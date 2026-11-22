@@ -298,7 +298,7 @@ impl CopyCache {
 
         let data_key = self
             .keystore
-            .open(found.file.wrapped_key.clone(), reason.to_owned())
+            .unseal(found.file.wrapped_key.clone(), reason.to_owned())
             .map(Zeroizing::new)
             .or_else(|e| {
                 let still_there = found.path.exists();

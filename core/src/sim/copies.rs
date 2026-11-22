@@ -110,7 +110,7 @@ impl SimKeystore {
         Ok([nonce.as_slice(), &sealed].concat())
     }
 
-    pub fn open(&self, sealed: Vec<u8>, _reason: String) -> Result<Vec<u8>, KeystoreError> {
+    pub fn unseal(&self, sealed: Vec<u8>, _reason: String) -> Result<Vec<u8>, KeystoreError> {
         let mut state = lock(&self.state);
         if state.invalidated {
             return Err(KeystoreError::KeyGone);
@@ -156,8 +156,8 @@ impl DeviceKeystore for SimKeystore {
         SimKeystore::seal(self, secret)
     }
 
-    fn open(&self, sealed: Vec<u8>, reason: String) -> Result<Vec<u8>, KeystoreError> {
-        SimKeystore::open(self, sealed, reason)
+    fn unseal(&self, sealed: Vec<u8>, reason: String) -> Result<Vec<u8>, KeystoreError> {
+        SimKeystore::unseal(self, sealed, reason)
     }
 
     fn index_key(&self) -> Result<Vec<u8>, KeystoreError> {

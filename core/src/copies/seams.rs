@@ -56,7 +56,7 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for KeystoreError {
 ///   passcode must not open a copy.
 /// - `seal` is `SecKeyCreateEncryptedData` with the public key and
 ///   `.eciesEncryptionCofactorVariableIVX963SHA256AESGCM`; no prompt.
-/// - `open` is `SecKeyCreateDecryptedData` with the private key, found with
+/// - `unseal` is `SecKeyCreateDecryptedData` with the private key, found with
 ///   a fresh `LAContext` whose `localizedReason` is `reason`
 ///   (`kSecUseAuthenticationContext`). It blocks until Face ID answers, so
 ///   it must not be called on the main thread.
@@ -73,7 +73,7 @@ pub trait DeviceKeystore: Send + Sync {
 
     /// Decrypts what [`Self::seal`] returned. Shows Face ID with `reason`
     /// and blocks until it answers. No passcode fallback.
-    fn open(&self, sealed: Vec<u8>, reason: String) -> Result<Vec<u8>, KeystoreError>;
+    fn unseal(&self, sealed: Vec<u8>, reason: String) -> Result<Vec<u8>, KeystoreError>;
 
     /// A 32-byte secret, usable without a prompt while the phone is
     /// unlocked, created on first use and the same in the app and the
