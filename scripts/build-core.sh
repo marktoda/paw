@@ -33,6 +33,9 @@ mkdir -p "$out/headers" "$out/bindings" "$gen"
 cd "$root/core"
 if [[ "$ios" == yes ]]; then
   mkdir -p "$out/ios" "$out/ios-sim"
+  # The C parts (libgit2, ring) otherwise target the newest SDK, not the
+  # app's deployment target in app/project.yml.
+  export IPHONEOS_DEPLOYMENT_TARGET=26.0
   cargo build --lib --release --target aarch64-apple-ios
   cargo build --lib --release --target aarch64-apple-ios-sim
   cp target/aarch64-apple-ios/release/libpaw_core.a "$out/ios/"
