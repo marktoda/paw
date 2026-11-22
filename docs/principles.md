@@ -102,6 +102,7 @@ Not protected:
 Made by the owner on 2026-11-22.
 
 - **Face ID window:** on by default. Whether the device passcode may stand in for Face ID is still open (see below).
+- **Face ID time is per entry:** each entry stays available for the chosen length from its own key touch, not until one shared end time.
 - **Backup:** setup warns when there is no second key or backup, and does not block. A better backup story comes later.
 - **Recipients:** paw warns whenever `.gpg-id` changes, and shows somewhere visible which keys can open the passwords.
 - **Keys without a YubiKey:** possibly, later, for lower-security stores. Principle 1 would then read "the person chooses where the key lives, and paw says plainly what each choice protects".
