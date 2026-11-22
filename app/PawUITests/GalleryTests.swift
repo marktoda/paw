@@ -186,10 +186,10 @@ final class GalleryTests: XCTestCase {
 
             // Done has no button: it closes itself.
             expect("stage-done").tap()
-            XCTAssertTrue(app.staticTexts["Done"].waitForExistence(timeout: 5),
-                          "Done should show before the sheet closes")
+            let done = app.staticTexts["key-sheet-headline"]
+            XCTAssertTrue(done.waitForExistence(timeout: 3), "Done should show before the sheet closes")
             snapshot("\(appearance)-done")
-            XCTAssertTrue(app.staticTexts["Done"].waitForNonExistence(timeout: 10),
+            XCTAssertTrue(done.waitForNonExistence(timeout: 10),
                           "The sheet should close itself after Done")
         }
     }

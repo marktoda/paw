@@ -428,9 +428,10 @@ private struct KeySheetSampleHost: View {
             .presentationDetents([.height(PawMetrics.keySheetHeight), .large], selection: $detent)
             .presentationDragIndicator(.visible)
             .task(id: sample) {
-                // Touch received: the sheet closes itself after a second.
+                // Touch received: the sheet closes itself. The app waits one
+                // second; the gallery waits four so the stage can be looked at.
                 guard sample == .done else { return }
-                try? await Task.sleep(for: .seconds(1))
+                try? await Task.sleep(for: .seconds(4))
                 if !Task.isCancelled { isPresented = false }
             }
     }

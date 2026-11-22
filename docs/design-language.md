@@ -344,4 +344,6 @@ enum PawMetrics {
 - **Touch stage.** The hero is the 92pt disc with its halo inside a thin outline of a key, following design.md 2.3 ("the gold disc glyph alone is never used as the touch prompt"). The halo reaches 1.74 times the disc, not the mock-up's 1.91, so the stage fits the 480pt detent. The 15-second ring is not built.
 - **PIN stages** use the 36pt disc so the field and both buttons stay above the keyboard.
 - **Bottom search.** The system search field's VoiceOver label is the prompt ("Search 332 passwords"), not "Search passwords". While searching, the system replaces Add with its own close button.
+- **Sheets are translucent.** At the 480pt detent the system's glass sheet shows a blur of the screen behind it, so light and dark bands from the list underneath show through the key sheet and the large-type view. No custom sheet background was added, per section 4.
+- **The PIN field is blank in screenshots** while it is a secure field: iOS hides secure text from screen capture. The dots show on a device.
 - **Copy confirmation** is hidden from VoiceOver focus and posted as an announcement, as specified, so UI tests can only see it in screenshots.
