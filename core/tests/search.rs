@@ -181,6 +181,11 @@ fn a_service_identifier_is_reduced_to_its_host() {
         ("https://github.com.evil.example/github.com", Some("github.com.evil.example")),
         ("https://evil.example#github.com", Some("evil.example")),
         ("https://evil.example?github.com", Some("evil.example")),
+        // A "://" that is not a scheme at the start does not move the host.
+        ("evil.example/?next=://github.com", Some("evil.example")),
+        ("evil.example/x://github.com", Some("evil.example")),
+        ("evil.example?u=https://github.com", Some("evil.example")),
+        ("//evil.example://github.com", None),
         ("", None),
         ("https://", None),
         ("not a host", None),

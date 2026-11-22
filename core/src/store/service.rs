@@ -41,7 +41,13 @@ fn is_host(text: &str) -> bool {
 /// `None` if there is no usable host in it.
 pub fn host_of(service: &str) -> Option<String> {
     let service = service.trim();
-    let rest = service.split_once("://").map_or(service, |(_, rest)| rest);
+    // Only a real scheme at the very start is a scheme. A "://" later on is
+    // part of a path or query (`evil.example/?next=://github.com`) and must
+    // not move where the host is read from.
+    let rest = match service.split_once("://") {
+        Some((scheme, rest)) if is_scheme(scheme) => rest,
+        _ => service,
+    };
     // Browsers read `\` as `/` in web addresses, so it ends the host too.
     let authority = rest.split(['/', '\\', '?', '#']).next()?;
     let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
@@ -51,6 +57,14 @@ pub fn host_of(service: &str) -> Option<String> {
     };
     let host = host.strip_suffix('.').unwrap_or(host).to_lowercase();
     is_host(&host).then_some(host)
+}
+
+/// Whether `text` is a URL scheme: a letter, then letters, digits, `+`, `-`
+/// or `.`.
+fn is_scheme(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
 }
 
 /// The registrable domain of `host`, e.g. `example.co.uk` for
