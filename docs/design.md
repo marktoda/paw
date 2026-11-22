@@ -801,6 +801,14 @@ Pushing ─key removed / touch timeout─► Idle (queue intact; the sheet shows
 
 **Background.** `BGAppRefreshTask` runs `pull_now()` with the device key only, under a 25 s budget. It never pushes, never prompts, never touches the card and never touches `window/`. It rewrites `index.bin` and the AutoFill identity store if the tree changed.
 
+**Outcome (branch `sync-integrate`).** Built in `core/src/sync/` (`integrate`, `queue`, `operation`, `hosts`) and `core/src/setup/`, tested against two clones of one bare repository behind the in-process SSH server. Differences from the above:
+- The local copy is named "`<name> (from this iPhone <YYYY-MM-DD>)`" (then "` 2`", "` 3`"), dated by the local commit's author time, not "(iPhone copy)".
+- A push refused because the server moved is retried once on the same connection, not up to three times; a second refusal is `SyncError::RemoteKeptMoving`. One sync is one login (asserted: one signature, including the retry).
+- "The last tip seen" is the ref `refs/paw/last-seen/<branch>`, written by clone, integrate and push.
+- Local commits that are not one-entry paw commits stop integrate with `SyncError::NotPawHistory`; uncommitted working-copy changes with `UncommittedChanges`. Both change nothing.
+- Not built yet: parking a queued change whose `.gpg-id` changed (`NeedsReencrypt`, `refs/paw/parked/`). `.gpg-id` changes are reported (`IntegrateReport.recipients_changed`), and integrate proceeds.
+- `SyncStatus`/`SyncPhase`, backoff and the device key are not built; sync is a function the app calls with the card.
+
 ### 3.7 Recipients and encryption
 
 ```rust
