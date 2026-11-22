@@ -878,6 +878,18 @@ Constants either way:
 - There is no `GitBackend` trait. All library use stays inside `sync/` behind five functions (`clone`, `fetch`, `integrate`, `commit`, `push`), so a swap is one module.
 - Add `cargo deny` to make any new crate with a C build dependency an explicit decision.
 
+**Outcome of the spike (branch `git-spike`).** Step 2 applied: russh needs ring or aws-lc for its AEAD ciphers and has no pure-Rust backend, and both fail on Linux for want of `xcrun`. The stack is `git2` 0.21 (vendored libgit2 1.9, no TLS, no libssh2) with a smart subtransport over `russh` 0.65 (`ring` backend). What the spike showed, against an in-process SSH server in front of the real `git-upload-pack` and `git-receive-pack`:
+
+- russh's external signer works for ed25519 with the card, and it sends the public-key query first. A key the host does not know is refused before the signer runs: no PIN try, no touch. `Connector::probe` (4.2) is therefore a by-product of `open`, not a separate round trip.
+- One login per connection, and each git service is a channel on it. Clone is one signature; fetch then push on one connection is one signature. Not yet tried against GitHub itself.
+- The data to sign for user `git` with an ed25519 key is 146 bytes, so it fits a short APDU. Risk 5 in 8.2 only bites for long user names; the simulated card accepts chaining and extended length regardless.
+- The signer trait is synchronous (`public_key`, `sign`). The connection runs russh on its own worker thread and the caller's thread blocks in `sign`, so the oneshot in 4.2 is not needed until `CardActor` exists.
+- libgit2 picks transports by URL scheme from a process-wide table. The connection is handed to it through a thread-local for the duration of one call.
+- The host key algorithms offered must be narrowed to the pinned key's type, or a host with several keys may present another one and fail the pin.
+- libgit2's checkout follows a folder symlink in the working copy and treats paths as patterns unless told otherwise. `commit` builds from the tree, refuses paths through links, and checks out literally. The entry reader (M2) must likewise not follow links out of the store.
+- `cargo test` builds the vendored libgit2 rather than a system one, so Linux and iOS run the same C.
+- Still open: ECDSA P-256 through the external signer (device key); two channels on one connection at GitHub; the macOS build of the iOS libraries, which has not been run.
+
 **UNPROVEN** (answered by the spike): russh cross-compiling from Linux; russh's external-signer path for ed25519 (card) and ECDSA P-256 (device key); russh exposing the public-key query; two session channels on one connection against GitHub; for gix, a caller-supplied blocking transport and a practical pack writer.
 
 ### 3.11 AutoFill extension
