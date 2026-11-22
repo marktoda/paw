@@ -375,3 +375,22 @@ fn commit_does_not_follow_a_link_planted_in_the_working_copy() {
     assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
     assert_eq!(git(dir.path(), &["rev-parse", "HEAD"]), head);
 }
+
+#[test]
+fn an_entry_named_like_a_pattern_does_not_touch_other_entries() {
+    let card = card();
+    let server = GitServer::start(&[authorised_line(&card)]);
+    let dir = cloned(&server, &card);
+    commit_entry(dir.path());
+    // A change on disk that has not been committed.
+    std::fs::write(dir.path().join(ENTRY), "local state").unwrap();
+
+    // `pass` allows these characters in names; to git they are a pattern
+    // that also matches the entry above.
+    for name in ["web/*", "web/example?com.gpg", "web/[a-z]*.gpg", ":/web/example.com.gpg"] {
+        sync::commit(dir.path(), name, b"other", MESSAGE, &author()).unwrap();
+        assert_eq!(std::fs::read(dir.path().join(name)).unwrap(), b"other", "{name}");
+    }
+
+    assert_eq!(std::fs::read_to_string(dir.path().join(ENTRY)).unwrap(), "local state");
+}

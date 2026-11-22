@@ -234,8 +234,11 @@ pub fn commit(
     let id = repo
         .commit(Some("HEAD"), &signature, &signature, message, &tree, &[&parent])
         .map_err(git_err)?;
-    repo.checkout_head(Some(CheckoutBuilder::new().force().path(path)))
-        .map_err(git_err)?;
+    // The name is taken literally. Left to itself, checkout reads it as a
+    // pattern, and an entry called `web/*` would overwrite its neighbours.
+    let mut only_this_file = CheckoutBuilder::new();
+    only_this_file.force().disable_pathspec_match(true).path(path);
+    repo.checkout_head(Some(&mut only_this_file)).map_err(git_err)?;
     Ok(id.to_string())
 }
 
