@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="t">
+  <title id="t">paw icon candidate B, monochrome</title>
+  <rect width="1024" height="1024" fill="#1C1C1E"/>
+  <g fill="#FFFFFF" opacity="0.62">
+    <circle cx="213" cy="438" r="78"/>
+    <circle cx="394" cy="286" r="90"/>
+    <circle cx="630" cy="286" r="90"/>
+    <circle cx="811" cy="438" r="78"/>
+  </g>
+  <circle cx="512" cy="610" r="212" fill="#FFFFFF"/>
+</svg>

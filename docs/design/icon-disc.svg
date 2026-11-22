@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="t">
+  <title id="t">paw icon candidate A: the gold key disc</title>
+  <!-- Full-bleed square: iOS applies the corner mask. -->
+  <rect width="1024" height="1024" fill="#1B1A2B"/>
+  <circle cx="512" cy="512" r="368" fill="#F5B301" fill-opacity="0.12"/>
+  <circle cx="512" cy="512" r="276" fill="#F5B301" fill-opacity="0.24"/>
+  <circle cx="512" cy="512" r="180" fill="#F5B301" stroke="#B26A00" stroke-width="24"/>
+</svg>

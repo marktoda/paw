@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 388 164" role="img" aria-labelledby="t">
+  <title id="t">paw wordmark: the bowl of the p is the gold key disc</title>
+  <!-- Drawn from circles and round-capped strokes, not set in a font. Ink is #16151F: for light grounds. -->
+  <g fill="none" stroke="#16151F" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 34V142"/>
+    <circle cx="176" cy="72" r="38"/>
+    <path d="M214 34V110"/>
+    <path d="M254 34V82a28 28 0 0 0 56 0V34M310 82a28 28 0 0 0 56 0V34"/>
+  </g>
+  <circle cx="60" cy="72" r="45" fill="#F5B301" stroke="#B26A00" stroke-width="8"/>
+</svg>

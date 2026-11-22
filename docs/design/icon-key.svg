@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="t">
+  <title id="t">paw icon candidate C: a key whose bow is the gold disc</title>
+  <!-- Full-bleed square: iOS applies the corner mask. -->
+  <rect width="1024" height="1024" fill="#1B1A2B"/>
+  <g fill="#EDEBFA">
+    <rect x="500" y="478" width="384" height="68" rx="34"/>
+    <rect x="716" y="512" width="64" height="150" rx="32"/>
+    <rect x="812" y="512" width="64" height="112" rx="32"/>
+  </g>
+  <circle cx="356" cy="512" r="190" fill="#F5B301" stroke="#B26A00" stroke-width="24"/>
+</svg>
