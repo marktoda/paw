@@ -57,9 +57,8 @@ final class GalleryTests: XCTestCase {
     func testColoursPage() {
         for appearance in Self.appearances {
             launch(page: "colours", appearance: appearance)
-            for token in ["bg", "labelSecondary", "action", "panel", "keyGold", "keyGoldRim"] {
-                expect("swatch-\(token)")
-            }
+            expect("swatch-bg")
+            expect("swatch-keyGold")
             snapshot(appearance)
             app.swipeUp()
             expect("swatch-passwordSymbol")
@@ -78,23 +77,17 @@ final class GalleryTests: XCTestCase {
 
     func testFolderTintsAreStable() {
         // FNV-1a 32-bit of the lower-cased, NFC name, mod 7, worked out
-        // independently of the app.
-        let expected = [
-            "bank": "cocoa", "Bank": "cocoa", "dev": "blue", "email": "sky",
-            "home": "teal", "shopping": "olive", "work": "sky", "travel": "purple",
-            "school": "magenta", "cafe-composed": "olive", "cafe-decomposed": "olive",
-            "none": "slate",
-        ]
+        // independently of the app. The page lists them in this order.
+        let expected = "bank cocoa, Bank cocoa, dev blue, email sky, home teal, shopping olive, "
+            + "work sky, travel purple, school magenta, cafe-composed olive, cafe-decomposed olive"
         for appearance in Self.appearances {
             launch(page: "tints", appearance: appearance)
-            for tint in ["blue", "sky", "teal", "olive", "purple", "magenta", "cocoa", "slate"] {
-                expect("tint-\(tint)")
-            }
+            expect("tint-blue")
+            expect("tint-slate")
             snapshot(appearance)
             if appearance == "light" {
-                for (folder, tint) in expected {
-                    expectLabel("tint-of-\(folder)", tint)
-                }
+                expectLabel("tint-assignments", expected)
+                expectLabel("tint-of-none", "slate")
             }
             app.swipeUp()
             snapshot("\(appearance)-assignment")

@@ -162,6 +162,11 @@ struct TintsPage: View {
                         .accessibilityIdentifier("tint-of-none")
                 }
             }
+            // The whole assignment in one line, so a UI test reads it in one query.
+            Text(Self.known.map { "\($0.id) \(FolderTint(folder: $0.folder).name)" }.joined(separator: ", "))
+                .font(PawFont.caption)
+                .foregroundStyle(PawColor.labelSecondary)
+                .accessibilityIdentifier("tint-assignments")
         }
     }
 }
