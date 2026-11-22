@@ -70,3 +70,24 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.marktoda.paw.autofill
+  PawUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - PawUITests
+    dependencies:
+      - target: Paw
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.marktoda.paw.uitests
+        GENERATE_INFOPLIST_FILE: "YES"
+        TEST_TARGET_NAME: Paw
+schemes:
+  Paw:
+    build:
+      targets:
+        Paw: all
+        PawUITests: [test]
+    test:
+      targets:
+        - PawUITests

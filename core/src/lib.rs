@@ -6,6 +6,7 @@
 //! raw APDUs with the card (see [`ApduTransport`]).
 
 pub mod ffi;
+pub mod sim;
 
 uniffi::setup_scaffolding!();
 
@@ -27,7 +28,7 @@ pub trait ApduTransport: Send + Sync {
 }
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
-pub enum Error {
+pub enum PawError {
     #[error("could not talk to the key: {0}")]
     Transport(String),
     #[error("wrong PIN, {tries_left} tries left")]
@@ -108,20 +109,20 @@ impl CardTransaction for Tx {
     }
 }
 
-fn card_err(e: openpgp_card::Error) -> Error {
+fn card_err(e: openpgp_card::Error) -> PawError {
     match e {
-        openpgp_card::Error::Smartcard(e) => Error::Transport(e.to_string()),
-        other => Error::Card(other.to_string()),
+        openpgp_card::Error::Smartcard(e) => PawError::Transport(e.to_string()),
+        other => PawError::Card(other.to_string()),
     }
 }
 
-fn open(transport: Arc<dyn ApduTransport>) -> Result<Card<Open>, Error> {
+fn open(transport: Arc<dyn ApduTransport>) -> Result<Card<Open>, PawError> {
     let backend: Box<dyn CardBackend + Send + Sync> = Box::new(Backend(transport));
     Card::<Open>::new(backend).map_err(card_err)
 }
 
 /// Reads the card's identity and key state. Needs no PIN and no touch.
-pub fn card_info(transport: Arc<dyn ApduTransport>) -> Result<CardInfo, Error> {
+pub fn card_info(transport: Arc<dyn ApduTransport>) -> Result<CardInfo, PawError> {
     let mut card = open(transport)?;
     let mut tx = card.transaction().map_err(card_err)?;
 
@@ -151,8 +152,8 @@ pub fn decrypt_entry(
     pin: &str,
     ciphertext: &[u8],
     on_touch_needed: &(dyn Fn() + Send + Sync),
-) -> Result<Vec<u8>, Error> {
-    let message = Message::from_bytes(ciphertext).map_err(|e| Error::NotAnEntry(e.to_string()))?;
+) -> Result<Vec<u8>, PawError> {
+    let message = Message::from_bytes(ciphertext).map_err(|e| PawError::NotAnEntry(e.to_string()))?;
 
     let mut card = open(transport)?;
     let mut tx = card.transaction().map_err(card_err)?;
@@ -167,34 +168,34 @@ pub fn decrypt_entry(
                 tx.invalidate_cache().map_err(card_err)?;
                 let tries_left = tx.pw_status_bytes().map_err(card_err)?.err_count_pw1();
                 if tries_left == 0 {
-                    Error::PinBlocked
+                    PawError::PinBlocked
                 } else {
-                    Error::WrongPin { tries_left }
+                    PawError::WrongPin { tries_left }
                 }
             }
             openpgp_card::Error::CardStatus(StatusBytes::AuthenticationMethodBlocked) => {
-                Error::PinBlocked
+                PawError::PinBlocked
             }
             other => card_err(other),
         });
     }
 
     let slot = CardSlot::init_from_card(&mut tx, KeyType::Decryption, on_touch_needed)
-        .map_err(|e| Error::Card(e.to_string()))?;
+        .map_err(|e| PawError::Card(e.to_string()))?;
 
     let mut decrypted = slot
         .decrypt_message(message)
-        .map_err(|e| Error::Decrypt(e.to_string()))?;
+        .map_err(|e| PawError::Decrypt(e.to_string()))?;
     if decrypted.is_compressed() {
         decrypted = decrypted
             .decompress()
-            .map_err(|e| Error::Decrypt(e.to_string()))?;
+            .map_err(|e| PawError::Decrypt(e.to_string()))?;
     }
 
     let mut plaintext = Vec::new();
     decrypted
         .read_to_end(&mut plaintext)
-        .map_err(|e| Error::Decrypt(e.to_string()))?;
+        .map_err(|e| PawError::Decrypt(e.to_string()))?;
     Ok(plaintext)
 }
 
@@ -204,22 +205,22 @@ pub fn decrypt_entry(
 pub fn encrypt_to_card(
     transport: Arc<dyn ApduTransport>,
     plaintext: &[u8],
-) -> Result<Vec<u8>, Error> {
+) -> Result<Vec<u8>, PawError> {
     use pgp::composed::MessageBuilder;
     use pgp::crypto::sym::SymmetricKeyAlgorithm;
 
     let mut card = open(transport)?;
     let mut tx = card.transaction().map_err(card_err)?;
     let slot = CardSlot::init_from_card(&mut tx, KeyType::Decryption, &|| {})
-        .map_err(|e| Error::Card(e.to_string()))?;
+        .map_err(|e| PawError::Card(e.to_string()))?;
 
     let mut rng = rand::thread_rng();
     let mut builder = MessageBuilder::from_bytes("", plaintext.to_vec())
         .seipd_v1(&mut rng, SymmetricKeyAlgorithm::AES256);
     builder
         .encrypt_to_key(&mut rng, slot.public_key())
-        .map_err(|e| Error::Card(e.to_string()))?;
+        .map_err(|e| PawError::Card(e.to_string()))?;
     builder
         .to_vec(&mut rng)
-        .map_err(|e| Error::Card(e.to_string()))
+        .map_err(|e| PawError::Card(e.to_string()))
 }

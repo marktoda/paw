@@ -6,7 +6,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # Rust is pure, so the iOS libraries are built on Linux, where runners are
+  # faster. The Mac jobs only compile Swift and run the UI tests.
   core:
     runs-on: ubuntu-latest
     steps:
@@ -14,27 +20,40 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
-      - run: cargo test --manifest-path core/Cargo.toml
+      - name: Test the core
+        run: cargo test --manifest-path core/Cargo.toml
+      - name: Build the core for iOS
+        run: scripts/build-core.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: core
+          path: |
+            app/build/core
+            app/Generated
+          retention-days: 3
 
-  app:
+  ui:
+    needs: core
     runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        family: [iPhone, iPad]
     steps:
       - uses: actions/checkout@v4
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/download-artifact@v4
         with:
-          workspaces: core
-      - name: Build the Rust core
-        run: scripts/build-core.sh
+          name: core
+          path: app
       - name: Generate the Xcode project
         run: |
           brew install xcodegen
-          cd app && xcodegen generate
-      - name: Build for the simulator
-        run: |
-          set -o pipefail
-          cd app
-          xcodebuild build \
-            -project Paw.xcodeproj -scheme Paw \
-            -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build/derived \
-            CODE_SIGNING_ALLOWED=NO | tail -60
+          scripts/make-xcframework.sh
+      - name: Run the UI tests
+        run: scripts/ci-test.sh ${{ matrix.family }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: report-${{ matrix.family }}
+          path: app/build/report
+          retention-days: 7

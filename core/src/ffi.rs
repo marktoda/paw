@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::{ApduTransport, CardInfo, Error};
+use crate::{ApduTransport, CardInfo, PawError};
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum ConnectionError {
@@ -35,7 +35,7 @@ impl ApduTransport for Adapter {
 
 /// Reads the key's identity and state. Needs no PIN and no touch.
 #[uniffi::export]
-pub fn read_card(connection: Arc<dyn CardConnection>) -> Result<CardInfo, Error> {
+pub fn read_card(connection: Arc<dyn CardConnection>) -> Result<CardInfo, PawError> {
     crate::card_info(Arc::new(Adapter(connection)))
 }
 
@@ -45,7 +45,7 @@ pub fn decrypt(
     connection: Arc<dyn CardConnection>,
     pin: String,
     ciphertext: Vec<u8>,
-) -> Result<Vec<u8>, Error> {
+) -> Result<Vec<u8>, PawError> {
     let touch = connection.clone();
     crate::decrypt_entry(Arc::new(Adapter(connection)), &pin, &ciphertext, &move || {
         touch.touch_needed()
@@ -57,6 +57,6 @@ pub fn decrypt(
 pub fn encrypt_to_card(
     connection: Arc<dyn CardConnection>,
     plaintext: Vec<u8>,
-) -> Result<Vec<u8>, Error> {
+) -> Result<Vec<u8>, PawError> {
     crate::encrypt_to_card(Arc::new(Adapter(connection)), &plaintext)
 }

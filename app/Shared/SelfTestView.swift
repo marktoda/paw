@@ -6,7 +6,7 @@ struct SelfTestView: View {
     let host: String
 
     @State private var pin = ""
-    @State private var log: [String] = []
+    @State private var results: [String] = []
     @State private var busy = false
     @State private var waitingForTouch = false
 
@@ -14,58 +14,70 @@ struct SelfTestView: View {
         NavigationStack {
             List {
                 Section("Key") {
-                    Button("Read key") { run("Read key") { try describeKey() } }
+                    Button("Read key") { run { try describeKey() } }
+                        .accessibilityIdentifier("read-key")
+                        .disabled(busy)
                 }
                 Section("Decrypt") {
                     SecureField("Key PIN", text: $pin)
                         .textContentType(.password)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
-                    Button("Encrypt and decrypt a test message") {
+                        .accessibilityIdentifier("pin-field")
+                        .disabled(busy)
+                    Button("Decrypt a test message") {
                         let pin = pin
-                        run("Decrypt") {
+                        run {
                             let text = try KeySelfTest.roundTrip(pin: pin) {
                                 DispatchQueue.main.async { waitingForTouch = true }
                             }
                             return text == KeySelfTest.message
-                                ? "Decrypted correctly: \(text)"
+                                ? "Decrypted correctly."
                                 : "Decrypted to something unexpected: \(text)"
                         }
                     }
-                    .disabled(pin.isEmpty)
+                    .accessibilityIdentifier("decrypt")
+                    .disabled(busy || pin.isEmpty)
+
                     if waitingForTouch {
                         Label("Touch your key", systemImage: "circle.fill")
                             .foregroundStyle(.orange)
+                            .accessibilityIdentifier("touch-prompt")
+                        if KeyConnection.isSimulated {
+                            Button("Touch the simulated key") { KeyConnection.simulateTouch() }
+                                .accessibilityIdentifier("simulated-touch")
+                        }
                     }
                 }
-                Section("Log") {
-                    if log.isEmpty {
+                Section("Results, newest first") {
+                    if results.isEmpty {
                         Text("Nothing yet.").foregroundStyle(.secondary)
                     }
-                    ForEach(Array(log.enumerated()), id: \.offset) { _, line in
-                        Text(line).font(.footnote.monospaced()).textSelection(.enabled)
+                    ForEach(Array(results.enumerated()), id: \.offset) { index, line in
+                        Text(line)
+                            .font(.footnote.monospaced())
+                            .textSelection(.enabled)
+                            .accessibilityIdentifier(index == 0 ? "latest-result" : "older-result")
                     }
                 }
             }
             .navigationTitle("Paw key test (\(host))")
             .navigationBarTitleDisplayMode(.inline)
-            .disabled(busy)
         }
     }
 
     private func describeKey() throws -> String {
-        let readers = UsbCardConnection.slotNames()
         let key = try KeySelfTest.readKey()
         return """
-            readers: \(readers)
-            key: \(key.ident)
-            decryption key: \(key.decryptionFingerprint ?? "none")
+            Reader: \(KeyConnection.readerNames.joined(separator: ", "))
+            Key: \(key.ident)
+            Decryption key: \(key.decryptionFingerprint ?? "none")
             PIN tries left: \(key.pinTriesLeft)
-            touch required: \(key.touchRequired)
+            Touch required: \(key.touchRequired ? "yes" : "no")
             """
     }
 
-    private func run(_ name: String, _ work: @escaping @Sendable () throws -> String) {
+    private func run(_ work: @escaping @Sendable () throws -> String) {
         busy = true
         let started = Date()
         DispatchQueue.global(qos: .userInitiated).async {
@@ -73,11 +85,11 @@ struct SelfTestView: View {
             do {
                 outcome = try work()
             } catch {
-                outcome = "FAILED: \(error.localizedDescription) [\(error)]"
+                outcome = describe(error)
             }
             let seconds = String(format: "%.1f", Date().timeIntervalSince(started))
             DispatchQueue.main.async {
-                log.insert("\(name) (\(host), \(seconds)s)\n\(outcome)", at: 0)
+                results.insert("\(outcome)\n(\(host), \(seconds)s)", at: 0)
                 busy = false
                 waitingForTouch = false
             }
