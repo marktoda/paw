@@ -35,7 +35,6 @@ targets:
     entitlements:
       path: Paw/Paw.entitlements
       properties:
-        com.apple.security.smartcard: true
         com.apple.developer.authentication-services.autofill-credential-provider: true
     settings:
       base:
@@ -65,7 +64,6 @@ targets:
     entitlements:
       path: PawAutoFill/PawAutoFill.entitlements
       properties:
-        com.apple.security.smartcard: true
         com.apple.developer.authentication-services.autofill-credential-provider: true
     settings:
       base:

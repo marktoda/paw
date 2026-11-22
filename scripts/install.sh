@@ -38,10 +38,9 @@ wanted.update(eval(sys.argv[2]))
 sys.stdout.buffer.write(plistlib.dumps(wanted))
 PY
 }
-# iOS refuses to install a build that claims com.apple.security.smartcard:
-# no provisioning profile grants it. PAW_SMARTCARD=1 tries it anyway.
+# com.apple.security.smartcard is macOS-only: iOS refuses to install a build
+# that claims it, and reaches the key over USB-C without it.
 extra='{}'
-[ "${PAW_SMARTCARD:-}" = 1 ] && extra='{"com.apple.security.smartcard": True}'
 entitlements "$PAW_SIGNING_DIR/Paw.mobileprovision" "$extra" > "$work/Paw.ent"
 entitlements "$PAW_SIGNING_DIR/PawAutoFill.mobileprovision" "$extra" > "$work/PawAutoFill.ent"
 cp "$PAW_SIGNING_DIR/Paw.mobileprovision" "$app/embedded.mobileprovision"
