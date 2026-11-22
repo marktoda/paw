@@ -8,6 +8,7 @@
 //! The same card signs the SSH login to the git host ([`ssh`]), which is how
 //! the password store is cloned and pushed ([`sync`]).
 
+pub mod copies;
 pub mod diag;
 pub mod entry;
 pub mod ffi;
@@ -90,6 +91,27 @@ pub enum PawError {
     /// A value that cannot be stored in an entry as given.
     #[error("{0}")]
     InvalidField(String),
+    /// The entry has no live Face ID copy (none was kept, it ended, or the
+    /// entry changed since). Open it with the key.
+    #[error("this entry needs your key")]
+    CopyUnavailable,
+    /// The person closed the Face ID prompt. The copy is still there.
+    #[error("Face ID was cancelled")]
+    FaceIdCancelled,
+    #[error("Face ID didn't recognise you")]
+    FaceIdNotRecognised,
+    #[error("Face ID is turned off until you enter your iPhone passcode")]
+    FaceIdLockedOut,
+    #[error("Face ID isn't set up on this iPhone, so saved copies can't be opened")]
+    FaceIdNotSetUp,
+    /// The Face ID key was invalidated (enrolment changed or the passcode
+    /// was removed). Every copy has been wiped.
+    #[error("Face ID changed on this iPhone, so opened passwords were cleared")]
+    FaceIdChanged,
+    /// The copies folder or the keystore failed in some other way. Never
+    /// carries entry names or contents.
+    #[error("Face ID copies: {0}")]
+    CopyFailed(String),
 }
 
 /// What the card says about itself, read without a PIN.
