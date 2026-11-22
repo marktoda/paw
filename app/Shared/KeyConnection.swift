@@ -122,5 +122,19 @@ func describe(_ error: Swift.Error) -> String {
             : "This entry is encrypted for another key: \(recipients.joined(separator: ", "))."
     case .InvalidField(let message):
         return message
+    case .CopyUnavailable:
+        return "This password needs your key again."
+    case .FaceIdCancelled:
+        return "Face ID was cancelled."
+    case .FaceIdNotRecognised:
+        return "Face ID did not recognise you."
+    case .FaceIdLockedOut:
+        return "Face ID is locked. Unlock your iPhone with its passcode, then try again."
+    case .FaceIdNotSetUp:
+        return "Face ID is not set up on this iPhone."
+    case .FaceIdChanged:
+        return "Face ID changed on this iPhone, so opened passwords were cleared."
+    case .CopyFailed(let message):
+        return "Could not keep this password for Face ID: \(message)"
     }
 }
