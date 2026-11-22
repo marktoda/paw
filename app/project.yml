@@ -1,0 +1,72 @@
+name: Paw
+options:
+  bundleIdPrefix: com.marktoda
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.0.1"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    GENERATE_INFOPLIST_FILE: "NO"
+targets:
+  Paw:
+    type: application
+    platform: iOS
+    sources:
+      - Paw
+      - Shared
+      - Generated
+    dependencies:
+      - framework: build/PawCore.xcframework
+        embed: false
+      - sdk: CryptoTokenKit.framework
+      - target: PawAutoFill
+    info:
+      path: Paw/Info.plist
+      properties:
+        CFBundleDisplayName: Paw
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        ITSAppUsesNonExemptEncryption: false
+    entitlements:
+      path: Paw/Paw.entitlements
+      properties:
+        com.apple.security.smartcard: true
+        com.apple.developer.authentication-services.autofill-credential-provider: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.marktoda.paw
+  PawAutoFill:
+    type: app-extension
+    platform: iOS
+    sources:
+      - PawAutoFill
+      - Shared
+      - Generated
+    dependencies:
+      - framework: build/PawCore.xcframework
+        embed: false
+      - sdk: CryptoTokenKit.framework
+      - sdk: AuthenticationServices.framework
+    info:
+      path: PawAutoFill/Info.plist
+      properties:
+        CFBundleDisplayName: Paw
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.authentication-services-credential-provider-ui
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).CredentialProviderViewController
+          NSExtensionAttributes:
+            ASCredentialProviderExtensionCapabilities:
+              ProvidesPasswords: true
+    entitlements:
+      path: PawAutoFill/PawAutoFill.entitlements
+      properties:
+        com.apple.security.smartcard: true
+        com.apple.developer.authentication-services.autofill-credential-provider: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.marktoda.paw.autofill

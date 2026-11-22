@@ -1,0 +1,17 @@
+{
+  description = "paw: a pass client for iPhone and iPad with YubiKey support";
+
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+  outputs = {nixpkgs, ...}: let
+    systems = ["x86_64-linux" "aarch64-linux" "aarch64-darwin"];
+    forAll = f: nixpkgs.lib.genAttrs systems (s: f nixpkgs.legacyPackages.${s});
+  in {
+    devShells = forAll (pkgs: {
+      default = pkgs.mkShell {
+        # rustup rather than nixpkgs rustc: the iOS targets come from rustup.
+        packages = [pkgs.rustup pkgs.gcc pkgs.pkg-config pkgs.gnupg];
+      };
+    });
+  };
+}
