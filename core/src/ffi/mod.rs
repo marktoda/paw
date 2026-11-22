@@ -80,8 +80,10 @@ pub fn card_touch_timeout_check(
     crate::diag::card_touch_timeout_check(Arc::new(Adapter(connection)), &pin)
 }
 
+mod copies;
 mod entry;
 
+pub use copies::{FaceIdOpen, KeyOpen};
 pub use entry::{EntryView, FieldView, OpenedEntry};
 
 #[uniffi::export]
