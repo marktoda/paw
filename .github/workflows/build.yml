@@ -58,6 +58,11 @@ jobs:
         family: [iPhone]
     steps:
       - uses: actions/checkout@v4
+      - name: Start the simulator booting
+        run: |
+          udid=$(scripts/ci-sim.sh ${{ matrix.family }})
+          echo "PAW_SIM=$udid" >> "$GITHUB_ENV"
+          nohup xcrun simctl boot "$udid" > /dev/null 2>&1 &
       - uses: actions/download-artifact@v4
         with:
           name: core

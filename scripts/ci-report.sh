@@ -22,6 +22,9 @@ gh run download "$run" --dir "$dest" > /dev/null 2>&1 || true
 for report in "$dest"/report-*; do
   [ -d "$report" ] || continue
   echo "== $(basename "$report") ($(cat "$report/device.txt" 2>/dev/null | xargs))"
+  if [ -s "$report/timing.txt" ]; then
+    awk '$1 ~ /^[0-9]+$/ { if (p) printf "  %s took %ds\n", $2, $1 - p; p = $1 }' "$report/timing.txt"
+  fi
   if [ -s "$report/errors.txt" ]; then sed 's/^/  /' "$report/errors.txt" | head -40; fi
   if [ -s "$report/cases.txt" ]; then
     sed -E "s/.*Test Case '-\[[A-Za-z]+\.([A-Za-z]+) ([A-Za-z0-9_]+)\]' (passed|failed) \(([0-9.]+) seconds\).*/  \3  \2 (\4s)/" "$report/cases.txt"

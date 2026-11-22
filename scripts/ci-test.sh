@@ -11,20 +11,7 @@ report="build/report"
 rm -rf "$report" build/result.xcresult
 mkdir -p "$report/screenshots"
 
-# Newest available simulator of the requested family.
-udid=$(xcrun simctl list devices available -j | python3 -c '
-import json, sys
-family = sys.argv[1]
-runtimes = json.load(sys.stdin)["devices"]
-best = None
-for runtime in sorted(runtimes):
-    if "iOS" not in runtime:
-        continue
-    for device in runtimes[runtime]:
-        if device["name"].startswith(family):
-            best = device
-print(best["udid"] if best else "")
-' "$family")
+udid="${PAW_SIM:-$("$root/scripts/ci-sim.sh" "$family")}"
 if [ -z "$udid" ]; then
   echo "No $family simulator available" | tee "$report/errors.txt"
   exit 1
@@ -32,21 +19,41 @@ fi
 xcrun simctl list devices available | grep "$udid" | tee "$report/device.txt"
 
 # PAW_ONLY narrows the run to the tests being worked on, e.g.
-# "GalleryTests KeyTests/testReadKeyShowsIdentityWithoutAPin". A full run
-# takes about 17 minutes, almost all of it tests; one class takes a few.
+# "GalleryTests KeyTests/testReadKeyShowsIdentityWithoutAPin".
 only=()
 for name in ${PAW_ONLY:-}; do
   only+=("-only-testing:PawUITests/$name")
 done
 
-xcodebuild test \
+# Where the minutes go, so the loop can be made faster with evidence.
+timing="$report/timing.txt"
+mark() { echo "$(date +%s) $1" >> "$timing"; }
+
+mark build-start
+xcodebuild build-for-testing \
   -project Paw.xcodeproj -scheme Paw \
   -destination "platform=iOS Simulator,id=$udid" \
   -derivedDataPath build/derived \
-  -resultBundlePath build/result.xcresult \
-  ${only[@]+"${only[@]}"} \
   CODE_SIGNING_ALLOWED=NO > "$report/xcodebuild.log" 2>&1
 status=$?
+mark build-end
+
+if [ $status -eq 0 ]; then
+  # A cold simulator takes minutes to boot on a hosted runner. The workflow
+  # starts it before the build; this waits for whatever is left.
+  xcrun simctl bootstatus "$udid" -b > "$report/boot.log" 2>&1
+  mark simulator-ready
+  xcodebuild test-without-building \
+    -project Paw.xcodeproj -scheme Paw \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath build/derived \
+    -resultBundlePath build/result.xcresult \
+    ${only[@]+"${only[@]}"} \
+    CODE_SIGNING_ALLOWED=NO >> "$report/xcodebuild.log" 2>&1
+  status=$?
+  mark tests-end
+fi
+
 
 # Compiler and linker errors, deduplicated, are the first thing to read.
 grep -E "(error:|ld: |Undefined symbols|\*\* (BUILD|TEST) )" "$report/xcodebuild.log" \
