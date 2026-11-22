@@ -133,10 +133,20 @@ impl GitServer {
     /// Adds a commit to the server's `main` the way another machine would:
     /// from a separate clone, over the file system.
     pub fn desktop_commit(&self, path: &str, contents: &str) -> String {
+        self.desktop_change(path, |file| std::fs::write(file, contents).unwrap())
+    }
+
+    /// Commits a symbolic link named `path` that points at `target`, as a
+    /// hostile or careless collaborator could.
+    pub fn desktop_symlink(&self, path: &str, target: &Path) -> String {
+        self.desktop_change(path, |link| std::os::unix::fs::symlink(target, link).unwrap())
+    }
+
+    fn desktop_change(&self, path: &str, create: impl FnOnce(&Path)) -> String {
         let work = tempfile::tempdir().unwrap();
         let bare = self.bare();
         git(work.path(), &["clone", "--quiet", bare.to_str().unwrap(), "."]);
-        std::fs::write(work.path().join(path), contents).unwrap();
+        create(&work.path().join(path));
         git(work.path(), &["add", path]);
         git(work.path(), &["commit", "--quiet", "-m", &format!("Add {path} from the desktop.")]);
         git(work.path(), &["push", "--quiet", "origin", "HEAD:refs/heads/main"]);

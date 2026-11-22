@@ -62,6 +62,10 @@ pub enum PawError {
     /// was pushed; paw never forces.
     #[error("the remote has changes that are not in this copy")]
     NotFastForward,
+    /// A file name that could reach outside the store or into git's own
+    /// files. Nothing was written.
+    #[error("not a safe name for an entry: {0}")]
+    UnsafePath(String),
     #[error("git error: {0}")]
     Git(String),
 }

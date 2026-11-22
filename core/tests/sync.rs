@@ -67,6 +67,8 @@ fn clones_commits_and_pushes_with_the_card() {
     assert_eq!(card.authentication_count(), 1);
 
     let commit = commit_entry(dir.path());
+    assert_eq!(std::fs::read(dir.path().join(ENTRY)).unwrap(), b"ciphertext");
+    assert_eq!(git(dir.path(), &["status", "--porcelain"]), "");
     assert_eq!(git(dir.path(), &["log", "-1", "--format=%s|%an|%ae"]), format!("{MESSAGE}|iPhone|iphone@example.com"));
     assert_eq!(git(dir.path(), &["show", "--format=", "--name-only", "HEAD"]), ENTRY);
     assert_ne!(server.tip(), commit);
@@ -265,15 +267,111 @@ fn a_login_for_a_short_user_name_fits_one_short_apdu() {
     assert!((100..=255).contains(&size), "{size}");
 }
 
+/// A clone of a fresh server's store, for the tests that only commit.
+fn cloned(server: &GitServer, card: &Arc<SimulatedKey>) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    sync::clone(&connect(server, card), &server.remote(), dir.path()).unwrap();
+    dir
+}
+
+/// The reason `commit` gives for refusing `path`.
+fn refused_path(dir: &Path, path: &str) -> String {
+    match sync::commit(dir, path, b"x", MESSAGE, &author()) {
+        Err(PawError::UnsafePath(why)) => why,
+        other => panic!("expected {path:?} to be refused, got {other:?}"),
+    }
+}
+
 #[test]
-fn commit_refuses_paths_outside_the_store() {
+fn commit_refuses_names_that_leave_the_store() {
     let card = card();
     let server = GitServer::start(&[authorised_line(&card)]);
-    let dir = tempfile::tempdir().unwrap();
-    sync::clone(&connect(&server, &card), &server.remote(), dir.path()).unwrap();
+    let dir = cloned(&server, &card);
+    let head = git(dir.path(), &["rev-parse", "HEAD"]);
 
-    for path in ["../escape.gpg", "/tmp/escape.gpg", ".git/config", ""] {
-        let result = sync::commit(dir.path(), path, b"x", MESSAGE, &author());
-        assert!(matches!(result, Err(PawError::Git(_))), "{path}");
+    for (path, why) in [
+        ("../escape.gpg", "`.` or `..`"),
+        ("web/../../escape.gpg", "`.` or `..`"),
+        ("/tmp/escape.gpg", "absolute"),
+        ("", "empty component"),
+        ("web//x.gpg", "empty component"),
+        ("web/", "empty component"),
+        ("web\\x.gpg", "backslash"),
+        ("web/x\0.gpg", "NUL"),
+    ] {
+        let said = refused_path(dir.path(), path);
+        assert!(said.contains(why), "{path:?}: {said}");
     }
+    assert_eq!(git(dir.path(), &["rev-parse", "HEAD"]), head);
+}
+
+#[test]
+fn commit_refuses_gits_own_directory_however_it_is_spelled() {
+    let card = card();
+    let server = GitServer::start(&[authorised_line(&card)]);
+    let dir = cloned(&server, &card);
+    let config = std::fs::read(dir.path().join(".git/config")).unwrap();
+
+    for path in [
+        ".git/config",
+        "web/.git/config",
+        ".Git/config",
+        "web/.GIT/hooks/pre-commit",
+        "GIT~1/config",
+        ".git./config",
+        ".git /config",
+        ".git::$INDEX_ALLOCATION/config",
+        ".g\u{200c}it/config",
+        "web/.git",
+    ] {
+        let said = refused_path(dir.path(), path);
+        assert!(said.contains("git's own directory"), "{path:?}: {said}");
+    }
+    // Names that merely resemble it are ordinary entries.
+    sync::commit(dir.path(), "web/.github.gpg", b"x", MESSAGE, &author()).unwrap();
+
+    assert_eq!(std::fs::read(dir.path().join(".git/config")).unwrap(), config);
+    assert!(!dir.path().join("web/.git").exists());
+    assert!(!dir.path().join(".Git").exists());
+}
+
+#[test]
+fn commit_refuses_to_write_through_a_link_in_the_repository() {
+    let card = card();
+    let server = GitServer::start(&[authorised_line(&card)]);
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("victim.gpg"), "untouched").unwrap();
+    // The repository carries a folder link and a file link out of the store.
+    server.desktop_symlink("shared", outside.path());
+    server.desktop_symlink("victim.gpg", &outside.path().join("victim.gpg"));
+    let dir = cloned(&server, &card);
+    let head = git(dir.path(), &["rev-parse", "HEAD"]);
+    assert!(dir.path().join("shared").is_symlink());
+
+    let through_folder = refused_path(dir.path(), "shared/new.gpg");
+    let through_file = refused_path(dir.path(), "victim.gpg");
+
+    assert!(through_folder.contains("one of its folders is a link"), "{through_folder}");
+    assert!(through_file.contains("it is a link"), "{through_file}");
+    assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 1);
+    assert_eq!(std::fs::read_to_string(outside.path().join("victim.gpg")).unwrap(), "untouched");
+    assert_eq!(git(dir.path(), &["rev-parse", "HEAD"]), head);
+}
+
+#[test]
+fn commit_does_not_follow_a_link_planted_in_the_working_copy() {
+    let card = card();
+    let server = GitServer::start(&[authorised_line(&card)]);
+    let dir = cloned(&server, &card);
+    let outside = tempfile::tempdir().unwrap();
+    // Not in the repository, so only the working copy knows about it.
+    std::os::unix::fs::symlink(outside.path(), dir.path().join("web")).unwrap();
+
+    let head = git(dir.path(), &["rev-parse", "HEAD"]);
+
+    let said = refused_path(dir.path(), ENTRY);
+
+    assert!(said.contains("in the working copy"), "{said}");
+    assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+    assert_eq!(git(dir.path(), &["rev-parse", "HEAD"]), head);
 }

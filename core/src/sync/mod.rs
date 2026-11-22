@@ -10,10 +10,13 @@
 
 mod transport;
 
-use std::path::{Component, Path};
+use std::path::Path;
 
 use git2::build::CheckoutBuilder;
-use git2::{AutotagOption, Direction, FetchOptions, PushOptions, RemoteCallbacks, Repository};
+use git2::{
+    AutotagOption, Direction, FetchOptions, FileMode, ObjectType, PushOptions, RemoteCallbacks,
+    Repository,
+};
 
 pub use transport::{Connection, HostKeyPin, Remote};
 
@@ -94,8 +97,60 @@ pub fn fetch(connection: &Connection, dir: &Path) -> Result<String, PawError> {
         .map_err(git_err)
 }
 
-/// Writes `contents` to `path` (relative to the store) and commits exactly
-/// that file on the current branch. Returns the commit id.
+/// Why `path` cannot name an entry, or `None` if it can. `path` comes from
+/// the user or from the repository, and the repository is not trusted.
+fn unsafe_path(path: &str) -> Option<&'static str> {
+    if path.contains(['\0', '\\']) {
+        return Some("it contains a NUL or a backslash");
+    }
+    if path.starts_with('/') {
+        return Some("it is absolute");
+    }
+    for component in path.split('/') {
+        if component.is_empty() {
+            return Some("it has an empty component");
+        }
+        if component == "." || component == ".." {
+            return Some("it has a `.` or `..` component");
+        }
+        if is_dot_git(component) {
+            return Some("it names git's own directory");
+        }
+    }
+    None
+}
+
+/// Whether some file system would take `component` for `.git`: any letter
+/// case, the Windows short name, trailing dots and spaces or an alternate
+/// data stream (NTFS), and characters HFS+ ignores.
+fn is_dot_git(component: &str) -> bool {
+    const HFS_IGNORED: [std::ops::RangeInclusive<char>; 4] = [
+        '\u{200C}'..='\u{200F}',
+        '\u{202A}'..='\u{202E}',
+        '\u{206A}'..='\u{206F}',
+        '\u{FEFF}'..='\u{FEFF}',
+    ];
+    let visible: String = component
+        .chars()
+        .filter(|c| !HFS_IGNORED.iter().any(|range| range.contains(c)))
+        .collect();
+    let name = visible.split(':').next().unwrap_or_default();
+    let name = name.trim_end_matches(['.', ' ']).to_ascii_lowercase();
+    name == ".git" || name == "git~1"
+}
+
+fn unsafe_path_err(path: &str, why: &str) -> PawError {
+    PawError::UnsafePath(format!("{path}: {why}"))
+}
+
+/// Commits `contents` as the file `path` (relative to the store, `/`
+/// separated) on the current branch, and nothing else. Returns the commit id.
+///
+/// The commit is built from the branch's tree, not from the working copy,
+/// and the file reaches the working copy through libgit2's checkout. A
+/// cloned repository is not trusted and may contain symbolic links, so a
+/// path that runs through one, in the tree or on disk, is refused with
+/// [`PawError::UnsafePath`] before anything is written.
 ///
 /// `message` is the subject line, in `pass`'s own wording
 /// ("Add given password for web/example to store.") so the history reads the
@@ -107,35 +162,81 @@ pub fn commit(
     message: &str,
     author: &Author,
 ) -> Result<String, PawError> {
-    let relative = Path::new(path);
-    let inside = relative.components().all(|c| matches!(c, Component::Normal(_)));
-    if !inside || relative.starts_with(".git") || path.is_empty() {
-        return Err(PawError::Git(format!("not a path inside the store: {path}")));
+    if let Some(why) = unsafe_path(path) {
+        return Err(unsafe_path_err(path, why));
     }
-
     let repo = Repository::open(dir).map_err(git_err)?;
-    let file = dir.join(relative);
-    let io_err = |e: std::io::Error| PawError::Git(format!("writing {path}: {e}"));
-    if let Some(parent) = file.parent() {
-        std::fs::create_dir_all(parent).map_err(io_err)?;
-    }
-    std::fs::write(&file, contents).map_err(io_err)?;
-
-    let mut index = repo.index().map_err(git_err)?;
-    index.add_path(relative).map_err(git_err)?;
-    index.write().map_err(git_err)?;
-    let tree = repo
-        .find_tree(index.write_tree().map_err(git_err)?)
-        .map_err(git_err)?;
-
     let parent = repo
         .head()
         .and_then(|head| head.peel_to_commit())
         .map_err(git_err)?;
+    let base = parent.tree().map_err(git_err)?;
+
+    // Every folder on the way must be a real folder in the tree (or not
+    // exist yet), and the entry itself a regular file (or not exist yet).
+    let folders: Vec<usize> = path.match_indices('/').map(|(at, _)| at).collect();
+    for end in folders {
+        match base.get_path(Path::new(&path[..end])) {
+            Ok(entry) if entry.kind() != Some(ObjectType::Tree) => {
+                let why = "one of its folders is a link or a file in the repository";
+                return Err(unsafe_path_err(path, why));
+            }
+            _ => {}
+        }
+    }
+    if let Ok(entry) = base.get_path(Path::new(path)) {
+        let regular = [FileMode::Blob, FileMode::BlobExecutable].map(i32::from);
+        if !regular.contains(&entry.filemode()) {
+            return Err(unsafe_path_err(path, "it is a link or a folder in the repository"));
+        }
+    }
+
+    // The working copy can differ from the tree, and checkout does follow a
+    // folder link it finds there (seen with libgit2 1.9), so look before
+    // anything is changed. `symlink_metadata` does not follow links.
+    let mut on_disk = dir.to_path_buf();
+    let mut components = path.split('/').peekable();
+    while let Some(component) = components.next() {
+        on_disk.push(component);
+        let is_folder = components.peek().is_some();
+        match std::fs::symlink_metadata(&on_disk) {
+            Ok(found) if found.is_symlink() || (is_folder && !found.is_dir()) => {
+                let why = "a link or a file in the working copy is in its way";
+                return Err(unsafe_path_err(path, why));
+            }
+            _ => {}
+        }
+    }
+
+    let mut index = git2::Index::new().map_err(git_err)?;
+    index.read_tree(&base).map_err(git_err)?;
+    index
+        .add(&git2::IndexEntry {
+            ctime: git2::IndexTime::new(0, 0),
+            mtime: git2::IndexTime::new(0, 0),
+            dev: 0,
+            ino: 0,
+            mode: FileMode::Blob.into(),
+            uid: 0,
+            gid: 0,
+            file_size: 0,
+            id: repo.blob(contents).map_err(git_err)?,
+            flags: 0,
+            flags_extended: 0,
+            path: path.as_bytes().to_vec(),
+        })
+        .map_err(git_err)?;
+    let tree = repo
+        .find_tree(index.write_tree_to(&repo).map_err(git_err)?)
+        .map_err(git_err)?;
+
     let signature = git2::Signature::now(&author.name, &author.email).map_err(git_err)?;
-    repo.commit(Some("HEAD"), &signature, &signature, message, &tree, &[&parent])
-        .map(|id| id.to_string())
-        .map_err(git_err)
+    let id = repo
+        .commit(Some("HEAD"), &signature, &signature, message, &tree, &[&parent])
+        .map_err(git_err)?;
+    repo.checkout_head(Some(CheckoutBuilder::new().force().path(path)))
+        .map_err(git_err)?;
+    Ok(id.to_string())
 }
 
 /// Pushes the current branch to the branch of the same name, as a
