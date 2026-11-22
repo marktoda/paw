@@ -857,6 +857,19 @@ pub fn match_service(&self, id: &ServiceId) -> Vec<ServiceMatch>;    // AutoFill
 
 Both run in memory over `NameIndex`. `index.bin` is a versioned compact dump written by the app after each scan, so the extension never walks the tree. It records the HEAD commit id it was built from. On launch and on foreground the app compares that with the repository's HEAD and rebuilds the index if they differ (a background pull killed at its budget, or a crash between checkout and index write, leaves it stale). The index is a lookup aid only: nothing security-relevant trusts its blob ids (3.11).
 
+**Outcome of M2's core half (branch `store-model`).** Built: `store/` (tree, `.gpg-id`, safe reads, search, service matching), `recipients.rs` (who an entry is for, from its clear-text headers), `entry.rs` (`EntryDoc`), a UniFFI `PassStore` and `OpenedEntry`, and a fixture store beside the simulated key. Where it differs from the sections above:
+
+- **`Access` means "can this key open it"** (`CanOpen`, `MightOpen` for hidden recipients, `NotForThisKey`, `Unreadable`), not `FaceId | NeedsKey` as in 3.3. The Face ID state needs its own name when M3 adds it.
+- **Decrypting asks the card only for the session key addressed to it.** The library call the spike used tried every recipient packet in order: an entry for two keys cost a touch per wrong packet, and failed outright unless the card's packet came first. `decrypt_entry` now refuses an entry for other keys before the PIN is sent.
+- **No `NameIndex` or `index.bin` yet.** Search and matching run over the scanned entry list (5,000 entries scan and search well inside the test's bound). The index file belongs with the extension in M3b.
+- **Search order** is: whole name, name prefix, word in the name, folder word, inside the name, inside a folder; then shorter path, then alphabetical. There is no recency yet (2.6), because nothing records it.
+- **Service matching uses the Public Suffix List** (`psl` crate, compiled in). A path part must be a host name to match: an entry called just `github` matches no site, because anyone can register `github.example`. User-made associations (3.9) are not built.
+- **`PassStore` is an immutable snapshot**; the app opens a new one after a sync or an edit. `PawCore`, `StoreId`, `EntryPath` and the observer are not built. Paths cross the boundary as strings and are checked on every read.
+- **`OpenedEntry` has no `copy_bytes` or `begin_edit`.** Secrets cross as `String` on explicit calls only. `EntryDoc` can already set the password or a field byte-exactly; saving is M5.
+- **`PawError` is still flat**, with `Store`, `NotText`, `NotForThisKey` and `InvalidField` added. The structured errors of 3.14 are M1b's.
+- **The fixture store lives in `sim/fixture.rs`**, under whatever gate `sim` gets (5.5). Today that is none: the split into `paw-sim` is still to do.
+- Not checked on read: that the message is integrity protected (3.7), and decompressed size. ASCII-armoured entries are reported as unreadable.
+
 ### 3.10 Git library
 
 **Decision rule, settled by a Linux spike before any `sync/` code:**
