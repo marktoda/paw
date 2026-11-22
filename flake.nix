@@ -10,7 +10,17 @@
     devShells = forAll (pkgs: {
       default = pkgs.mkShell {
         # rustup rather than nixpkgs rustc: the iOS targets come from rustup.
-        packages = [pkgs.rustup pkgs.gcc pkgs.pkg-config pkgs.gnupg];
+        packages = [
+          pkgs.rustup
+          pkgs.gcc
+          pkgs.pkg-config
+          pkgs.gnupg
+          # Signing and installing device builds from Linux.
+          pkgs.rcodesign
+          pkgs.openssl
+          pkgs.unzip
+          pkgs.uv
+        ];
       };
     });
   };

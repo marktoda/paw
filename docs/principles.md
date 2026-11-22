@@ -12,11 +12,11 @@ The private key is generated or stored on a hardware key the person holds, and d
 
 *So we won't* add a master password, a key stored in the app, or a "recover my vault" feature. Recovery means a second key or a backup the person made themselves.
 
-### 2. Run no server
+### 2. Need no server, trust no server
 
-There is no paw account and no paw service. The app talks to the person's git remote and to nothing else unless they turn something on.
+There is no paw account, and paw works in full with nothing but the person's own git remote, or with no remote at all. The app talks to that remote and to nothing else unless the person turns something on.
 
-*So we won't* ship analytics, third-party crash reporting or a sync relay. If a feature needs a server run by us, the feature does not ship.
+*So we won't* ship analytics, third-party crash reporting, or any feature that only works through a service we run. *We may* later offer an optional helper service, for example to keep a copy available, but only if it holds nothing except what the git host already sees, can be replaced by something the person runs, and can be switched off without losing anything.
 
 ### 3. Use formats that outlive the app
 
@@ -97,12 +97,22 @@ Not protected:
 - A new vault format.
 - Being the right tool for everyone. Someone who cannot keep a second key or a backup is better served by a mainstream manager, and we should say so.
 
+## Decisions so far
+
+Made by the owner on 2026-11-22.
+
+- **Face ID window:** on by default. Whether the device passcode may stand in for Face ID is still open (see below).
+- **Backup:** setup warns when there is no second key or backup, and does not block. A better backup story comes later.
+- **Recipients:** paw warns whenever `.gpg-id` changes, and shows somewhere visible which keys can open the passwords.
+- **Keys without a YubiKey:** possibly, later, for lower-security stores. Principle 1 would then read "the person chooses where the key lives, and paw says plainly what each choice protects".
+- **Creating a key:** out of scope for now. paw assumes the YubiKey is already set up.
+- **Creating a repository:** paw may ask for permission to create a private repository on the person's git host.
+- **No remote:** a store that lives only on the device is supported.
+
 ## Open questions for the owner
 
-1. Is the Face ID window on or off by default, how long is it, and may the device passcode stand in for Face ID?
-2. Do we require a second key or backup before setup finishes, or only warn?
-3. Should paw warn when `.gpg-id` changes, and should it check signed commits or `.gpg-id.sig`?
-4. Will paw ever support a key without a YubiKey (for example one held in the Secure Enclave)? That would change principle 1.
-5. For newcomers: generate the key on the YubiKey (cannot be backed up, so two keys are needed) or generate it on the phone and load it onto two keys?
-6. May paw ask for permission to create a private GitHub repository, or should the person create it and grant access to that one repository only?
-7. Is "no remote at all" a supported way to use paw?
+1. May the device passcode stand in for Face ID during the window? The draft answer is no: someone who watched the passcode being typed should not get the opened entries.
+2. How long is the Face ID window by default?
+3. Should paw look keys up on a keyserver to show a name and email for each recipient? A lookup tells the keyserver which keys the person cares about, so the draft answer is: only when the person asks.
+4. Should paw check signed commits or `.gpg-id.sig`?
+5. Which remotes beyond GitHub come first?
