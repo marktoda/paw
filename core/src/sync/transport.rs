@@ -21,11 +21,11 @@ use std::time::Duration;
 use git2::transport::{Service, SmartSubtransport, SmartSubtransportStream, Transport};
 use russh::client::{self, AuthResult};
 use russh::keys::agent::AgentIdentity;
-use russh::keys::{HashAlg, PublicKey, PublicKeyOrCertificate};
+use russh::keys::{Algorithm, HashAlg, PublicKey, PublicKeyOrCertificate};
 use russh::{Channel, ChannelMsg, Disconnect};
 
 use crate::PawError;
-use crate::ssh::SshSigner;
+use crate::ssh::{SshPublicKey, SshSigner};
 
 /// How long to wait for the TCP connection and SSH handshake.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
@@ -38,21 +38,98 @@ const TRANSPORT_URL: &str = "paw-ssh://connection";
 /// How much of the remote's stderr is kept for error messages.
 const STDERR_LIMIT: usize = 2048;
 
-/// The host key a remote must present, fixed when the remote was added.
+/// The host keys a remote may present, fixed when the remote was added: one
+/// key for a host confirmed on first use, or a host's published set (see
+/// [`super::hosts`]). Any one of them is accepted; nothing else is.
 #[derive(Debug, Clone)]
-pub struct HostKeyPin(PublicKey);
+pub struct HostKeyPin(Vec<PublicKey>);
 
 impl HostKeyPin {
     /// Parses a public key line such as `ssh-ed25519 AAAA...`.
     pub fn parse(line: &str) -> Result<Self, PawError> {
-        PublicKey::from_openssh(line)
+        Self::parse_all(&[line])
+    }
+
+    /// Parses several public key lines; the host may present any of them.
+    pub fn parse_all(lines: &[&str]) -> Result<Self, PawError> {
+        if lines.is_empty() {
+            return Err(PawError::Git("no host key to pin".into()));
+        }
+        lines
+            .iter()
+            .map(|line| PublicKey::from_openssh(line.trim()))
+            .collect::<Result<Vec<_>, _>>()
             .map(Self)
             .map_err(|e| PawError::Git(format!("not a host key: {e}")))
     }
 
-    /// The `SHA256:...` form shown to the user.
+    /// The `SHA256:...` form of the first (preferred) key, shown to the user.
     pub fn fingerprint(&self) -> String {
-        self.0.fingerprint(HashAlg::Sha256).to_string()
+        fingerprint_of(&self.0[0])
+    }
+
+    /// The `SHA256:...` form of every pinned key, preferred first.
+    pub fn fingerprints(&self) -> Vec<String> {
+        self.0.iter().map(fingerprint_of).collect()
+    }
+
+    /// The pinned keys as public key lines, preferred first.
+    pub fn lines(&self) -> Vec<String> {
+        self.0
+            .iter()
+            .filter_map(|key| key.to_openssh().ok())
+            .collect()
+    }
+
+    /// The host key algorithms to offer: the pinned keys' types, preferred
+    /// first, and nothing else, so a host with several keys cannot present
+    /// one that is not pinned. RSA is left out because this build of russh
+    /// has no RSA (see Cargo.toml); a pin of RSA keys only has none.
+    pub fn algorithms(&self) -> Vec<Algorithm> {
+        let mut offered: Vec<Algorithm> = Vec::new();
+        for key in &self.0 {
+            let algorithm = key.algorithm();
+            if !algorithm.clone().is_rsa() && !offered.contains(&algorithm) {
+                offered.push(algorithm);
+            }
+        }
+        offered
+    }
+
+    fn accepts(&self, presented: &PublicKey) -> bool {
+        self.0.iter().any(|pinned| pinned.key_data() == presented.key_data())
+    }
+}
+
+fn fingerprint_of(key: &PublicKey) -> String {
+    key.fingerprint(HashAlg::Sha256).to_string()
+}
+
+/// A host key seen on a first connection, before anyone has confirmed it.
+#[derive(Debug, Clone)]
+pub struct PresentedHostKey(PublicKey);
+
+impl PresentedHostKey {
+    /// The `SHA256:...` form to show for confirmation.
+    pub fn fingerprint(&self) -> String {
+        fingerprint_of(&self.0)
+    }
+
+    /// The algorithm name, e.g. `ssh-ed25519`.
+    pub fn algorithm(&self) -> String {
+        self.0.algorithm().to_string()
+    }
+
+    /// The key as a public key line, for the known-hosts file.
+    pub fn line(&self) -> Result<String, PawError> {
+        self.0
+            .to_openssh()
+            .map_err(|e| PawError::Git(format!("cannot write the host key: {e}")))
+    }
+
+    /// Pins this key alone.
+    pub fn pin(&self) -> HostKeyPin {
+        HostKeyPin(vec![self.0.clone()])
     }
 }
 
@@ -98,7 +175,7 @@ struct Diagnostics {
 
 /// Accepts the pinned host key and nothing else.
 struct PinnedHost {
-    pin: PublicKey,
+    pin: HostKeyPin,
     /// Fingerprint of a key that was presented and refused.
     refused: Arc<Mutex<Option<String>>>,
 }
@@ -115,11 +192,113 @@ impl client::Handler for PinnedHost {
                 return Ok(false);
             }
         };
-        if presented.key_data() == self.pin.key_data() {
+        if self.pin.accepts(presented) {
             return Ok(true);
         }
-        *self.refused.lock().unwrap() = Some(presented.fingerprint(HashAlg::Sha256).to_string());
+        *self.refused.lock().unwrap() = Some(fingerprint_of(presented));
         Ok(false)
+    }
+}
+
+/// Accepts no key, and remembers the one the host presented: how a host
+/// that is not pinned yet is asked for its key, with nothing sent to it.
+struct RecordHost {
+    presented: Arc<Mutex<Option<PublicKey>>>,
+}
+
+impl client::Handler for RecordHost {
+    type Error = russh::Error;
+
+    async fn check_server_key(&mut self, key: &PublicKeyOrCertificate) -> Result<bool, Self::Error> {
+        if let PublicKeyOrCertificate::PublicKey { key, .. } = key {
+            *self.presented.lock().unwrap() = Some(key.clone());
+        }
+        Ok(false)
+    }
+}
+
+/// Stands in for the card when the host is only asked whether it would
+/// accept a key. It is called only if the host said yes, and it never signs.
+struct ProbeOnly {
+    asked: bool,
+}
+
+impl russh::Signer for ProbeOnly {
+    type Error = PawError;
+
+    async fn auth_sign(
+        &mut self,
+        _key: &AgentIdentity,
+        _hash_alg: Option<HashAlg>,
+        _signed: Vec<u8>,
+    ) -> Result<Vec<u8>, PawError> {
+        self.asked = true;
+        Err(PawError::Sign("only asking whether the key is accepted".into()))
+    }
+}
+
+fn runtime() -> Result<tokio::runtime::Runtime, PawError> {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .map_err(|e| PawError::Network(e.to_string()))
+}
+
+/// Connects and checks the host key against `remote`'s pin. Nothing has
+/// been sent that identifies the user when this returns.
+async fn handshake(remote: &Remote) -> Result<client::Handle<PinnedHost>, PawError> {
+    let pin = remote.host_key.clone();
+    let mut config = client::Config {
+        inactivity_timeout: Some(INACTIVITY_TIMEOUT),
+        ..Default::default()
+    };
+    // Ask only for the pinned keys' types. A host with several host keys
+    // would otherwise be free to present one that cannot match the pin.
+    let algorithms = pin.algorithms();
+    if algorithms.is_empty() {
+        return Err(PawError::Git("none of the pinned host keys is of a type paw supports".into()));
+    }
+    config.preferred.key = algorithms.into();
+
+    let refused = Arc::new(Mutex::new(None));
+    let handler = PinnedHost { pin, refused: refused.clone() };
+    let address = (remote.host.as_str(), remote.port);
+    let connecting = client::connect(Arc::new(config), address, handler);
+    match tokio::time::timeout(CONNECT_TIMEOUT, connecting).await {
+        Err(_) => Err(PawError::Network("timed out".into())),
+        Ok(Err(e)) => Err(match refused.lock().unwrap().take() {
+            Some(presented) => PawError::HostKeyMismatch { presented },
+            None => PawError::Network(e.to_string()),
+        }),
+        Ok(Ok(session)) => Ok(session),
+    }
+}
+
+/// Connects to `host` and returns the host key it presents, without
+/// accepting it or sending anything else. For a host that is not pinned
+/// yet: the key is shown to the person, and pinned only once confirmed.
+pub fn scan_host_key(host: &str, port: u16) -> Result<PresentedHostKey, PawError> {
+    let runtime = runtime()?;
+    let presented = Arc::new(Mutex::new(None));
+    let handler = RecordHost { presented: presented.clone() };
+    let config = client::Config {
+        inactivity_timeout: Some(INACTIVITY_TIMEOUT),
+        ..Default::default()
+    };
+    let outcome = runtime.block_on(async {
+        let connecting = client::connect(Arc::new(config), (host, port), handler);
+        tokio::time::timeout(CONNECT_TIMEOUT, connecting).await
+    });
+    let error = match outcome {
+        Err(_) => PawError::Network("timed out".into()),
+        // The handler refuses every key, so the handshake cannot succeed.
+        Ok(Ok(_)) => PawError::Network("the host did not ask to be checked".into()),
+        Ok(Err(e)) => PawError::Network(e.to_string()),
+    };
+    match presented.lock().unwrap().take() {
+        Some(key) => Ok(PresentedHostKey(key)),
+        None => Err(error),
     }
 }
 
@@ -169,38 +348,9 @@ impl Connection {
     /// is used, so a key the host does not know costs no PIN try and no
     /// touch: that case is [`PawError::KeyRejected`].
     pub fn open(remote: &Remote, signer: &dyn SshSigner) -> Result<Self, PawError> {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
-            .enable_all()
-            .build()
-            .map_err(|e| PawError::Network(e.to_string()))?;
-
-        let pin = remote.host_key.0.clone();
-        let mut config = client::Config {
-            inactivity_timeout: Some(INACTIVITY_TIMEOUT),
-            ..Default::default()
-        };
-        // Ask only for the pinned key's type. A host with several host keys
-        // would otherwise be free to present one that cannot match the pin.
-        config.preferred.key = vec![pin.algorithm()].into();
-
-        let refused = Arc::new(Mutex::new(None));
-        let handler = PinnedHost { pin, refused: refused.clone() };
-        let address = (remote.host.as_str(), remote.port);
-
+        let runtime = runtime()?;
         let session = runtime.block_on(async {
-            let connecting = client::connect(Arc::new(config), address, handler);
-            let mut session = match tokio::time::timeout(CONNECT_TIMEOUT, connecting).await {
-                Err(_) => return Err(PawError::Network("timed out".into())),
-                Ok(Err(e)) => {
-                    return Err(match refused.lock().unwrap().take() {
-                        Some(presented) => PawError::HostKeyMismatch { presented },
-                        None => PawError::Network(e.to_string()),
-                    });
-                }
-                Ok(Ok(session)) => session,
-            };
-
+            let mut session = handshake(remote).await?;
             let key = PublicKey::from_bytes(signer.public_key().blob())
                 .map_err(|e| PawError::NoSshKey(e.to_string()))?;
             let login = session
@@ -219,6 +369,29 @@ impl Connection {
                 path: remote.path.clone(),
                 diagnostics: Mutex::default(),
             }),
+        })
+    }
+
+    /// Asks the host whether it would accept `key` for `remote.user`,
+    /// without a signature: no PIN, no touch. Checks the host key first,
+    /// exactly as [`Self::open`] does. Returns whether the key is accepted.
+    pub fn probe(remote: &Remote, key: &SshPublicKey) -> Result<bool, PawError> {
+        let runtime = runtime()?;
+        runtime.block_on(async {
+            let mut session = handshake(remote).await?;
+            let public = PublicKey::from_bytes(key.blob())
+                .map_err(|e| PawError::NoSshKey(e.to_string()))?;
+            let mut probe = ProbeOnly { asked: false };
+            let answer = session
+                .authenticate_publickey_with(&remote.user, public, None, &mut probe)
+                .await;
+            let _ = session.disconnect(Disconnect::ByApplication, "", "en").await;
+            match answer {
+                Ok(AuthResult::Success) => Ok(true),
+                Ok(AuthResult::Failure { .. }) => Ok(probe.asked),
+                Err(_) if probe.asked => Ok(true),
+                Err(e) => Err(e),
+            }
         })
     }
 

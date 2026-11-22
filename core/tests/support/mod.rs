@@ -2,6 +2,9 @@
 //! real `git-upload-pack` and `git-receive-pack` against a bare repository
 //! in a temporary directory. Nothing leaves the machine.
 
+// Each test binary uses its own part of this.
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -54,12 +57,40 @@ pub fn some_other_host_key() -> String {
     host_key(2).public_key().to_openssh().unwrap()
 }
 
+/// An ECDSA P-256 host key, made for these tests with ssh-keygen. It
+/// protects nothing.
+const ECDSA_HOST_KEY: &str = "-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAaAAAABNlY2RzYS
+1zaGEyLW5pc3RwMjU2AAAACG5pc3RwMjU2AAAAQQSDeBXw2cY7/bLcIZ+3/uD3+6arc22x
+kB+w7P9NzlaYwa0zuD/P3nJG8zxGMSKapeTExcKjUTPp2L4xoi/2K9vmAAAAqE1dnpZNXZ
+6WAAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBIN4FfDZxjv9stwh
+n7f+4Pf7pqtzbbGQH7Ds/03OVpjBrTO4P8/eckbzPEYxIpql5MTFwqNRM+nYvjGiL/Yr2+
+YAAAAgKugwxnhe6unKXb4Ima+fATA3weyrgARUpgolnBVeVmAAAAANcGF3IHRlc3QgaG9z
+dAECAw==
+-----END OPENSSH PRIVATE KEY-----
+";
+
+/// The public key line of the server's ed25519 host key.
+pub fn ed25519_host_key() -> String {
+    host_key(1).public_key().to_openssh().unwrap()
+}
+
+/// The public key line of the ECDSA host key a server started with
+/// [`GitServer::start_with_two_host_keys`] also holds.
+pub fn ecdsa_host_key() -> String {
+    PrivateKey::from_openssh(ECDSA_HOST_KEY).unwrap().public_key().to_openssh().unwrap()
+}
+
+/// Something to do on the server just before a `git-receive-pack` starts.
+type BeforePush = Box<dyn FnOnce() + Send>;
+
 /// What the server saw, for the tests' assertions about connection reuse.
 #[derive(Default)]
 struct Seen {
     logins: AtomicU32,
     /// One entry per successful login: the git services run on it, in order.
     services: Mutex<Vec<Vec<String>>>,
+    before_push: Mutex<Option<BeforePush>>,
 }
 
 pub struct GitServer {
@@ -75,6 +106,25 @@ impl GitServer {
     /// adds `README`. Only the keys in `authorised` (public key lines) may
     /// log in.
     pub fn start(authorised: &[String]) -> Self {
+        let server = Self::start_with(authorised, vec![host_key(1)]);
+        server.desktop_commit("README", "a password store\n");
+        server
+    }
+
+    /// A server whose repository has no commits at all.
+    pub fn start_empty(authorised: &[String]) -> Self {
+        Self::start_with(authorised, vec![host_key(1)])
+    }
+
+    /// Like [`Self::start`], with an ECDSA host key besides the ed25519 one.
+    pub fn start_with_two_host_keys(authorised: &[String]) -> Self {
+        let ecdsa = PrivateKey::from_openssh(ECDSA_HOST_KEY).unwrap();
+        let server = Self::start_with(authorised, vec![host_key(1), ecdsa]);
+        server.desktop_commit("README", "a password store\n");
+        server
+    }
+
+    fn start_with(authorised: &[String], keys: Vec<PrivateKey>) -> Self {
         let root = tempfile::tempdir().unwrap();
         git(root.path(), &["init", "--quiet", "--bare", "--initial-branch=main", REPO]);
 
@@ -90,7 +140,7 @@ impl GitServer {
             channels: HashMap::new(),
         };
         let config = Arc::new(server::Config {
-            keys: vec![host_key(1)],
+            keys,
             // Refusals are delayed by default to slow down guessing.
             auth_rejection_time: Duration::ZERO,
             ..Default::default()
@@ -106,9 +156,7 @@ impl GitServer {
             server.run_on_socket(config, &listener).await.unwrap();
         });
 
-        let server = Self { _runtime: runtime, root, port, seen };
-        server.desktop_commit("README", "a password store\n");
-        server
+        Self { _runtime: runtime, root, port, seen }
     }
 
     pub fn remote(&self) -> Remote {
@@ -143,14 +191,26 @@ impl GitServer {
     }
 
     fn desktop_change(&self, path: &str, create: impl FnOnce(&Path)) -> String {
-        let work = tempfile::tempdir().unwrap();
-        let bare = self.bare();
-        git(work.path(), &["clone", "--quiet", bare.to_str().unwrap(), "."]);
-        create(&work.path().join(path));
-        git(work.path(), &["add", path]);
-        git(work.path(), &["commit", "--quiet", "-m", &format!("Add {path} from the desktop.")]);
-        git(work.path(), &["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
+        desktop_change_at(&self.bare(), path, create);
         self.tip()
+    }
+
+    /// A fresh clone of the server's repository on "the desktop", for tests
+    /// that change it with `git` and push it themselves.
+    pub fn desktop(&self) -> tempfile::TempDir {
+        let work = tempfile::tempdir().unwrap();
+        git(work.path(), &["clone", "--quiet", self.bare().to_str().unwrap(), "."]);
+        work
+    }
+
+    /// Has the desktop push a commit writing `path` while the next push from
+    /// the phone is already under way: after its connection is open, before
+    /// the host lists its branches.
+    pub fn move_before_next_push(&self, path: &str, contents: &str) {
+        let (bare, path, contents) = (self.bare(), path.to_owned(), contents.to_owned());
+        *self.seen.before_push.lock().unwrap() = Some(Box::new(move || {
+            desktop_change_at(&bare, &path, |file| std::fs::write(file, contents).unwrap());
+        }));
     }
 
     pub fn logins(&self) -> u32 {
@@ -161,6 +221,19 @@ impl GitServer {
     pub fn services(&self) -> Vec<Vec<String>> {
         self.seen.services.lock().unwrap().clone()
     }
+}
+
+fn desktop_change_at(bare: &Path, path: &str, create: impl FnOnce(&Path)) {
+    let work = tempfile::tempdir().unwrap();
+    git(work.path(), &["clone", "--quiet", bare.to_str().unwrap(), "."]);
+    let file = work.path().join(path);
+    if let Some(folder) = file.parent() {
+        std::fs::create_dir_all(folder).unwrap();
+    }
+    create(&file);
+    git(work.path(), &["add", path]);
+    git(work.path(), &["commit", "--quiet", "-m", &format!("Add {path} from the desktop.")]);
+    git(work.path(), &["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
 }
 
 struct Listener(Connection);
@@ -241,11 +314,12 @@ impl server::Handler for Connection {
         command: &[u8],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        // Exactly what a git client sends: `git-upload-pack 'store.git'`.
+        // Exactly what a git client sends: `git-upload-pack 'store.git'`,
+        // or with `/store.git` for an `ssh://` address.
         let command = String::from_utf8_lossy(command);
-        let service = ["git-upload-pack", "git-receive-pack"]
-            .into_iter()
-            .find(|service| command == format!("{service} '{REPO}'"));
+        let service = ["git-upload-pack", "git-receive-pack"].into_iter().find(|service| {
+            command == format!("{service} '{REPO}'") || command == format!("{service} '/{REPO}'")
+        });
         let (Some(service), Some(channel), Some(login)) =
             (service, self.channels.remove(&id), self.login)
         else {
@@ -253,6 +327,11 @@ impl server::Handler for Connection {
             return Ok(());
         };
         self.seen.services.lock().unwrap()[login].push(service.to_owned());
+        if service == "git-receive-pack"
+            && let Some(before) = self.seen.before_push.lock().unwrap().take()
+        {
+            before();
+        }
         session.channel_success(id)?;
 
         let mut git = isolated(Command::new("git"));
