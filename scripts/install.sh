@@ -32,7 +32,8 @@ start, end = raw.index(b"<?xml"), raw.index(b"</plist>") + len(b"</plist>")
 granted = plistlib.loads(raw[start:end])["Entitlements"]
 wanted = dict(granted)
 # The profile grants a wildcard keychain group; the signature must name one.
-wanted["keychain-access-groups"] = [granted["application-identifier"]]
+wanted["keychain-access-groups"] = [granted["application-identifier"]] + [
+    g for g in granted["keychain-access-groups"] if "*" not in g]  # keeps com.apple.token
 wanted.update(eval(sys.argv[2]))
 sys.stdout.buffer.write(plistlib.dumps(wanted))
 PY
