@@ -89,6 +89,34 @@ final class KeyTests: XCTestCase {
                        "The touch prompt should go away after the decrypt")
     }
 
+    func testCardChecksReportEveryCommand() {
+        launch()
+        enterPin("123456")
+        app.buttons["card-checks"].tap()
+
+        // Three signatures each wait for their own touch.
+        let latest = app.staticTexts["latest-result"]
+        let deadline = Date().addingTimeInterval(30)
+        while !latest.exists && Date() < deadline {
+            let touch = app.buttons["simulated-touch"]
+            if touch.waitForExistence(timeout: 1) { touch.tap() }
+        }
+
+        expectResult(containing: "Sign a login, chained, last part (touch)")
+        XCTAssertFalse(latest.label.contains("error:"), latest.label)
+        XCTAssertFalse(latest.label.contains("123456"), "Results must never show the PIN")
+        snapshot("card-checks")
+    }
+
+    func testTouchTimeoutCheckReportsAnUntouchedKey() {
+        launch(touchTimeoutMs: 1_000)
+        enterPin("123456")
+        app.buttons["touch-timeout-check"].tap()
+
+        expectResult(containing: "6982  ")
+        expectResult(containing: "Sign a login with no touch")
+    }
+
     func testDecryptWithoutTouchPolicyNeedsNoTouch() {
         launch(touch: false)
         enterPin("123456")

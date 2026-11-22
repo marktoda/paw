@@ -60,3 +60,21 @@ pub fn encrypt_to_card(
 ) -> Result<Vec<u8>, PawError> {
     crate::encrypt_to_card(Arc::new(Adapter(connection)), &plaintext)
 }
+
+/// Raw checks of the key's behaviour for the diagnostics screen. Needs the
+/// PIN and three touches; `touch_needed` is called before each.
+#[uniffi::export]
+pub fn card_checks(connection: Arc<dyn CardConnection>, pin: String) -> Vec<crate::diag::CheckResult> {
+    let touch = connection.clone();
+    crate::diag::card_checks(Arc::new(Adapter(connection)), &pin, &move || touch.touch_needed())
+}
+
+/// Asks for one signature the user must not touch for, to see how the key
+/// reports a touch timeout.
+#[uniffi::export]
+pub fn card_touch_timeout_check(
+    connection: Arc<dyn CardConnection>,
+    pin: String,
+) -> Vec<crate::diag::CheckResult> {
+    crate::diag::card_touch_timeout_check(Arc::new(Adapter(connection)), &pin)
+}

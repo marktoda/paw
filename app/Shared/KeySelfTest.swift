@@ -17,4 +17,21 @@ enum KeySelfTest {
         let plaintext = try decrypt(connection: connection, pin: pin, ciphertext: ciphertext)
         return String(decoding: plaintext, as: UTF8.self)
     }
+
+    /// Raw checks of how the key behaves, for building the key session.
+    /// Needs the PIN and three touches.
+    static func runChecks(pin: String, onTouchNeeded: @escaping @Sendable () -> Void) throws -> String {
+        format(cardChecks(connection: try KeyConnection.open(onTouchNeeded: onTouchNeeded), pin: pin))
+    }
+
+    /// Asks for one signature nobody should touch for.
+    static func runTouchTimeoutCheck(pin: String) throws -> String {
+        format(cardTouchTimeoutCheck(connection: try KeyConnection.open(onTouchNeeded: {}), pin: pin))
+    }
+
+    private static func format(_ results: [CheckResult]) -> String {
+        results
+            .map { "\($0.status)  \($0.millis) ms  \($0.responseLen) B  \($0.name)\n    \($0.command)" }
+            .joined(separator: "\n")
+    }
 }

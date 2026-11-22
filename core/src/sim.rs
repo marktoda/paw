@@ -294,6 +294,10 @@ impl SimulatedKey {
                 if state.tries_left == 0 {
                     return Err(0x6983);
                 }
+                // No data asks whether the PIN is verified, without using a try.
+                if data.is_empty() {
+                    return if state.verified { Ok(vec![]) } else { Err(0x63C0 | u16::from(state.tries_left)) };
+                }
                 if data == self.options.pin.as_bytes() {
                     state.tries_left = 3;
                     state.verified = true;

@@ -8,6 +8,7 @@
 //! The same card signs the SSH login to the git host ([`ssh`]), which is how
 //! the password store is cloned and pushed ([`sync`]).
 
+pub mod diag;
 pub mod ffi;
 pub mod sim;
 pub mod ssh;

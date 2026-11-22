@@ -49,6 +49,28 @@ struct SelfTestView: View {
                         }
                     }
                 }
+                Section {
+                    Button("Run card checks (three touches)") {
+                        let pin = pin
+                        run {
+                            try KeySelfTest.runChecks(pin: pin) {
+                                DispatchQueue.main.async { waitingForTouch = true }
+                            }
+                        }
+                    }
+                    .accessibilityIdentifier("card-checks")
+                    .disabled(busy || pin.isEmpty)
+                    Button("Check the touch timeout (do not touch)") {
+                        let pin = pin
+                        run { try KeySelfTest.runTouchTimeoutCheck(pin: pin) }
+                    }
+                    .accessibilityIdentifier("touch-timeout-check")
+                    .disabled(busy || pin.isEmpty)
+                } header: {
+                    Text("Card checks")
+                } footer: {
+                    Text("Uses the PIN above. Results show status words and timings, never the PIN.")
+                }
                 Section("Results, newest first") {
                     if results.isEmpty {
                         Text("Nothing yet.").foregroundStyle(.secondary)
