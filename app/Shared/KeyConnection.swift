@@ -94,5 +94,23 @@ func describe(_ error: Swift.Error) -> String {
         return "The key did not decrypt this: \(message)"
     case .Card(let message):
         return "The key reported a problem: \(message)"
+    // The git errors cannot reach Swift yet: nothing exported from the core
+    // returns them. They are listed so the switch stays exhaustive.
+    case .NoSshKey(let message):
+        return "This key cannot log in to a git host: \(message)"
+    case .Sign(let message):
+        return "The key did not sign the login: \(message)"
+    case .Network(let message):
+        return "Could not reach the git host: \(message)"
+    case .HostKeyMismatch(let presented):
+        return "The git host's key has changed. It presented \(presented)."
+    case .KeyRejected:
+        return "The git host did not accept this key."
+    case .NotFastForward:
+        return "The remote has changes that are not on this device yet."
+    case .UnsafePath(let message):
+        return "Not a safe name for an entry: \(message)"
+    case .Git(let message):
+        return "Git reported a problem: \(message)"
     }
 }

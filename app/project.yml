@@ -22,6 +22,10 @@ targets:
     dependencies:
       - framework: build/PawCore.xcframework
         embed: false
+      # What the C inside the core (libgit2) links against.
+      - sdk: libz.tbd
+      - sdk: libiconv.tbd
+      - sdk: Security.framework
       - sdk: CryptoTokenKit.framework
       - target: PawAutoFill
     info:
@@ -49,6 +53,10 @@ targets:
     dependencies:
       - framework: build/PawCore.xcframework
         embed: false
+      # What the C inside the core (libgit2) links against.
+      - sdk: libz.tbd
+      - sdk: libiconv.tbd
+      - sdk: Security.framework
       - sdk: CryptoTokenKit.framework
       - sdk: AuthenticationServices.framework
     info:

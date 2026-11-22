@@ -11,8 +11,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Rust is pure, so the iOS libraries are built on Linux, where runners are
-  # faster. The Mac jobs only compile Swift and run the UI tests.
+  # The logic is tested on Linux, where runners are faster: the sync tests
+  # run against an in-process SSH server and the runner's own git. The same
+  # job checks that the Swift bindings still generate.
   core:
     runs-on: ubuntu-latest
     steps:
@@ -22,6 +23,18 @@ jobs:
           workspaces: core
       - name: Test the core
         run: cargo test --manifest-path core/Cargo.toml
+      - name: Generate the Swift bindings
+        run: scripts/build-core.sh --bindings-only
+
+  # The core contains C (libgit2 and ring), which needs the Apple SDK to
+  # compile for iOS, so the iOS libraries are built on a Mac.
+  core-ios:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
       - name: Build the core for iOS
         run: scripts/build-core.sh
       - uses: actions/upload-artifact@v4
@@ -33,7 +46,7 @@ jobs:
           retention-days: 3
 
   ui:
-    needs: core
+    needs: [core, core-ios]
     runs-on: macos-26
     strategy:
       fail-fast: false
@@ -61,7 +74,7 @@ jobs:
   # An unsigned build for real devices. It is signed on the developer's own
   # machine (scripts/install.sh), so the signing key never leaves it.
   device:
-    needs: core
+    needs: [core, core-ios]
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
