@@ -848,6 +848,16 @@ Decisions inside this section:
 - *Sealing format.* AEAD in Rust with real associated data won over sealing the whole payload in Swift with ECIES: plaintext never crosses the FFI to be sealed, and the format is tested on Linux.
 - *Key access class.* `WhenPasscodeSetThisDeviceOnly`, so removing the passcode deletes the key.
 
+**Outcome of the core half (branch `face-id-copies`).** Built: `core/src/copies/` (`CopyCache`, the on-disk format, the `DeviceKeystore` and `Clock` seams), `SimKeystore` and `SimClock` in `sim/copies.rs`, and `PassStore::open_entry_keeping_copy`, `open_entry_with_face_id` and `face_id_status`. Where it differs from the sections above:
+
+- **Keyed by entry path plus a content id, not by blob oid.** The file is `window/<HMAC(index key, path)>.copy`; the content id (SHA-256 of the `.gpg` bytes) is sealed inside and checked on every read, so a pull still makes a copy stale. A rename loses the copy.
+- **`DeviceKeystore` is `seal`, `open`, `index_key`, `reset`**, not `create_key`/`wrap`/`unwrap`/`sign`. The data key is still the only thing sealed by the Secure Enclave. `index_key` is new: a keychain secret usable without Face ID that names the files and seals each copy's metadata, so status and the Home list are authenticated without a prompt and file names say nothing. There is no `key.json`; Swift creates keys on first use.
+- **No high-water-mark files.** "Clock set back" is a copy whose sealed creation time is later than now. A copy also ends once its length has passed on the monotonic clock, so a smaller step back cannot lengthen it.
+- **Every call sweeps.** Each operation reads every copy's metadata, applies the end-all rules and wipes what has ended, before any prompt. Ending all resets the keystore first.
+- **One "key gone" error.** Enrolment change and passcode removal both arrive as `KeystoreError::KeyGone` and `PawError::FaceIdChanged`; telling them apart is left to Swift.
+- **Boot id.** `kern.bootsessionuuid` is unreadable from the iOS 18 sandbox; the `Clock` docs describe a POSIX-semaphore restart check instead. Not yet tried on a device.
+- Not built: `SingleUse` copies and hand-off, re-sealing on edit, per-entry "Always ask" (the caller passes a zero length), `CoreObserver`, Darwin notifications, store id in the metadata.
+
 ### 3.9 Search and service matching
 
 ```rust
