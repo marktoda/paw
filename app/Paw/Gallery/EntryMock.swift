@@ -82,6 +82,7 @@ struct EntryMock: View {
             }
         }
         .listStyle(.insetGrouped)
+        .contentMargins(.top, 0, for: .scrollContent)
         .environment(\.defaultMinListRowHeight, PawMetrics.tapMin)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -92,16 +93,24 @@ struct EntryMock: View {
         }
         .copyToast($toast)
         .sheet(isPresented: $showsLargeType) {
-            NavigationStack {
-                LargeTypeView(password: password)
-                    .navigationTitle("Password")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") { showsLargeType = false }
-                                .accessibilityIdentifier("large-type-done")
-                        }
+            VStack(spacing: 0) {
+                ZStack {
+                    Text("Password")
+                        .font(PawFont.headline)
+                        .foregroundStyle(PawColor.label)
+                        .accessibilityAddTraits(.isHeader)
+                    HStack {
+                        Spacer()
+                        Button("Done") { showsLargeType = false }
+                            .font(PawFont.headline)
+                            .foregroundStyle(PawColor.label)
+                            .frame(minWidth: PawMetrics.tapMin, minHeight: PawMetrics.tapMin)
+                            .accessibilityIdentifier("large-type-done")
                     }
+                }
+                .padding(.horizontal, PawMetrics.Spacing.l)
+                .padding(.top, PawMetrics.Spacing.l)
+                LargeTypeView(password: password)
             }
             .presentationDetents([.medium, .large])
         }

@@ -393,25 +393,7 @@ struct KeySheetPage: View {
         .navigationTitle("Key sheet")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $isPresented) {
-            KeySheetContent(
-                purpose: "Open Fastmail",
-                stage: sample.stage,
-                pin: $pin,
-                note: "Afterwards it opens with Face ID until 6:40 PM.",
-                onContinue: {
-                    pin = ""
-                    sample = .touch
-                    detent = .height(PawMetrics.keySheetHeight)
-                },
-                onCancel: { isPresented = false })
-                .presentationDetents([.height(PawMetrics.keySheetHeight), .large], selection: $detent)
-                .presentationDragIndicator(.visible)
-                .task(id: sample) {
-                    // Touch received: the sheet closes itself after a second.
-                    guard sample == .done else { return }
-                    try? await Task.sleep(for: .seconds(1))
-                    if !Task.isCancelled { isPresented = false }
-                }
+            KeySheetSampleHost(sample: $sample, pin: $pin, detent: $detent, isPresented: $isPresented)
         }
     }
 
@@ -420,6 +402,37 @@ struct KeySheetPage: View {
         sample = item
         detent = item.needsKeyboard ? .large : .height(PawMetrics.keySheetHeight)
         isPresented = true
+    }
+}
+
+/// The sheet's content. A separate view, so it follows `sample` while the
+/// sheet stays up (Continue on a PIN stage moves on to Touch in place).
+private struct KeySheetSampleHost: View {
+    @Binding var sample: KeySheetPage.Sample
+    @Binding var pin: String
+    @Binding var detent: PresentationDetent
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        KeySheetContent(
+            purpose: "Open Fastmail",
+            stage: sample.stage,
+            pin: $pin,
+            note: "Afterwards it opens with Face ID until 6:40 PM.",
+            onContinue: {
+                pin = ""
+                sample = .touch
+                detent = .height(PawMetrics.keySheetHeight)
+            },
+            onCancel: { isPresented = false })
+            .presentationDetents([.height(PawMetrics.keySheetHeight), .large], selection: $detent)
+            .presentationDragIndicator(.visible)
+            .task(id: sample) {
+                // Touch received: the sheet closes itself after a second.
+                guard sample == .done else { return }
+                try? await Task.sleep(for: .seconds(1))
+                if !Task.isCancelled { isPresented = false }
+            }
     }
 }
 

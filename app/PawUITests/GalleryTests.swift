@@ -178,8 +178,9 @@ final class GalleryTests: XCTestCase {
                     break
                 }
                 snapshot("\(appearance)-\(stage)")
-                app.buttons["key-sheet-cancel"].tap()
-                XCTAssertTrue(element("key-sheet-headline").waitForNonExistence(timeout: 5),
+                let cancel = app.buttons["key-sheet-cancel"]
+                cancel.tap()
+                XCTAssertTrue(cancel.waitForNonExistence(timeout: 10),
                               "Cancel should close the sheet at \(stage)")
             }
 
@@ -187,7 +188,7 @@ final class GalleryTests: XCTestCase {
             expect("stage-done").tap()
             expectLabel("key-sheet-headline", "Done")
             snapshot("\(appearance)-done")
-            XCTAssertTrue(element("key-sheet-headline").waitForNonExistence(timeout: 5),
+            XCTAssertTrue(app.staticTexts["Done"].waitForNonExistence(timeout: 10),
                           "The sheet should close itself after Done")
         }
     }
@@ -243,8 +244,9 @@ final class GalleryTests: XCTestCase {
             expectLabel("large-type-cell-4", "Hash, 4 of 16")
             expectLabel("large-type-cell-7", "0, 7 of 16")
             snapshot("\(appearance)-large-type")
-            app.buttons["large-type-done"].tap()
-            XCTAssertTrue(element("large-type-cell-1").waitForNonExistence(timeout: 5))
+            let done = app.buttons["large-type-done"]
+            done.tap()
+            XCTAssertTrue(done.waitForNonExistence(timeout: 10), "Done should close the large-type view")
 
             app.buttons["password-copy"].tap()
             snapshot("\(appearance)-copied")

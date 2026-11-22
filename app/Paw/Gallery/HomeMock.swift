@@ -106,6 +106,7 @@ struct HomeMock: View {
             }
         }
         .listStyle(.insetGrouped)
+        .contentMargins(.top, 0, for: .scrollContent)
     }
 
     private var results: some View {

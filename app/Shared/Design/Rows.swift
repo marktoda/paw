@@ -29,7 +29,7 @@ struct EntryRow: View {
                     Text(displayName)
                         .font(PawFont.body)
                         .foregroundStyle(PawColor.label)
-                        .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
+                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                         .truncationMode(.tail)
                     Text(subtitle)
                         .font(PawFont.footnote)
@@ -37,6 +37,7 @@ struct EntryRow: View {
                         .lineLimit(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
                 switch access {
                 case .faceID:
                     Image(systemName: PawSymbol.faceID)
@@ -88,6 +89,7 @@ struct FolderRow: View {
                     .foregroundStyle(PawColor.label)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
                 Text(count, format: .number)
                     .font(PawFont.body.monospacedDigit())
                     .foregroundStyle(PawColor.labelSecondary)
