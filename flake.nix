@@ -15,6 +15,9 @@
           pkgs.gcc
           pkgs.pkg-config
           pkgs.gnupg
+          # The sync tests run git-upload-pack and git-receive-pack behind an
+          # in-process SSH server.
+          pkgs.git
           # Signing and installing device builds from Linux.
           pkgs.rcodesign
           pkgs.openssl

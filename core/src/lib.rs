@@ -4,9 +4,13 @@
 //! parses a `pass` entry, asks the card to unwrap the session key, and does
 //! the symmetric decryption itself. The app supplies only a way to exchange
 //! raw APDUs with the card (see [`ApduTransport`]).
+//!
+//! The same card signs the SSH login to the git host ([`ssh`]), which is how
+//! the password store is cloned and pushed ([`sync`]).
 
 pub mod ffi;
 pub mod sim;
+pub mod ssh;
 
 uniffi::setup_scaffolding!();
 
@@ -15,7 +19,7 @@ use std::sync::Arc;
 
 use card_backend::{CardBackend, CardCaps, CardTransaction, PinType, SmartcardError};
 use openpgp_card::ocard::{KeyType, StatusBytes};
-use openpgp_card::state::Open;
+use openpgp_card::state::{Open, Transaction};
 use openpgp_card::Card;
 use openpgp_card_rpgp::CardSlot;
 use pgp::composed::Message;
@@ -41,6 +45,24 @@ pub enum PawError {
     Decrypt(String),
     #[error("card error: {0}")]
     Card(String),
+    #[error("this key cannot log in to a git host: {0}")]
+    NoSshKey(String),
+    #[error("the key could not sign the login: {0}")]
+    Sign(String),
+    #[error("could not reach the git host: {0}")]
+    Network(String),
+    /// The host presented a key other than the pinned one. `presented` is
+    /// its SHA-256 fingerprint, for the "host key changed" screen.
+    #[error("the git host's key does not match the saved one (it presented {presented})")]
+    HostKeyMismatch { presented: String },
+    #[error("the git host did not accept this key")]
+    KeyRejected,
+    /// The remote branch has commits this copy does not build on. Nothing
+    /// was pushed; paw never forces.
+    #[error("the remote has changes that are not in this copy")]
+    NotFastForward,
+    #[error("git error: {0}")]
+    Git(String),
 }
 
 /// What the card says about itself, read without a PIN.
@@ -143,6 +165,35 @@ pub fn card_info(transport: Arc<dyn ApduTransport>) -> Result<CardInfo, PawError
     })
 }
 
+/// Verifies the user PIN in the mode that unlocks both decryption and
+/// authentication (PW1 mode 82), turning the card's refusals into
+/// [`PawError::WrongPin`] and [`PawError::PinBlocked`].
+fn verify_pin(tx: &mut Card<Transaction<'_>>, pin: &str) -> Result<(), PawError> {
+    // The library's copy of the PIN is a `SecretString`, wiped when dropped.
+    let Err(e) = tx.verify_user_pin(pin.to_owned().into()) else {
+        return Ok(());
+    };
+    Err(match e {
+        openpgp_card::Error::CardStatus(
+            StatusBytes::SecurityStatusNotSatisfied | StatusBytes::PasswordNotChecked(_),
+        ) => {
+            // The library caches card status; a failed VERIFY changes the
+            // counter on the card, so read it again.
+            tx.invalidate_cache().map_err(card_err)?;
+            let tries_left = tx.pw_status_bytes().map_err(card_err)?.err_count_pw1();
+            if tries_left == 0 {
+                PawError::PinBlocked
+            } else {
+                PawError::WrongPin { tries_left }
+            }
+        }
+        openpgp_card::Error::CardStatus(StatusBytes::AuthenticationMethodBlocked) => {
+            PawError::PinBlocked
+        }
+        other => card_err(other),
+    })
+}
+
 /// Decrypts one `pass` entry (the bytes of a `.gpg` file) with the card.
 ///
 /// `on_touch_needed` is called just before the card starts waiting for a
@@ -157,28 +208,7 @@ pub fn decrypt_entry(
 
     let mut card = open(transport)?;
     let mut tx = card.transaction().map_err(card_err)?;
-
-    if let Err(e) = tx.verify_user_pin(pin.to_owned().into()) {
-        return Err(match e {
-            openpgp_card::Error::CardStatus(
-                StatusBytes::SecurityStatusNotSatisfied | StatusBytes::PasswordNotChecked(_),
-            ) => {
-                // The library caches card status; a failed VERIFY changes the
-                // counter on the card, so read it again.
-                tx.invalidate_cache().map_err(card_err)?;
-                let tries_left = tx.pw_status_bytes().map_err(card_err)?.err_count_pw1();
-                if tries_left == 0 {
-                    PawError::PinBlocked
-                } else {
-                    PawError::WrongPin { tries_left }
-                }
-            }
-            openpgp_card::Error::CardStatus(StatusBytes::AuthenticationMethodBlocked) => {
-                PawError::PinBlocked
-            }
-            other => card_err(other),
-        });
-    }
+    verify_pin(&mut tx, pin)?;
 
     let slot = CardSlot::init_from_card(&mut tx, KeyType::Decryption, on_touch_needed)
         .map_err(|e| PawError::Card(e.to_string()))?;

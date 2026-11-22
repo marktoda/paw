@@ -25,7 +25,10 @@ fn reads_card_status_without_a_pin() {
 
     assert_eq!(info.ident, "0006:12345678");
     assert_eq!(info.decryption_fingerprint, Some(key.fingerprint_hex()));
-    assert_eq!(info.authentication_fingerprint, None);
+    assert_eq!(
+        info.authentication_fingerprint,
+        Some(key.authentication_fingerprint_hex())
+    );
     assert_eq!(info.pin_tries_left, 3);
     assert!(info.touch_required);
 }
