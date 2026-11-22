@@ -106,6 +106,7 @@ Made by the owner on 2026-11-22.
 - **PIN:** asked once while the key stays plugged in, and forgotten after 15 minutes with paw in the background. Locking the phone does not clear it.
 - **Generate button:** the first version has a password generator on the add and edit forms.
 - **Build order:** editing and push come before full AutoFill, as in [design.md](design.md).
+- **Several recipients:** encrypting to more than one key comes after the first version, but the first version is built ready for it. It reads the recipient key IDs from each entry, says before any touch when the plugged-in key cannot open an entry, and keeps recipients as a list everywhere in the core.
 - **Backup:** setup warns when there is no second key or backup, and does not block. A better backup story comes later.
 - **Recipients:** paw warns whenever `.gpg-id` changes, and shows somewhere visible which keys can open the passwords.
 - **Keys without a YubiKey:** possibly, later, for lower-security stores. Principle 1 would then read "the person chooses where the key lives, and paw says plainly what each choice protects".
