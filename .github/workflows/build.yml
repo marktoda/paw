@@ -38,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        family: [iPhone, iPad]
+        family: [iPhone]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -56,4 +56,37 @@ jobs:
         with:
           name: report-${{ matrix.family }}
           path: app/build/report
+          retention-days: 7
+
+  # An unsigned build for real devices. It is signed on the developer's own
+  # machine (scripts/install.sh), so the signing key never leaves it.
+  device:
+    needs: core
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: core
+          path: app
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          scripts/make-xcframework.sh
+      - name: Build for devices, unsigned
+        run: |
+          set -o pipefail
+          cd app
+          xcodebuild build \
+            -project Paw.xcodeproj -scheme Paw -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/derived \
+            CODE_SIGNING_ALLOWED=NO > build/device.log 2>&1 \
+            || { grep -E "error:|ld: " build/device.log | awk '!seen[$0]++'; exit 1; }
+          cd build/derived/Build/Products/Debug-iphoneos
+          zip -qry "$GITHUB_WORKSPACE/Paw.app.zip" Paw.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: device-app
+          path: Paw.app.zip
           retention-days: 7
