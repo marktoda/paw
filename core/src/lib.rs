@@ -18,6 +18,7 @@ pub mod sim;
 pub mod ssh;
 pub mod store;
 pub mod sync;
+pub mod setup;
 
 uniffi::setup_scaffolding!();
 
