@@ -95,8 +95,19 @@ struct SelfTestView: View {
             Key: \(key.ident)
             Decryption key: \(key.decryptionFingerprint ?? "none")
             PIN tries left: \(key.pinTriesLeft)
-            Touch required: \(key.touchRequired ? "yes" : "no")
+            Touch to decrypt: \(Self.words(key.decryptionTouch))
+            Touch to log in (SSH): \(Self.words(key.authenticationTouch))
+            SSH key: \(key.authenticationFingerprint ?? "none")
             """
+    }
+
+    private static func words(_ touch: KeyTouch) -> String {
+        switch touch {
+        case .off: return "never"
+        case .eachUse: return "every time"
+        case .cached: return "once per 15 seconds"
+        case .unknown: return "unknown"
+        }
     }
 
     private func run(_ work: @escaping @Sendable () throws -> String) {

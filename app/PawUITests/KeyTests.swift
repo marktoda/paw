@@ -68,7 +68,7 @@ final class KeyTests: XCTestCase {
 
         expectResult(containing: "Key: 0006:12345678")
         expectResult(containing: "PIN tries left: 3")
-        expectResult(containing: "Touch required: yes")
+        expectResult(containing: "Touch to decrypt: every time")
     }
 
     func testDecryptWaitsForTouchThenSucceeds() {

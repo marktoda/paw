@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use paw_core::sim::SimulatedKey;
-use paw_core::{card_info, decrypt_entry, encrypt_to_card, PawError};
+use paw_core::{card_info, decrypt_entry, encrypt_to_card, KeyTouch, PawError};
 
 const PIN: &str = "123456";
 const ENTRY: &str = "correct horse battery staple\nlogin: you@example.com\nurl: example.com\n";
@@ -31,6 +31,9 @@ fn reads_card_status_without_a_pin() {
     );
     assert_eq!(info.pin_tries_left, 3);
     assert!(info.touch_required);
+    assert_eq!(info.decryption_touch, KeyTouch::EachUse);
+    assert_eq!(info.authentication_touch, KeyTouch::EachUse);
+    assert_eq!(card_info(self::key(false)).unwrap().decryption_touch, KeyTouch::Off);
 }
 
 #[test]

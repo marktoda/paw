@@ -105,6 +105,39 @@ pub struct CardInfo {
     pub pin_tries_left: u8,
     /// Whether the decryption key needs a physical touch for each use.
     pub touch_required: bool,
+    /// When the decryption key asks for a touch.
+    pub decryption_touch: KeyTouch,
+    /// When the authentication key (SSH) asks for a touch.
+    pub authentication_touch: KeyTouch,
+}
+
+/// When a key slot asks for a physical touch. The app shows its touch prompt
+/// from this, so a cached policy must not be mistaken for "every time".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum KeyTouch {
+    /// Never.
+    Off,
+    /// For every use.
+    EachUse,
+    /// For a use more than 15 seconds after the last touch.
+    Cached,
+    /// The key did not say, or said something this version does not know.
+    Unknown,
+}
+
+fn key_touch(tx: &mut Card<Transaction<'_>>, slot: KeyType) -> KeyTouch {
+    use openpgp_card::ocard::data::TouchPolicy;
+    match tx.user_interaction_flag(slot) {
+        Ok(Some(uif)) => match uif.touch_policy() {
+            TouchPolicy::Off => KeyTouch::Off,
+            TouchPolicy::On | TouchPolicy::Fixed => KeyTouch::EachUse,
+            TouchPolicy::Cached | TouchPolicy::CachedFixed => KeyTouch::Cached,
+            TouchPolicy::Unknown(_) => KeyTouch::Unknown,
+        },
+        // Cards without the touch feature have no such data object.
+        Ok(None) => KeyTouch::Off,
+        Err(_) => KeyTouch::Unknown,
+    }
 }
 
 struct Backend(Arc<dyn ApduTransport>);
@@ -178,10 +211,9 @@ pub fn card_info(transport: Arc<dyn ApduTransport>) -> Result<CardInfo, PawError
     let ident = tx.application_identifier().map_err(card_err)?.ident();
     let fps = tx.fingerprints().map_err(card_err)?;
     let pin_tries_left = tx.pw_status_bytes().map_err(card_err)?.err_count_pw1();
-    let touch_required = matches!(
-        tx.user_interaction_flag(KeyType::Decryption),
-        Ok(Some(uif)) if uif.touch_policy().touch_required()
-    );
+    let decryption_touch = key_touch(&mut tx, KeyType::Decryption);
+    let authentication_touch = key_touch(&mut tx, KeyType::Authentication);
+    let touch_required = decryption_touch != KeyTouch::Off;
 
     Ok(CardInfo {
         ident,
@@ -189,6 +221,8 @@ pub fn card_info(transport: Arc<dyn ApduTransport>) -> Result<CardInfo, PawError
         authentication_fingerprint: fps.authentication().map(|f| f.to_string().replace(' ', "")),
         pin_tries_left,
         touch_required,
+        decryption_touch,
+        authentication_touch,
     })
 }
 
