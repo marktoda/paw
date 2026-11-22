@@ -11,6 +11,7 @@
 pub mod ffi;
 pub mod sim;
 pub mod ssh;
+pub mod sync;
 
 uniffi::setup_scaffolding!();
 
