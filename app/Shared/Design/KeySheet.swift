@@ -43,8 +43,38 @@ struct KeySheetContent: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: PawMetrics.Spacing.l) {
+        GeometryReader { proxy in
+            ScrollView {
+                content
+                    .padding(.horizontal, PawMetrics.Spacing.xl)
+                    .padding(.top, PawMetrics.Spacing.xl)
+                    .padding(.bottom, PawMetrics.Spacing.s)
+                    // Without a keyboard the buttons sit at the bottom of the sheet.
+                    .frame(
+                        maxWidth: .infinity,
+                        minHeight: isPinStage ? nil : proxy.size.height,
+                        alignment: .top)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        }
+        .onChange(of: stage, initial: true) {
+            stageChanged()
+        }
+        .onChange(of: showPin) {
+            if focus != nil {
+                focus = showPin ? .plain : .secure
+            }
+        }
+        .sensoryFeedback(trigger: stage) { _, new in
+            Self.haptic(for: new)
+        }
+    }
+
+    // MARK: Parts
+
+    private var content: some View {
+        VStack(spacing: PawMetrics.Spacing.l) {
+            Group {
                 Text(purpose)
                     .font(PawFont.sectionHeader)
                     .foregroundStyle(PawColor.labelSecondary)
@@ -65,28 +95,13 @@ struct KeySheetContent: View {
                         .frame(maxWidth: PawMetrics.sheetTextWidth)
                         .accessibilityIdentifier("key-sheet-note")
                 }
-                buttons
             }
-            .padding(.horizontal, PawMetrics.Spacing.xl)
-            .padding(.top, PawMetrics.Spacing.xl)
-            .padding(.bottom, PawMetrics.Spacing.s)
-            .frame(maxWidth: .infinity)
-        }
-        .scrollBounceBehavior(.basedOnSize)
-        .onChange(of: stage, initial: true) {
-            stageChanged()
-        }
-        .onChange(of: showPin) {
-            if focus != nil {
-                focus = showPin ? .plain : .secure
+            if !isPinStage {
+                Spacer(minLength: 0)
             }
-        }
-        .sensoryFeedback(trigger: stage) { _, new in
-            Self.haptic(for: new)
+            buttons
         }
     }
-
-    // MARK: Parts
 
     @ViewBuilder private var hero: some View {
         switch stage {

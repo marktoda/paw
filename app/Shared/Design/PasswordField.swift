@@ -189,5 +189,6 @@ struct LargeTypeView: View {
             }
             .padding(PawMetrics.Spacing.l)
         }
+        .scrollEdgeEffectHidden()
     }
 }
