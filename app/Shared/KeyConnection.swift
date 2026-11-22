@@ -112,5 +112,15 @@ func describe(_ error: Swift.Error) -> String {
         return "Not a safe name for an entry: \(message)"
     case .Git(let message):
         return "Git reported a problem: \(message)"
+    case .Store(let message):
+        return message
+    case .NotText:
+        return "This entry is not text, so paw cannot show it."
+    case .NotForThisKey(let recipients):
+        return recipients.isEmpty
+            ? "This entry is encrypted for another key."
+            : "This entry is encrypted for another key: \(recipients.joined(separator: ", "))."
+    case .InvalidField(let message):
+        return message
     }
 }
