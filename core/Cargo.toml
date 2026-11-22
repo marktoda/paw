@@ -21,6 +21,7 @@ git2 = { version = "0.21", default-features = false, features = ["vendored-libgi
 openpgp-card = "0.7.3"
 openpgp-card-rpgp = "0.9.1"
 pgp = "0.21.1"
+psl = "2"
 rand = "0.8"
 # No RSA, no compression, and ring rather than aws-lc: ring builds with the
 # C compiler alone, aws-lc also wants cmake on some targets.
@@ -28,11 +29,13 @@ russh = { version = "0.65.4", default-features = false, features = ["ring"] }
 sha1 = "0.11.0"
 thiserror = "2.0.21"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time"] }
+unicode-normalization = "0.1"
 uniffi = { version = "0.32.2", features = ["cli"] }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 zeroize = "1"
 
 [dev-dependencies]
+proptest = "1"
 # An ed25519 verifier that shares no code with the simulated card's signer.
 ring = "0.17"
 tempfile = "3"

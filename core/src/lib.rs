@@ -9,9 +9,13 @@
 //! the password store is cloned and pushed ([`sync`]).
 
 pub mod diag;
+pub mod entry;
 pub mod ffi;
+pub mod path;
+pub mod recipients;
 pub mod sim;
 pub mod ssh;
+pub mod store;
 pub mod sync;
 
 uniffi::setup_scaffolding!();
@@ -24,7 +28,9 @@ use openpgp_card::ocard::{KeyType, StatusBytes};
 use openpgp_card::state::{Open, Transaction};
 use openpgp_card::Card;
 use openpgp_card_rpgp::CardSlot;
-use pgp::composed::Message;
+use pgp::composed::{Esk, Message};
+use pgp::packet::PublicKeyEncryptedSessionKey;
+use pgp::types::{DecryptionKey, EskType, Password};
 
 /// Exchanges one command APDU for one response APDU (including the two
 /// status bytes). On iOS this is backed by the USB-C smart card connection;
@@ -69,6 +75,21 @@ pub enum PawError {
     UnsafePath(String),
     #[error("git error: {0}")]
     Git(String),
+    /// The store on this device could not be read, or holds no such thing.
+    #[error("{0}")]
+    Store(String),
+    /// The entry decrypted, but to something other than text. It is left
+    /// exactly as it is.
+    #[error("this entry is not text, so paw cannot show or edit it")]
+    NotText,
+    /// Refused before the PIN or a touch was asked for: none of the keys the
+    /// entry is encrypted for is the one plugged in. `recipients` are the
+    /// keys that can open it, as people write them ("key ID 0123...").
+    #[error("this entry is encrypted for another key ({})", .recipients.join(", "))]
+    NotForThisKey { recipients: Vec<String> },
+    /// A value that cannot be stored in an entry as given.
+    #[error("{0}")]
+    InvalidField(String),
 }
 
 /// What the card says about itself, read without a PIN.
@@ -200,7 +221,23 @@ fn verify_pin(tx: &mut Card<Transaction<'_>>, pin: &str) -> Result<(), PawError>
     })
 }
 
+/// Whether a recipient packet hides whom it is for (`gpg --throw-keyids`).
+fn is_hidden(pkesk: &PublicKeyEncryptedSessionKey) -> bool {
+    match pkesk {
+        PublicKeyEncryptedSessionKey::V3 { id, .. } => id.is_wildcard(),
+        PublicKeyEncryptedSessionKey::V6 { fingerprint, .. } => fingerprint.is_none(),
+        _ => false,
+    }
+}
+
 /// Decrypts one `pass` entry (the bytes of a `.gpg` file) with the card.
+///
+/// An entry can be encrypted for several keys. The card is asked to unwrap
+/// only the session key addressed to it, because every request costs a
+/// touch; if the entry hides its recipients, each hidden one is tried in
+/// turn. An entry that names other keys only fails with
+/// [`PawError::NotForThisKey`] before the PIN is sent, so it costs neither a
+/// PIN try nor a touch.
 ///
 /// `on_touch_needed` is called just before the card starts waiting for a
 /// touch, so the app can show its "touch your key" prompt.
@@ -211,17 +248,66 @@ pub fn decrypt_entry(
     on_touch_needed: &(dyn Fn() + Send + Sync),
 ) -> Result<Vec<u8>, PawError> {
     let message = Message::from_bytes(ciphertext).map_err(|e| PawError::NotAnEntry(e.to_string()))?;
+    let Message::Encrypted { esk, mut edata, .. } = message else {
+        return Err(PawError::NotAnEntry("it is not encrypted".into()));
+    };
 
     let mut card = open(transport)?;
     let mut tx = card.transaction().map_err(card_err)?;
-    verify_pin(&mut tx, pin)?;
+    let key = CardSlot::init_from_card(&mut tx, KeyType::Decryption, &|| {})
+        .map_err(|e| PawError::Card(e.to_string()))?
+        .public_key()
+        .clone();
 
-    let slot = CardSlot::init_from_card(&mut tx, KeyType::Decryption, on_touch_needed)
+    let for_this_key: Vec<&PublicKeyEncryptedSessionKey> = esk
+        .iter()
+        .filter_map(|esk| match esk {
+            Esk::PublicKeyEncryptedSessionKey(pkesk) if pkesk.match_identity(&key) => Some(pkesk),
+            _ => None,
+        })
+        .collect();
+    // The packets that name this key; only if there are none, the hidden ones.
+    let (hidden, named): (Vec<_>, Vec<_>) = for_this_key.into_iter().partition(|p| is_hidden(p));
+    let candidates = if named.is_empty() { hidden } else { named };
+    if candidates.is_empty() {
+        let recipients = recipients::entry_recipients(ciphertext)
+            .map(|found| found.keys.iter().map(recipients::Recipient::describe).collect())
+            .unwrap_or_default();
+        return Err(PawError::NotForThisKey { recipients });
+    }
+
+    verify_pin(&mut tx, pin)?;
+    let slot = CardSlot::with_public_key(&mut tx, KeyType::Decryption, key, on_touch_needed)
         .map_err(|e| PawError::Card(e.to_string()))?;
 
-    let mut decrypted = slot
-        .decrypt_message(message)
+    let mut failure = PawError::Decrypt("the key did not answer".into());
+    let mut session_key = None;
+    for pkesk in candidates {
+        let version = match pkesk {
+            PublicKeyEncryptedSessionKey::V6 { .. } => EskType::V6,
+            _ => EskType::V3_4,
+        };
+        let unwrapped = pkesk
+            .values()
+            .and_then(|values| slot.decrypt(&Password::empty(), values, version))
+            .and_then(|inner| inner);
+        match unwrapped {
+            Ok(key) => {
+                session_key = Some(key);
+                break;
+            }
+            Err(e) => failure = PawError::Decrypt(e.to_string()),
+        }
+    }
+    let Some(session_key) = session_key else {
+        return Err(failure);
+    };
+
+    edata
+        .decrypt(&session_key)
         .map_err(|e| PawError::Decrypt(e.to_string()))?;
+    let mut decrypted =
+        Message::from_bytes(edata).map_err(|e| PawError::Decrypt(e.to_string()))?;
     if decrypted.is_compressed() {
         decrypted = decrypted
             .decompress()
@@ -235,6 +321,43 @@ pub fn decrypt_entry(
     Ok(plaintext)
 }
 
+/// The public half of the card's decryption key. Needs no PIN.
+pub fn card_decryption_key(
+    transport: Arc<dyn ApduTransport>,
+) -> Result<pgp::packet::PublicKey, PawError> {
+    let mut card = open(transport)?;
+    let mut tx = card.transaction().map_err(card_err)?;
+    let slot = CardSlot::init_from_card(&mut tx, KeyType::Decryption, &|| {})
+        .map_err(|e| PawError::Card(e.to_string()))?;
+    Ok(slot.public_key().clone())
+}
+
+/// Encrypts `plaintext` to every key in `keys`, the way `pass` encrypts an
+/// entry (`gpg -e -r ... -r ...`). Recipients are a list everywhere in the
+/// core, even while the app only ever passes one.
+pub fn encrypt_to_keys<R: rand::Rng + rand::CryptoRng>(
+    mut rng: R,
+    keys: &[pgp::packet::PublicKey],
+    plaintext: &[u8],
+) -> Result<Vec<u8>, PawError> {
+    use pgp::composed::MessageBuilder;
+    use pgp::crypto::sym::SymmetricKeyAlgorithm;
+
+    if keys.is_empty() {
+        return Err(PawError::Card("there is no key to encrypt to".into()));
+    }
+    let mut builder = MessageBuilder::from_bytes("", plaintext.to_vec())
+        .seipd_v1(&mut rng, SymmetricKeyAlgorithm::AES256);
+    for key in keys {
+        builder
+            .encrypt_to_key(&mut rng, key)
+            .map_err(|e| PawError::Card(e.to_string()))?;
+    }
+    builder
+        .to_vec(&mut rng)
+        .map_err(|e| PawError::Card(e.to_string()))
+}
+
 /// Encrypts `plaintext` to the card's own decryption key, the way `pass`
 /// encrypts an entry. Needs no PIN. Used to prove a key works end to end
 /// without touching the password store.
@@ -242,21 +365,6 @@ pub fn encrypt_to_card(
     transport: Arc<dyn ApduTransport>,
     plaintext: &[u8],
 ) -> Result<Vec<u8>, PawError> {
-    use pgp::composed::MessageBuilder;
-    use pgp::crypto::sym::SymmetricKeyAlgorithm;
-
-    let mut card = open(transport)?;
-    let mut tx = card.transaction().map_err(card_err)?;
-    let slot = CardSlot::init_from_card(&mut tx, KeyType::Decryption, &|| {})
-        .map_err(|e| PawError::Card(e.to_string()))?;
-
-    let mut rng = rand::thread_rng();
-    let mut builder = MessageBuilder::from_bytes("", plaintext.to_vec())
-        .seipd_v1(&mut rng, SymmetricKeyAlgorithm::AES256);
-    builder
-        .encrypt_to_key(&mut rng, slot.public_key())
-        .map_err(|e| PawError::Card(e.to_string()))?;
-    builder
-        .to_vec(&mut rng)
-        .map_err(|e| PawError::Card(e.to_string()))
+    let key = card_decryption_key(transport)?;
+    encrypt_to_keys(rand::thread_rng(), &[key], plaintext)
 }

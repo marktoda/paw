@@ -10,6 +10,8 @@
 //! APDUs; which of the last two the card advertises is an option, because a
 //! real key advertises both and the library's choice depends on it.
 
+pub mod fixture;
+
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 

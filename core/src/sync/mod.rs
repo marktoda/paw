@@ -21,6 +21,7 @@ use git2::{
 pub use transport::{Connection, HostKeyPin, Remote};
 
 use crate::PawError;
+use crate::path::{unsafe_path, unsafe_path_err};
 
 /// Every branch of the remote is mirrored under `origin/`.
 const FETCH_REFSPEC: &str = "+refs/heads/*:refs/remotes/origin/*";
@@ -95,52 +96,6 @@ pub fn fetch(connection: &Connection, dir: &Path) -> Result<String, PawError> {
     repo.refname_to_id(&format!("refs/remotes/origin/{short}"))
         .map(|id| id.to_string())
         .map_err(git_err)
-}
-
-/// Why `path` cannot name an entry, or `None` if it can. `path` comes from
-/// the user or from the repository, and the repository is not trusted.
-fn unsafe_path(path: &str) -> Option<&'static str> {
-    if path.contains(['\0', '\\']) {
-        return Some("it contains a NUL or a backslash");
-    }
-    if path.starts_with('/') {
-        return Some("it is absolute");
-    }
-    for component in path.split('/') {
-        if component.is_empty() {
-            return Some("it has an empty component");
-        }
-        if component == "." || component == ".." {
-            return Some("it has a `.` or `..` component");
-        }
-        if is_dot_git(component) {
-            return Some("it names git's own directory");
-        }
-    }
-    None
-}
-
-/// Whether some file system would take `component` for `.git`: any letter
-/// case, the Windows short name, trailing dots and spaces or an alternate
-/// data stream (NTFS), and characters HFS+ ignores.
-fn is_dot_git(component: &str) -> bool {
-    const HFS_IGNORED: [std::ops::RangeInclusive<char>; 4] = [
-        '\u{200C}'..='\u{200F}',
-        '\u{202A}'..='\u{202E}',
-        '\u{206A}'..='\u{206F}',
-        '\u{FEFF}'..='\u{FEFF}',
-    ];
-    let visible: String = component
-        .chars()
-        .filter(|c| !HFS_IGNORED.iter().any(|range| range.contains(c)))
-        .collect();
-    let name = visible.split(':').next().unwrap_or_default();
-    let name = name.trim_end_matches(['.', ' ']).to_ascii_lowercase();
-    name == ".git" || name == "git~1"
-}
-
-fn unsafe_path_err(path: &str, why: &str) -> PawError {
-    PawError::UnsafePath(format!("{path}: {why}"))
 }
 
 /// Commits `contents` as the file `path` (relative to the store, `/`

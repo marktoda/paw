@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::store::PassStore;
 use crate::{ApduTransport, CardInfo, PawError};
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -77,4 +78,35 @@ pub fn card_touch_timeout_check(
     pin: String,
 ) -> Vec<crate::diag::CheckResult> {
     crate::diag::card_touch_timeout_check(Arc::new(Adapter(connection)), &pin)
+}
+
+mod entry;
+
+pub use entry::{EntryView, FieldView, OpenedEntry};
+
+#[uniffi::export]
+impl PassStore {
+    /// Decrypts `entry` with the key and keeps the plaintext on the Rust
+    /// side, behind an [`OpenedEntry`].
+    ///
+    /// An entry that is encrypted for other keys only fails with
+    /// [`PawError::NotForThisKey`] before the PIN is sent or a touch is
+    /// asked for (see [`crate::decrypt_entry`]). Call `access` first to
+    /// know without a card exchange.
+    pub fn open_entry(
+        &self,
+        connection: Arc<dyn CardConnection>,
+        pin: String,
+        entry: String,
+    ) -> Result<Arc<OpenedEntry>, PawError> {
+        let ciphertext = self.read_entry(&entry)?;
+        let touch = connection.clone();
+        let plaintext = crate::decrypt_entry(
+            Arc::new(Adapter(connection)),
+            &pin,
+            &ciphertext,
+            &move || touch.touch_needed(),
+        )?;
+        OpenedEntry::from_plaintext(plaintext)
+    }
 }
