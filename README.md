@@ -11,3 +11,7 @@ decrypts with a YubiKey over USB-C. Early work: nothing here is usable yet.
   bindings (macOS only).
 
 `nix develop` provides the Rust toolchain.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
