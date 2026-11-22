@@ -11,6 +11,10 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     TARGETED_DEVICE_FAMILY: "1,2"
     GENERATE_INFOPLIST_FILE: "NO"
+  configs:
+    Debug:
+      # The component gallery (app/Paw/Gallery) is compiled under DEBUG only.
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
 targets:
   Paw:
     type: application
