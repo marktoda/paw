@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      only:
+        description: "Run only these UI tests: space-separated Class or Class/test names. Empty runs all."
+        default: ""
 
 concurrency:
   group: build-${{ github.ref }}
@@ -63,6 +67,8 @@ jobs:
           brew install xcodegen
           scripts/make-xcframework.sh
       - name: Run the UI tests
+        env:
+          PAW_ONLY: ${{ inputs.only }}
         run: scripts/ci-test.sh ${{ matrix.family }}
       - uses: actions/upload-artifact@v4
         if: always()

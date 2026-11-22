@@ -31,11 +31,20 @@ if [ -z "$udid" ]; then
 fi
 xcrun simctl list devices available | grep "$udid" | tee "$report/device.txt"
 
+# PAW_ONLY narrows the run to the tests being worked on, e.g.
+# "GalleryTests KeyTests/testReadKeyShowsIdentityWithoutAPin". A full run
+# takes about 17 minutes, almost all of it tests; one class takes a few.
+only=()
+for name in ${PAW_ONLY:-}; do
+  only+=("-only-testing:PawUITests/$name")
+done
+
 xcodebuild test \
   -project Paw.xcodeproj -scheme Paw \
   -destination "platform=iOS Simulator,id=$udid" \
   -derivedDataPath build/derived \
   -resultBundlePath build/result.xcresult \
+  ${only[@]+"${only[@]}"} \
   CODE_SIGNING_ALLOWED=NO > "$report/xcodebuild.log" 2>&1
 status=$?
 
