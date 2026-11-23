@@ -9,12 +9,18 @@
 //! Commands may arrive as short APDUs, chained short APDUs or extended-length
 //! APDUs; which of the last two the card advertises is an option, because a
 //! real key advertises both and the library's choice depends on it.
+//!
+//! For the key session's tests it can also be unplugged and plugged back in
+//! (a power cycle: the PIN is no longer verified), drop the verified PIN on
+//! a re-SELECT (whether a YubiKey does is not known, so it is a switch),
+//! honour a CACHED touch policy, have its PIN changed "on another computer",
+//! and count the VERIFY commands it receives.
 
 pub mod copies;
 pub mod fixture;
 
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ed25519_dalek::{Signer, SigningKey};
 use sha1::{Digest, Sha1};
@@ -29,6 +35,42 @@ const OID_ED25519: [u8; 9] = [0x2B, 0x06, 0x01, 0x04, 0x01, 0xDA, 0x47, 0x0F, 0x
 /// Largest command the card claims to accept when it advertises extended
 /// length. A YubiKey 5 reports a value of this order.
 const MAX_EXTENDED_COMMAND: u16 = 2048;
+
+/// How long one touch lasts for a slot with the CACHED policy, unless a test
+/// says otherwise. A YubiKey's is 15 seconds.
+const TOUCH_CACHE: Duration = Duration::from_secs(15);
+
+/// A slot's touch policy, as the simulated key can be set to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SimTouch {
+    Off,
+    /// A touch for every use (YubiKey "on").
+    EachUse,
+    /// One touch covers every use of the slot for a while (YubiKey "cached").
+    Cached,
+}
+
+impl SimTouch {
+    fn from_flag(touch: bool) -> Self {
+        if touch { Self::EachUse } else { Self::Off }
+    }
+
+    /// The first byte of the slot's user interaction flag data object.
+    fn uif(self) -> u8 {
+        match self {
+            Self::Off => 0x00,
+            Self::EachUse => 0x01,
+            Self::Cached => 0x03,
+        }
+    }
+}
+
+/// The two slots that can wait for a touch.
+#[derive(Clone, Copy)]
+enum Slot {
+    Decryption = 0,
+    Authentication = 1,
+}
 
 /// How a simulated key is set up. [`SimulatedKey::new`] covers the common
 /// case; tests that need the slots to differ build this directly.
@@ -55,6 +97,7 @@ pub struct SimulatedKey {
 }
 
 struct State {
+    pin: String,
     tries_left: u8,
     verified: bool,
     touch_pending: bool,
@@ -62,6 +105,23 @@ struct State {
     authentications: u32,
     /// Data of a chained command received so far (CLA bit 0x10).
     chain: Vec<u8>,
+    /// Plugged in. While not, every exchange fails as a removed card's does.
+    present: bool,
+    /// Counts plug-ins, so a command that was running across a removal and
+    /// re-insertion still fails.
+    plugged: u32,
+    /// A SELECT drops the verified PIN, as a power cycle does.
+    reselect_drops_pin: bool,
+    /// Indexed by [`Slot`].
+    policies: [SimTouch; 2],
+    last_touch: [Option<Instant>; 2],
+    touch_cache: Duration,
+    /// A key operation is waiting for a touch right now.
+    waiting_for_touch: bool,
+    /// VERIFY commands with a PIN in them: each may use a try.
+    verify_attempts: u32,
+    /// Empty VERIFY commands: "is the PIN verified?", which uses no try.
+    pin_queries: u32,
 }
 
 fn tlv(tag: &[u8], value: &[u8]) -> Vec<u8> {
@@ -93,13 +153,13 @@ impl SimulatedKey {
     /// Stands in for a finger on the gold disc. One touch allows one key
     /// operation (a decrypt or an authentication signature).
     pub fn touch(&self) {
-        self.state.lock().unwrap().touch_pending = true;
+        self.lock().touch_pending = true;
         self.touched.notify_all();
     }
 
     /// How many decrypts the key has performed.
     pub fn decipher_count(&self) -> u32 {
-        self.state.lock().unwrap().deciphers
+        self.lock().deciphers
     }
 
     /// Hex OpenPGP v4 fingerprint of the decryption key.
@@ -108,13 +168,91 @@ impl SimulatedKey {
     }
 
     /// One command APDU in, one response APDU (with status bytes) out.
+    /// While the key is unplugged the answer is empty, which the core reads
+    /// as a reader failure.
     pub fn exchange(&self, apdu: Vec<u8>) -> Vec<u8> {
-        let (mut body, sw) = match self.handle(&apdu) {
-            Ok(body) => (body, 0x9000u16),
-            Err(sw) => (vec![], sw),
-        };
-        body.extend(sw.to_be_bytes());
-        body
+        self.transmit_checked(&apdu).unwrap_or_default()
+    }
+
+    /// The key is pulled out: every exchange fails, and a key operation
+    /// waiting for a touch fails at once.
+    pub fn unplug(&self) {
+        let mut state = self.lock();
+        state.present = false;
+        state.verified = false;
+        state.touch_pending = false;
+        state.chain.clear();
+        drop(state);
+        self.touched.notify_all();
+    }
+
+    /// The key is plugged back in. Like any power cycle, the PIN is no
+    /// longer verified and no touch is remembered.
+    pub fn plug_in(&self) {
+        let mut state = self.lock();
+        state.present = true;
+        state.plugged += 1;
+        state.verified = false;
+        state.touch_pending = false;
+        state.last_touch = [None, None];
+        state.chain.clear();
+    }
+
+    /// Whether a SELECT drops the verified PIN. Off unless set: whether a
+    /// YubiKey does this through the iPhone's reader is not known.
+    pub fn set_reselect_drops_pin(&self, drops: bool) {
+        self.lock().reselect_drops_pin = drops;
+    }
+
+    /// The PIN is changed on another computer. The key was unplugged to get
+    /// there, so its PIN is no longer verified either.
+    pub fn change_pin_elsewhere(&self, new_pin: String) {
+        let mut state = self.lock();
+        state.pin = new_pin;
+        state.verified = false;
+    }
+
+    /// Another computer has used PIN tries (or reset them).
+    pub fn set_pin_tries_left(&self, tries: u8) {
+        self.lock().tries_left = tries;
+    }
+
+    pub fn set_decryption_touch(&self, policy: SimTouch) {
+        self.lock().policies[Slot::Decryption as usize] = policy;
+    }
+
+    pub fn set_authentication_touch(&self, policy: SimTouch) {
+        self.lock().policies[Slot::Authentication as usize] = policy;
+    }
+
+    /// How long one touch lasts for a CACHED slot.
+    pub fn set_touch_cache_ms(&self, ms: u32) {
+        self.lock().touch_cache = Duration::from_millis(ms.into());
+    }
+
+    /// VERIFY commands that carried a PIN, wrong or right: the tries paw
+    /// has put at risk.
+    pub fn verify_attempts(&self) -> u32 {
+        self.lock().verify_attempts
+    }
+
+    /// Empty VERIFY commands, which ask whether the PIN is verified.
+    pub fn pin_queries(&self) -> u32 {
+        self.lock().pin_queries
+    }
+
+    /// Whether the PIN is verified on the key right now.
+    pub fn pin_verified(&self) -> bool {
+        self.lock().verified
+    }
+
+    /// Whether a key operation is waiting for a touch right now.
+    pub fn waiting_for_touch(&self) -> bool {
+        self.lock().waiting_for_touch
+    }
+
+    pub fn pin_tries_left(&self) -> u8 {
+        self.lock().tries_left
     }
 }
 
@@ -160,15 +298,28 @@ impl SimulatedKey {
         Arc::new(Self {
             secret: StaticSecret::from([7u8; 32]),
             auth_key: SigningKey::from_bytes(&[9u8; 32]),
-            options,
             state: Mutex::new(State {
+                pin: options.pin.clone(),
                 tries_left: 3,
                 verified: false,
                 touch_pending: false,
                 deciphers: 0,
                 authentications: 0,
                 chain: Vec::new(),
+                present: true,
+                plugged: 0,
+                reselect_drops_pin: false,
+                policies: [
+                    SimTouch::from_flag(options.decrypt_touch),
+                    SimTouch::from_flag(options.auth_touch),
+                ],
+                last_touch: [None, None],
+                touch_cache: TOUCH_CACHE,
+                waiting_for_touch: false,
+                verify_attempts: 0,
+                pin_queries: 0,
             }),
+            options,
             touched: Condvar::new(),
         })
     }
@@ -176,7 +327,39 @@ impl SimulatedKey {
     /// How many authentication signatures the key has made. With the touch
     /// policy on, this is also how many touches SSH has cost.
     pub fn authentication_count(&self) -> u32 {
-        self.state.lock().unwrap().authentications
+        self.lock().authentications
+    }
+
+    fn lock(&self) -> MutexGuard<'_, State> {
+        // Tests share the key between threads; one that panicked while
+        // holding the lock has already failed its test.
+        self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn uif(&self, slot: Slot) -> Vec<u8> {
+        vec![self.lock().policies[slot as usize].uif(), 0x20]
+    }
+
+    /// [`ApduTransport::transmit`]: fails while unplugged, and when the key
+    /// was unplugged while the command ran.
+    fn transmit_checked(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
+        let plugged = {
+            let state = self.lock();
+            if !state.present {
+                return Err("the key is not connected".into());
+            }
+            state.plugged
+        };
+        let (mut body, sw) = match self.handle(apdu) {
+            Ok(body) => (body, 0x9000u16),
+            Err(sw) => (vec![], sw),
+        };
+        let state = self.lock();
+        if !state.present || state.plugged != plugged {
+            return Err("the key was removed".into());
+        }
+        body.extend(sw.to_be_bytes());
+        Ok(body)
     }
 
     /// The raw ed25519 public key of the authentication slot.
@@ -203,7 +386,7 @@ impl SimulatedKey {
     }
 
     fn pw_status(&self) -> Vec<u8> {
-        let tries = self.state.lock().unwrap().tries_left;
+        let tries = self.lock().tries_left;
         vec![0x00, 0x7F, 0x7F, 0x7F, tries, 0x00, 0x03]
     }
 
@@ -241,8 +424,8 @@ impl SimulatedKey {
         discretionary.extend(tlv(&[0xC6], &[0u8; 60]));
         discretionary.extend(tlv(&[0xCD], &self.generation_times()));
         discretionary.extend(tlv(&[0xD6], &[0x00, 0x20]));
-        discretionary.extend(tlv(&[0xD7], &[self.options.decrypt_touch.into(), 0x20]));
-        discretionary.extend(tlv(&[0xD8], &[self.options.auth_touch.into(), 0x20]));
+        discretionary.extend(tlv(&[0xD7], &self.uif(Slot::Decryption)));
+        discretionary.extend(tlv(&[0xD8], &self.uif(Slot::Authentication)));
 
         let aid = [
             0xD2, 0x76, 0x00, 0x01, 0x24, 0x01, 0x03, 0x04, 0x00, 0x06, 0x12, 0x34, 0x56, 0x78,
@@ -274,7 +457,7 @@ impl SimulatedKey {
         // Command chaining: every part but the last has CLA bit 0x10 set and
         // is only stored.
         let data = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.lock();
             state.chain.extend_from_slice(part);
             if cla & 0x10 != 0 {
                 return Ok(vec![]);
@@ -284,16 +467,27 @@ impl SimulatedKey {
         let data = data.as_slice();
 
         match (ins, p1, p2) {
-            (0xA4, 0x04, _) => Ok(vec![]),
+            (0xA4, 0x04, _) => {
+                let mut state = self.lock();
+                if state.reselect_drops_pin {
+                    state.verified = false;
+                }
+                Ok(vec![])
+            }
             (0xCA, 0x00, 0x6E) => Ok(self.application_related_data()),
             (0xCA, 0x00, 0xC4) => Ok(self.pw_status()),
             (0xCA, 0x00, 0xC5) => Ok(self.fingerprints()),
             (0xCA, 0x00, 0xCD) => Ok(self.generation_times()),
-            (0xCA, 0x00, 0xD7) => Ok(vec![self.options.decrypt_touch.into(), 0x20]),
-            (0xCA, 0x00, 0xD8) => Ok(vec![self.options.auth_touch.into(), 0x20]),
+            (0xCA, 0x00, 0xD7) => Ok(self.uif(Slot::Decryption)),
+            (0xCA, 0x00, 0xD8) => Ok(self.uif(Slot::Authentication)),
             (0xCA, _, _) => Err(0x6A88),
             (0x20, 0x00, 0x82) => {
-                let mut state = self.state.lock().unwrap();
+                let mut state = self.lock();
+                if data.is_empty() {
+                    state.pin_queries += 1;
+                } else {
+                    state.verify_attempts += 1;
+                }
                 if state.tries_left == 0 {
                     return Err(0x6983);
                 }
@@ -301,7 +495,7 @@ impl SimulatedKey {
                 if data.is_empty() {
                     return if state.verified { Ok(vec![]) } else { Err(0x63C0 | u16::from(state.tries_left)) };
                 }
-                if data == self.options.pin.as_bytes() {
+                if data == state.pin.as_bytes() {
                     state.tries_left = 3;
                     state.verified = true;
                     Ok(vec![])
@@ -310,6 +504,11 @@ impl SimulatedKey {
                     state.verified = false;
                     Err(0x6982)
                 }
+            }
+            // P1 FF: forget that the PIN was verified.
+            (0x20, 0xFF, 0x82) => {
+                self.lock().verified = false;
+                Ok(vec![])
             }
             (0x47, 0x81, 0x00) if data == [0xB8, 0x00] => {
                 Ok(tlv(&[0x7F, 0x49], &tlv(&[0x86], &self.public())))
@@ -326,21 +525,37 @@ impl SimulatedKey {
 
     /// Checks that the PIN was verified and, if the slot's policy asks for
     /// it, waits for a touch and consumes it.
-    fn authorise(&self, touch_required: bool) -> Result<MutexGuard<'_, State>, u16> {
-        let mut state = self.state.lock().unwrap();
+    ///
+    /// A touch that does not come in time fails with 6982, as does a
+    /// removal. What a YubiKey answers after its touch timeout is not yet
+    /// known.
+    fn authorise(&self, slot: Slot) -> Result<MutexGuard<'_, State>, u16> {
+        let mut state = self.lock();
         if !state.verified {
             return Err(0x6982);
         }
-        if touch_required {
+        let cached = state.last_touch[slot as usize]
+            .is_some_and(|at| at.elapsed() < state.touch_cache);
+        let wait = match state.policies[slot as usize] {
+            SimTouch::Off => false,
+            SimTouch::EachUse => true,
+            SimTouch::Cached => !cached,
+        };
+        if wait {
+            state.waiting_for_touch = true;
             let (guard, _) = self
                 .touched
-                .wait_timeout_while(state, self.options.touch_timeout, |s| !s.touch_pending)
-                .unwrap();
+                .wait_timeout_while(state, self.options.touch_timeout, |s| {
+                    !s.touch_pending && s.present
+                })
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             state = guard;
-            if !state.touch_pending {
+            state.waiting_for_touch = false;
+            if !state.touch_pending || !state.present {
                 return Err(0x6982);
             }
             state.touch_pending = false;
+            state.last_touch[slot as usize] = Some(Instant::now());
         }
         Ok(state)
     }
@@ -351,7 +566,7 @@ impl SimulatedKey {
         if data.is_empty() {
             return Err(0x6A80);
         }
-        let mut state = self.authorise(self.options.auth_touch)?;
+        let mut state = self.authorise(Slot::Authentication)?;
         state.authentications += 1;
         Ok(self.auth_key.sign(data).to_bytes().to_vec())
     }
@@ -361,7 +576,7 @@ impl SimulatedKey {
         if data.len() < 32 || data[0] != 0xA6 {
             return Err(0x6A80);
         }
-        let mut state = self.authorise(self.options.decrypt_touch)?;
+        let mut state = self.authorise(Slot::Decryption)?;
         let mut point = [0u8; 32];
         point.copy_from_slice(&data[data.len() - 32..]);
         state.deciphers += 1;
@@ -375,6 +590,6 @@ impl SimulatedKey {
 
 impl ApduTransport for SimulatedKey {
     fn transmit(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
-        Ok(self.exchange(apdu.to_vec()))
+        self.transmit_checked(apdu)
     }
 }
