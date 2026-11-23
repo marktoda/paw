@@ -327,9 +327,16 @@ final class SetupTests: XCTestCase {
             swipes += 1
         }
         remove.tap()
+        // The confirmation opens at the foot of the list, below the fold.
+        let confirm = element("settings-remove-confirm")
+        swipes = 0
+        while !(confirm.exists && confirm.isHittable) && swipes < 6 {
+            app.swipeUp()
+            swipes += 1
+        }
         expectText("settings-remove-warning", contains: "not touched")
         snapshot("remove-confirm")
-        tap("settings-remove-confirm")
+        confirm.tap()
         expect("setup-welcome", timeout: 20)
         app.terminate()
         launch(keep: true)
