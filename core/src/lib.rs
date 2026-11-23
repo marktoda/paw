@@ -38,6 +38,16 @@ use pgp::composed::{Esk, Message};
 use pgp::packet::PublicKeyEncryptedSessionKey;
 use pgp::types::{DecryptionKey, EskType, Password};
 
+/// How many recipient packets of one entry the card is asked to unwrap:
+/// one. It is the first packet that names the card's decryption key, or,
+/// if none names it, the first hidden (wildcard) packet. Each try can cost
+/// a touch, so a crafted entry with many packets for this key cannot make
+/// the person touch the key again and again. An entry whose only packets
+/// are hidden, for several recipients, opens only if this key's packet is
+/// the first: `gpg --throw-keyids` with several recipients is rare in
+/// password stores, and a failed open says the key could not decrypt it.
+pub const MAX_DECIPHERS: usize = 1;
+
 /// Exchanges one command APDU for one response APDU (including the two
 /// status bytes). On iOS this is backed by the USB-C smart card connection;
 /// in tests by a simulated card.
@@ -329,7 +339,8 @@ pub fn decrypt_entry(
         .collect();
     // The packets that name this key; only if there are none, the hidden ones.
     let (hidden, named): (Vec<_>, Vec<_>) = for_this_key.into_iter().partition(|p| is_hidden(p));
-    let candidates = if named.is_empty() { hidden } else { named };
+    let mut candidates = if named.is_empty() { hidden } else { named };
+    candidates.truncate(MAX_DECIPHERS);
     if candidates.is_empty() {
         let recipients = recipients::entry_recipients(ciphertext)
             .map(|found| found.keys.iter().map(recipients::Recipient::describe).collect())

@@ -607,3 +607,23 @@ fn no_state_or_error_shows_the_pin_or_the_plaintext() {
         }
     }
 }
+
+// A crafted entry.
+
+#[test]
+fn an_entry_with_many_packets_for_this_key_costs_one_decipher() {
+    let rig = rig(SimTouch::EachUse, SimTouch::EachUse);
+    let genuine = std::fs::read(rig.store_dir().join(format!("{ENTRY}.gpg"))).unwrap();
+    std::fs::write(rig.store_dir().join("web/crafted.gpg"), with_packet_repeated(&genuine, 5)).unwrap();
+
+    let driver = Driver::helpful(PIN, &rig.sim);
+    let task = open(&rig, "web/crafted", &driver);
+    let error = failed(&finish(&task));
+
+    assert!(matches!(error, KeyError::DecryptFailed { .. }), "{error:?}");
+    assert_eq!(rig.sim.decipher_count(), 1);
+    assert_eq!(driver.count(is_touch), 1);
+    // The genuine entry still opens with one.
+    open_ok(&rig);
+    assert_eq!(rig.sim.decipher_count(), 2);
+}

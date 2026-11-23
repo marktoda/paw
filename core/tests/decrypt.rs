@@ -3,7 +3,9 @@
 
 #![cfg(feature = "sim")]
 
-use std::sync::atomic::{AtomicBool, Ordering};
+mod key_common;
+
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use paw_core::sim::SimulatedKey;
@@ -141,4 +143,20 @@ fn an_entry_that_expands_without_end_is_refused() {
         Err(PawError::Decrypt(why)) => assert!(why.contains("more text"), "{why}"),
         other => panic!("expected a refusal, got {:?}", other.map(|text| text.len())),
     }
+}
+
+#[test]
+fn an_entry_with_many_packets_for_this_key_costs_one_decipher() {
+    let key = key(true);
+    let crafted = key_common::with_packet_repeated(&entry_for(&key), 5);
+    let asked = AtomicU32::new(0);
+
+    let result = decrypt_entry(key.clone(), PIN, &crafted, &|| {
+        asked.fetch_add(1, Ordering::SeqCst);
+        key.touch();
+    });
+
+    assert!(matches!(result, Err(PawError::Decrypt(_))), "{result:?}");
+    assert_eq!(key.decipher_count(), 1);
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
 }

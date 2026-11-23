@@ -42,8 +42,9 @@ fn is_hidden(pkesk: &PublicKeyEncryptedSessionKey) -> bool {
 }
 
 pub(crate) struct Plan<'a> {
-    /// The packets addressed to this key; only if there are none, the
-    /// hidden ones, each of which costs a try (and a touch).
+    /// The one packet the card is asked to unwrap: the first addressed to
+    /// this key, or if none is, the first hidden one (see
+    /// [`crate::MAX_DECIPHERS`]).
     candidates: Vec<PublicKeyEncryptedSessionKey>,
     edata: Edata<'a>,
 }
@@ -59,7 +60,8 @@ impl<'a> Plan<'a> {
             _ => None,
         });
         let (hidden, named): (Vec<_>, Vec<_>) = for_this_key.partition(is_hidden);
-        let candidates = if named.is_empty() { hidden } else { named };
+        let mut candidates = if named.is_empty() { hidden } else { named };
+        candidates.truncate(crate::MAX_DECIPHERS);
         if candidates.is_empty() {
             let recipients = recipients::entry_recipients(ciphertext)
                 .map(|found| found.keys.iter().map(recipients::Recipient::describe).collect())

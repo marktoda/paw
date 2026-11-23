@@ -67,6 +67,46 @@ pub fn rig_unplugged(decrypt: SimTouch, auth: SimTouch) -> Rig {
     }
 }
 
+impl Rig {
+    /// Where the fixture store is, to add crafted entries to it.
+    pub fn store_dir(&self) -> &std::path::Path {
+        self._dirs.0.path()
+    }
+}
+
+/// `ciphertext` (one recipient packet, then the encrypted data) with that
+/// packet repeated so there are `copies` of it, all but the last damaged
+/// so the card's answer does not unwrap them: what a crafted entry that
+/// asks the card again and again looks like.
+pub fn with_packet_repeated(ciphertext: &[u8], copies: usize) -> Vec<u8> {
+    let first = ciphertext[0];
+    let (header, length) = if first & 0x40 != 0 {
+        match ciphertext[1] {
+            n @ 0..192 => (2, n as usize),
+            n @ 192..224 => (3, ((n as usize - 192) << 8) + ciphertext[2] as usize + 192),
+            255 => (6, u32::from_be_bytes(ciphertext[2..6].try_into().unwrap()) as usize),
+            other => panic!("partial length {other} in a recipient packet"),
+        }
+    } else {
+        match first & 3 {
+            0 => (2, ciphertext[1] as usize),
+            1 => (3, u16::from_be_bytes([ciphertext[1], ciphertext[2]]) as usize),
+            _ => (5, u32::from_be_bytes(ciphertext[1..5].try_into().unwrap()) as usize),
+        }
+    };
+    let tag = if first & 0x40 != 0 { first & 0x3f } else { (first >> 2) & 0x0f };
+    assert_eq!(tag, 1, "the entry does not start with a recipient packet");
+    let packet = &ciphertext[..header + length];
+    let mut damaged = packet.to_vec();
+    *damaged.last_mut().unwrap() ^= 0x55;
+    let mut out = Vec::new();
+    for _ in 1..copies {
+        out.extend_from_slice(&damaged);
+    }
+    out.extend_from_slice(ciphertext);
+    out
+}
+
 pub fn rig(decrypt: SimTouch, auth: SimTouch) -> Rig {
     let rig = rig_unplugged(decrypt, auth);
     rig.port.attach(rig.sim.clone()).unwrap();
