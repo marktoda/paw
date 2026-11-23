@@ -362,6 +362,17 @@ fn in_casefold_namespace(test: &str) -> bool {
          {CASEFOLD_DIR}='{m}/cf' exec '{}' --exact {test} --nocapture --test-threads=1",
         exe.display()
     );
+    // Some systems (GitHub's runners among them) forbid user namespaces.
+    let allowed = std::process::Command::new("unshare")
+        .args(["-rm", "true"])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if !allowed {
+        eprintln!("skipped: user namespaces are not allowed here");
+        return false;
+    }
     match std::process::Command::new("unshare").args(["-rm", "sh", "-c", &script]).status() {
         Ok(status) if status.code() == Some(77) => {
             eprintln!("skipped: no casefold tmpfs in a user namespace here");

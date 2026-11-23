@@ -25,6 +25,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
+      # Two tests check a hostile remote on a file system that ignores case,
+      # which they mount in a user namespace. They skip where that is refused.
+      - name: Allow user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - name: Test the core
         run: cargo test --manifest-path core/Cargo.toml
       - name: Generate the Swift bindings
