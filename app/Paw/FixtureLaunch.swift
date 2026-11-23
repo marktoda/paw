@@ -1,6 +1,6 @@
 import SwiftUI
 
-#if targetEnvironment(simulator)
+#if DEBUG && targetEnvironment(simulator)
 /// `-pawFixture 1`: the app on a made-up store, with the simulated key
 /// (`-pawSimPin`, `-pawSimTouch`, `-pawSimTouchTimeoutMs`, `-pawSimPinTries`,
 /// `-pawSimUnplugged`), a simulated
@@ -11,11 +11,11 @@ import SwiftUI
 /// (`WritableFixture`, `-pawSimRecipients changed|missing`).
 enum FixtureLaunch {
     static var isRequested: Bool {
-        UserDefaults.standard.bool(forKey: "pawFixture")
+        LaunchArguments.bool("pawFixture")
     }
 
     static var colorScheme: ColorScheme? {
-        switch UserDefaults.standard.string(forKey: "pawAppearance") {
+        switch LaunchArguments.string("pawAppearance") {
         case "dark": return .dark
         case "light": return .light
         default: return nil
@@ -23,7 +23,7 @@ enum FixtureLaunch {
     }
 
     private static var faceId: SimFaceId {
-        switch UserDefaults.standard.string(forKey: "pawSimFaceId") {
+        switch LaunchArguments.string("pawSimFaceId") {
         case "cancel": return .cancel
         case "nomatch": return .noMatch
         case "lockout": return .lockedOut
@@ -61,7 +61,7 @@ enum FixtureLaunch {
         let copies = CopyCache(
             dir: copiesDir.path, keystore: SimKeystoreAdapter(sim: keystore), clock: sharedClock)
         let key = SimulatedKeyHolder.shared
-        let away = UserDefaults.standard.integer(forKey: "pawSimAwayMs")
+        let away = LaunchArguments.int("pawSimAwayMs") ?? 0
         let model = AppModel(
             store: store, copies: copies, clock: sharedClock,
             connect: { try KeyConnection.openForSession() },

@@ -6,15 +6,15 @@ import SwiftUI
 /// `-pawAppearance dark|light`. Debug builds only.
 enum GalleryLaunch {
     static var isRequested: Bool {
-        UserDefaults.standard.bool(forKey: "pawGallery")
+        LaunchArguments.bool("pawGallery")
     }
 
     static var page: GalleryPage? {
-        UserDefaults.standard.string(forKey: "pawGalleryPage").flatMap(GalleryPage.init(rawValue:))
+        LaunchArguments.string("pawGalleryPage").flatMap(GalleryPage.init(rawValue:))
     }
 
     static var colorScheme: ColorScheme? {
-        switch UserDefaults.standard.string(forKey: "pawAppearance") {
+        switch LaunchArguments.string("pawAppearance") {
         case "dark": return .dark
         case "light": return .light
         default: return nil

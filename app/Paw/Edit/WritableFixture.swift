@@ -1,6 +1,6 @@
 import Foundation
 
-#if targetEnvironment(simulator)
+#if DEBUG && targetEnvironment(simulator)
 /// The fixture store, set up the way a real one is so it can be written:
 /// the core's simulated git host serves it, and setup runs to the end
 /// against it (read the key, check the host, download, open one entry),
@@ -57,7 +57,7 @@ enum WritableFixture {
             throw Failure(errorDescription: "Setup stopped at \(state).")
         }
         let sync = try? StoreSync.open(stateDir: stateDir.path)
-        if let mode = UserDefaults.standard.string(forKey: "pawSimRecipients"), let sync {
+        if let mode = LaunchArguments.string("pawSimRecipients"), let sync {
             var lines = key.fingerprintHex() + "\n"
             if mode == "missing" {
                 lines += SimulatedKey.newOther(pin: pin, touchRequired: false, touchTimeoutMs: 1_000).fingerprintHex() + "\n"
