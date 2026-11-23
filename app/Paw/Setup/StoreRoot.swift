@@ -353,8 +353,8 @@ private struct StoreProblemView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: PawMetrics.Spacing.l) {
                 ErrorRow(
-                    kind: .error, problem: "paw couldn't open the store on this iPhone",
-                    nextStep: "Try again. If that doesn't help, set it up again from your server.",
+                    kind: .error, problem: "Couldn't open the store on this iPhone",
+                    nextStep: "Try again, or set it up again from your server.",
                     isBanner: true)
                 if !detail.isEmpty {
                     Text("Details: \(detail)")
@@ -394,12 +394,12 @@ private struct StoreProblemView: View {
     }
 
     private var warning: String {
-        var text = "This deletes the store on this iPhone, its Face ID copies and this iPhone's record of your key. "
-            + "Your store on the server is not touched."
+        var text = "Deletes the store, its Face ID copies and your key's record from this iPhone. "
+            + "The store on the server is not touched."
         if unpushed == 1 {
-            text += " 1 change that is only on this iPhone will be lost."
+            text += " 1 change not sent yet will be lost."
         } else if unpushed > 1 {
-            text += " \(unpushed) changes that are only on this iPhone will be lost."
+            text += " \(unpushed) changes not sent yet will be lost."
         }
         return text
     }

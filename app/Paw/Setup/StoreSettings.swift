@@ -15,7 +15,7 @@ struct StoreSettingsSections: View {
         if let controls {
             if !controls.copiesAvailable {
                 Section {
-                    Text("Face ID copies can't be kept on this iPhone, so every password opens with your key.")
+                    Text("This iPhone can't keep Face ID copies. Every password needs your key.")
                         .font(PawFont.footnote)
                         .foregroundStyle(PawColor.labelSecondary)
                         .accessibilityIdentifier("settings-no-copies")
@@ -74,19 +74,14 @@ struct StoreSettingsSections: View {
         if let controls {
             Section {
                 if confirmingRemove {
-                    Text(removeWarning(controls))
-                        .font(PawFont.subheadline)
-                        .foregroundStyle(PawColor.label)
-                        .accessibilityIdentifier("settings-remove-warning")
-                    Button("Remove") { remove(controls) }
-                        .font(PawFont.body.weight(.semibold))
-                        .foregroundStyle(PawColor.danger)
-                        .accessibilityIdentifier("settings-remove-confirm")
-                    Button("Keep it") { confirmingRemove = false }
-                        .foregroundStyle(PawColor.label)
-                        .accessibilityIdentifier("settings-remove-cancel")
+                    InlineConfirmRow(
+                        question: "Remove this store?", detail: removeWarning(controls),
+                        confirmTitle: "Remove", cancelTitle: "Keep it",
+                        identifier: "settings-remove", questionIdentifier: "settings-remove-warning",
+                        onConfirm: { remove(controls) },
+                        onCancel: { confirmingRemove = false })
                 } else {
-                    Button("Remove this store from this iPhone\u{2026}") { confirmingRemove = true }
+                    Button("Remove store from this iPhone\u{2026}") { confirmingRemove = true }
                         .foregroundStyle(PawColor.danger)
                         .accessibilityIdentifier("settings-remove-store")
                 }
@@ -98,12 +93,12 @@ struct StoreSettingsSections: View {
     }
 
     private func removeWarning(_ controls: StoreControls) -> String {
-        var text = "This deletes the downloaded store, its Face ID copies and this iPhone's record of your key. "
-            + "Your store on the server is not touched."
+        var text = "Deletes the store, its Face ID copies and your key's record from this iPhone. "
+            + "The store on the server is not touched."
         if controls.unpushed == 1 {
-            text += " 1 change that is only on this iPhone will be lost."
+            text += " 1 change not sent yet will be lost."
         } else if controls.unpushed > 1 {
-            text += " \(controls.unpushed) changes that are only on this iPhone will be lost."
+            text += " \(controls.unpushed) changes not sent yet will be lost."
         }
         return text
     }
