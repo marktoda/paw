@@ -225,7 +225,7 @@ final class SetupTests: XCTestCase {
         toAddress()
         let field = expect("repo-address")
         field.tap()
-        field.typeText("you/password-store")
+        field.typeText("password-store")
         tap("address-connect")
         expectText("address-problem", contains: "doesn't look like a git address")
         expect("setup-address")
