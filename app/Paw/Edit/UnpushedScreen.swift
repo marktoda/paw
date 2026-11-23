@@ -10,7 +10,7 @@ struct UnpushedSection: View {
             Section {
                 UnpushedBanner(
                     reason: .waiting, title: edits.bannerTitle,
-                    detail: "Saved on this iPhone. See what changed."
+                    detail: "Saved on this iPhone."
                 ) {
                     model.path.append(.unpushed)
                 }
@@ -35,21 +35,20 @@ struct UnpushedScreen: View {
         List {
             if let problem = edits?.queueProblem {
                 Section {
-                    ErrorRow(kind: .error, problem: "That didn't work.", nextStep: problem)
+                    ErrorRow(kind: .error, problem: "That didn't work", nextStep: problem)
                         .pawListRow()
                 }
             }
             if items.isEmpty {
                 Section {
                     EmptyState(
-                        symbol: PawSymbol.synced, title: "Nothing waiting",
-                        message: "Every change on this iPhone has been sent or taken back.")
+                        symbol: PawSymbol.synced, title: "Nothing to send", message: "")
                         .listRowBackground(Color.clear)
                 }
             } else {
                 SyncSendSection(model: model)
                 Section {
-                    Button("Undo the last change") {
+                    Button("Undo last change") {
                         confirming = nil
                         model.undoLastChange()
                     }
@@ -77,14 +76,14 @@ struct UnpushedScreen: View {
                         }
                     }
                 } header: {
-                    PawSectionHeader(items.count == 1 ? "1 change, newest first" : "\(items.count) changes, newest first")
+                    PawSectionHeader(items.count == 1 ? "1 change" : "\(items.count) changes, newest first")
                         .accessibilityIdentifier("unpushed-count")
                 }
                 Section {
                     if confirming == "all" {
                         InlineConfirmRow(
                             question: items.count == 1 ? "Discard 1 change?" : "Discard \(items.count) changes?",
-                            detail: "The store goes back to what was last downloaded from your git remote.",
+                            detail: "The store goes back to how it was last downloaded.",
                             confirmTitle: "Discard all", cancelTitle: "Keep them", identifier: "unpushed-discard-all",
                             onConfirm: {
                                 confirming = nil
@@ -93,16 +92,13 @@ struct UnpushedScreen: View {
                             onCancel: { confirming = nil })
                             .pawListRow()
                     } else {
-                        Button {
+                        Button(items.count == 1 ? "Discard this change" : "Discard all \(items.count) changes") {
                             confirming = "all"
-                        } label: {
-                            Text("Discard all changes")
-                                .font(PawFont.body.weight(.semibold))
-                                .foregroundStyle(PawColor.danger)
-                                .frame(maxWidth: .infinity, minHeight: PawMetrics.tapMin, alignment: .leading)
                         }
+                        .buttonStyle(.pawDestructive)
                         .accessibilityIdentifier("unpushed-discard-all")
-                        .pawListRow()
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
                     }
                 }
             }
@@ -138,10 +134,10 @@ struct UnpushedScreen: View {
     static func discardDetail(_ item: QueueItem) -> String {
         let name = name(item.entry)
         switch item.kind {
-        case .added: return "\(name) is removed from this iPhone. Later changes are kept."
-        case .edited: return "\(name) goes back to how it was. Later changes are kept."
-        case .deleted: return "\(name) comes back. Later changes are kept."
-        case .renamed: return "\(name) gets its old name back. Later changes are kept."
+        case .added: return "\(name) is removed from this iPhone."
+        case .edited: return "\(name) goes back to how it was."
+        case .deleted: return "\(name) comes back."
+        case .renamed: return "\(name) gets its old name back."
         }
     }
 

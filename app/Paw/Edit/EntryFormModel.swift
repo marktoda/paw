@@ -200,7 +200,7 @@ final class EntryFormModel {
         } catch let error as WriteError {
             saveProblem = editProblem(error, folder: effectiveFolder)
         } catch {
-            saveProblem = EditProblem(problem: "That password can't be generated.", nextStep: describe(error))
+            saveProblem = EditProblem(problem: "That password can't be generated", nextStep: describe(error))
         }
     }
 
@@ -359,7 +359,7 @@ final class EntryFormModel {
             recipientsFolder = effectiveFolder
             return nil
         } catch {
-            saveProblem = EditProblem(problem: "paw couldn't save this.", nextStep: "Nothing was changed. \(describe(error))")
+            saveProblem = EditProblem(problem: "Couldn't save this", nextStep: "Nothing was changed. \(describe(error))")
             return nil
         }
     }

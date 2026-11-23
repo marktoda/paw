@@ -21,7 +21,7 @@ extension AppModel {
         do {
             storeChanged(try PassStore(dir: edits.repoDir), renamed: renamed)
         } catch {
-            notice = Notice(problem: "The list couldn't be read again.", nextStep: describe(error))
+            notice = Notice(problem: "Couldn't read the list again", nextStep: describe(error))
         }
         edits.refreshQueue()
     }

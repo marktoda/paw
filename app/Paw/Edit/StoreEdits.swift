@@ -107,7 +107,8 @@ func describeEditError(_ error: Error) -> String {
             return String(describing: error)
         }
     case let error as WriteError:
-        return editProblem(error, folder: "").problem
+        let problem = editProblem(error, folder: "").problem
+        return problem.hasSuffix(".") ? problem : problem + "."
     default:
         return describe(error)
     }
@@ -120,43 +121,43 @@ func editProblem(_ error: WriteError, folder: String) -> EditProblem {
     case .MissingRecipients(_, let missing):
         let count = missing.count == 1 ? "a key" : "\(missing.count) keys"
         return EditProblem(
-            problem: "paw can't save in \(place): it is also encrypted for \(count) paw doesn't have.",
-            nextStep: "paw won't save it for fewer keys. Adding a missing key comes later; pick another folder for now.")
+            problem: "Can't save in \(place)",
+            nextStep: "It's also encrypted for \(count) paw doesn't have. Pick another folder.")
     case .RecipientsChanged:
         return EditProblem(
-            problem: "Who can open \(place) changed since you last checked.",
+            problem: "Who can open \(place) changed",
             nextStep: "Review the new list before saving here.", reviewFolder: folder)
     case .RecipientsNotConfirmed:
         return EditProblem(
-            problem: "paw hasn't confirmed who can open this store yet.",
+            problem: "paw hasn't confirmed who can open this store",
             nextStep: "Finish setting up the store, then save again.")
     case .NeedsOpenEntry(let entry):
         return EditProblem(
-            problem: "Moving \(EntryRef(path: entry).name) to a folder with other keys needs it open.",
-            nextStep: "Open it with your key, then move it from its Edit screen.")
+            problem: "Open \(EntryRef(path: entry).name) before moving it",
+            nextStep: "That folder uses other keys. Open it with your key, then move it from Edit.")
     case .NoSuchEntry(let entry):
         return EditProblem(
-            problem: "\(EntryRef(path: entry).name) isn't in the store any more.",
-            nextStep: "Nothing was changed. It may have been deleted on another device.")
+            problem: "\(EntryRef(path: entry).name) isn't in the store any more",
+            nextStep: "It may have been deleted on another device.")
     case .AlreadyExists(let entry):
         return EditProblem(
-            problem: "There's already an entry called '\(EntryRef(path: entry).name)'.",
+            problem: "There's already a password called '\(EntryRef(path: entry).name)'",
             nextStep: "Pick another name.")
     case .ChangedSinceOpened(let entry):
         return EditProblem(
-            problem: "\(EntryRef(path: entry).name) changed since you opened it.",
-            nextStep: "Nothing was saved. Close this, open it again and make your change there.")
+            problem: "\(EntryRef(path: entry).name) changed since you opened it",
+            nextStep: "Nothing was saved. Close this, open it again and redo your change.")
     case .Invalid(let problems):
         return EditProblem(
-            problem: problems.first?.message ?? "Something in the form can't be saved.",
+            problem: problems.first?.message ?? "Something here can't be saved",
             nextStep: "Fix it, then save.")
     case .Policy(let message):
-        return EditProblem(problem: "That password can't be generated.", nextStep: message)
+        return EditProblem(problem: "That password can't be generated", nextStep: message)
     case .Failed(let message), .Certificate(let message):
-        return EditProblem(problem: "paw couldn't save this.", nextStep: "Nothing was changed. Details: \(message)")
+        return EditProblem(problem: "Couldn't save this", nextStep: "Nothing was changed. Details: \(message)")
     case .NoEncryptionKey(_, let reason):
-        return EditProblem(problem: "A key for this folder can't be used to encrypt.", nextStep: reason)
+        return EditProblem(problem: "A key for this folder can't encrypt", nextStep: reason)
     case .NotPinned:
-        return EditProblem(problem: "A key for this folder isn't saved on this iPhone.", nextStep: "Nothing was changed.")
+        return EditProblem(problem: "A key for this folder isn't saved on this iPhone", nextStep: "Nothing was changed.")
     }
 }

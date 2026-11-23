@@ -227,7 +227,7 @@ final class EditTests: PawUITestCase {
         tap("add-button")
         type("half-typed", into: "form-name")
         tap("form-cancel")
-        expectLabel("form-discard-question", contains: "Discard this new entry?")
+        expectLabel("form-discard-question", contains: "Discard this new password?")
         snapshot("cancel-confirm")
         tap("form-discard-cancel")
         expectGone("form-discard-question")
@@ -312,7 +312,7 @@ final class EditTests: PawUITestCase {
         expectLabel("unpushed-count", contains: "2 changes")
         expectLabel("unpushed-added-first.example", contains: "Added first.example")
         expectLabel("unpushed-added-second.example", contains: "Added second.example")
-        expectLabel("unpushed-send-footer", contains: "Sending needs your key")
+        expectLabel("unpushed-send-footer", contains: "Needs your key")
         snapshot("unpushed-list")
     }
 

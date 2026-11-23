@@ -25,13 +25,20 @@ struct UnpushedBanner: View {
                     Text(title)
                         .font(PawFont.headline)
                         .foregroundStyle(reason == .waitingForKey ? PawColor.onPanel : PawColor.label)
-                    Text(detail)
-                        .font(PawFont.footnote)
-                        .foregroundStyle(
-                            reason == .waitingForKey ? PawColor.onPanelSecondary : PawColor.labelSecondary)
+                    if !detail.isEmpty {
+                        Text(detail)
+                            .font(PawFont.footnote)
+                            .foregroundStyle(
+                                reason == .waitingForKey ? PawColor.onPanelSecondary : PawColor.labelSecondary)
+                    }
                 }
                 .multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                // It opens the list of changes.
+                Image(systemName: PawSymbol.disclosure)
+                    .font(PawFont.footnote.weight(.semibold))
+                    .foregroundStyle(reason == .waitingForKey ? PawColor.onPanelSecondary : PawColor.labelTertiary)
+                    .accessibilityHidden(true)
             }
             .padding(.horizontal, PawMetrics.Spacing.l)
             .padding(.vertical, PawMetrics.Spacing.m)
@@ -75,7 +82,7 @@ struct UnpushedBanner: View {
     }
 
     private var spokenLabel: String {
-        let words = "\(title). \(detail)"
+        let words = detail.isEmpty ? "\(title)." : "\(title). \(detail)"
         return reason == .waitingForKey ? "\(words) Needs your key." : words
     }
 }

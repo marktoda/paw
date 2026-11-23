@@ -9,6 +9,8 @@ struct InlineConfirmRow: View {
     let cancelTitle: String
     /// `<identifier>-confirm` and `<identifier>-cancel` for the buttons.
     let identifier: String
+    /// The question's own identifier, where it isn't `<identifier>-question`.
+    var questionIdentifier: String? = nil
     let onConfirm: () -> Void
     let onCancel: () -> Void
 
@@ -18,14 +20,16 @@ struct InlineConfirmRow: View {
                 Text(question)
                     .font(PawFont.headline)
                     .foregroundStyle(PawColor.label)
-                Text(detail)
-                    .font(PawFont.footnote)
-                    .foregroundStyle(PawColor.labelSecondary)
+                if !detail.isEmpty {
+                    Text(detail)
+                        .font(PawFont.footnote)
+                        .foregroundStyle(PawColor.labelSecondary)
+                }
             }
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isHeader)
-            .accessibilityIdentifier("\(identifier)-question")
+            .accessibilityIdentifier(questionIdentifier ?? "\(identifier)-question")
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: PawMetrics.Spacing.s) { buttons }
                 VStack(spacing: PawMetrics.Spacing.s) { buttons }
@@ -69,23 +73,23 @@ struct RecipientsFooter: View {
         case nil:
             EmptyView()
         case .failure(let error)?:
-            ErrorRow(kind: .error, problem: "paw can't tell who can open this folder.", nextStep: describe(error))
+            ErrorRow(kind: .error, problem: "Can't tell who can open this folder", nextStep: describe(error))
         case .success(let recipients)?:
             if !recipients.confirmed {
                 ErrorRow(
-                    kind: .warning, problem: "paw hasn't confirmed who can open this store yet.",
+                    kind: .warning, problem: "paw hasn't confirmed who can open this store",
                     nextStep: "Finish setting up the store, then save.")
             } else if recipients.changed {
                 ErrorRow(
                     kind: .warning,
-                    problem: "Who can open \(place) changed since you last checked.",
+                    problem: "Who can open \(place) changed",
                     nextStep: "Review the new list before saving here.",
-                    actionTitle: "Review who can open this folder", action: onReview)
+                    actionTitle: "Review", action: onReview)
             } else if !recipients.lines.allSatisfy(\.isReady) {
                 ErrorRow(
                     kind: .warning,
-                    problem: "paw can't save in \(place): it is also encrypted for a key paw doesn't have.",
-                    nextStep: "paw won't save it for fewer keys. Adding a missing key comes later; pick another folder for now.")
+                    problem: "Can't save in \(place)",
+                    nextStep: "It's also encrypted for a key paw doesn't have. Pick another folder.")
             } else {
                 HStack(alignment: .firstTextBaseline, spacing: PawMetrics.Spacing.s) {
                     Image(systemName: "person.badge.key")
@@ -96,7 +100,7 @@ struct RecipientsFooter: View {
                         Text(Self.sentence(recipients.lines))
                             .font(PawFont.subheadline)
                             .foregroundStyle(PawColor.label)
-                        Text("Saving needs no key and no connection. It stays on this iPhone until you send it.")
+                        Text("Saving needs no key. It stays on this iPhone until you send it.")
                             .font(PawFont.footnote)
                             .foregroundStyle(PawColor.labelSecondary)
                     }
@@ -168,7 +172,7 @@ struct RecipientsReviewScreen: View {
     var body: some View {
         List {
             Section {
-                Text("The list of keys that can open \(place) is not the one you last accepted. New passwords saved here are encrypted for everyone on the new list.")
+                Text("The keys that can open \(place) changed. Passwords you save here will be encrypted for the new list.")
                     .font(PawFont.subheadline)
                     .foregroundStyle(PawColor.label)
                     .fixedSize(horizontal: false, vertical: true)
@@ -180,13 +184,13 @@ struct RecipientsReviewScreen: View {
             case .success(let found)?:
                 Section {
                     if found.acceptedLines.isEmpty {
-                        lineRow("No list accepted", detail: "This folder had no list of keys of its own.")
+                        lineRow("No list", detail: "This folder had no list of its own.")
                     }
                     ForEach(found.acceptedLines, id: \.self) { line in
                         lineRow(Self.name(line, in: found), detail: Self.grouped(line))
                     }
                 } header: {
-                    PawSectionHeader("Before (\(found.acceptedGpgId ?? "none"))")
+                    PawSectionHeader("Before")
                 }
                 .accessibilityIdentifier("recipients-before")
                 Section {
@@ -197,17 +201,17 @@ struct RecipientsReviewScreen: View {
                                 : "\(line.statusWords) \u{00B7} \(Self.grouped(line.line))")
                     }
                 } header: {
-                    PawSectionHeader("Now (\(found.gpgId))")
+                    PawSectionHeader("Now")
                 }
                 .accessibilityIdentifier("recipients-now")
             case .failure(let error)?:
-                ErrorRow(kind: .error, problem: "The list couldn't be read.", nextStep: describe(error))
+                ErrorRow(kind: .error, problem: "Couldn't read the list", nextStep: describe(error))
                     .pawListRow()
             case nil:
                 EmptyView()
             }
             if let problem {
-                ErrorRow(kind: .error, problem: "Not accepted.", nextStep: problem)
+                ErrorRow(kind: .error, problem: "Not accepted", nextStep: problem)
                     .pawListRow()
             }
             Section {
@@ -217,7 +221,7 @@ struct RecipientsReviewScreen: View {
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
             } footer: {
-                Text("Check it with whoever changed it if you didn't expect this.")
+                Text("Not expected? Check with whoever changed it first.")
                     .font(PawFont.footnote)
                     .foregroundStyle(PawColor.labelSecondary)
             }

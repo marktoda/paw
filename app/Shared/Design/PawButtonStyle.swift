@@ -7,6 +7,9 @@ struct PawButtonStyle: ButtonStyle {
         case primary
         /// `label` on `fill`.
         case secondary
+        /// `danger` on `dangerFill`: the step that loses something. It
+        /// asks before it acts.
+        case destructive
     }
 
     let kind: Kind
@@ -25,17 +28,34 @@ private struct PawButtonBody: View {
         configuration.label
             .font(PawFont.headline)
             .multilineTextAlignment(.center)
-            .foregroundStyle(kind == .primary ? PawColor.onAction : PawColor.label)
+            .foregroundStyle(foreground)
             .padding(.horizontal, PawMetrics.Spacing.l)
             .padding(.vertical, PawMetrics.Spacing.s)
             .frame(maxWidth: .infinity, minHeight: PawMetrics.control)
-            .background(kind == .primary ? PawColor.action : PawColor.fill, in: Capsule())
+            .background(ground, in: Capsule())
             .contentShape(Capsule())
             .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
+    }
+
+    private var foreground: Color {
+        switch kind {
+        case .primary: PawColor.onAction
+        case .secondary: PawColor.label
+        case .destructive: PawColor.danger
+        }
+    }
+
+    private var ground: Color {
+        switch kind {
+        case .primary: PawColor.action
+        case .secondary: PawColor.fill
+        case .destructive: PawColor.dangerFill
+        }
     }
 }
 
 extension ButtonStyle where Self == PawButtonStyle {
     static var pawPrimary: PawButtonStyle { PawButtonStyle(kind: .primary) }
     static var pawSecondary: PawButtonStyle { PawButtonStyle(kind: .secondary) }
+    static var pawDestructive: PawButtonStyle { PawButtonStyle(kind: .destructive) }
 }

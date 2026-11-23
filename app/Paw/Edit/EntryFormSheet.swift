@@ -19,7 +19,7 @@ struct EntryFormSheet: View {
                     EntryFormView(model: model, edits: edits, form: form)
                 } else if let openProblem {
                     List {
-                        ErrorRow(kind: .error, problem: "This entry can't be edited now.", nextStep: openProblem)
+                        ErrorRow(kind: .error, problem: "Can't edit this now", nextStep: openProblem)
                             .pawListRow()
                     }
                     .toolbar {
@@ -84,8 +84,8 @@ private struct EntryFormView: View {
                 if form.confirmingDiscard {
                     Section {
                         InlineConfirmRow(
-                            question: form.isEditing ? "Discard your changes?" : "Discard this new entry?",
-                            detail: "What you typed is not kept anywhere.",
+                            question: form.isEditing ? "Discard your changes?" : "Discard this new password?",
+                            detail: "",
                             confirmTitle: "Discard", cancelTitle: "Keep editing", identifier: "form-discard",
                             onConfirm: close, onCancel: { form.confirmingDiscard = false })
                             .pawListRow()
@@ -102,7 +102,7 @@ private struct EntryFormView: View {
             .listStyle(.insetGrouped)
             .environment(\.defaultMinListRowHeight, PawMetrics.tapMin)
             .scrollDismissesKeyboard(.interactively)
-            .navigationTitle(form.isEditing ? "Edit" : "New entry")
+            .navigationTitle(form.isEditing ? "Edit" : "New password")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -299,7 +299,7 @@ private struct EntryFormView: View {
                 identifier: "form-website", problem: shown(.url, "website"), keyboard: .URL)
                 .focused($focus, equals: .website)
         } footer: {
-            Text("AutoFill uses the website to check it is filling the right page.")
+            Text("AutoFill uses it to match the page.")
                 .font(PawFont.footnote)
                 .foregroundStyle(PawColor.labelSecondary)
         }
@@ -335,7 +335,7 @@ private struct EntryFormView: View {
         } header: {
             PawSectionHeader("Other fields")
         } footer: {
-            Text("Each is saved as its own line, like \u{201C}pin: 1234\u{201D}.")
+            Text("Saved as lines like \u{201C}pin: 1234\u{201D}.")
                 .font(PawFont.footnote)
                 .foregroundStyle(PawColor.labelSecondary)
         }
@@ -365,7 +365,7 @@ private struct EntryFormView: View {
             if let problem = form.saveProblem {
                 ErrorRow(
                     kind: .error, problem: problem.problem, nextStep: problem.nextStep,
-                    actionTitle: problem.reviewFolder == nil ? nil : "Review who can open this folder",
+                    actionTitle: problem.reviewFolder == nil ? nil : "Review",
                     action: { reviewing = true })
                     .pawListRow()
                     .id("footer")
@@ -533,7 +533,7 @@ private struct GeneratorOptions: View {
                 .font(PawFont.subheadline.weight(.semibold))
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("form-strength")
-            Text("Options change the next password you generate.")
+            Text("Used the next time you generate.")
                 .font(PawFont.footnote)
                 .foregroundStyle(PawColor.labelSecondary)
         }
