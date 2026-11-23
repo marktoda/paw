@@ -19,7 +19,9 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 | Card answers PIN state queries; login-sized signatures work in every encoding; auth slot caches a touch for 15 s | done |
 | Clone, commit, fetch, push over SSH with the login signed by a simulated card | done |
 | Read a store: tree, `.gpg-id`, who can open an entry, entry text, search, site matching, fixture store | done |
-| Design language, logo candidates, SwiftUI tokens, components and gallery | in progress (`ui-kit`) |
+| Design language, logo candidates, SwiftUI tokens, components and gallery | done |
+| Face ID copies in the core: per-entry deadlines, tamper and clock rules, simulated keystore and clock | done |
+| Staying in step with a remote: replay, keep both, unpushed queue, setup flow, pinned GitHub host keys | done |
 
 ## Milestones
 
@@ -29,10 +31,10 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 |---|---|---|
 | Raw card checks on the test screen | core + app | done |
 | Exact touch policy per slot | core | done |
-| Keep the simulated key and fixture out of device builds (cargo feature, device-library scan in CI) | foundations | next, after `ui-kit` merges |
-| App Group container and shared keychain group for app and extension, checked in the simulator | foundations | next, after `ui-kit` merges |
-| Key session in the core: one object per plugged-in key, PIN held for the session and forgotten after 15 minutes in the background, cancel, structured errors | key-session | next |
-| Key task state machine (plug in, PIN, touch, working, done) driving the real key sheet | key-session, then screens | blocked on `ui-kit` merge for the Swift half |
+| Keep the simulated key and fixture out of device builds (cargo feature, device-library scan in CI) | foundations | next, after `screens` merges |
+| App Group container and shared keychain group for app and extension, checked in the simulator | foundations | next, after `screens` merges |
+| Key session in the core: one object per plugged-in key, PIN held for the session and forgotten after 15 minutes in the background, cancel, structured errors | key-session | in progress (`key-session`) |
+| Key task state machine (plug in, PIN, touch, working, done) driving the real key sheet | key-session, then screens | core in progress (`key-session`); Swift half after it and `screens` merge |
 | Touch-timeout status word from the real key | device | blocked on the owner running one check |
 
 ### M2 Read a store
@@ -40,16 +42,16 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 | Item | Track | Status |
 |---|---|---|
 | Store model in the core | core | done |
-| Home, folder, search and opened entry screens on the fixture store; copy with expiry, reveal, large type, app-switcher cover | screens | blocked on `ui-kit` merge |
+| Home, folder, search and opened entry screens on the fixture store; copy with expiry, reveal, large type, app-switcher cover | screens | in progress (`screens`) |
 | Open real entries on the device (store imported by hand, before clone exists) | device | later; clone may arrive first |
 
 ### M3 Face ID copies
 
 | Item | Track | Status |
 |---|---|---|
-| Copy cache in the core: per-entry deadline from the key touch, sealed by a device keystore trait, wiped on expiry, clock moved back or reboot ends all copies, "Lock now" | face-id-copies | next |
-| Simulated keystore and clock for Linux and the simulator | face-id-copies | next |
-| Secure Enclave keystore in Swift (current face only, no passcode fallback: owner to confirm) | screens | blocked on the core half |
+| Copy cache in the core: per-entry deadline from the key touch, sealed by a device keystore trait, wiped on expiry, clock moved back or reboot ends all copies, "Lock now" | face-id-copies | done |
+| Simulated keystore and clock for Linux and the simulator | face-id-copies | done |
+| Secure Enclave keystore in Swift (current face only, no passcode fallback: owner to confirm) | screens | next; needs the device to verify |
 | Early AutoFill skeleton: fill from a copy, shared index, staleness after a pull | autofill | blocked on App Group and copies |
 
 ### M4 Clone, setup, fetch
@@ -57,18 +59,18 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 | Item | Track | Status |
 |---|---|---|
 | Card-signed SSH transport, pinned host keys | core | done |
-| Integrate after fetch: fast-forward, replay local commits on top, keep both when one entry changed on both sides | sync | next |
-| Setup flow as a core state machine: read key, address, check the host accepts the key before the PIN, clone, test decrypt | sync | next |
-| GitHub host keys shipped in the app; first-connection screen for other hosts | sync | next |
-| Setup screens | screens | blocked on the two rows above |
+| Integrate after fetch: fast-forward, replay local commits on top, keep both when one entry changed on both sides | sync | done |
+| Setup flow as a core state machine: read key, address, check the host accepts the key before the PIN, clone, test decrypt | sync | done |
+| GitHub host keys shipped in the app; first-connection confirm for other hosts | sync | done (core) |
+| Setup screens | screens | next, after `screens` merges |
 | First real clone of the owner's store from GitHub with the YubiKey | device | blocked on setup screens |
 
 ### M5 Write and push
 
 | Item | Track | Status |
 |---|---|---|
-| Entry draft, password generator, encrypt to the recipient list, pass-style commit messages | core | next, after M4 sync |
-| Unpushed queue, undo, discard; push with fetch and replay on one login | sync | next, after integrate |
+| Entry draft, password generator, encrypt to the recipient list, pass-style commit messages, delete, rename, move | core | in progress (`write-path`) |
+| Unpushed queue, undo, discard; push with fetch and replay on one login | sync | done |
 | Add, edit, delete, rename screens | screens | later |
 | A real push, read back by desktop `pass` | device | later |
 
