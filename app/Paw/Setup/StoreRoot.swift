@@ -1,5 +1,6 @@
 import Observation
 import SwiftUI
+import UIKit
 
 /// What Settings shows and does about the store: its address and host,
 /// whether Face ID copies exist on this iPhone, and removing it.
@@ -13,6 +14,9 @@ struct StoreControls {
     /// Removes the store from this iPhone and returns to setup. Returns
     /// why it could not, if it could not.
     let remove: @MainActor () -> String?
+    /// The protection classes of the store's files, for the simulator's
+    /// Settings readback.
+    let fileProtection: @MainActor () -> String
 }
 
 extension EnvironmentValues {
@@ -27,17 +31,19 @@ final class StoreRootModel {
     enum Phase {
         case setup(SetupModel)
         case home(AppModel, StoreControls)
-        case failed(String)
+        /// The store on this iPhone could not be opened: the raw error for
+        /// "Details", and the changes that setting up again would lose.
+        case failed(detail: String, unpushed: Int)
     }
 
-    private(set) var phase: Phase = .failed("")
+    private(set) var phase: Phase = .failed(detail: "", unpushed: 0)
     let location: StoreLocation
     let keyPort: KeyPort
     private let clock: Clock
     private let connect: AppModel.Connect = { try KeyConnection.openForSession() }
     #if targetEnvironment(simulator)
     private let simulatedClock: SimClock
-    private let keystore = SimKeystore()
+    let keystore = SimKeystore()
     #endif
 
     init() throws {
@@ -69,8 +75,13 @@ final class StoreRootModel {
                 phase = .setup(makeSetup(setup))
             }
         } catch {
-            phase = .failed(String(describing: error))
+            fail(error)
         }
+    }
+
+    private func fail(_ error: Error) {
+        let unpushed = (try? StoreSync.open(stateDir: location.stateDir.path).unpushed().count) ?? 0
+        phase = .failed(detail: String(describing: error), unpushed: unpushed)
     }
 
     private func makeSetup(_ setup: Setup) -> SetupModel {
@@ -90,6 +101,8 @@ final class StoreRootModel {
     private func openHome() {
         do {
             _ = try keyPort.loadEnrolledKey(stateDir: location.stateDir.path)
+            // Setup wrote the pinned keys, the enrolment and the known hosts.
+            location.protect()
             let store = try PassStore(dir: location.repoDir.path)
             let sync = try? StoreSync.open(stateDir: location.stateDir.path)
             #if targetEnvironment(simulator)
@@ -97,7 +110,7 @@ final class StoreRootModel {
                 dir: location.copiesDir.path, keystore: keystore.asKeystore(), clock: clock)
             let held = SimulatedKeyHolder.shared
             let simulatedClock = simulatedClock
-            let away = UserDefaults.standard.integer(forKey: "pawSimAwayMs")
+            let away = LaunchArguments.int("pawSimAwayMs") ?? 0
             let simulator: SimulatorControls? = SimulatorControls(
                 advanceClock: { simulatedClock.advanceMs(ms: $0) },
                 plugIn: { held.key.plugIn() },
@@ -122,10 +135,11 @@ final class StoreRootModel {
                 hostFingerprints: (try? sync?.hostFingerprints()) ?? [],
                 unpushed: (try? sync?.unpushed().count) ?? 0,
                 copiesAvailable: copies != nil,
-                remove: { [weak self] in self?.removeStore() })
+                remove: { [weak self] in self?.removeStore() },
+                fileProtection: { [location] in location.protectionSummary() })
             phase = .home(model, controls)
         } catch {
-            phase = .failed(String(describing: error))
+            fail(error)
         }
     }
 
@@ -135,18 +149,40 @@ final class StoreRootModel {
         if case .home(let model, _) = phase {
             model.lockNow()
         }
-        return wipeAndRestart()
+        // Whatever Lock now managed, and even with no Face ID copies on this
+        // iPhone: the seal key, the index key and the enrolment marker go.
+        let keychain = wipeKeychain()
+        Clipboard.clearIfOurs()
+        let files = wipeAndRestart()
+        return [keychain, files].compactMap { $0 }.first
+    }
+
+    /// Deletes the Face ID copies' keychain items. Returns why not, if not.
+    private func wipeKeychain() -> String? {
+        do {
+            #if targetEnvironment(simulator)
+            try keystore.reset()
+            #else
+            try EnclaveKeystore().resetDetailed()
+            #endif
+            return nil
+        } catch {
+            return "paw couldn't delete the Face ID keys from the keychain: \(describe(error))"
+        }
     }
 
     /// "Start setup again" after the host's identity changed, or after the
     /// store could not be opened.
     func startOver() {
+        _ = wipeKeychain()
         if let problem = wipeAndRestart() {
-            phase = .failed(problem)
+            phase = .failed(detail: problem, unpushed: 0)
         }
     }
 
     private func wipeAndRestart() -> String? {
+        // Drops the PIN at once; the card is de-verified on the session's
+        // own thread, never here on the main thread.
         keyPort.session()?.forgetPin()
         keyPort.setEnrolledKey(key: nil)
         do {
@@ -161,7 +197,7 @@ final class StoreRootModel {
 }
 
 /// Builds the root model once the first frame is up, then shows setup or
-/// Home, and says so inline if the store can't be read.
+/// Home, and says so inline if the store can't be read, with a way out.
 struct StoreRoot: View {
     @State private var root: StoreRootModel?
     @State private var problem: String?
@@ -171,7 +207,9 @@ struct StoreRoot: View {
             if let root {
                 StoreRootContent(root: root)
             } else if let problem {
-                StoreProblemView(problem: problem, startOver: nil)
+                StoreProblemView(
+                    detail: problem, unpushed: Self.unpushedOnDisk(), retry: { build() },
+                    startOver: { removeEverything() })
             } else {
                 PawColor.bg.ignoresSafeArea()
             }
@@ -179,16 +217,36 @@ struct StoreRoot: View {
         .preferredColorScheme(Self.appearance)
         .onAppear {
             guard root == nil, problem == nil else { return }
-            do {
-                root = try StoreRootModel()
-            } catch {
-                problem = String(describing: error)
-            }
+            build()
         }
     }
 
+    private func build() {
+        do {
+            root = try StoreRootModel()
+            problem = nil
+        } catch {
+            problem = String(describing: error)
+        }
+    }
+
+    /// "Remove the store" when even opening paw's folder failed.
+    private func removeEverything() {
+        do {
+            try StoreLocation.standard().removeAll()
+            build()
+        } catch {
+            problem = String(describing: error)
+        }
+    }
+
+    private static func unpushedOnDisk() -> Int {
+        guard let location = try? StoreLocation.standard() else { return 0 }
+        return (try? StoreSync.open(stateDir: location.stateDir.path).unpushed().count) ?? 0
+    }
+
     private static var appearance: ColorScheme? {
-        #if targetEnvironment(simulator)
+        #if DEBUG && targetEnvironment(simulator)
         FixtureLaunch.colorScheme
         #else
         nil
@@ -200,39 +258,110 @@ private struct StoreRootContent: View {
     let root: StoreRootModel
 
     var body: some View {
-        switch root.phase {
-        case .setup(let model):
-            SetupFlowView(model: model)
-        case .home(let model, let controls):
-            RootView(model: model)
-                .environment(\.storeControls, controls)
-        case .failed(let problem):
-            StoreProblemView(problem: problem) { root.startOver() }
+        Group {
+            switch root.phase {
+            case .setup(let model):
+                SetupFlowView(model: model)
+            case .home(let model, let controls):
+                RootView(model: model)
+                    .environment(\.storeControls, controls)
+            case .failed(let detail, let unpushed):
+                StoreProblemView(
+                    detail: detail, unpushed: unpushed, retry: { root.route() }, startOver: { root.startOver() })
+            }
         }
+        #if DEBUG && targetEnvironment(simulator)
+        .background(alignment: .topLeading) {
+            // For the UI tests: what is left of a store after it was removed.
+            let state = root.debugState()
+            Text(verbatim: state)
+                .font(.caption2)
+                .frame(width: 1, height: 1)
+                .opacity(0.02)
+                .accessibilityLabel("Store state")
+                .accessibilityValue(state)
+                .accessibilityIdentifier("sim-store-state")
+        }
+        #endif
     }
 }
 
-/// The store could not be opened. Nothing else is possible, so say what
-/// happened and offer the one way out.
+#if DEBUG && targetEnvironment(simulator)
+extension StoreRootModel {
+    /// "copies 0 · keychain resets 1 · pin none · pasteboard empty".
+    func debugState() -> String {
+        let copies = (try? FileManager.default.contentsOfDirectory(atPath: location.copiesDir.path).count) ?? 0
+        let pin = keyPort.session()?.holdsPin() == true ? "held" : "none"
+        let pasteboard = UIPasteboard.general.hasStrings ? "full" : "empty"
+        return "copies \(copies) · keychain resets \(keystore.resetCount()) · pin \(pin) · pasteboard \(pasteboard)"
+    }
+}
+#endif
+
+/// The store could not be opened. Say what happened in words, keep the
+/// library's text under Details, and offer the ways out: try again, or set
+/// up again after an inline confirmation that says what would be lost.
 private struct StoreProblemView: View {
-    let problem: String
-    let startOver: (() -> Void)?
+    let detail: String
+    /// Changes saved on this iPhone and not sent: lost by setting up again.
+    let unpushed: Int
+    let retry: () -> Void
+    let startOver: () -> Void
+
+    @State private var confirming = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: PawMetrics.Spacing.l) {
-            ErrorRow(
-                kind: .error, problem: "paw couldn't open the store on this iPhone",
-                nextStep: "Quit paw and open it again. If that doesn't help, set it up again. \(problem)",
-                isBanner: true)
-            if let startOver {
-                Button("Set up again", action: startOver)
-                    .buttonStyle(.pawSecondary)
-                    .accessibilityIdentifier("store-start-over")
+        ScrollView {
+            VStack(alignment: .leading, spacing: PawMetrics.Spacing.l) {
+                ErrorRow(
+                    kind: .error, problem: "paw couldn't open the store on this iPhone",
+                    nextStep: "Try again. If that doesn't help, set it up again from your server.",
+                    isBanner: true)
+                if !detail.isEmpty {
+                    Text("Details: \(detail)")
+                        .font(PawFont.footnote.monospaced())
+                        .foregroundStyle(PawColor.labelSecondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("store-problem-detail")
+                }
+                Button("Try again", action: retry)
+                    .buttonStyle(.pawPrimary)
+                    .accessibilityIdentifier("store-retry")
+                if confirming {
+                    Text(warning)
+                        .font(PawFont.subheadline)
+                        .foregroundStyle(PawColor.label)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("store-start-over-warning")
+                    Button("Delete and set up again", action: startOver)
+                        .buttonStyle(.pawSecondary)
+                        .foregroundStyle(PawColor.danger)
+                        .accessibilityIdentifier("store-start-over-confirm")
+                    Button("Keep it") { confirming = false }
+                        .buttonStyle(.pawSecondary)
+                        .accessibilityIdentifier("store-start-over-cancel")
+                } else {
+                    Button("Set up again\u{2026}") { confirming = true }
+                        .buttonStyle(.pawSecondary)
+                        .accessibilityIdentifier("store-start-over")
+                }
             }
+            .padding(PawMetrics.Spacing.l)
         }
-        .padding(PawMetrics.Spacing.l)
         .frame(maxHeight: .infinity)
         .background(PawColor.bg.ignoresSafeArea())
         .accessibilityIdentifier("store-problem")
+    }
+
+    private var warning: String {
+        var text = "This deletes the store on this iPhone, its Face ID copies and this iPhone's record of your key. "
+            + "Your store on the server is not touched."
+        if unpushed == 1 {
+            text += " 1 change that is only on this iPhone will be lost."
+        } else if unpushed > 1 {
+            text += " \(unpushed) changes that are only on this iPhone will be lost."
+        }
+        return text
     }
 }
