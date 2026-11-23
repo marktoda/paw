@@ -396,3 +396,25 @@ fn a_repository_the_key_cannot_see_is_told_apart_from_a_refused_key() {
     assert!(matches!(download(&w, &Driver::helpful(PIN, &w.sim)), KeyTaskState::Done { .. }));
     assert_eq!(w.setup.last_remote_message(), None);
 }
+
+#[test]
+fn an_empty_repository_sends_the_task_path_back_to_the_address_with_the_reason() {
+    let sim = cached_login_key();
+    let server = GitServer::start_empty(&[sim.ssh_public_key()]);
+    let port = KeyPort::new(SimClock::new(1_790_000_000_000));
+    port.attach(sim.clone()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let setup = Setup::open(dir.path().to_string_lossy().into_owned()).unwrap();
+    let w = World { sim, port, server, dir, setup };
+    to_need_pin(&w);
+
+    let state = download(&w, &Driver::helpful(PIN, &w.sim));
+
+    assert!(matches!(state, KeyTaskState::Failed { error: KeyError::Reader { .. } }), "{state:?}");
+    assert!(matches!(w.setup.last_task_result(), Err(SetupError::EmptyRepository)));
+    assert!(matches!(w.setup.state(), SetupState::Address { .. }), "{:?}", w.setup.state());
+    assert_eq!(w.setup.last_remote_message().unwrap().reason, RemoteReason::EmptyRepository);
+    assert!(!w.dir.path().join("repo").exists());
+    let relaunched = Setup::open(w.dir.path().to_string_lossy().into_owned()).unwrap();
+    assert_eq!(relaunched.last_remote_message().unwrap().reason, RemoteReason::EmptyRepository);
+}

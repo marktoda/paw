@@ -353,7 +353,24 @@ fn an_empty_repository_is_its_own_failure() {
 
     assert!(matches!(error, SetupError::EmptyRepository), "{error:?}");
     assert!(!flow.repo_dir().exists());
-    assert!(matches!(flow.state(), SetupState::NeedPin { .. }));
+    // Back at the address, which is kept, with the reason, also after a
+    // relaunch.
+    assert!(matches!(flow.state(), SetupState::Address { .. }), "{:?}", flow.state());
+    let message = flow.last_remote_message().unwrap();
+    assert_eq!(message.reason, RemoteReason::EmptyRepository);
+    assert_eq!((message.host.as_str(), message.repository.as_str()), ("127.0.0.1", "store.git"));
+    let relaunched = SetupFlow::open(dir.path()).unwrap();
+    assert!(matches!(relaunched.state(), SetupState::Address { .. }));
+    assert_eq!(relaunched.last_remote_message(), Some(message));
+    // The same address again, once the store is pushed: it goes through.
+    let mut flow = relaunched;
+    push_fixture_store(&server);
+    flow.set_address(&address(&server)).unwrap();
+    assert_eq!(flow.last_remote_message(), None);
+    assert!(matches!(flow.check_host().unwrap(), SetupState::NeedPin { .. }));
+    assert!(matches!(download(&mut flow, &card, &events(&card, true)).unwrap(), SetupState::TestDecrypt { .. }));
+    assert_eq!(SetupFlow::open(dir.path()).unwrap().last_remote_message(), None);
+    assert!(!std::fs::read_to_string(dir.path().join("setup")).unwrap().contains("problem="));
 }
 
 #[test]
@@ -394,6 +411,12 @@ fn a_repository_without_gpg_id_is_not_a_pass_store() {
 
     assert!(matches!(error, SetupError::NotAPassStore), "{error:?}");
     assert!(!flow.repo_dir().exists());
+    assert!(matches!(flow.state(), SetupState::Address { .. }), "{:?}", flow.state());
+    assert_eq!(flow.last_remote_message().unwrap().reason, RemoteReason::NotAPassStore);
+    assert_eq!(SetupFlow::open(dir.path()).unwrap().last_remote_message().unwrap().reason, RemoteReason::NotAPassStore);
+    // Going back from the address forgets it.
+    flow.back().unwrap();
+    assert_eq!(SetupFlow::open(dir.path()).unwrap().last_remote_message(), None);
 }
 
 #[test]
@@ -544,7 +567,8 @@ fn a_second_login_within_the_cached_window_does_not_ask_for_a_touch() {
     let sim = card(false);
     let cached: Arc<dyn ApduTransport> = Arc::new(CachedPolicy(sim.clone()));
     assert_eq!(card_info(cached.clone()).unwrap().authentication_touch, KeyTouch::Cached);
-    let server = GitServer::start_empty(&[authorised(&sim)]);
+    let server = GitServer::start(&[authorised(&sim)]);
+    server.sim.set_repository_not_found(true);
     let dir = tempfile::tempdir().unwrap();
     let mut flow = SetupFlow::open(dir.path()).unwrap();
     flow.read_key(cached.clone()).unwrap();
@@ -553,9 +577,9 @@ fn a_second_login_within_the_cached_window_does_not_ask_for_a_touch() {
     flow.confirm_host(&fingerprint).unwrap();
     let events = events(&sim, false);
 
-    // The first login asks; the repository is empty, so it is tried again.
+    // The first login asks; the repository is not there, so it is tried again.
     let first = flow.download(cached.clone(), PIN, events.clone()).unwrap_err();
-    assert!(matches!(first, SetupError::EmptyRepository));
+    assert!(matches!(first, SetupError::Failed { .. }), "{first:?}");
     assert_eq!(events.asked.load(Ordering::SeqCst), 1);
     assert_eq!(flow.state(), SetupState::NeedPin { address: address(&server), touch: TouchExpectation::NotNeeded });
 
@@ -567,7 +591,8 @@ fn a_second_login_within_the_cached_window_does_not_ask_for_a_touch() {
 #[test]
 fn a_key_that_needs_a_touch_each_time_is_asked_each_time() {
     let card = card(true);
-    let server = GitServer::start_empty(&[authorised(&card)]);
+    let server = GitServer::start(&[authorised(&card)]);
+    server.sim.set_repository_not_found(true);
     let dir = tempfile::tempdir().unwrap();
     let mut flow = at_need_pin(dir.path(), &card, &server);
     let events = events(&card, true);

@@ -221,11 +221,15 @@ struct Saved {
     address: Option<String>,
     notice: Option<String>,
     opened: Option<String>,
+    /// Why a download sent setup back to the address: an empty repository
+    /// or one that is not a pass store. Saved, so the address screen can
+    /// still say so after a relaunch.
+    problem: Option<RemoteReason>,
 }
 
 impl Saved {
     fn fresh() -> Self {
-        Self { step: Step::ReadKey, key: None, address: None, notice: None, opened: None }
+        Self { step: Step::ReadKey, key: None, address: None, notice: None, opened: None, problem: None }
     }
 
     fn to_text(&self) -> String {
@@ -241,6 +245,9 @@ impl Saved {
             if let Some(value) = value {
                 lines.push(format!("{name}={value}"));
             }
+        }
+        if let Some(problem) = self.problem {
+            lines.push(format!("problem={}", problem.name()));
         }
         lines.iter().map(|line| format!("{}\n", line.replace(['\n', '\r'], " "))).collect()
     }
@@ -265,7 +272,14 @@ impl Saved {
             }),
             _ => None,
         };
-        let saved = Self { step, key, address: value("address"), notice: value("notice"), opened: value("opened") };
+        let saved = Self {
+            step,
+            key,
+            address: value("address"),
+            notice: value("notice"),
+            opened: value("opened"),
+            problem: value("problem").as_deref().and_then(RemoteReason::from_name),
+        };
         // Every step past the first needs the key, and past Address the address.
         let complete = match step {
             Step::ReadKey => true,
@@ -336,6 +350,9 @@ impl SetupFlow {
             refused: Vec::new(),
             remote_message: None,
         };
+        if let Some(problem) = flow.saved.problem.filter(|_| flow.saved.step == Step::Address) {
+            flow.note_remote(problem, None);
+        }
         let repo = flow.repo_dir();
         let cloned = repo.join(".git").is_dir() && repo.join(".gpg-id").is_file();
         match flow.saved.step {
@@ -365,6 +382,9 @@ impl SetupFlow {
 
     fn go(&mut self, step: Step) -> Result<SetupState, SetupError> {
         self.saved.step = step;
+        if step != Step::Address {
+            self.saved.problem = None;
+        }
         self.save()?;
         Ok(self.state())
     }
@@ -435,6 +455,7 @@ impl SetupFlow {
 
     /// Goes one step back: the Back button.
     pub fn back(&mut self) -> Result<SetupState, SetupError> {
+        self.remote_message = None;
         if self.unconfirmed.take().is_some() {
             return Ok(self.state());
         }
@@ -699,6 +720,11 @@ impl SetupFlow {
     /// The end of a download: checks what arrived is a pass store and moves
     /// on to the test decrypt, or starts the download over. `said` is what
     /// the host printed on stderr, if anything.
+    ///
+    /// A repository with no commits, or with no `.gpg-id` at the top, is
+    /// the wrong address rather than a failed download: setup goes back to
+    /// the address, with the address kept and the reason in
+    /// [`Self::last_remote_message`] (also after a relaunch).
     pub(crate) fn finish_download(
         &mut self,
         remote: &sync::Remote,
@@ -708,7 +734,7 @@ impl SetupFlow {
         let repo = self.repo_dir();
         let outcome = match cloned {
             Err(e) => Err(self.connection_error(remote, e, said)),
-            Ok(Cloned::Empty) => Err(SetupError::EmptyRepository),
+            Ok(Cloned::Empty) => return self.wrong_repository(RemoteReason::EmptyRepository),
             // Nothing was checked out; the download is removed below.
             Ok(Cloned::Refused(paths)) => {
                 let error = failed(sync::Refused(paths.clone()));
@@ -720,7 +746,7 @@ impl SetupFlow {
                 if gpg_id.map(|m| m.is_file()).unwrap_or(false) {
                     Ok(())
                 } else {
-                    Err(SetupError::NotAPassStore)
+                    return self.wrong_repository(RemoteReason::NotAPassStore);
                 }
             }
         };
@@ -731,6 +757,19 @@ impl SetupFlow {
         let address = self.saved.address.clone().unwrap_or_default();
         std::fs::write(self.dir.join(REMOTE_FILE), format!("{address}\n")).map_err(failed)?;
         self.go(Step::TestDecrypt)
+    }
+
+    /// The repository is not a store paw can use: back to the address.
+    fn wrong_repository(&mut self, reason: RemoteReason) -> Result<SetupState, SetupError> {
+        remove_dir(&self.repo_dir())?;
+        self.saved.opened = None;
+        self.note_remote(reason, None);
+        self.saved.problem = Some(reason);
+        self.go(Step::Address)?;
+        Err(match reason {
+            RemoteReason::EmptyRepository => SetupError::EmptyRepository,
+            _ => SetupError::NotAPassStore,
+        })
     }
 
     /// Opens one entry the key can open, to prove it works. The plaintext is

@@ -46,6 +46,34 @@ pub struct RemoteMessage {
     pub said: Option<String>,
 }
 
+impl RemoteReason {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::RepositoryNotFound => "repository-not-found",
+            Self::KeyNotAccepted => "key-not-accepted",
+            Self::Unreachable => "unreachable",
+            Self::HostKeyChanged => "host-key-changed",
+            Self::EmptyRepository => "empty-repository",
+            Self::NotAPassStore => "not-a-pass-store",
+            Self::Other => "other",
+        }
+    }
+
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
+        [
+            Self::RepositoryNotFound,
+            Self::KeyNotAccepted,
+            Self::Unreachable,
+            Self::HostKeyChanged,
+            Self::EmptyRepository,
+            Self::NotAPassStore,
+            Self::Other,
+        ]
+        .into_iter()
+        .find(|reason| reason.name() == name)
+    }
+}
+
 /// Whether what a host printed when a git command failed says the
 /// repository is not there, or not there for this key. Hosts word it
 /// differently:
@@ -92,5 +120,13 @@ mod tests {
         for said in ["", "sh: git-upload-pack: command not found", "fatal: protocol error: bad line length"] {
             assert!(!says_repository_missing(said), "{said}");
         }
+    }
+
+    #[test]
+    fn reasons_are_saved_by_name() {
+        for reason in [RemoteReason::RepositoryNotFound, RemoteReason::EmptyRepository, RemoteReason::Other] {
+            assert_eq!(RemoteReason::from_name(reason.name()), Some(reason));
+        }
+        assert_eq!(RemoteReason::from_name("nonsense"), None);
     }
 }
