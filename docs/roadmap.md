@@ -51,7 +51,7 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 |---|---|---|
 | Copy cache in the core: per-entry deadline from the key touch, sealed by a device keystore trait, wiped on expiry, clock moved back or reboot ends all copies, "Lock now" | face-id-copies | done |
 | Simulated keystore and clock for Linux and the simulator | face-id-copies | done |
-| Secure Enclave keystore in Swift (current face only, no passcode fallback) | screens | built; needs the device to verify |
+| Secure Enclave keystore in Swift (current face only, no passcode fallback) | screens | done; the owner opened entries with Face ID on the iPhone, 2026-11-23 |
 | Early AutoFill skeleton: fill from a copy, shared index, staleness after a pull | autofill | blocked on App Group and copies |
 
 ### M4 Clone, setup, fetch
