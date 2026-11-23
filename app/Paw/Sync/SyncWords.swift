@@ -178,13 +178,6 @@ func syncKeyWords(_ error: KeyError, during kind: SyncKind, unpushed: Int) -> Ke
     }
 }
 
-extension KeyErrorWords {
-    init(problem: String, nextStep: String) {
-        self.problem = problem
-        self.nextStep = nextStep
-    }
-}
-
 /// "just now", "2 min ago", "at 14:02", "on Mon", "on 3 Nov".
 func syncAgo(_ date: Date, now: Date = Date()) -> String {
     let seconds = now.timeIntervalSince(date)
