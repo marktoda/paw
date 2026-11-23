@@ -80,6 +80,13 @@ final class GitHubTests: PawUITestCase {
         return true
     }
 
+    /// Settings builds its rows lazily: scroll to the row, then read it.
+    private func inSettingsList(_ identifier: String, contains text: String,
+                                file: StaticString = #filePath, line: UInt = #line) {
+        scrollTo(identifier, file: file, line: line)
+        expectText(identifier, contains: text, file: file, line: line)
+    }
+
     // MARK: Signing in and choosing
 
     func testSigningInWithTheCodeAndChoosingTheStoreFinishesSetupWithOnePin() {
@@ -186,7 +193,7 @@ final class GitHubTests: PawUITestCase {
         tap("address-connect")
         finishSetup()
         openSettings()
-        expectText("settings-github-status", contains: "Not signed in")
+        inSettingsList("settings-github-status", contains: "Not signed in")
         closeSettings()
     }
 
@@ -227,7 +234,7 @@ final class GitHubTests: PawUITestCase {
         tapSimulated("simulated-touch")
         expectLabel("sync-summary-title", contains: "1 password changed")
         openSettings()
-        expectText("settings-github-status", contains: "Not signed in")
+        inSettingsList("settings-github-status", contains: "Not signed in")
         closeSettings()
     }
 
@@ -235,14 +242,14 @@ final class GitHubTests: PawUITestCase {
         launch()
         setUpThroughGitHub()
         openSettings()
-        expectText("settings-github-status", contains: "mira/password-store")
+        inSettingsList("settings-github-status", contains: "mira/password-store")
         snapshot("settings-signed-in")
         tap("settings-github-sign-out")
         expect("settings-github-sign-out-warning")
         expect("settings-github-sign-out-revoke")
         tap("settings-github-sign-out-confirm")
-        expectText("settings-github-signed-out", contains: "settings/apps/authorizations")
-        expectText("settings-github-status", contains: "Not signed in")
+        inSettingsList("settings-github-signed-out", contains: "settings/apps/authorizations")
+        inSettingsList("settings-github-status", contains: "Not signed in")
         snapshot("settings-signed-out")
         closeSettings()
         let pill = expect("sync-pill")
@@ -263,7 +270,7 @@ final class GitHubTests: PawUITestCase {
         expectText("github-code", contains: "WDJB-MJHT")
         tap("sim-github-authorise")
         expectGone("github-code")
-        expectText("settings-github-status", contains: "mira/password-store")
+        inSettingsList("settings-github-status", contains: "mira/password-store")
         closeSettings()
     }
 }
