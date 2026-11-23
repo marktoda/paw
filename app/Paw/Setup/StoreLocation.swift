@@ -1,4 +1,3 @@
-import Darwin
 import Foundation
 
 /// Where paw keeps the store on this iPhone: the setup state, the cloned
@@ -51,50 +50,5 @@ struct StoreLocation {
         for folder in [stateDir, copiesDir] where manager.fileExists(atPath: folder.path) {
             try manager.removeItem(at: folder)
         }
-    }
-}
-
-/// The real clock, for a device: wall time, a monotonic clock that keeps
-/// counting while the phone sleeps (so 15 minutes in the background are
-/// 15 minutes), and this boot's identifier, which ends every Face ID copy
-/// on a reboot.
-final class DeviceClock: Clock, @unchecked Sendable {
-    private let boot: String
-
-    init() {
-        boot = Self.readBootId()
-    }
-
-    func wallMs() -> Int64 {
-        Int64(Date().timeIntervalSince1970 * 1000)
-    }
-
-    func monotonicMs() -> Int64 {
-        // CLOCK_MONOTONIC on Darwin includes time asleep; CLOCK_UPTIME_RAW does not.
-        Int64(clock_gettime_nsec_np(CLOCK_MONOTONIC) / 1_000_000)
-    }
-
-    func bootId() -> String {
-        boot
-    }
-
-    private static func readBootId() -> String {
-        var size = 0
-        guard sysctlbyname("kern.bootsessionuuid", nil, &size, nil, 0) == 0, size > 0 else {
-            return Self.bootTimeFallback()
-        }
-        var bytes = [CChar](repeating: 0, count: size)
-        guard sysctlbyname("kern.bootsessionuuid", &bytes, &size, nil, 0) == 0 else {
-            return Self.bootTimeFallback()
-        }
-        return String(decoding: bytes.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
-    }
-
-    /// The boot time, if the session identifier cannot be read.
-    private static func bootTimeFallback() -> String {
-        var time = timeval()
-        var size = MemoryLayout<timeval>.size
-        guard sysctlbyname("kern.boottime", &time, &size, nil, 0) == 0 else { return "unknown" }
-        return "boot-\(time.tv_sec)"
     }
 }

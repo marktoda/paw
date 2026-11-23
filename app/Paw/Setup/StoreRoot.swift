@@ -50,7 +50,7 @@ final class StoreRootModel {
         let clock = simulatedClock.asClock()
         self.simulatedClock = simulatedClock
         #else
-        let clock: Clock = DeviceClock()
+        let clock: Clock = SystemClock()
         #endif
         try location.prepare()
         self.location = location
@@ -104,8 +104,10 @@ final class StoreRootModel {
                 startsUnplugged: held.startsUnplugged && keyPort.session() == nil,
                 awayMs: UInt64(max(away, 0)))
             #else
-            // Face ID copies need a Secure Enclave keystore, which is not
-            // built yet: until then every open uses the key.
+            // Face ID copies wait until the Secure Enclave keystore
+            // (PlatformCopies) has been checked on the owner's phone: until
+            // then every open uses the key. Turning them on is
+            // `PlatformCopies.make(dir: location.copiesDir.path)` here.
             let copies: CopyCache? = nil
             let simulator: SimulatorControls? = nil
             #endif
