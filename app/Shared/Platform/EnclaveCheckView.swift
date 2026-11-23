@@ -196,7 +196,10 @@ struct EnclaveCheckView: View {
         let reads = (0..<3).map { _ in BootSession.read() }
         let sources = reads.map(\.source).joined(separator: " | ")
         let stable = Set(reads.map(\.id)).count == 1 && clock.bootId() == reads[0].id
-        add("boot-id", "Boot id read four times: \(stable ? "pass (same)" : "fail (changed)"); \(sources)")
+        // The start of the id (not a secret) so the owner can relaunch and
+        // see it stay the same until the phone restarts.
+        let shown = reads[0].id.prefix(13)
+        add("boot-id", "Boot id read four times: \(stable ? "pass (same)" : "fail (changed)"); \(shown)…; \(sources)")
         add("done", "Storage checks: done")
         return rows
     }
