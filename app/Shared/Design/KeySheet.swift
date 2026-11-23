@@ -62,7 +62,7 @@ struct KeySheetContent: View {
         GeometryReader { proxy in
             ScrollView {
                 content
-                    .padding(.horizontal, PawMetrics.Spacing.xl)
+                    .padding(.horizontal, PawMetrics.screenMargin)
                     .padding(.top, PawMetrics.Spacing.xl)
                     .padding(.bottom, PawMetrics.Spacing.s)
                     // Without a keyboard the buttons sit at the bottom of the sheet.
@@ -115,9 +115,7 @@ struct KeySheetContent: View {
                 Spacer(minLength: 0)
             }
             buttons
-            ForEach(simulatorActions, id: \.identifier) { action in
-                SimulatorActionButton(action: action)
-            }
+            SimulatorStrip(actions: simulatorActions)
         }
     }
 
@@ -299,26 +297,25 @@ struct KeySheetContent: View {
     private var explanation: String? {
         switch stage {
         case .plugIn:
-            return "USB-C, on the bottom of your iPhone."
+            return nil
         case .pin(_, let forgotten):
             return forgotten
-                ? "paw forgot your PIN after 15 minutes away. Enter the key's PIN, not your iPhone passcode."
-                : "The PIN for the key, not your iPhone passcode. Asked once while the key stays plugged in."
-
-        case .wrongPin:
-            return "Enter the PIN for the key, not your iPhone passcode."
+                ? "Asked again after 15 minutes away."
+                : "The key's PIN, not your iPhone passcode."
+        case .wrongPin(let triesLeft):
+            return triesLeft == 1 ? "Not sure? Stop and check your PIN first." : nil
         case .pinAgain(_, _, let nextStep):
             return nextStep
         case .busy:
             return "Your key is finishing something else."
         case .touch:
-            return "Touch the gold part of your key. It's blinking."
+            return "The gold part, while it blinks."
         case .working(_, let progress):
             return progress
         case .done:
             return nil
         case .locked:
-            return "Unlock it with the key's reset code or Admin PIN. Passwords that open with Face ID still work."
+            return "Unlock it on a computer with its reset code or admin PIN. Passwords that open with Face ID still work."
         case .failed(_, let nextStep):
             return nextStep
         }
@@ -410,29 +407,63 @@ struct SimulatorAction {
     let perform: () -> Void
 }
 
-/// Dashed, small and labelled "Simulator", below the sheet's own buttons,
-/// so a screenshot never shows it as part of the design.
+/// The simulator's controls for one screen: a single small dashed strip
+/// under everything else, marked with a hammer, so they take no room from
+/// the design and a screenshot never shows them as part of it.
+struct SimulatorStrip: View {
+    let actions: [SimulatorAction]
+
+    var body: some View {
+        if !actions.isEmpty {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: PawMetrics.Spacing.xs) { controls }
+                VStack(spacing: 0) { controls }
+            }
+            .padding(.horizontal, PawMetrics.Spacing.m)
+            .overlay(
+                RoundedRectangle(cornerRadius: PawMetrics.inlineRadius, style: .continuous).strokeBorder(
+                    PawColor.labelTertiary, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+        }
+    }
+
+    @ViewBuilder private var controls: some View {
+        Image(systemName: "hammer")
+            .font(PawFont.caption)
+            .foregroundStyle(PawColor.labelTertiary)
+            .accessibilityHidden(true)
+        ForEach(actions, id: \.identifier) { action in
+            Button(action: action.perform) {
+                Text(action.title)
+                    .font(PawFont.caption.weight(.semibold))
+                    .foregroundStyle(PawColor.labelSecondary)
+                    .underline()
+                    .lineLimit(1)
+                    .padding(.horizontal, PawMetrics.Spacing.xs)
+                    .frame(minHeight: PawMetrics.pill)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(action.title)
+            .accessibilityIdentifier(action.identifier)
+        }
+    }
+}
+
+/// One simulator control on its own, for a screen that has only one.
 struct SimulatorActionButton: View {
     let action: SimulatorAction
 
     var body: some View {
-        Button(action: action.perform) {
-            HStack(spacing: PawMetrics.Spacing.xs) {
-                Image(systemName: "hammer")
-                    .font(PawFont.caption.weight(.semibold))
-                Text("Simulator: \(action.title)")
-                    .font(PawFont.footnote.weight(.semibold))
-            }
-            .foregroundStyle(PawColor.labelSecondary)
-            .padding(.horizontal, PawMetrics.Spacing.m)
-            .frame(minHeight: PawMetrics.tapMin)
-            .overlay(
-                Capsule().strokeBorder(
-                    PawColor.labelTertiary, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(action.title)
-        .accessibilityIdentifier(action.identifier)
+        SimulatorStrip(actions: [action])
+    }
+}
+
+extension View {
+    /// An opaque ground for a sheet that opens part-way up. The system's
+    /// glass sheet lets the screen behind show through at a small detent,
+    /// and its rows end up under the sheet's own words.
+    func pawSheetBackground() -> some View {
+        presentationBackground(PawColor.bg)
     }
 }
 

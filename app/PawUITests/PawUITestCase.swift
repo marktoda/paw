@@ -303,9 +303,19 @@ class PawUITestCase: XCTestCase {
         expectGone("settings-done")
     }
 
+    /// Opens the Simulator row at the foot of Settings: its controls are
+    /// closed until it is tapped.
+    func showSimulatorControls(file: StaticString = #filePath, line: UInt = #line) {
+        let row = scrollTo("sim-controls", file: file, line: line)
+        if (row.value as? String) != "shown" {
+            row.tap()
+        }
+    }
+
     /// Taps a control in Settings' Simulator section, then closes Settings.
     func inSettings(tapping identifiers: String...) {
         openSettings()
+        showSimulatorControls()
         for identifier in identifiers {
             tap(identifier)
         }
@@ -315,6 +325,7 @@ class PawUITestCase: XCTestCase {
     /// What paw's pasteboard holds now, read inside the app (no paste prompt).
     func pasteboardContents(file: StaticString = #filePath, line: UInt = #line) -> String {
         openSettings()
+        showSimulatorControls(file: file, line: line)
         tap("sim-read-pasteboard", file: file, line: line)
         let shown = expect("sim-pasteboard-value", file: file, line: line)
         let value = (shown.value as? String) ?? ""

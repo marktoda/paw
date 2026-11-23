@@ -9,7 +9,7 @@ struct KeyErrorWords: Equatable {
     enum Purpose {
         case open, download, send, check
 
-        /// "Nothing was opened.", by what did not happen.
+        /// "Nothing was opened.", by what did not happen. Said after Cancel.
         var nothingHappened: String {
             switch self {
             case .open: "Nothing was opened."
@@ -32,29 +32,28 @@ struct KeyErrorWords: Equatable {
         switch error {
         case .WrongPin(let triesLeft):
             problem = "Wrong PIN"
-            nextStep = triesLeft == 1
-                ? "1 try left before the key locks. If you're unsure, stop and check your PIN first."
-                : "\(triesLeft) tries left. Enter the PIN for the key, not your iPhone passcode."
+            nextStep = triesLeft == 1 ? "1 try left before the key locks." : "\(triesLeft) tries left."
         case .HeldPinRejected(let triesLeft):
-            problem = "Your key didn't take the PIN paw had"
-            let tries = triesLeft == 1 ? "1 try left before the key locks" : "\(triesLeft) tries left"
-            nextStep = "It may have been changed on another computer. Enter the PIN again (\(tries))."
+            problem = "Your key refused the PIN paw was holding"
+            nextStep = triesLeft == 1
+                ? "It may have been changed. Enter the current one. 1 try left before the key locks."
+                : "It may have been changed. Enter the current one. \(triesLeft) tries left."
         case .PinBlocked:
-            problem = "The PIN is locked"
-            nextStep = "Three wrong PINs lock the key. Unlock it on a computer with your admin PIN. "
+            problem = "Your key is locked"
+            nextStep = "Unlock it on a computer with its reset code or admin PIN. "
                 + "Passwords that open with Face ID still work."
         case .PinFormat:
             problem = "A PIN has 6 to 127 characters"
-            nextStep = "Nothing was sent to your key, so no try was used. Check the PIN and enter it again."
+            nextStep = "Enter it again; no try was used."
         case .PinForgotten:
-            problem = "paw forgot your PIN"
-            nextStep = "It was forgotten before your key was used. Try again and enter it."
+            problem = "paw no longer has your PIN"
+            nextStep = "Try again and enter it."
         case .TouchTimeout:
             problem = "Your key wasn't touched in time"
-            nextStep = "\(purpose.nothingHappened) Try again, and touch the gold part of your key while it blinks."
+            nextStep = "Try again and touch the gold part while it blinks."
         case .KeyRemoved:
             problem = "Your key was unplugged"
-            nextStep = "Plug it back in, then try again. paw will ask for your PIN again."
+            nextStep = "Plug it back in and try again."
         case .NotForThisKey(let recipients):
             problem = "This key can't open \(entry)"
             nextStep = recipients.count == 1
@@ -62,20 +61,19 @@ struct KeyErrorWords: Equatable {
                 : "It's encrypted for other keys. Open it on a computer that has one of them."
         case .NoDecryptionKey:
             problem = "This key has no decryption key"
-            nextStep = "paw needs a YubiKey with an OpenPGP decryption key. Plug in another key, then try again."
+            nextStep = "paw needs a key with an OpenPGP decryption key. Try another key."
         case .NoAuthenticationKey:
             problem = "This key has no SSH key"
-            nextStep = "Add an authentication subkey to this key on a computer, then try again. "
-                + "It can still open passwords."
+            nextStep = "Add an authentication subkey on a computer, then try again. It can still open passwords."
         case .EntryUnreadable(let detail):
-            problem = "\(entry) isn't a readable password"
-            nextStep = "The file may be damaged (\(detail)). Other passwords are not affected."
+            problem = "\(entry) can't be read"
+            nextStep = "Its file may be damaged (\(detail))."
         case .DecryptFailed:
             problem = "This key couldn't open \(entry)"
-            nextStep = "It may be encrypted for another key. Nothing was kept. Try again with that key."
+            nextStep = "It may be encrypted for another key."
         case .Reader(let detail):
-            problem = "Your key answered unexpectedly"
-            nextStep = "Unplug it, plug it back in, then try again. The key said: \(detail)."
+            problem = "Your key gave an error"
+            nextStep = "Unplug it, plug it back in and try again. The key said: \(detail)."
         case .Cancelled:
             problem = "Cancelled"
             nextStep = purpose.nothingHappened

@@ -35,6 +35,10 @@ enum PawMetrics {
     static let sheetTextWidth: CGFloat = 290
     static let readableWidth: CGFloat = 560
     static let keySheetHeight: CGFloat = 480
+    /// From the screen's edge to text and cards outside a list: the same
+    /// 20pt an inset grouped list keeps, so setup pages, sheets and lists
+    /// line up.
+    static let screenMargin: CGFloat = 20
 
     /// Chips and small discs grow with Dynamic Type, but only this far, so
     /// that at the largest sizes the width goes to the text.

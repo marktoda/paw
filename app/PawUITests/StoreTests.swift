@@ -69,6 +69,7 @@ final class StoreTests: PawUITestCase {
         expect("setup-welcome")
         setUpStore()
         openSettings()
+        showSimulatorControls()
         let protection = scrollTo("sim-file-protection")
         let summary = (protection.value as? String) ?? ""
         let attachment = XCTAttachment(string: summary)

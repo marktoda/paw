@@ -17,7 +17,7 @@ struct KeySheetHost: View {
             stage: stage,
             pin: $model.pinEntry,
             note: model.copies == nil
-                ? nil : "Afterwards it opens with Face ID for \(AppModel.faceIdWindowSecs / 3600) hours.",
+                ? nil : "Then it opens with Face ID for \(AppModel.faceIdWindowSecs / 3600) hours.",
             onContinue: { model.continueWithPin() },
             onCancel: { model.cancelKeyTask() },
             onRetry: { model.retry() },
@@ -26,6 +26,7 @@ struct KeySheetHost: View {
             comingSoon: model.keyRequest?.differentKey == true ? "Replace key (coming)" : nil)
             .presentationDetents([.height(PawMetrics.keySheetHeight), .large], selection: $detent)
             .presentationDragIndicator(.visible)
+            .pawSheetBackground()
             .onChange(of: stage, initial: true) {
                 detent = Self.needsKeyboard(stage) ? .large : .height(PawMetrics.keySheetHeight)
             }
@@ -97,16 +98,16 @@ struct SettingsSheet: View {
                     }
                     .accessibilityIdentifier("settings-lock-now")
                 } footer: {
-                    Text("Ends every Face ID copy and forgets your PIN. Every password then needs your key.")
+                    Text("Every password needs your key and its PIN again.")
                         .font(PawFont.footnote)
                         .foregroundStyle(PawColor.labelSecondary)
                 }
+                StoreSettingsSections(model: model)
                 #if DEBUG && targetEnvironment(simulator)
                 if model.simulator != nil {
                     SimulatorSettingsSection(model: model)
                 }
                 #endif
-                StoreSettingsSections(model: model)
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Settings")
@@ -118,21 +119,33 @@ struct SettingsSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        // Tall from the start: Remove is the last row and must not open
+        // below the fold.
+        .presentationDetents([.large])
         .privacyCover()
     }
 }
 
 #if DEBUG && targetEnvironment(simulator)
 /// Settings' controls for the simulated hardware, and readbacks for the UI
-/// tests. Debug simulator builds only.
+/// tests. Debug simulator builds only: one closed row at the bottom of
+/// Settings until it is tapped.
 private struct SimulatorSettingsSection: View {
     let model: AppModel
     @Environment(\.storeControls) private var controls
     @State private var pasteboard: String?
+    @State private var shown = false
 
     var body: some View {
         Section {
+            SimulatorDisclosureRow(shown: $shown)
+            if shown {
+                controlRows
+            }
+        }
+    }
+
+    @ViewBuilder private var controlRows: some View {
             Button("Move the clock 1 hour on") { model.advanceSimulatedClock(hours: 1) }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-advance-1h")
@@ -178,9 +191,35 @@ private struct SimulatorSettingsSection: View {
                     .accessibilityValue(protection)
                     .accessibilityIdentifier("sim-file-protection")
             }
-        } header: {
-            PawSectionHeader("Simulator")
-        }
     }
 }
 #endif
+
+/// "Simulator", with a hammer: opens and closes a list's debug controls.
+/// Closed, it is the only debug row a screenshot shows.
+struct SimulatorDisclosureRow: View {
+    @Binding var shown: Bool
+
+    var body: some View {
+        Button {
+            shown.toggle()
+        } label: {
+            HStack(spacing: PawMetrics.Spacing.s) {
+                Image(systemName: "hammer")
+                    .font(PawFont.caption)
+                Text("Simulator")
+                    .font(PawFont.footnote.weight(.semibold))
+                Spacer()
+                Image(systemName: PawSymbol.disclosure)
+                    .font(PawFont.caption.weight(.semibold))
+                    .rotationEffect(.degrees(shown ? 90 : 0))
+            }
+            .foregroundStyle(PawColor.labelSecondary)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Simulator controls")
+        .accessibilityValue(shown ? "shown" : "hidden")
+        .accessibilityIdentifier("sim-controls")
+    }
+}
