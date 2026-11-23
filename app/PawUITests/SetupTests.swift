@@ -3,110 +3,29 @@ import XCTest
 /// First-run setup (`-pawSetup 1`) against the simulated key (PIN 123456,
 /// a touch for every use) and the core's simulated git host, which runs
 /// inside the app and serves the fixture store: 29 passwords, 27 of them
-/// for the simulated key.
-final class SetupTests: XCTestCase {
-    private var app: XCUIApplication!
-
-    private static let pin = "123456"
-
-    override func setUp() {
-        continueAfterFailure = false
-        app = XCUIApplication()
-    }
-
-    override func tearDown() {
-        snapshot("end")
-    }
-
+/// for the simulated key. The host's address is
+/// `ssh://git@127.0.0.1:<port>/store.git`.
+final class SetupTests: PawUITestCase {
     // MARK: Helpers
 
     /// `keep` keeps what earlier launches set up; otherwise setup starts
-    /// from nothing.
+    /// from nothing. The key's touch timeout is the long one: a test about
+    /// the timeout ends it with `timeOutTheTouch()`.
     private func launch(appearance: String = "light", remote: String? = nil, keep: Bool = false,
-                        touchTimeoutMs: Int = 15_000) {
-        var arguments = [
-            "-pawSetup", "1",
-            "-pawAppearance", appearance,
-            "-pawSimPin", Self.pin,
-            "-pawSimTouch", "1",
-            "-pawSimTouchTimeoutMs", String(touchTimeoutMs),
-        ]
+                        extra: [String] = []) {
+        var arguments = ["-pawSetup", "1", "-pawAppearance", appearance] + keyArguments()
         if keep { arguments += ["-pawSetupKeep", "1"] }
         if let remote { arguments += ["-pawSimRemote", remote] }
-        app.launchArguments = arguments
+        app.launchArguments = arguments + extra
         app.launch()
-    }
-
-    private func snapshot(_ name: String) {
-        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        attachment.name = "\(self.name.split(separator: " ").last?.dropLast() ?? "test")-\(name)"
-        attachment.lifetime = .keepAlways
-        add(attachment)
-    }
-
-    private func element(_ identifier: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
-    }
-
-    @discardableResult
-    private func expect(_ identifier: String, timeout: TimeInterval = 10,
-                        file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
-        let found = element(identifier)
-        XCTAssertTrue(found.waitForExistence(timeout: timeout),
-                      "\"\(identifier)\" should be on screen", file: file, line: line)
-        return found
-    }
-
-    private func expectGone(_ identifier: String, timeout: TimeInterval = 10,
-                            file: StaticString = #filePath, line: UInt = #line) {
-        let gone = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: element(identifier))
-        if XCTWaiter().wait(for: [gone], timeout: timeout) != .completed {
-            XCTFail("\"\(identifier)\" should have gone", file: file, line: line)
-        }
-    }
-
-    private func expectAbsent(_ identifier: String, _ why: String,
-                              file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertFalse(element(identifier).exists, why, file: file, line: line)
-    }
-
-    /// Waits until the element's label (or value) contains `text`.
-    private func expectText(_ identifier: String, contains text: String, timeout: TimeInterval = 10,
-                            file: StaticString = #filePath, line: UInt = #line) {
-        let found = expect(identifier, timeout: timeout, file: file, line: line)
-        let matches = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", text, text), object: found)
-        if XCTWaiter().wait(for: [matches], timeout: timeout) != .completed {
-            XCTFail("\"\(identifier)\" should say \"\(text)\", it said \"\(found.label)\" \(String(describing: found.value))",
-                    file: file, line: line)
-        }
-    }
-
-    private func tap(_ identifier: String, timeout: TimeInterval = 10,
-                     file: StaticString = #filePath, line: UInt = #line) {
-        expect(identifier, timeout: timeout, file: file, line: line).tap()
-    }
-
-    private func enterPin(_ pin: String, file: StaticString = #filePath, line: UInt = #line) {
-        let field = expect("pin-field", file: file, line: line)
-        field.tap()
-        field.typeText(pin)
-        app.buttons["pin-continue"].tap()
-    }
-
-    /// The touch prompt is up: the simulated finger goes on the key at once.
-    private func touchKey(file: StaticString = #filePath, line: UInt = #line) {
-        expect("touch-prompt", timeout: 20, file: file, line: line)
-        app.buttons["simulated-touch"].tap()
     }
 
     /// Welcome, "Your key", then the address screen.
     private func toAddress(shots: Bool = false) {
-        expect("setup-welcome", timeout: 20)
+        expect("setup-welcome")
         if shots { snapshot("welcome") }
         tap("setup-start")
-        expect("setup-your-key", timeout: 15)
+        expect("setup-your-key")
         expectText("key-serial", contains: "serial")
         if shots { snapshot("your-key") }
         tap("key-continue")
@@ -116,13 +35,14 @@ final class SetupTests: XCTestCase {
     /// Types the simulated host's address and trusts its key.
     private func toDownload(shots: Bool = false) {
         tap("simulated-address")
+        expectText("address-reading", contains: "paw will connect to 127.0.0.1 as git")
         if shots { snapshot("address") }
         tap("address-connect")
-        expect("setup-confirm-host", timeout: 20)
+        expect("setup-confirm-host")
         expect("host-fingerprint")
         if shots { snapshot("confirm-host") }
         tap("host-trust")
-        expect("setup-download", timeout: 20)
+        expect("setup-download")
         if shots { snapshot("download") }
     }
 
@@ -132,12 +52,12 @@ final class SetupTests: XCTestCase {
         if pin {
             enterPin(Self.pin)
         }
-        expect("touch-prompt", timeout: 20)
+        expect("touch-prompt")
         if shots { snapshot("download-touch") }
-        app.buttons["simulated-touch"].tap()
+        tapSimulated("simulated-touch")
         if shots {
-            // What follows the touch: the clone with its progress, or Done
-            // if the fixture's 29 entries have already arrived.
+            // What follows the touch: the clone with its progress ("412 of
+            // 1,240 · 1.2 MB"), or Done if the fixture has already arrived.
             snapshot("download-progress")
         }
         expect("setup-check", timeout: 60)
@@ -147,10 +67,10 @@ final class SetupTests: XCTestCase {
     private func check(shots: Bool = false) {
         if shots { snapshot("check") }
         tap("check-start")
-        expect("touch-prompt", timeout: 20)
+        expect("touch-prompt")
         expectAbsent("pin-field", "The PIN typed for the download should still be held")
-        touchKey()
-        expect("setup-done", timeout: 30)
+        touchTheKey()
+        expect("setup-done")
     }
 
     private func setUpFully(shots: Bool = false) {
@@ -161,7 +81,19 @@ final class SetupTests: XCTestCase {
         expectText("done-count", contains: "29 passwords")
         if shots { snapshot("done") }
         tap("done-open")
-        expect("home-title", timeout: 20)
+        expect("home-title")
+    }
+
+    /// Empties the address field: the cursor goes to the end, then one
+    /// delete per character.
+    private func clearAddress() {
+        let field = expect("repo-address")
+        field.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.9)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: Self.patience),
+                      "The keyboard should come up for the address")
+        if let typed = field.value as? String, typed != "git@github.com:you/password-store.git" {
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: typed.count))
+        }
     }
 
     // MARK: The whole way
@@ -179,10 +111,10 @@ final class SetupTests: XCTestCase {
         setUpFully()
         tap("folder-web")
         tap("entry-github.com")
-        expect("touch-prompt", timeout: 20)
+        expect("touch-prompt")
         expectAbsent("pin-field", "The PIN typed during setup should still be held")
-        touchKey()
-        expectText("entry-title", contains: "github.com", timeout: 20)
+        touchTheKey()
+        expectText("entry-title", contains: "github.com")
     }
 
     func testAfterSetupANewEntrySavesWithoutTheKeyAndWaitsToBeSent() {
@@ -190,19 +122,19 @@ final class SetupTests: XCTestCase {
         setUpFully()
         tap("folder-web")
         tap("add-button")
-        let name = element("form-name")
-        XCTAssertTrue(name.waitForExistence(timeout: 20))
+        let name = expect("form-name")
         name.tap()
         name.typeText("after-setup.example")
         let password = element("form-password")
         password.tap()
         password.typeText("Typed-pass-42")
         tap("form-save")
-        expectGone("form-save", timeout: 20)
+        expectGone("form-save")
+        expect("entry-after-setup.example")
+        waitForKeyTasksToEnd()
         expectAbsent("key-sheet-purpose", "Saving should never ask for the key")
-        expect("entry-after-setup.example", timeout: 20)
-        app.navigationBars.buttons.element(boundBy: 0).tap()
-        expectText("unpushed-banner", contains: "1 change not sent", timeout: 20)
+        goBack()
+        expectText("unpushed-banner", contains: "1 change not sent")
         snapshot("home-after-save")
     }
 
@@ -218,9 +150,9 @@ final class SetupTests: XCTestCase {
         setUpFully()
         app.terminate()
         launch(keep: true)
-        expect("home-title", timeout: 20)
-        expectAbsent("setup-welcome", "A set-up store should not show setup again")
+        expect("home-title")
         expect("folder-web")
+        expectAbsent("setup-welcome", "A set-up store should not show setup again")
     }
 
     func testARelaunchAfterTheDownloadResumesAtTheKeyCheck() {
@@ -230,13 +162,43 @@ final class SetupTests: XCTestCase {
         download()
         app.terminate()
         launch(keep: true)
-        expect("setup-check", timeout: 20)
+        expect("setup-check")
         expectText("check-count", contains: "29 passwords")
         // A new launch holds no PIN, so the check asks for it, then a touch.
         tap("check-start")
         enterPin(Self.pin)
-        touchKey()
-        expect("setup-done", timeout: 30)
+        touchTheKey()
+        expect("setup-done")
+    }
+
+    // MARK: The address
+
+    func testTheAddressLineSaysWherePawWillConnectAndALongAddressWraps() {
+        launch()
+        toAddress()
+        let field = expect("repo-address")
+        let oneLine = field.frame.height
+        // A long address wraps in the field instead of being cut off.
+        let long = "ssh://git@a-long-host-name.internal.example.com:2222/infrastructure-team/shared/password-store.git"
+        field.tap()
+        field.typeText(long)
+        expectValue("repo-address", long)
+        expectText("address-reading", contains: "paw will connect to a-long-host-name.internal.example.com as git on port 2222.")
+        XCTAssertGreaterThan(field.frame.height, oneLine * 1.5, "The long address should take more than one line")
+        snapshot("address-long")
+        // GitHub's short form, read as its SSH address, with a host whose
+        // keys come with paw.
+        clearAddress()
+        field.typeText("you/password-store")
+        expectText("address-reading", contains: "paw will connect to github.com as git.")
+        expectText("address-reading", contains: "paw already knows github.com's fingerprint.")
+        expectText("address-reading-notice", contains: "git@github.com:you/password-store.git")
+        snapshot("address-short-form")
+        // The simulated host: its own port, a fingerprint to confirm.
+        tap("simulated-address")
+        expectText("address-reading", contains: "paw will connect to 127.0.0.1 as git on port")
+        expectAbsent("address-reading-notice", "The simulated host's address is used as typed")
+        snapshot("address-reading")
     }
 
     // MARK: What goes wrong
@@ -254,34 +216,105 @@ final class SetupTests: XCTestCase {
         snapshot("bad-address")
     }
 
+    func testAKeyWithAPinSettingPawCannotFollowIsRefusedBeforeAnyPin() {
+        launch(extra: ["-pawSimKdf", "unsupported"])
+        expect("setup-welcome")
+        tap("setup-start")
+        expectText("error-row", contains: "paw doesn't support this key's PIN setting yet")
+        expectText("error-row", contains: "No PIN try was used")
+        waitForKeyTasksToEnd()
+        expect("setup-plug-in")
+        expectAbsent("pin-field", "No PIN is asked of a key paw can't send it to")
+        expectAbsent("setup-your-key", "Setup stops at the key")
+        snapshot("kdf-unsupported")
+    }
+
+    func testAKeyThatFailsToBeReadShowsWhyAndTryAgainReadsIt() {
+        // Dark here: a cheap screen to see in both.
+        launch(appearance: "dark", extra: ["-pawSimAttachFails", "1"])
+        expect("setup-welcome")
+        tap("setup-start")
+        expectText("error-row", contains: "paw couldn't read your key")
+        expectText("error-row", contains: "didn't answer")
+        expect("setup-plug-in")
+        snapshot("attach-failed")
+        // No unplugging: Try again reads the key that is still in.
+        tap("plug-in-retry")
+        expect("setup-your-key")
+        expectText("key-serial", contains: "serial")
+        expectGone("plug-in-retry")
+    }
+
     func testAHostThatDoesNotKnowTheKeyShowsTheKeyToAddBeforeAnyPin() {
         launch(remote: "refuseKey")
         toAddress()
         tap("simulated-address")
         tap("address-connect")
-        tap("host-trust", timeout: 20)
-        expect("setup-key-not-accepted", timeout: 20)
+        tap("host-trust")
+        expect("setup-key-not-accepted")
         expectText("ssh-public-key", contains: "ssh-ed25519")
         expect("copy-ssh-key")
+        waitForKeyTasksToEnd()
         expectAbsent("pin-field", "No PIN is asked before the host accepts the key")
         snapshot("key-not-accepted")
         tap("copy-ssh-key")
         tap("simulated-accept-key")
         tap("check-again")
-        expect("setup-download", timeout: 20)
+        expect("setup-download")
     }
 
-    func testAChangedHostKeyIsRefusedWithTheExplanation() {
-        launch(remote: "changedHostKey")
+    func testARepositoryTheHostDoesNotHaveSaysNoStoreAtThatAddress() {
+        launch(remote: "repositoryNotFound")
         toAddress()
         toDownload()
+        // The host says so only after the key's login: PIN and touch.
         tap("download-start")
         enterPin(Self.pin)
-        expectText("error-row", contains: "identity changed", timeout: 30)
+        touchTheKey()
+        expectText("error-row", contains: "No store at that address", timeout: 60)
+        expectText("error-row", contains: "store.git doesn't exist, or this key can't see it")
+        waitForKeyTasksToEnd()
+        expect("setup-download")
+        expectAbsent("setup-check", "Nothing was downloaded")
+        snapshot("repository-not-found")
+    }
+
+    func testAChangedHostKeyIsRefusedAndAnExpectedChangeIsConfirmedAgain() {
+        launch(remote: "changedHostKey")
+        toAddress()
+        tap("simulated-address")
+        tap("address-connect")
+        let first = expect("host-fingerprint").label
+        tap("host-trust")
+        expect("setup-download")
+        // The host now presents another key.
+        tap("download-start")
+        enterPin(Self.pin)
+        expectText("error-row", contains: "identity changed")
         expectText("error-row", contains: "Nothing was sent")
+        waitForKeyTasksToEnd()
         expectAbsent("touch-prompt", "Nothing is signed for a host whose identity changed")
         expect("setup-download")
+        expect("host-key-expected")
         snapshot("host-key-changed")
+        // Not a bundled host: the person may say they expected it, and
+        // confirm the new key as on first use.
+        tap("host-key-expected")
+        expect("setup-confirm-host")
+        let fingerprint = expect("host-fingerprint")
+        let changed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label != %@", first), object: fingerprint)
+        XCTAssertEqual(XCTWaiter().wait(for: [changed], timeout: Self.patience), .completed,
+                       "The confirm screen should show the new fingerprint")
+        snapshot("confirm-new-host-key")
+        tap("host-trust")
+        expect("setup-download")
+        // The PIN was verified before the refusal, so it is still held.
+        tap("download-start")
+        expect("touch-prompt")
+        expectAbsent("pin-field", "The PIN should still be held")
+        tapSimulated("simulated-touch")
+        expect("setup-check", timeout: 60)
     }
 
     func testADroppedConnectionOffersARetryThatSucceeds() {
@@ -290,15 +323,32 @@ final class SetupTests: XCTestCase {
         toDownload()
         tap("download-start")
         enterPin(Self.pin)
-        touchKey()
+        touchTheKey()
         expectText("error-row", contains: "Nothing was kept", timeout: 60)
         expect("setup-download")
         snapshot("dropped")
         tap("error-action")
         // The PIN is still held: straight to the touch.
-        expect("touch-prompt", timeout: 20)
+        expect("touch-prompt")
         expectAbsent("pin-field", "The PIN should still be held for the retry")
-        touchKey()
+        tapSimulated("simulated-touch")
+        expect("setup-check", timeout: 60)
+    }
+
+    func testATouchTimeoutDuringTheDownloadSaysNothingWasDownloadedAndRetriesWithoutThePin() {
+        launch()
+        toAddress()
+        toDownload()
+        tap("download-start")
+        enterPin(Self.pin)
+        timeOutTheTouch()
+        expectText("key-sheet-headline", contains: "Your key wasn't touched in time")
+        expectText("key-sheet-body", contains: "Nothing was downloaded.")
+        snapshot("download-touch-timed-out")
+        tap("key-sheet-retry")
+        expect("touch-prompt")
+        expectAbsent("pin-field", "The PIN should still be held after a touch timeout")
+        tapSimulated("simulated-touch")
         expect("setup-check", timeout: 60)
     }
 
@@ -316,21 +366,28 @@ final class SetupTests: XCTestCase {
     }
 
     func testCancelDuringTheDownloadLeavesNothingHalfDownloaded() {
-        launch(touchTimeoutMs: 4_000)
+        launch()
         toAddress()
         toDownload()
         tap("download-start")
         enterPin(Self.pin)
-        expect("touch-prompt", timeout: 20)
+        expect("touch-prompt")
         tap("key-sheet-cancel")
         expectGone("key-sheet-cancel")
-        expect("download-start", timeout: 10)
+        // The cancelled login's command still waits on the key for its
+        // touch, which nothing can interrupt: its timeout ends it.
+        tap("simulated-time-out-touch")
+        expectGone("simulated-time-out-touch")
+        waitForKeyTasksToEnd()
+        expect("download-start")
         expectAbsent("home-title", "A cancelled download is not a store")
         expectAbsent("setup-check", "A cancelled download is not a store")
         snapshot("cancelled")
-        // Again: the PIN is held; the key may first finish the cancelled login.
+        // Again: the PIN is held, and the key is free.
         tap("download-start")
-        touchKey()
+        expect("touch-prompt")
+        expectAbsent("pin-field", "The PIN should still be held after a cancel")
+        tapSimulated("simulated-touch")
         expect("setup-check", timeout: 60)
     }
 
@@ -339,28 +396,16 @@ final class SetupTests: XCTestCase {
     func testRemovingTheStoreReturnsToWelcome() {
         launch()
         setUpFully()
-        tap("settings-button")
-        expect("settings-lock-now")
-        let remove = element("settings-remove-store")
-        var swipes = 0
-        while !(remove.exists && remove.isHittable) && swipes < 6 {
-            app.swipeUp()
-            swipes += 1
-        }
-        remove.tap()
+        openSettings()
+        tap("settings-remove-store")
         // The confirmation opens at the foot of the list, below the fold.
-        let confirm = element("settings-remove-confirm")
-        swipes = 0
-        while !(confirm.exists && confirm.isHittable) && swipes < 6 {
-            app.swipeUp()
-            swipes += 1
-        }
+        scrollTo("settings-remove-confirm")
         expectText("settings-remove-warning", contains: "not touched")
         snapshot("remove-confirm")
-        confirm.tap()
-        expect("setup-welcome", timeout: 20)
+        tap("settings-remove-confirm")
+        expect("setup-welcome")
         app.terminate()
         launch(keep: true)
-        expect("setup-welcome", timeout: 20)
+        expect("setup-welcome")
     }
 }

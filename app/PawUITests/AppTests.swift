@@ -3,157 +3,9 @@ import XCTest
 /// The real screens on the fixture store (`-pawFixture 1`): 27 entries the
 /// simulated key can open and 2 under `archive/` it cannot, a simulated key
 /// with PIN 123456, a simulated Face ID and a simulated clock.
-final class AppTests: XCTestCase {
-    private var app: XCUIApplication!
-
-    private static let pin = "123456"
-    private static let githubPassword = "tidal-Quartz-88-ferns"
-
-    override func setUp() {
-        continueAfterFailure = false
-        app = XCUIApplication()
-    }
-
-    override func tearDown() {
-        snapshot("end")
-    }
-
-    // MARK: Helpers
-
+final class AppTests: PawUITestCase {
     private func launch(appearance: String = "light", extra: [String] = []) {
-        app.launchArguments = [
-            "-pawFixture", "1",
-            "-pawAppearance", appearance,
-            "-pawSimPin", Self.pin,
-            "-pawSimTouch", "1",
-            "-pawSimTouchTimeoutMs", "15000",
-        ] + extra
-        app.launch()
-        expect("home-title", timeout: 20)
-    }
-
-    private func snapshot(_ name: String) {
-        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        attachment.name = "\(self.name.split(separator: " ").last?.dropLast() ?? "test")-\(name)"
-        attachment.lifetime = .keepAlways
-        add(attachment)
-    }
-
-    private func element(_ identifier: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
-    }
-
-    @discardableResult
-    private func expect(_ identifier: String, timeout: TimeInterval = 10,
-                        file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
-        let found = element(identifier)
-        XCTAssertTrue(found.waitForExistence(timeout: timeout),
-                      "\"\(identifier)\" should be on screen", file: file, line: line)
-        return found
-    }
-
-    private func expectGone(_ identifier: String, timeout: TimeInterval = 10,
-                            file: StaticString = #filePath, line: UInt = #line) {
-        let gone = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: element(identifier))
-        if XCTWaiter().wait(for: [gone], timeout: timeout) != .completed {
-            XCTFail("\"\(identifier)\" should have gone", file: file, line: line)
-        }
-    }
-
-    private func expectAbsent(_ identifier: String, _ why: String,
-                              file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertFalse(element(identifier).exists, why, file: file, line: line)
-    }
-
-    /// Waits until the element's label contains `text`, and reports what it said otherwise.
-    private func expectLabel(_ identifier: String, contains text: String, timeout: TimeInterval = 10,
-                             file: StaticString = #filePath, line: UInt = #line) {
-        let found = expect(identifier, timeout: timeout, file: file, line: line)
-        let matches = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label CONTAINS %@", text), object: found)
-        if XCTWaiter().wait(for: [matches], timeout: timeout) != .completed {
-            XCTFail("\"\(identifier)\" should say \"\(text)\", it said \"\(found.label)\"",
-                    file: file, line: line)
-        }
-    }
-
-    private func expectValue(_ identifier: String, _ value: String,
-                             file: StaticString = #filePath, line: UInt = #line) {
-        let found = expect(identifier, file: file, line: line)
-        let matches = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == %@", value), object: found)
-        if XCTWaiter().wait(for: [matches], timeout: 5) != .completed {
-            XCTFail("\"\(identifier)\" should be \"\(value)\", it was \"\(found.value ?? "nil")\"",
-                    file: file, line: line)
-        }
-    }
-
-    /// Scrolls the list until the element can be tapped.
-    @discardableResult
-    private func scrollTo(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
-        let found = element(identifier)
-        var swipes = 0
-        while !(found.exists && found.isHittable) && swipes < 6 {
-            app.swipeUp()
-            swipes += 1
-        }
-        XCTAssertTrue(found.exists, "\"\(identifier)\" should be in the list", file: file, line: line)
-        return found
-    }
-
-    private func tap(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {
-        scrollTo(identifier, file: file, line: line).tap()
-    }
-
-    private func goBack() {
-        let back = app.navigationBars.buttons["BackButton"]
-        if back.exists {
-            back.tap()
-        } else {
-            app.navigationBars.buttons.element(boundBy: 0).tap()
-        }
-    }
-
-    /// The PIN field, secure or shown (it is shown with one try left).
-    @discardableResult
-    private func pinField(file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
-        let field = element("pin-field")
-        XCTAssertTrue(field.waitForExistence(timeout: 10), "The key sheet should ask for the PIN",
-                      file: file, line: line)
-        return field
-    }
-
-    /// Types the PIN and sends it with the return key, which cannot miss
-    /// the way a tap on Continue can while the sheet is still resizing.
-    private func enterPin(_ pin: String) {
-        let field = pinField()
-        field.tap()
-        field.typeText(pin + "\n")
-    }
-
-    /// A simulator control drawn below the key sheet's own buttons. Tapped
-    /// at once: a touch must land before the simulated key's timeout, and
-    /// XCUITest scrolls the sheet to it if needed.
-    private func tapSimulated(_ identifier: String) {
-        app.buttons[identifier].tap()
-    }
-
-    private func touchTheKey() {
-        expect("touch-prompt")
-        tapSimulated("simulated-touch")
-    }
-
-    /// From Home: the web folder, then github.com with PIN and touch.
-    private func openGitHubWithKey(askingForPin: Bool = true) {
-        tap("folder-web")
-        tap("entry-github.com")
-        expectLabel("key-sheet-purpose", contains: "Open github.com")
-        if askingForPin {
-            enterPin(Self.pin)
-        }
-        touchTheKey()
-        expectLabel("entry-title", contains: "github.com")
+        launchFixture(appearance: appearance, extra: extra)
     }
 
     // MARK: Browse and search
@@ -229,8 +81,8 @@ final class AppTests: XCTestCase {
             expectAbsent("pin-tries-left", "A fresh key has all 3 tries, so none are counted out")
             expectAbsent("touch-prompt", "No touch before the PIN")
             if appearance == "light" { snapshot("key-sheet-pin") }
-            field.tap()
-            field.typeText(Self.pin)
+            enterPin(Self.pin, send: false)
+            expectEnabled("pin-continue", true)
             app.buttons["pin-continue"].tap()
 
             expect("touch-prompt")
@@ -290,7 +142,7 @@ final class AppTests: XCTestCase {
     }
 
     func testCancelWhileWaitingForATouchOpensNothing() {
-        launch(extra: ["-pawSimTouchTimeoutMs", "8000"])
+        launch()
         tap("folder-web")
         tap("entry-github.com")
         enterPin(Self.pin)
@@ -298,13 +150,18 @@ final class AppTests: XCTestCase {
         app.buttons["key-sheet-cancel"].tap()
         expectGone("key-sheet-purpose")
 
-        // Past the key's own timeout: the late answer must not open anything.
-        sleep(10)
+        // The key is still waiting for the touch the sheet let go of. Its
+        // timeout runs out now; the late answer must not open anything.
+        goBack()
+        inSettings(tapping: "sim-time-out-touch")
+        waitForKeyTasksToEnd()
         expectAbsent("entry-title", "Nothing opens after a cancel")
         expectAbsent("key-sheet-purpose", "The sheet stays closed")
+        expectAbsent("face-id-github.com", "A cancelled open keeps no Face ID copy")
         snapshot("after-cancel")
 
         // The key is free again.
+        tap("folder-web")
         tap("entry-gitlab.com")
         touchTheKey()
         expectLabel("entry-title", contains: "gitlab.com")
@@ -321,10 +178,8 @@ final class AppTests: XCTestCase {
         goBack()
 
         // The key is still blinking: touch it now, after the cancel.
-        app.buttons["settings-button"].tap()
-        app.buttons["sim-touch-key"].tap()
-        app.buttons["settings-done"].tap()
-        sleep(3)
+        inSettings(tapping: "sim-touch-key")
+        waitForKeyTasksToEnd()
 
         expectAbsent("entry-title", "A late touch opens nothing")
         expect("folder-web")
@@ -344,12 +199,11 @@ final class AppTests: XCTestCase {
         goBack()
 
         // The key is still waiting for the touch when Lock now runs.
-        app.buttons["settings-button"].tap()
-        app.buttons["settings-lock-now"].tap()
-        app.buttons["settings-button"].tap()
-        app.buttons["sim-touch-key"].tap()
-        app.buttons["settings-done"].tap()
-        sleep(3)
+        openSettings()
+        tap("settings-lock-now")
+        expectGone("settings-done")
+        inSettings(tapping: "sim-touch-key")
+        waitForKeyTasksToEnd()
 
         expectAbsent("entry-title", "A touch after Lock now opens nothing")
         expectAbsent("face-id-github.com", "A touch after Lock now keeps no Face ID copy")
@@ -399,9 +253,7 @@ final class AppTests: XCTestCase {
         goBack()
         expect("face-id-github.com")
 
-        app.buttons["settings-button"].tap()
-        app.buttons["sim-advance-9h"].tap()
-        app.buttons["settings-done"].tap()
+        inSettings(tapping: "sim-advance-9h")
 
         expectLabel("recent-github.com", contains: "needs your key")
         expectAbsent("face-id-github.com", "The copy has ended")
@@ -468,12 +320,10 @@ final class AppTests: XCTestCase {
         launch()
         tap("folder-web")
         tap("entry-github.com")
-        let field = pinField()
-        field.tap()
-        field.typeText("12345")
-        XCTAssertFalse(app.buttons["pin-continue"].isEnabled, "Continue waits for 6 characters")
+        enterPin("12345", send: false)
+        expectEnabled("pin-continue", false)
         // The return key sends it anyway; the core refuses it before the card.
-        field.typeText("\n")
+        pinField().typeText("\n")
         expectLabel("key-sheet-headline", contains: "A PIN has 6 to 127 characters")
         expectLabel("key-sheet-body", contains: "no try was used")
         expectAbsent("pin-tries-left", "The key still has all 3 tries")
@@ -505,9 +355,7 @@ final class AppTests: XCTestCase {
         openGitHubWithKey()
         goBack()
 
-        XCUIDevice.shared.press(.home)
-        sleep(2)
-        app.activate()
+        backgroundAndReturn()
         tap("entry-gitlab.com")
         expectLabel("key-sheet-purpose", contains: "Open gitlab.com")
         pinField()
@@ -520,14 +368,14 @@ final class AppTests: XCTestCase {
     }
 
     func testATouchTimeoutCanBeTriedAgainWithoutThePin() {
-        // Long enough to photograph the second touch stage before it ends too.
-        launch(extra: ["-pawSimTouchTimeoutMs", "8000"])
+        launch()
         tap("folder-web")
         tap("entry-github.com")
         enterPin(Self.pin)
-        expect("touch-prompt")
+        // The key's timeout runs out now, by the simulator's control.
+        timeOutTheTouch()
 
-        expectLabel("key-sheet-headline", contains: "Your key wasn't touched in time", timeout: 20)
+        expectLabel("key-sheet-headline", contains: "Your key wasn't touched in time")
         expectLabel("key-sheet-body", contains: "Nothing was opened.")
         expectAbsent("entry-title", "Nothing opens without a touch")
         snapshot("touch-timeout")
@@ -547,26 +395,27 @@ final class AppTests: XCTestCase {
         expectValue("password-value", Self.githubPassword)
 
         // Notification Center over paw: paw is inactive and the cover is up.
-        // The pull from the top edge does not always register in the
-        // simulator, so it is tried a few times.
+        // A slow drag from the top edge, held at the end, is what the
+        // simulator reliably takes as the gesture; a quick one is sometimes
+        // read as a tap on the status bar.
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let cover = element("privacy-cover")
-        for attempt in 0..<4 where !cover.exists {
-            let x = attempt.isMultiple(of: 2) ? 0.3 : 0.5
-            let top = springboard.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.0))
-            let middle = springboard.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.7))
-            top.press(forDuration: 0.3, thenDragTo: middle)
-            _ = cover.waitForExistence(timeout: 4)
+        for attempt in 0..<5 where !cover.exists {
+            let x = [0.25, 0.4, 0.15, 0.3, 0.2][attempt]
+            let top = springboard.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.001))
+            let middle = springboard.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.75))
+            top.press(forDuration: 0.5, thenDragTo: middle, withVelocity: .slow, thenHoldForDuration: 0.5)
+            _ = cover.waitForExistence(timeout: 5)
         }
         expect("privacy-cover")
         snapshot("cover")
 
-        // Then to the background and back.
-        XCUIDevice.shared.press(.home)
-        sleep(2)
-        app.activate()
+        // Then to the background and back: still masked, and the entry is
+        // still open (well inside the 2 minutes).
+        backgroundAndReturn()
         expectGone("privacy-cover")
         expectValue("password-value", "hidden")
+        expectLabel("entry-title", contains: "github.com")
         snapshot("hidden-after-background")
     }
 
@@ -585,5 +434,13 @@ final class AppTests: XCTestCase {
 
         app.buttons["large-type-done"].tap()
         expectGone("large-type-group-1")
+
+        // Large Type closes when paw goes to the background.
+        app.buttons["password-reveal"].tap()
+        app.buttons["password-large-type"].tap()
+        expect("large-type-group-1")
+        backgroundAndReturn()
+        expectGone("large-type-group-1")
+        expectValue("password-value", "hidden")
     }
 }

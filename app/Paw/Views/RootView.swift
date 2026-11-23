@@ -62,13 +62,7 @@ struct RootView: View {
             // For the UI tests: how many key tasks have not ended, so a
             // test can wait for "0" instead of sleeping before it checks
             // that a cancelled open left nothing.
-            Text(verbatim: "\(model.pendingKeyTasks)")
-                .font(.caption2)
-                .frame(width: 1, height: 1)
-                .opacity(0.02)
-                .accessibilityLabel("Key tasks running")
-                .accessibilityValue("\(model.pendingKeyTasks)")
-                .accessibilityIdentifier("sim-key-tasks")
+            KeyTasksSignal(tasks: model.pendingKeyTasks)
         }
         #endif
     }

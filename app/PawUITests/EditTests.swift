@@ -4,120 +4,12 @@ import XCTest
 /// (`-pawFixture 1`), which is set up through the simulated git host so it
 /// can be written, and the list of changes not sent yet. None of it needs
 /// the key: the key sheet only appears to open an entry.
-final class EditTests: XCTestCase {
-    private var app: XCUIApplication!
-
-    private static let pin = "123456"
-    private static let githubPassword = "tidal-Quartz-88-ferns"
-
-    override func setUp() {
-        continueAfterFailure = false
-        app = XCUIApplication()
-    }
-
-    override func tearDown() {
-        snapshot("end")
-    }
-
+final class EditTests: PawUITestCase {
     // MARK: Helpers
 
     private func launch(appearance: String = "light", extra: [String] = []) {
-        app.launchArguments = [
-            "-pawFixture", "1",
-            "-pawAppearance", appearance,
-            "-pawSimPin", Self.pin,
-            "-pawSimTouch", "1",
-            "-pawSimTouchTimeoutMs", "15000",
-        ] + extra
-        app.launch()
-        expect("home-title", timeout: 30)
+        launchFixture(appearance: appearance, extra: extra)
         expectAbsent("warning-row", "The fixture store should be writable")
-    }
-
-    private func snapshot(_ name: String) {
-        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        attachment.name = "\(self.name.split(separator: " ").last?.dropLast() ?? "test")-\(name)"
-        attachment.lifetime = .keepAlways
-        add(attachment)
-    }
-
-    private func element(_ identifier: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
-    }
-
-    @discardableResult
-    private func expect(_ identifier: String, timeout: TimeInterval = 20,
-                        file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
-        let found = element(identifier)
-        XCTAssertTrue(found.waitForExistence(timeout: timeout),
-                      "\"\(identifier)\" should be on screen", file: file, line: line)
-        return found
-    }
-
-    private func expectGone(_ identifier: String, timeout: TimeInterval = 20,
-                            file: StaticString = #filePath, line: UInt = #line) {
-        let gone = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: element(identifier))
-        if XCTWaiter().wait(for: [gone], timeout: timeout) != .completed {
-            XCTFail("\"\(identifier)\" should have gone", file: file, line: line)
-        }
-    }
-
-    private func expectAbsent(_ identifier: String, _ why: String,
-                              file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertFalse(element(identifier).exists, why, file: file, line: line)
-    }
-
-    private func expectLabel(_ identifier: String, contains text: String, timeout: TimeInterval = 20,
-                             file: StaticString = #filePath, line: UInt = #line) {
-        let found = expect(identifier, timeout: timeout, file: file, line: line)
-        let matches = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label CONTAINS %@", text), object: found)
-        if XCTWaiter().wait(for: [matches], timeout: timeout) != .completed {
-            XCTFail("\"\(identifier)\" should say \"\(text)\", it said \"\(found.label)\"",
-                    file: file, line: line)
-        }
-    }
-
-    private func expectValue(_ identifier: String, _ value: String, timeout: TimeInterval = 20,
-                             file: StaticString = #filePath, line: UInt = #line) {
-        let found = expect(identifier, timeout: timeout, file: file, line: line)
-        let matches = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == %@", value), object: found)
-        if XCTWaiter().wait(for: [matches], timeout: timeout) != .completed {
-            XCTFail("\"\(identifier)\" should be \"\(value)\", it was \"\(found.value ?? "nil")\"",
-                    file: file, line: line)
-        }
-    }
-
-    private func expectEnabled(_ identifier: String, _ enabled: Bool,
-                               file: StaticString = #filePath, line: UInt = #line) {
-        let found = expect(identifier, file: file, line: line)
-        let matches = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "enabled == %@", NSNumber(value: enabled)), object: found)
-        if XCTWaiter().wait(for: [matches], timeout: 10) != .completed {
-            XCTFail("\"\(identifier)\" should be \(enabled ? "enabled" : "disabled")", file: file, line: line)
-        }
-    }
-
-    /// Scrolls until the element can be tapped.
-    @discardableResult
-    private func scrollTo(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
-        let found = element(identifier)
-        _ = found.waitForExistence(timeout: 10)
-        var swipes = 0
-        while !(found.exists && found.isHittable && !underKeyboard(found)) && swipes < 6 {
-            app.swipeUp()
-            swipes += 1
-        }
-        XCTAssertTrue(found.exists, "\"\(identifier)\" should be on screen", file: file, line: line)
-        return found
-    }
-
-    /// The keyboard covers it, though it counts as hittable.
-    private func underKeyboard(_ found: XCUIElement) -> Bool {
-        let keyboard = app.keyboards.firstMatch
-        return keyboard.exists && found.frame.maxY > keyboard.frame.minY
     }
 
     /// Save is dimmed and does nothing: the sheet stays and nothing is saved.
@@ -125,19 +17,6 @@ final class EditTests: XCTestCase {
         app.buttons["form-save"].firstMatch.tap()
         XCTAssertTrue(element("form-cancel").exists, "Save should not close the form", file: file, line: line)
         XCTAssertFalse(element("sim-last-app-toast").exists, "Nothing should have been saved", file: file, line: line)
-    }
-
-    private func tap(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {
-        scrollTo(identifier, file: file, line: line).tap()
-    }
-
-    private func goBack() {
-        let back = app.navigationBars.buttons["BackButton"]
-        if back.exists {
-            back.tap()
-        } else {
-            app.navigationBars.buttons.element(boundBy: 0).tap()
-        }
     }
 
     /// Types into a form field, replacing what is there.
@@ -194,12 +73,9 @@ final class EditTests: XCTestCase {
         tap("entry-\(name)")
         expectLabel("key-sheet-purpose", contains: "Open \(name)")
         if askingForPin {
-            let field = expect("pin-field")
-            field.tap()
-            field.typeText(Self.pin + "\n")
+            enterPin(Self.pin)
         }
-        expect("touch-prompt")
-        app.buttons["simulated-touch"].tap()
+        touchTheKey()
         expectLabel("entry-title", contains: name)
     }
 
@@ -228,8 +104,9 @@ final class EditTests: XCTestCase {
         expectLabel("unpushed-banner", contains: "1 change not sent")
         snapshot("home-after-save")
 
+        // Saved with a Face ID copy: what was just typed opens without the key.
         tap("folder-web")
-        expectLabel("entry-shop.example", contains: "shop.example, needs your key")
+        expectLabel("entry-shop.example", contains: "shop.example, opens with Face ID")
         expectNoKeySheet()
         goBack()
 
@@ -240,7 +117,7 @@ final class EditTests: XCTestCase {
         expect("entry-shop.example")
     }
 
-    func testANewEntryOpensWithTheKeyAndShowsWhatWasTyped() {
+    func testANewEntryOpensWithFaceIdAndShowsWhatWasTyped() {
         launch()
         tap("folder-email")
         tap("add-button")
@@ -257,7 +134,12 @@ final class EditTests: XCTestCase {
         expectGone("form-save")
         expectNoKeySheet()
 
-        openWithKey("newsletter")
+        // A new entry gets a Face ID copy from its save: no key sheet.
+        expectLabel("entry-newsletter", contains: "opens with Face ID")
+        tap("entry-newsletter")
+        expectLabel("entry-title", contains: "newsletter")
+        expectAbsent("key-sheet-purpose", "What was just typed opens with Face ID, not the key")
+        expectLabel("face-id-window-text", contains: "Opens with Face ID until")
         expectValue("field-Username", "reader@example.com")
         expectValue("field-Website", "https://news.example")
         expectValue("field-Member id", "A-1234")
