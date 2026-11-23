@@ -38,6 +38,8 @@ private struct CopyToastModifier: ViewModifier {
                         .transition(.opacity)
                         // Spoken as an announcement instead; not focusable.
                         .accessibilityHidden(true)
+                        // A tap on the button under it still reaches the button.
+                        .allowsHitTesting(false)
                 }
             }
             .animation(.easeOut(duration: 0.2), value: message)
