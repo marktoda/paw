@@ -4,7 +4,7 @@ extension View {
     /// The bottom search field and round Add button, as the system draws
     /// them in glass. Use on the root view of a `NavigationStack`.
     func pawBottomSearch(
-        text: Binding<String>, prompt: String, onAdd: @escaping () -> Void
+        text: Binding<String>, prompt: String, addDisabled: Bool = false, onAdd: @escaping () -> Void
     ) -> some View {
         searchable(text: text, prompt: Text(prompt))
             .toolbar {
@@ -14,6 +14,7 @@ extension View {
                     Button(action: onAdd) {
                         Label("Add a password", systemImage: PawSymbol.add)
                     }
+                    .disabled(addDisabled)
                     .accessibilityIdentifier("add-button")
                 }
             }

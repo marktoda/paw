@@ -8,6 +8,9 @@ struct EntryRow: View {
         case faceID
         /// The next tap asks for the key.
         case needsKey
+        /// The plugged-in key cannot open it: no mark, and the tap explains
+        /// which keys can, without asking for a PIN or a touch.
+        case anotherKey
     }
 
     let name: String
@@ -17,6 +20,12 @@ struct EntryRow: View {
     let access: Access
     /// A search term; the part of the name that matches is drawn semibold.
     var match: String? = nil
+    /// Matched stretches of the name and subtitle in UTF-16 units, as the
+    /// core's search reports them. Drawn semibold; they win over `match`.
+    var nameHighlights: [NSRange] = []
+    var subtitleHighlights: [NSRange] = []
+    /// Defaults to `entry-<name>`. Set it when one name can appear twice on a screen.
+    var identifier: String? = nil
     var action: () -> Void = {}
 
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -31,10 +40,12 @@ struct EntryRow: View {
                         .foregroundStyle(PawColor.label)
                         .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                         .truncationMode(.tail)
-                    Text(subtitle)
-                        .font(PawFont.footnote)
-                        .foregroundStyle(PawColor.labelSecondary)
-                        .lineLimit(1)
+                    if !subtitle.isEmpty {
+                        Text(Self.emphasized(subtitle, subtitleHighlights, font: PawFont.footnote.weight(.semibold)))
+                            .font(PawFont.footnote)
+                            .foregroundStyle(PawColor.labelSecondary)
+                            .lineLimit(1)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
@@ -46,6 +57,8 @@ struct EntryRow: View {
                 case .needsKey:
                     KeyDisc(size: .marker)
                         .padding(.trailing, 3)
+                case .anotherKey:
+                    EmptyView()
                 }
             }
             .padding(.vertical, PawMetrics.Spacing.s)
@@ -53,10 +66,23 @@ struct EntryRow: View {
             .contentShape(Rectangle())
         }
         .accessibilityLabel(spokenLabel)
-        .accessibilityIdentifier("entry-\(name)")
+        .accessibilityIdentifier(identifier ?? "entry-\(name)")
+    }
+
+    private static func emphasized(_ string: String, _ ranges: [NSRange], font: Font) -> AttributedString {
+        var text = AttributedString(string)
+        for range in ranges {
+            if let found = Range(range, in: text) {
+                text[found].font = font
+            }
+        }
+        return text
     }
 
     private var displayName: AttributedString {
+        if !nameHighlights.isEmpty {
+            return Self.emphasized(name, nameHighlights, font: Font.body.weight(.semibold))
+        }
         var text = AttributedString(name)
         if let match, !match.isEmpty,
            let range = text.range(of: match, options: [.caseInsensitive, .diacriticInsensitive]) {
@@ -66,9 +92,11 @@ struct EntryRow: View {
     }
 
     private var spokenLabel: String {
+        let words = subtitle.isEmpty ? name : "\(name), \(subtitle)"
         switch access {
-        case .faceID: "\(name), \(subtitle), opens with Face ID"
-        case .needsKey: "\(name), \(subtitle), needs your key"
+        case .faceID: return "\(words), opens with Face ID"
+        case .needsKey: return "\(words), needs your key"
+        case .anotherKey: return words
         }
     }
 }

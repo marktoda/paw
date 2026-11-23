@@ -107,6 +107,8 @@ struct FieldRow: View {
 /// The password: always 16 dots while hidden, coloured SF Mono when shown.
 struct PasswordField: View {
     var label = "Password"
+    /// Prefix of the identifiers: `<prefix>-value`, `-reveal`, `-copy`, `-large-type`.
+    var identifier = "password"
     let password: String
     @Binding var isRevealed: Bool
     var onCopy: () -> Void = {}
@@ -133,22 +135,22 @@ struct PasswordField: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(label)
             .accessibilityValue(isRevealed ? password : "hidden")
-            .accessibilityIdentifier("password-value")
+            .accessibilityIdentifier("\(identifier)-value")
 
             if isRevealed {
                 PawIconButton(
                     symbol: PawSymbol.largeType, label: "Show in large type",
-                    identifier: "password-large-type", action: onLargeType)
+                    identifier: "\(identifier)-large-type", action: onLargeType)
             }
             PawIconButton(
                 symbol: isRevealed ? PawSymbol.hide : PawSymbol.reveal,
-                label: isRevealed ? "Hide password" : "Show password",
-                identifier: "password-reveal") {
+                label: isRevealed ? "Hide \(label.lowercased())" : "Show \(label.lowercased())",
+                identifier: "\(identifier)-reveal") {
                     isRevealed.toggle()
                 }
             PawIconButton(
-                symbol: PawSymbol.copy, label: "Copy password",
-                identifier: "password-copy", action: onCopy)
+                symbol: PawSymbol.copy, label: "Copy \(label.lowercased())",
+                identifier: "\(identifier)-copy", action: onCopy)
         }
         .padding(.vertical, PawMetrics.Spacing.s)
         .frame(minHeight: PawMetrics.rowField)

@@ -17,6 +17,9 @@ enum KeySheetStage: Equatable {
     case done
     /// Out of PIN tries.
     case locked
+    /// Something went wrong that trying again may fix, e.g. the key was not
+    /// touched in time. `problem` says what happened, `nextStep` what to do.
+    case failed(problem: String, nextStep: String)
 }
 
 /// The content of the key sheet for every stage. The host presents it with
@@ -31,6 +34,8 @@ struct KeySheetContent: View {
     var minimumPinLength = 6
     var onContinue: () -> Void = {}
     var onCancel: () -> Void = {}
+    /// "Try again" on the failed stage.
+    var onRetry: () -> Void = {}
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showPin = false
@@ -84,7 +89,7 @@ struct KeySheetContent: View {
                 if isPinStage {
                     pinField
                 }
-                if stage != .locked && stage != .done {
+                if showsSteps {
                     KeyStepPills(current: currentStep)
                 }
                 if let note, stage == .touch {
@@ -129,6 +134,11 @@ struct KeySheetContent: View {
                 .transition(reduceMotion ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
         case .locked:
             KeyDisc(size: .hero, phase: .locked)
+        case .failed:
+            // Trying again needs the key, so the disc stays; smaller, so
+            // both buttons fit the sheet.
+            KeyDisc(size: .banner)
+                .accessibilityHidden(true)
         }
     }
 
@@ -220,6 +230,11 @@ struct KeySheetContent: View {
                 cancelButton("Cancel")
             case .locked:
                 cancelButton("Close")
+            case .failed:
+                Button("Try again", action: onRetry)
+                    .buttonStyle(.pawPrimary)
+                    .accessibilityIdentifier("key-sheet-retry")
+                cancelButton("Cancel")
             case .done:
                 EmptyView()
             case .plugIn, .busy, .touch, .working:
@@ -246,6 +261,7 @@ struct KeySheetContent: View {
         case .working(let message, _): message
         case .done: "Done"
         case .locked: "Your key is locked"
+        case .failed(let problem, _): problem
         }
     }
 
@@ -268,6 +284,8 @@ struct KeySheetContent: View {
             return nil
         case .locked:
             return "Unlock it with the key's reset code or Admin PIN. Passwords that open with Face ID still work."
+        case .failed(_, let nextStep):
+            return nextStep
         }
     }
 
@@ -306,6 +324,13 @@ struct KeySheetContent: View {
         triesLeft != nil
     }
 
+    private var showsSteps: Bool {
+        switch stage {
+        case .locked, .done, .failed: false
+        default: true
+        }
+    }
+
     private var isWrongPin: Bool {
         if case .wrongPin = stage { return true }
         return false
@@ -319,7 +344,7 @@ struct KeySheetContent: View {
         switch stage {
         case .plugIn: 0
         case .pin, .wrongPin, .locked: 1
-        case .busy, .touch: 2
+        case .busy, .touch, .failed: 2
         case .working, .done: 3
         }
     }

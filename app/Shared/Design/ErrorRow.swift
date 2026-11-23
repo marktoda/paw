@@ -12,6 +12,8 @@ struct ErrorRow: View {
     /// What to do, or what still works.
     let nextStep: String
     var actionTitle: String? = nil
+    /// The action asks for the key, so it carries the gold disc.
+    var actionNeedsKey = false
     var action: () -> Void = {}
     /// A banner stands alone on its own tinted card; a row sits in a list.
     var isBanner = false
@@ -35,7 +37,14 @@ struct ErrorRow: View {
                 .accessibilityLabel("\(kind == .error ? "Error" : "Warning"): \(problem) \(nextStep)")
                 .accessibilityIdentifier(kind == .error ? "error-row" : "warning-row")
                 if let actionTitle {
-                    Button(actionTitle, action: action)
+                    Button(action: action) {
+                        HStack(spacing: PawMetrics.Spacing.s) {
+                            if actionNeedsKey {
+                                KeyDisc(size: .marker)
+                            }
+                            Text(actionTitle)
+                        }
+                    }
                         .buttonStyle(.borderless)
                         .font(PawFont.subheadline.weight(.semibold))
                         .foregroundStyle(PawColor.label)
