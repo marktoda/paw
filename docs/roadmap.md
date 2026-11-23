@@ -63,7 +63,8 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 | Setup flow as a core state machine: read key, address, check the host accepts the key before the PIN, clone, test decrypt | sync | done |
 | GitHub host keys shipped in the app; first-connection confirm for other hosts | sync | done (core) |
 | Setup screens | screens | in progress (branch `setup-screens`; end to end in the simulator against the simulated key and host) |
-| First real clone of the owner's store from GitHub with the YubiKey | device | next: needs the owner, the phone and the key |
+| First real clone of the owner's store from GitHub with the YubiKey | device | done 2026-11-23: setup, clone, download and decrypt worked on the iPhone |
+| Pick the repository from a list after GitHub sign-in, instead of typing its address | screens | later, with the GitHub sign-in in M6 |
 
 ### M5 Write and push
 
@@ -93,6 +94,7 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 | Item | Status |
 |---|---|
 | Settings, "Who can open these passwords", replace key, diagnostics export, remove store | later |
+| Copy and UX polish passes: shorter, plainer text everywhere; fix the janky spots the owner saw on the phone | next, after hardening and sync land |
 | App icon (paw built from discs) and wordmark rework | later |
 | Licence notices for bundled libraries | later |
 
@@ -112,7 +114,7 @@ Several recipients (the owner's backup key), TOTP, import from other managers, c
 |---|---|
 | "Check the touch timeout (do not touch)" on the test screen | waiting |
 | "Read key" on the newest build, to see both slots' touch policies | waiting |
-| First real clone, once setup screens exist | next |
+| First real clone | done 2026-11-23 |
 
 ## Open decisions for the owner
 
