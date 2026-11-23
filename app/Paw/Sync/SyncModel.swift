@@ -647,6 +647,7 @@ final class SyncModel {
         let store = app.store
         let repoDir = repoDir
         let core = gitHub.core
+        let time = BackgroundTime.begin("Sync")
         workQueue.async { [weak self] in
             let snapshot = StoreSnapshot.take(store: store, repoDir: repoDir)
             let result = Result { try core.refreshStore() }
@@ -654,6 +655,7 @@ final class SyncModel {
             let handoff = SyncHandoff(value: (snapshot, result, stillSignedIn))
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
+                    time.end()
                     self?.checkedWithSignIn(before: handoff.value.0, handoff.value.1, stillSignedIn: handoff.value.2)
                 }
             }
