@@ -102,6 +102,7 @@ struct SettingsSheet: View {
                         .font(PawFont.footnote)
                         .foregroundStyle(PawColor.labelSecondary)
                 }
+                AutoFillSettingsSection()
                 StoreSettingsSections(model: model)
                 #if DEBUG && targetEnvironment(simulator)
                 if model.simulator != nil {

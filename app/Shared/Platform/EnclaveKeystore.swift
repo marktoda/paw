@@ -80,14 +80,14 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
     /// `PlatformCopies.make` on the simulator and for the check screen.
     @discardableResult
     func prepare() throws -> String {
-        let group = try KeychainGroup.resolve()
+        let group = try KeychainGroup.shared()
         try Self.preflightBiometry()
         let key = try lock.withLock { try findOrCreateKey(group: group) }
         return key.created ? "created" : "found"
     }
 
     func sealDetailed(_ secret: Data) throws -> Data {
-        let group = try KeychainGroup.resolve()
+        let group = try KeychainGroup.shared()
         try Self.preflightBiometry()
         let key = try lock.withLock { try findOrCreateKey(group: group) }
         if !key.created, enrolmentChanged(group: group) {
@@ -143,7 +143,7 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
             assertionFailure("EnclaveKeystore.unseal blocks on Face ID: call it off the main thread")
             throw EnclaveFailure.failed("unseal was called on the main thread")
         }
-        let group = try KeychainGroup.resolve()
+        let group = try KeychainGroup.shared()
         let (label, ciphertext) = try Self.parse(sealed)
 
         // Before any prompt: a key that is gone, or whose faces changed,
@@ -251,7 +251,7 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
     // MARK: Index key
 
     func indexKeyDetailed() throws -> Data {
-        let group = try KeychainGroup.resolve()
+        let group = try KeychainGroup.shared()
         return try lock.withLock {
             if let existing = try readSecret(account: Self.indexAccount, group: group) {
                 guard existing.count == 32 else { throw EnclaveFailure.failed("the index key has the wrong size") }
@@ -286,7 +286,7 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
     // MARK: Reset
 
     func resetDetailed() throws {
-        let group = try KeychainGroup.resolve()
+        let group = try KeychainGroup.shared()
         try lock.withLock {
             var failures: [String] = []
             let keys: [String: Any] = [
@@ -507,18 +507,34 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
 
 // MARK: - Keychain access group
 
-/// The keychain access group every Face ID copy item lives in:
-/// `<team id>.com.marktoda.paw`, the app's own application-identifier
-/// group, which scripts/install.sh signs into the app. The AutoFill
-/// extension can share it later by adding the same group to its
-/// `keychain-access-groups` (its profile grants the team wildcard).
+/// Keychain access groups.
 ///
-/// The team id is not known at build time (CI builds unsigned), so it is
-/// read once from the group the keychain gives an item stored without
-/// one: the first group in the signed entitlements.
+/// `shared()`: where every Face ID copy item lives, the App Group
+/// `group.com.marktoda.paw`. An App Group is also a keychain access group
+/// on iOS, and both paw and its AutoFill extension are signed with it, so a
+/// copy made in one opens in the other. scripts/install.sh signs each
+/// target with only its own application identifier as keychain group (it
+/// drops the profile's wildcard), so `<team>.com.marktoda.paw` would not
+/// reach the extension.
+///
+/// `resolve()`: `<team id>.com.marktoda.paw`, the app's own
+/// application-identifier group, for items only the app may read. The team
+/// id is not known at build time (CI builds unsigned), so it is read once
+/// from the group the keychain gives an item stored without one: the first
+/// group in the signed entitlements.
 enum KeychainGroup {
     /// The one place the group is named.
     static let name = "com.marktoda.paw"
+
+    /// The group shared with the AutoFill extension. In the unsigned
+    /// simulator build there is no App Group, so it is the app's own.
+    static func shared() throws -> String {
+        #if targetEnvironment(simulator)
+        return try resolve()
+        #else
+        return StoreLocation.appGroup
+        #endif
+    }
 
     static func resolve() throws -> String {
         switch resolved {
@@ -673,7 +689,7 @@ enum PlatformCopies {
         #if targetEnvironment(simulator)
         guard (try? keystore.prepare()) != nil else { return nil }
         #else
-        guard (try? KeychainGroup.resolve()) != nil else { return nil }
+        guard (try? KeychainGroup.shared()) != nil else { return nil }
         #endif
         return CopyCache(dir: dir, keystore: keystore, clock: SystemClock())
     }

@@ -143,6 +143,8 @@ final class StoreRootModel {
                 copiesAvailable: copies != nil,
                 remove: { [weak self] in self?.removeStore() },
                 fileProtection: { [location] in location.protectionSummary() })
+            model.publishIdentities = { CredentialIdentities.publish($0) }
+            CredentialIdentities.publish(store)
             phase = .home(model, controls)
         } catch {
             fail(error)
@@ -191,6 +193,7 @@ final class StoreRootModel {
         // own thread, never here on the main thread.
         keyPort.session()?.forgetPin()
         keyPort.setEnrolledKey(key: nil)
+        CredentialIdentities.clear()
         do {
             try location.removeAll()
             try location.prepare()

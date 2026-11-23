@@ -100,7 +100,7 @@ struct EnclaveCheckView: View {
         owner.invalidate()
 
         let group: String
-        do { group = try KeychainGroup.resolve() } catch let failure as EnclaveFailure {
+        do { group = try KeychainGroup.shared() } catch let failure as EnclaveFailure {
             group = "fail: \(failure.detail)"
         } catch { group = "fail" }
 

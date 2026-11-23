@@ -1,50 +1,92 @@
 import AuthenticationServices
 import SwiftUI
 
-/// The AutoFill extension, until filling is built (design 2.10): it says
-/// so and closes. It asks for no PIN and opens no connection to the key.
-final class CredentialProviderViewController: ASCredentialProviderViewController {
-    override func viewDidLoad() {
-        super.viewDidLoad()
+/// The AutoFill extension (design.md 2.10). It reads the store paw set up
+/// and fills a password by its Face ID copy or with the key. It never
+/// writes the store, opens no network connection, never shows a password
+/// and never uses the pasteboard. The screens and their model live in
+/// `app/Shared/AutoFill`, where the app's debug harness drives them too.
+final class CredentialProviderViewController: ASCredentialProviderViewController, AutoFillCompletion {
+    private var model: AutoFillModel?
+    private var host: UIHostingController<AutoFillRootView>?
 
-        let host = UIHostingController(rootView: ComingSoon { [weak self] in
-            self?.extensionContext.cancelRequest(
-                withError: NSError(
-                    domain: ASExtensionErrorDomain,
-                    code: ASExtensionError.userCanceled.rawValue))
-        })
+    /// The key icon, or "Passwords…" in the bar: a list for these sites.
+    override func prepareCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {
+        show(.list(services: serviceIdentifiers.map(\.identifier)))
+    }
+
+    /// A suggestion above the keyboard. Every copy is sealed behind Face
+    /// ID, which needs a screen, so this never fills by itself.
+    override func provideCredentialWithoutUserInteraction(for credentialRequest: ASCredentialRequest) {
+        guard let path = Self.path(of: credentialRequest) else {
+            end(.credentialIdentityNotFound)
+            return
+        }
+        // Off the main thread: opening the store walks its folders.
+        DispatchQueue.global(qos: .userInitiated).async {
+            let answer = StoreForAutoFill.quickTypeAnswer(StoreForAutoFill.open(), path: path)
+            DispatchQueue.main.async { [weak self] in
+                self?.end(answer)
+            }
+        }
+    }
+
+    /// After `userInteractionRequired`: Face ID or the key sheet for that
+    /// one entry.
+    override func prepareInterfaceToProvideCredential(for credentialRequest: ASCredentialRequest) {
+        guard let path = Self.path(of: credentialRequest) else {
+            end(.credentialIdentityNotFound)
+            return
+        }
+        show(.entry(path: path))
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        // Dismissed by a swipe or by iOS: stop any key task, drop the PIN.
+        model?.shutDown()
+    }
+
+    private static func path(of request: ASCredentialRequest) -> String? {
+        guard let identity = request.credentialIdentity as? ASPasswordCredentialIdentity,
+              let path = identity.recordIdentifier, !path.isEmpty else { return nil }
+        return path
+    }
+
+    private func show(_ request: AutoFillRequest) {
+        let model = AutoFillModel(request: request, completion: self, open: { StoreForAutoFill.open() })
+        self.model = model
+        let host = UIHostingController(rootView: AutoFillRootView(model: model))
+        self.host?.willMove(toParent: nil)
+        self.host?.view.removeFromSuperview()
+        self.host?.removeFromParent()
         addChild(host)
         host.view.frame = view.bounds
         host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(host.view)
         host.didMove(toParent: self)
+        self.host = host
     }
 
-    override func prepareCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {}
-}
+    // MARK: AutoFillCompletion
 
-private struct ComingSoon: View {
-    let close: () -> Void
+    func fill(user: String, password: String) {
+        let credential = ASPasswordCredential(user: user, password: password)
+        extensionContext.completeRequest(withSelectedCredential: credential, completionHandler: nil)
+        model?.shutDown()
+        model = nil
+    }
 
-    var body: some View {
-        VStack(spacing: PawMetrics.Spacing.l) {
-            Spacer(minLength: 0)
-            Text("AutoFill is coming")
-                .font(PawFont.title)
-                .foregroundStyle(PawColor.label)
-                .multilineTextAlignment(.center)
-                .accessibilityAddTraits(.isHeader)
-            Text("paw can't fill passwords yet. Open paw to copy one.")
-                .font(PawFont.body)
-                .foregroundStyle(PawColor.labelSecondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-            Button("Close", action: close)
-                .buttonStyle(.pawSecondary)
+    func end(_ reason: AutoFillEnd) {
+        let code: ASExtensionError.Code
+        switch reason {
+        case .userCanceled: code = .userCanceled
+        case .userInteractionRequired: code = .userInteractionRequired
+        case .credentialIdentityNotFound: code = .credentialIdentityNotFound
+        case .failed: code = .failed
         }
-        .padding(PawMetrics.Spacing.xl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(PawColor.bg.ignoresSafeArea())
+        extensionContext.cancelRequest(withError: NSError(domain: ASExtensionErrorDomain, code: code.rawValue))
+        model?.shutDown()
+        model = nil
     }
 }

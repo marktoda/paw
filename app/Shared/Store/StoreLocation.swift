@@ -1,24 +1,55 @@
 import Foundation
 
 /// Where paw keeps the store on this iPhone: the setup state, the cloned
-/// repository and the Face ID copies, all under one folder in Application
-/// Support that device backups leave out ("Moving to a new iPhone",
-/// design.md 2.12).
+/// repository and the Face ID copies, all under one folder in the App Group
+/// container that paw and its AutoFill extension share, left out of device
+/// backups ("Moving to a new iPhone", design.md 2.12).
 ///
-/// When the AutoFill extension needs the store, the folder moves to the App
-/// Group container: only `base()` changes, to
-/// `FileManager.default.containerURL(forSecurityApplicationGroupIdentifier:)`.
+/// The app writes here. The extension only reads the store (see
+/// `StoreForAutoFill`); the one thing it writes is a Face ID copy in
+/// `copiesDir`, which the copy cache makes safe for two processes.
 struct StoreLocation {
+    /// The App Group both targets are signed with.
+    static let appGroup = "group.com.marktoda.paw"
+
     /// The one folder everything below lives in.
     let root: URL
 
+    enum Problem: Error, CustomStringConvertible {
+        case noAppGroup
+
+        var description: String {
+            "paw can't reach its shared folder (\(StoreLocation.appGroup)). This build may not be signed for it."
+        }
+    }
+
+    /// The App Group container. The unsigned simulator build has none, so
+    /// there it is the app's Application Support folder; the debug AutoFill
+    /// harness runs inside the app and so shares it.
     static func base() throws -> URL {
-        try FileManager.default.url(
+        if let group = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup) {
+            return group
+        }
+        #if targetEnvironment(simulator)
+        return try FileManager.default.url(
             for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        #else
+        throw Problem.noAppGroup
+        #endif
     }
 
     static func standard() throws -> StoreLocation {
         StoreLocation(root: try base().appendingPathComponent("paw", isDirectory: true))
+    }
+
+    /// Setup finished and the store is on this iPhone. Reads two files and
+    /// writes nothing, so the extension can ask (`Setup.open` would create
+    /// folders and may restart a download).
+    var isSetUp: Bool {
+        let setup = stateDir.appendingPathComponent("setup")
+        guard let text = try? String(contentsOf: setup, encoding: .utf8),
+              text.split(separator: "\n").first == "step=done" else { return false }
+        return FileManager.default.fileExists(atPath: repoDir.appendingPathComponent(".gpg-id").path)
     }
 
     /// The core's state directory: `setup`, `known_hosts`, `remote`,

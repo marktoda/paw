@@ -140,6 +140,8 @@ final class AppModel {
     var showsSettings = false
     /// The entry Face ID is being asked for, to ignore a second tap.
     private(set) var faceIdOpening: String?
+    /// Tells AutoFill's suggestions about the store; set for a set-up store only.
+    @ObservationIgnored var publishIdentities: (@MainActor (PassStore) -> Void)?
 
     /// Every core task whose end has not been seen yet: the one the sheet
     /// follows, and any it let go of (Cancel, Lock now) that may still
@@ -770,6 +772,7 @@ final class AppModel {
         self.store = store
         home = store.home()
         entryCount = Int(store.entryCount())
+        publishIdentities?(store)
         let exists = Set(allEntryPaths())
         recentPaths = recentPaths
             .map { $0 == renamed?.from ? (renamed?.to ?? $0) : $0 }
@@ -849,6 +852,7 @@ final class AppModel {
                 }
             }
             keyPort.session()?.noteForegrounded()
+            publishIdentities?(store)
             Clipboard.clearIfExpired()
             sweepCopies()
             if readerPresent, keyPort.session() == nil {

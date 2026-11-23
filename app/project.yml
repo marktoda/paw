@@ -45,6 +45,10 @@ targets:
       path: Paw/Paw.entitlements
       properties:
         com.apple.developer.authentication-services.autofill-credential-provider: true
+        # The store, the Face ID copies and their keychain items, shared
+        # with the AutoFill extension (app/Shared/Store/StoreLocation.swift).
+        com.apple.security.application-groups:
+          - group.com.marktoda.paw
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.marktoda.paw
@@ -53,7 +57,11 @@ targets:
     platform: iOS
     sources:
       - PawAutoFill
-      - Shared
+      # Settings, the identity store writer and the debug harness are the
+      # app's: the extension never publishes suggestions or hosts tests.
+      - path: Shared
+        excludes:
+          - "AutoFill/App/**"
       - Generated
     dependencies:
       - framework: build/PawCore.xcframework
@@ -68,6 +76,7 @@ targets:
       path: PawAutoFill/Info.plist
       properties:
         CFBundleDisplayName: Paw
+        NSFaceIDUsageDescription: "Face ID fills passwords you recently opened with your key. Your passcode cannot be used instead."
         NSExtension:
           NSExtensionPointIdentifier: com.apple.authentication-services-credential-provider-ui
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).CredentialProviderViewController
@@ -78,6 +87,8 @@ targets:
       path: PawAutoFill/PawAutoFill.entitlements
       properties:
         com.apple.developer.authentication-services.autofill-credential-provider: true
+        com.apple.security.application-groups:
+          - group.com.marktoda.paw
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.marktoda.paw.autofill

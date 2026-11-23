@@ -54,7 +54,9 @@ final class PawAppDelegate: NSObject, UIApplicationDelegate {
 private struct LaunchRoot: View {
     var body: some View {
         #if DEBUG && targetEnvironment(simulator)
-        if FixtureLaunch.isRequested {
+        if AutoFillHarnessLaunch.isRequested {
+            AutoFillHarnessRoot()
+        } else if FixtureLaunch.isRequested {
             FixtureRoot()
         } else if LaunchArguments.bool("pawSelfTest") {
             SelfTestView(host: "app")
