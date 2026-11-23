@@ -62,8 +62,8 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 | Integrate after fetch: fast-forward, replay local commits on top, keep both when one entry changed on both sides | sync | done |
 | Setup flow as a core state machine: read key, address, check the host accepts the key before the PIN, clone, test decrypt | sync | done |
 | GitHub host keys shipped in the app; first-connection confirm for other hosts | sync | done (core) |
-| Setup screens | screens | next |
-| First real clone of the owner's store from GitHub with the YubiKey | device | blocked on setup screens |
+| Setup screens | screens | in progress (branch `setup-screens`; end to end in the simulator against the simulated key and host) |
+| First real clone of the owner's store from GitHub with the YubiKey | device | next: needs the owner, the phone and the key |
 
 ### M5 Write and push
 
@@ -112,7 +112,7 @@ Several recipients (the owner's backup key), TOTP, import from other managers, c
 |---|---|
 | "Check the touch timeout (do not touch)" on the test screen | waiting |
 | "Read key" on the newest build, to see both slots' touch policies | waiting |
-| First real clone, once setup screens exist | later |
+| First real clone, once setup screens exist | next |
 
 ## Open decisions for the owner
 

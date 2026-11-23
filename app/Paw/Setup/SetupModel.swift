@@ -182,9 +182,22 @@ final class SetupModel {
         if case .done = state {
             learnAboutStore()
         }
-        #if !targetEnvironment(simulator)
+        #if targetEnvironment(simulator)
+        if keyPresent { attachKey() }
+        #else
         watchReaders()
         #endif
+    }
+
+    /// A key is in but has no session yet (a relaunch past the first step):
+    /// open one, so the key sheet finds it.
+    private func attachKey() {
+        guard keyPort.session() == nil else { return }
+        let port = keyPort
+        let connect = connect
+        workQueue.async {
+            _ = try? port.pluggedIn(connection: connect())
+        }
     }
 
     var screen: SetupScreen {
@@ -376,6 +389,7 @@ final class SetupModel {
             case .check: startCheck()
             case .address: connectToHost()
             case .plugIn: readKey()
+            case .keyNotAccepted: checkAgain()
             default: break
             }
         }
@@ -763,6 +777,8 @@ final class SetupModel {
             keyPort.unplugged()
         } else if screen == .plugIn {
             readKey()
+        } else {
+            attachKey()
         }
     }
     #endif

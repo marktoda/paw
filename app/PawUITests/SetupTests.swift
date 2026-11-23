@@ -123,9 +123,12 @@ final class SetupTests: XCTestCase {
         if pin {
             enterPin(Self.pin)
         }
-        touchKey()
+        expect("touch-prompt", timeout: 20)
+        if shots { snapshot("download-touch") }
+        app.buttons["simulated-touch"].tap()
         if shots {
-            // What follows the touch: the clone, with its progress.
+            // What follows the touch: the clone with its progress, or Done
+            // if the fixture's 29 entries have already arrived.
             snapshot("download-progress")
         }
         expect("setup-check", timeout: 60)

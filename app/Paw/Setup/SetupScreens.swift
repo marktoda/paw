@@ -87,7 +87,7 @@ private struct WelcomeScreen: View {
     @State private var showsSelfTest = false
 
     var body: some View {
-        SetupPage(step: nil, title: "paw", identifier: "setup-welcome") {
+        SetupPage(step: nil, title: "paw", titleFont: PawFont.homeTitle, identifier: "setup-welcome") {
             VStack(alignment: .leading, spacing: PawMetrics.Spacing.xl) {
                 Text("Your pass store, opened with your YubiKey.")
                     .font(PawFont.columnTitle)
@@ -292,6 +292,8 @@ private struct AddressScreen: View {
                     }
                     .labelStyle(.iconOnly)
                     .buttonBorderShape(.capsule)
+                    // Ink, not the system blue: paw has no accent colour.
+                    .tint(PawColor.action)
                     .accessibilityIdentifier("address-paste")
                 }
                 .padding(.leading, PawMetrics.Spacing.l)
@@ -490,14 +492,18 @@ private struct DownloadScreen: View {
                 SetupProblemView(problem: problem) { model.performProblemAction() }
             }
         } buttons: {
-            Button {
-                model.startDownload()
-            } label: {
-                KeyButtonLabel(title: "Download")
+            // After the host's identity changed, the only way on is to
+            // start again: no button invites another try.
+            if model.problem?.action != .startOver {
+                Button {
+                    model.startDownload()
+                } label: {
+                    KeyButtonLabel(title: "Download")
+                }
+                .buttonStyle(.pawPrimary)
+                .disabled(model.working != nil)
+                .accessibilityIdentifier("download-start")
             }
-            .buttonStyle(.pawPrimary)
-            .disabled(model.working != nil)
-            .accessibilityIdentifier("download-start")
         }
     }
 }
@@ -549,7 +555,7 @@ private struct DoneScreen: View {
     var body: some View {
         SetupPage(
             step: nil, title: "It works",
-            message: "Your key opened \(Self.name(opened)). paw didn't show or keep it.",
+            message: "Your key opened \(opened). paw didn't show or keep it.",
             identifier: "setup-done"
         ) {
             SetupCard {
@@ -602,10 +608,6 @@ private struct DoneScreen: View {
         case 1: return "Encrypted for your key and 1 other."
         default: return "Encrypted for your key and \(others) others."
         }
-    }
-
-    private static func name(_ entry: String) -> String {
-        entry.split(separator: "/").last.map(String.init) ?? entry
     }
 
     /// "key ending 2C11 41DE", or the line as written if it is not hex.

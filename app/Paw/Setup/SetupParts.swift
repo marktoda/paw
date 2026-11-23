@@ -7,6 +7,7 @@ struct SetupPage<Content: View, Buttons: View>: View {
     let step: Int?
     let title: String
     var message: String? = nil
+    var titleFont = PawFont.title
     let identifier: String
     @ViewBuilder var content: Content
     @ViewBuilder var buttons: Buttons
@@ -22,7 +23,7 @@ struct SetupPage<Content: View, Buttons: View>: View {
                             .accessibilityIdentifier("setup-step")
                     }
                     Text(title)
-                        .font(PawFont.title)
+                        .font(titleFont)
                         .foregroundStyle(PawColor.label)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityAddTraits(.isHeader)
