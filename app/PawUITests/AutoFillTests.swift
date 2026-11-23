@@ -160,6 +160,33 @@ final class AutoFillTests: PawUITestCase {
         expect(row("web/github.com"))
     }
 
+    // MARK: Going away
+
+    func testSwipeAwayMidPinCancelsTheTask() {
+        launchProvider(["-pawHostProvider", "https://github.com", "-pawHarnessDismiss", "1"])
+        tap(row("web/github.com"))
+        enterPin(Self.pin, send: false)
+        tapSimulated("harness-dismiss")
+        expectResult("dismissed")
+        waitForKeyTasksToEnd()
+        expectValue("harness-pin", "none")
+    }
+
+    func testSwipeAwayMidTouchCancelsTheTaskAndForgetsThePin() {
+        launchProvider(["-pawHostProvider", "https://github.com", "-pawHarnessDismiss", "1"])
+        tap(row("web/github.com"))
+        enterPin(Self.pin)
+        expect("touch-prompt")
+        expectValue("harness-pin", "held")
+        tapSimulated("harness-dismiss")
+        expectResult("dismissed")
+        // A touch after the sheet went away fills nothing.
+        tap("harness-touch-key")
+        waitForKeyTasksToEnd()
+        expectValue("harness-pin", "none")
+        XCTAssertFalse(element("autofill-result").label.contains("filled"), "Nothing should be filled")
+    }
+
     // MARK: Suggestions above the keyboard
 
     func testSuggestionWithoutThenWithACopy() {

@@ -41,6 +41,24 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         show(.entry(path: path))
     }
 
+    /// Every way the provider can go away ends its key tasks and drops the
+    /// PIN: `fill` and `end` below (after `completeRequest` and
+    /// `cancelRequest`), a swipe down or iOS closing the sheet (here), and
+    /// the controller going away (`deinit`).
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        model?.viewWentAway()
+    }
+
+    deinit {
+        let model = model
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { model?.shutDown() }
+        } else {
+            DispatchQueue.main.async { model?.shutDown() }
+        }
+    }
+
     private static func path(of request: ASCredentialRequest) -> String? {
         guard let identity = request.credentialIdentity as? ASPasswordCredentialIdentity,
               let path = identity.recordIdentifier, !path.isEmpty else { return nil }

@@ -56,6 +56,8 @@ struct AutoFillHarnessRoot: View {
 /// key fill leaves a copy the next run fills from.
 private final class HarnessWorld: @unchecked Sendable {
     let opening: AutoFillOpening
+    /// The key port behind `opening`, to read whether a PIN is held.
+    private(set) var keyPort: KeyPort?
 
     init() {
         if LaunchArguments.string("pawHostProviderStore") == "none" {
@@ -76,10 +78,12 @@ private final class HarnessWorld: @unchecked Sendable {
             default: keystore.setFaceId(answer: .match)
             }
             let clock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000)).asClock()
+            let port = KeyPort(clock: clock)
+            keyPort = port
             opening = .ready(AutoFillSource(
                 store: try PassStore(dir: storeDir.path),
                 copies: CopyCache(dir: copiesDir.path, keystore: keystore.asKeystore(), clock: clock),
-                keyPort: KeyPort(clock: clock),
+                keyPort: port,
                 connect: { try KeyConnection.openForSession() }))
         } catch {
             opening = .unreadable(String(describing: error))
@@ -120,6 +124,18 @@ private final class HarnessRun: AutoFillCompletion {
         result = "ended \(reason.rawValue)"
         model = nil
     }
+
+    /// What the extension's controller does when its view goes away
+    /// without paw ending the request (a swipe down).
+    func dismiss() {
+        model?.viewWentAway()
+        model = nil
+        result = "dismissed"
+    }
+
+    var holdsPin: Bool {
+        world.keyPort?.session()?.holdsPin() == true
+    }
 }
 
 private struct AutoFillHarnessView: View {
@@ -132,6 +148,15 @@ private struct AutoFillHarnessView: View {
                     .overlay(alignment: .topLeading) {
                         KeyTasksSignal(tasks: model.pendingKeyTasks)
                     }
+                    .overlay(alignment: .topTrailing) {
+                        // `-pawHarnessDismiss 1`: stands in for a swipe down.
+                        if LaunchArguments.bool("pawHarnessDismiss") {
+                            SimulatorActionButton(action: SimulatorAction(
+                                title: "swipe the sheet away", identifier: "harness-dismiss") { run.dismiss() })
+                                .padding(.top, PawMetrics.Spacing.xxl * 2)
+                                .padding(.trailing, PawMetrics.Spacing.l)
+                        }
+                    }
             } else {
                 VStack(alignment: .leading, spacing: PawMetrics.Spacing.l) {
                     Text("AutoFill harness")
@@ -139,6 +164,9 @@ private struct AutoFillHarnessView: View {
                     Text(run.result)
                         .font(PawFont.footnote.monospaced())
                         .accessibilityIdentifier("autofill-result")
+                    Button("Touch the simulated key") { KeyConnection.simulateTouch() }
+                        .buttonStyle(.pawSecondary)
+                        .accessibilityIdentifier("harness-touch-key")
                     Button("Run again") { run.run() }
                         .buttonStyle(.pawPrimary)
                         .accessibilityIdentifier("harness-again")
@@ -150,6 +178,18 @@ private struct AutoFillHarnessView: View {
                 .overlay(alignment: .topLeading) {
                     KeyTasksSignal(tasks: 0)
                 }
+            }
+        }
+        .overlay(alignment: .bottomLeading) {
+            TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                let pin = run.holdsPin ? "held" : "none"
+                Text(verbatim: pin)
+                    .font(.caption2)
+                    .frame(width: 1, height: 1)
+                    .opacity(0.02)
+                    .accessibilityLabel("PIN")
+                    .accessibilityValue(pin)
+                    .accessibilityIdentifier("harness-pin")
             }
         }
         .overlay(alignment: .bottomTrailing) {

@@ -533,6 +533,19 @@ final class AutoFillModel {
         completion?.end(reason)
     }
 
+    /// The provider's view went away without a fill or a cancel from
+    /// paw: swiped down, or closed by iOS. Every key task is cancelled and
+    /// the PIN forgotten. A Face ID prompt under way is left to answer
+    /// (no PIN or key task is involved, and the entry it opens is wiped
+    /// at once), in case the system prompt itself hid the view.
+    func viewWentAway() {
+        if case .faceId = screen {
+            source?.keyPort.session()?.forgetPin()
+            return
+        }
+        shutDown()
+    }
+
     /// The provider is going away: every task is let go of and the PIN
     /// forgotten. Safe to call more than once.
     func shutDown() {
