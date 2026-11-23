@@ -41,6 +41,19 @@ struct SetupProblem: Equatable {
         case retry
         /// Forget everything setup kept and begin again.
         case startOver
+        /// "I expected this change": forget the host's changed key, then
+        /// show the key it presents now for confirmation.
+        case forgetHostKey
+        /// Switch to the host's other endpoint (GitHub's port 443).
+        case usePortFallback
+    }
+
+    /// A second way on, offered under the problem: a sentence and a button.
+    struct Offer: Equatable {
+        var text: String? = nil
+        let title: String
+        let identifier: String
+        let action: Action
     }
 
     var kind: ErrorRow.Kind = .error
@@ -50,6 +63,7 @@ struct SetupProblem: Equatable {
     var details: [String] = []
     var action: Action? = nil
     var actionTitle: String? = nil
+    var offer: Offer? = nil
 }
 
 /// The key sheet while setup shows it.
@@ -85,6 +99,17 @@ struct SetupSimulator {
 /// Wraps a value that crosses from a work queue to the main actor once.
 private struct SetupHandoff<Value>: @unchecked Sendable {
     let value: Value
+}
+
+/// Reading the key failed before it was read: the session could not be
+/// opened (design.md 2.11).
+private struct SetupAttachFailure: Error {
+    let error: Error
+}
+
+/// The key's PIN KDF is one paw cannot follow: refused before any PIN.
+private struct SetupUnsupportedPinKdf: Error {
+    let detail: String?
 }
 
 /// Hands a core task's stage changes to the main queue, in order.
@@ -152,12 +177,31 @@ final class SetupModel {
     private(set) var sshFingerprint: String?
     /// A key is in (a reader is present, or the simulated key is plugged).
     private(set) var keyPresent: Bool
+    /// Why the key in could not be read (its session not opened), for the
+    /// Plug in screen and its "Try again".
+    private(set) var attachProblem: String?
+    /// This iPhone has no smart card support at all (device only).
+    private(set) var noSmartCards = false
+    /// Core tasks not yet ended, for the UI tests' `sim-key-tasks`.
+    private(set) var pendingTasks = 0
+    /// A download was cancelled while the key waited for its touch: the
+    /// key still waits. The simulator's download screen offers to time it
+    /// out; on a device the key's own timeout ends it.
+    private(set) var touchLeftWaiting = false
 
-    @ObservationIgnored private var tasks: [UUID: KeyTask] = [:]
+    @ObservationIgnored private var tasks: [UUID: KeyTask] = [:] {
+        didSet { countTasks() }
+    }
     /// The sheet is up but its task waits for a cancelled one to end: a
     /// download stopped while the key waited for a touch is still being
     /// removed, and the next may start only once it is.
-    @ObservationIgnored private var waitingToStart = false
+    @ObservationIgnored private var waitingToStart = false {
+        didSet { countTasks() }
+    }
+    /// The sheet's task waits at Plug in and opening the key's session
+    /// failed: its "Try again" opens the session again.
+    @ObservationIgnored private var sheetAwaitsAttach = false
+    @ObservationIgnored private var attaching = false
     #if !targetEnvironment(simulator)
     @ObservationIgnored private var slotWatch: NSKeyValueObservation?
     #endif
@@ -183,20 +227,87 @@ final class SetupModel {
             learnAboutStore()
         }
         #if targetEnvironment(simulator)
-        if keyPresent { attachKey() }
+        // Before the key is read, reading it opens the session, and shows
+        // on Plug in if that fails.
+        if keyPresent, state != .readKey { attachKey() }
         #else
         watchReaders()
         #endif
     }
 
+    private func countTasks() {
+        pendingTasks = tasks.count + (waitingToStart ? 1 : 0)
+    }
+
     /// A key is in but has no session yet (a relaunch past the first step):
-    /// open one, so the key sheet finds it.
+    /// open one, so the key sheet finds it. A failure shows on Plug in, or
+    /// in the sheet if it waits at Plug in.
     private func attachKey() {
-        guard keyPort.session() == nil else { return }
+        guard keyPort.session() == nil, !attaching else { return }
+        attaching = true
         let port = keyPort
         let connect = connect
         workQueue.async {
-            _ = try? port.pluggedIn(connection: connect())
+            let result: Result<Void, Error> = Result {
+                _ = try port.pluggedIn(connection: connect())
+            }
+            let handoff = SetupHandoff(value: result)
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.attached(handoff.value)
+                }
+            }
+        }
+    }
+
+    private func attached(_ result: Result<Void, Error>) {
+        attaching = false
+        switch result {
+        case .success:
+            attachProblem = nil
+        case .failure(let error):
+            let words = Self.attachWords(error)
+            attachProblem = words
+            if var sheet, sheet.stage == .plugIn {
+                sheet.stage = .failed(problem: "paw couldn't read your key", nextStep: words)
+                self.sheet = sheet
+                sheetAwaitsAttach = true
+            }
+        }
+    }
+
+    /// What went wrong opening the key's session, as a sentence or two.
+    private static func attachWords(_ error: Error) -> String {
+        if let error = error as? KeyError {
+            let words = KeyErrorWords(error, entry: "your store", purpose: .check)
+            return "\(words.problem). \(words.nextStep)"
+        }
+        if let error = error as? ConnectionError, case .Failed(let message) = error {
+            return sentence(message)
+        }
+        return describe(error)
+    }
+
+    /// "Try again" under the attach problem on Plug in.
+    func retryAttach() {
+        attachProblem = nil
+        if screen == .plugIn {
+            readKey()
+        } else {
+            attachKey()
+        }
+    }
+
+    /// The setup flow is back in the foreground: the session hears of it
+    /// (it may drop a PIN held too long), and a key that is in but was not
+    /// read is read again.
+    func foregrounded() {
+        keyPort.session()?.noteForegrounded()
+        guard keyPresent, keyPort.session() == nil, working == nil else { return }
+        if screen == .plugIn, sheet == nil {
+            readKey()
+        } else if started || state != .readKey {
+            attachKey()
         }
     }
 
@@ -224,12 +335,33 @@ final class SetupModel {
 
     /// The host of the address set, for sentences: "github.com".
     var host: String {
-        let address: String
+        Self.host(of: addressSet)
+    }
+
+    /// The address setup has, else the one typed.
+    private var addressSet: String {
         switch state {
-        case .checkHost(let set, _), .needPin(let set, _): address = set
-        default: address = addressText
+        case .checkHost(let set, _), .needPin(let set, _): set
+        default: addressText
         }
-        return Self.host(of: address)
+    }
+
+    /// What paw makes of the address as typed, for the line under the
+    /// field; `nil` while it can't be read (the reason shows after Connect).
+    var addressReading: AddressReading? {
+        let typed = addressText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !typed.isEmpty else { return nil }
+        return try? readStoreAddress(text: typed)
+    }
+
+    /// "paw will connect to github.com as git."
+    static func readingLine(_ reading: AddressReading) -> String {
+        let port = reading.port == 22 ? "" : " on port \(reading.port)"
+        var line = "paw will connect to \(reading.host) as \(reading.user)\(port)."
+        if reading.hostKeyBundled {
+            line += " paw already knows \(reading.host)'s fingerprint."
+        }
+        return line
     }
 
     static func host(of address: String) -> String {
@@ -257,13 +389,27 @@ final class SetupModel {
     func readKey() {
         guard keyPresent, working == nil else { return }
         problem = nil
+        attachProblem = nil
         working = "Reading your key\u{2026}"
         let port = keyPort
         let connect = connect
         let setup = setup
         workQueue.async {
             let result: Result<(SetupState, String?), Error> = Result {
-                let session = try port.session() ?? port.pluggedIn(connection: connect())
+                let session: KeySession
+                if let held = port.session() {
+                    session = held
+                } else {
+                    do {
+                        session = try port.pluggedIn(connection: connect())
+                    } catch {
+                        throw SetupAttachFailure(error: error)
+                    }
+                }
+                // Refused before any PIN: paw could not send this key its PIN.
+                guard session.pinKdfSupported() else {
+                    throw SetupUnsupportedPinKdf(detail: session.pinKdf().detail)
+                }
                 let info = session.info()
                 do {
                     return (try setup.readKeyFromSession(session: session), info.authenticationFingerprint)
@@ -290,9 +436,18 @@ final class SetupModel {
             self.state = state
             sshFingerprint = fingerprint
             keyConfirmed = false
+        case .failure(let failure as SetupAttachFailure):
+            state = setup.state()
+            attachProblem = Self.attachWords(failure.error)
+        case .failure(let refusal as SetupUnsupportedPinKdf):
+            state = setup.state()
+            problem = SetupProblem(
+                problem: "paw doesn't support this key's PIN setting yet",
+                nextStep: "The key has KDF turned on in a way paw can't follow. No PIN try was used.",
+                details: refusal.detail.map { [$0] } ?? [])
         case .failure(let error as KeyError):
             state = setup.state()
-            let words = KeyErrorWords(error, entry: "your store")
+            let words = KeyErrorWords(error, entry: "your store", purpose: .check)
             problem = SetupProblem(problem: words.problem, nextStep: words.nextStep)
         case .failure(let error):
             state = setup.state()
@@ -339,6 +494,30 @@ final class SetupModel {
         }
     }
 
+    /// "I expected this change" on a changed host key: forgets the key
+    /// pinned for the host, then checks it again, which shows the key it
+    /// presents now for confirmation.
+    func forgetHostKey() {
+        problem = nil
+        run("Checking \(host)\u{2026}", during: .forgettingHostKey) { setup in
+            _ = try setup.forgetHostKey()
+            return try setup.checkHost()
+        }
+    }
+
+    /// "Try port 443": the address becomes the host's other endpoint, and
+    /// the address screen says so under the field.
+    func usePortFallback() {
+        problem = nil
+        run(nil, during: .checkingHost) { setup in
+            try setup.usePortFallback()
+        } then: { [weak self] state in
+            if case .checkHost(let address, _) = state {
+                self?.addressText = address
+            }
+        }
+    }
+
     /// Back, on every screen but the first.
     func back() {
         problem = nil
@@ -380,7 +559,22 @@ final class SetupModel {
     func performProblemAction() {
         guard let action = problem?.action else { return }
         problem = nil
+        perform(action)
+    }
+
+    /// The button the inline problem offers besides its action.
+    func performOffer() {
+        guard let action = problem?.offer?.action else { return }
+        problem = nil
+        perform(action)
+    }
+
+    private func perform(_ action: SetupProblem.Action) {
         switch action {
+        case .forgetHostKey:
+            forgetHostKey()
+        case .usePortFallback:
+            usePortFallback()
         case .startOver:
             startOver()
         case .retry:
@@ -396,7 +590,7 @@ final class SetupModel {
     }
 
     private enum Moment {
-        case readingKey, checkingHost, downloading, checkingKey, goingBack
+        case readingKey, checkingHost, downloading, checkingKey, goingBack, forgettingHostKey
     }
 
     /// Runs a plain core step off the main thread; `then` sees its new state.
@@ -485,6 +679,14 @@ final class SetupModel {
     /// "Try again" in the sheet: a new task, at the first stage still needed.
     func retrySheet() {
         guard var sheet else { return }
+        if sheetAwaitsAttach {
+            // The task still waits at Plug in: open the key's session again.
+            sheetAwaitsAttach = false
+            sheet.stage = .plugIn
+            self.sheet = sheet
+            attachKey()
+            return
+        }
         tasks[sheet.taskID]?.cancel()
         sheet.taskID = startTask(sheet.purpose)
         sheet.stage = .busy
@@ -496,23 +698,36 @@ final class SetupModel {
     /// core removes it and setup is back at the download step.
     func cancelSheet() {
         if let sheet {
+            if sheet.stage == .touch {
+                // The key's command can't be interrupted: it still waits.
+                touchLeftWaiting = true
+            }
             tasks[sheet.taskID]?.cancel()
         }
         sheet = nil
+        sheetAwaitsAttach = false
         waitingToStart = false
         pinEntry = ""
     }
 
     #if targetEnvironment(simulator)
-    /// The debug control on the sheet's Plug in stage.
+    /// The debug control on Plug in and on the sheet's Plug in stage: as a
+    /// reader appearing on a device does.
     func simulatedPlugIn() {
         simulator?.plugIn()
         keyPresent = true
-        let port = keyPort
-        let connect = connect
-        workQueue.async {
-            _ = try? port.pluggedIn(connection: connect())
+        if screen == .plugIn, sheet == nil {
+            readKey()
+        } else {
+            attachKey()
         }
+    }
+
+    /// The debug control on the download screen after a cancel during the
+    /// touch: the key's wait runs out now.
+    func simulatedTouchTimeout() {
+        touchLeftWaiting = false
+        KeyConnection.simulateTouchTimeout()
     }
     #endif
 
@@ -531,6 +746,8 @@ final class SetupModel {
         if taskState.isFinal {
             tasks[id] = nil
         }
+        sheetAwaitsAttach = false
+        let purpose: KeyErrorWords.Purpose = sheet.purpose == .download ? .download : .check
         switch taskState {
         case .plugIn:
             sheet.stage = .plugIn
@@ -542,15 +759,22 @@ final class SetupModel {
             case .WrongPin(let left)?:
                 sheet.stage = .wrongPin(triesLeft: Int(left))
             case let error?:
-                let words = KeyErrorWords(error, entry: entryName(task))
+                let words = KeyErrorWords(error, entry: entryName(task), purpose: purpose)
                 sheet.stage = .pinAgain(triesLeft: tries, problem: words.problem, nextStep: words.nextStep)
             }
         case .busy:
             sheet.stage = .busy
         case .touch:
             sheet.stage = .touch
+            // A new command waits for a touch, so any cancelled one has ended.
+            touchLeftWaiting = false
         case .working(let progress):
-            sheet.stage = .working(message: workingMessage(sheet.purpose, progress), progress: progress.map(Self.progressLine))
+            // Re-read on every change: objects and bytes, when known.
+            let transfer = sheet.purpose == .download ? task.transferProgress() : nil
+            let line = transfer.flatMap(Self.transferLine) ?? progress.map(Self.progressLine)
+            sheet.stage = .working(
+                message: workingMessage(sheet.purpose, started: progress != nil || transfer != nil),
+                progress: line)
         case .done:
             sheet.stage = .done
             self.sheet = sheet
@@ -571,7 +795,7 @@ final class SetupModel {
         case .failed(.PinBlocked):
             sheet.stage = .locked
         case .failed(let error):
-            let words = KeyErrorWords(error, entry: entryName(task))
+            let words = KeyErrorWords(error, entry: entryName(task), purpose: purpose)
             sheet.stage = .failed(problem: words.problem, nextStep: words.nextStep)
         }
         if !Self.asksForPin(sheet.stage) {
@@ -587,10 +811,10 @@ final class SetupModel {
         return "your store"
     }
 
-    private func workingMessage(_ purpose: SetupSheet.Purpose, _ progress: TaskProgress?) -> String {
+    private func workingMessage(_ purpose: SetupSheet.Purpose, started: Bool) -> String {
         switch purpose {
         case .download:
-            progress == nil ? "Connecting to \(host)\u{2026}" : "Downloading your store\u{2026}"
+            started ? "Downloading your store\u{2026}" : "Connecting to \(host)\u{2026}"
         case .check:
             "Checking your key\u{2026}"
         }
@@ -598,6 +822,14 @@ final class SetupModel {
 
     private static func progressLine(_ progress: TaskProgress) -> String {
         "\(Int(progress.done).formatted()) of \(Int(progress.total).formatted())"
+    }
+
+    /// "412 of 1,240 \u{00B7} 1.2 MB", once the host has said how many.
+    private static func transferLine(_ transfer: TransferProgress) -> String? {
+        guard transfer.totalObjects > 0 else { return nil }
+        let bytes = ByteCountFormatter.string(
+            fromByteCount: Int64(clamping: transfer.receivedBytes), countStyle: .file)
+        return "\(Int(transfer.receivedObjects).formatted()) of \(Int(transfer.totalObjects).formatted()) \u{00B7} \(bytes)"
     }
 
     private static func asksForPin(_ stage: KeySheetStage) -> Bool {
@@ -659,6 +891,13 @@ final class SetupModel {
                 actionTitle: "Try again")
             return
         }
+        // What the host said picks the words for a few failures that share
+        // a case, "no store at that address" in particular.
+        if [.checkingHost, .downloading, .forgettingHostKey].contains(moment),
+           let remote = setup.lastRemoteMessage(), let words = Self.remoteWords(remote) {
+            problem = words
+            return
+        }
         switch error {
         case .BadAddress(let message):
             addressProblem = message
@@ -666,9 +905,71 @@ final class SetupModel {
             notAccepted = KeyNotAccepted(host: host, publicKey: publicKey)
         case .Cancelled:
             problem = nil
+        case .HostKeyChanged(let host, let expected, let presented):
+            let bundled = (try? readStoreAddress(text: addressSet))?.hostKeyBundled ?? false
+            problem = Self.hostKeyChanged(host: host, expected: expected, presented: presented, bundled: bundled)
+        case .HostUnreachable:
+            var words = Self.words(error, during: moment)
+            if let fallback = setup.portFallback() {
+                words.offer = SetupProblem.Offer(
+                    text: "Port \(fallback.fromPort) seems blocked. Try \(fallback.host) on port \(fallback.port)?",
+                    title: "Try port \(fallback.port)", identifier: "use-port-fallback", action: .usePortFallback)
+            }
+            problem = words
+        case .Failed(let message) where moment == .forgettingHostKey:
+            // A host whose keys ship with paw: its key is never forgotten.
+            problem = SetupProblem(
+                problem: "paw kept this server's key", nextStep: Self.sentence(message),
+                action: .startOver, actionTitle: "Start setup again")
         default:
             problem = Self.words(error, during: moment)
         }
+    }
+
+    /// The words for what the last host check or download found, when it
+    /// has words of its own.
+    private static func remoteWords(_ remote: RemoteMessage) -> SetupProblem? {
+        switch remote.reason {
+        case .repositoryNotFound:
+            let repository = remote.repository.isEmpty ? "that repository" : remote.repository
+            let host = remote.host.isEmpty ? "The server" : remote.host
+            return SetupProblem(
+                problem: "No store at that address",
+                nextStep: "\(host) says \(repository) doesn't exist, or this key can't see it. Check the address, "
+                    + "and that your account can see the repository.",
+                details: remote.said.map { ["\(host) said: \($0)"] } ?? [],
+                action: .retry, actionTitle: "Try again")
+        case .emptyRepository:
+            return words(.EmptyRepository, during: .downloading)
+        case .notAPassStore:
+            return words(.NotAPassStore, during: .downloading)
+        case .keyNotAccepted, .unreachable, .hostKeyChanged, .other:
+            return nil
+        }
+    }
+
+    /// A pinned host presented another key. For a host paw has no keys of
+    /// its own for, the person may say they expected it.
+    private static func hostKeyChanged(host: String, expected: [String], presented: String,
+                                       bundled: Bool) -> SetupProblem {
+        let warning = "This can mean someone is intercepting the connection. Nothing was sent."
+        let advice: String
+        if bundled {
+            advice = "\(host)'s keys come with paw and can't be forgotten, so this connection isn't reaching the "
+                + "real \(host). Try another network."
+        } else {
+            advice = "If the server's admin confirms the change, tap I expected this change."
+        }
+        var words = SetupProblem(
+            problem: "\(host)'s identity changed",
+            nextStep: "\(warning) \(advice)",
+            details: expected.map { "Expected \($0)" } + ["It presented \(presented)"],
+            action: .startOver, actionTitle: "Start setup again")
+        if !bundled {
+            words.offer = SetupProblem.Offer(
+                title: "I expected this change", identifier: "host-key-expected", action: .forgetHostKey)
+        }
+        return words
     }
 
     /// The failure table of design.md 2.4, S3 and S4.
@@ -686,12 +987,9 @@ final class SetupModel {
                 problem: "Can't reach \(host)", nextStep: "Check your connection and try again.",
                 details: [detail], action: .retry, actionTitle: "Try again")
         case .HostKeyChanged(let host, let expected, let presented):
-            return SetupProblem(
-                problem: "\(host)'s identity changed",
-                nextStep: "This can mean someone is intercepting the connection. Nothing was sent. "
-                    + "If the server's admin confirms the change, start setup again.",
-                details: expected.map { "Expected \($0)" } + ["It presented \(presented)"],
-                action: .startOver, actionTitle: "Start setup again")
+            // `show` knows whether the host's keys ship with paw; without
+            // that, nothing is offered but starting again.
+            return hostKeyChanged(host: host, expected: expected, presented: presented, bundled: true)
         case .HostKeyNotConfirmed(let host):
             return SetupProblem(
                 problem: "That isn't the fingerprint \(host) showed", nextStep: "Go back and connect again.")
@@ -717,7 +1015,7 @@ final class SetupModel {
         case .NotAPassStore:
             return SetupProblem(
                 problem: "That repository isn't a pass store",
-                nextStep: "It has no .gpg-id file at the top. Go back to check the address.")
+                nextStep: "It has no .gpg-id file at the top. Check the address.")
         case .KeyCannotOpenStore:
             return SetupProblem(
                 problem: "This key can't open this store",
@@ -769,7 +1067,10 @@ final class SetupModel {
     /// Follows the system's smart card readers, as Home does: a reader
     /// appearing on the plug-in screen reads the key.
     private func watchReaders() {
-        guard let manager = TKSmartCardSlotManager.default else { return }
+        guard let manager = TKSmartCardSlotManager.default else {
+            noSmartCards = true
+            return
+        }
         slotWatch = manager.observe(\.slotNames, options: [.initial, .new]) { [weak self] manager, _ in
             let present = !manager.slotNames.isEmpty
             DispatchQueue.main.async {

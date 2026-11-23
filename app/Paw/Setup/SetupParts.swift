@@ -100,10 +100,17 @@ struct KeyButtonLabel: View {
 }
 
 /// The inline problem: what happened, what to do, the lines to read
-/// closely, and its one action.
+/// closely, its one action, and the other way on it offers, if any.
 struct SetupProblemView: View {
     let problem: SetupProblem
     let act: () -> Void
+    let offerAct: () -> Void
+
+    init(problem: SetupProblem, act: @escaping () -> Void, offer: @escaping () -> Void = {}) {
+        self.problem = problem
+        self.act = act
+        offerAct = offer
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: PawMetrics.Spacing.s) {
@@ -129,6 +136,26 @@ struct SetupProblemView: View {
                 .tint(PawColor.labelSecondary)
                 .padding(.horizontal, PawMetrics.Spacing.l)
                 .accessibilityIdentifier("setup-problem-details")
+            }
+            if let offer = problem.offer {
+                VStack(alignment: .leading, spacing: PawMetrics.Spacing.s) {
+                    if let text = offer.text {
+                        Text(text)
+                            .font(PawFont.subheadline)
+                            .foregroundStyle(PawColor.label)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("\(offer.identifier)-text")
+                    }
+                    Button(offer.title, action: offerAct)
+                        .buttonStyle(.borderless)
+                        .font(PawFont.subheadline.weight(.semibold))
+                        .foregroundStyle(PawColor.label)
+                        .padding(.horizontal, PawMetrics.Spacing.m)
+                        .frame(minHeight: PawMetrics.pill)
+                        .background(PawColor.fill, in: Capsule())
+                        .accessibilityIdentifier(offer.identifier)
+                }
+                .padding(.horizontal, PawMetrics.Spacing.l)
             }
         }
     }

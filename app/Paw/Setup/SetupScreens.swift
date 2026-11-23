@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 /// First-run setup (design.md 2.4): one screen per step, Back on all but
 /// the first, the shared key sheet for the steps that need the key.
@@ -42,10 +43,15 @@ struct SetupFlowView: View {
         .onChange(of: scenePhase) {
             switch scenePhase {
             case .background: model.keyPort.session()?.noteBackgrounded()
-            case .active: model.keyPort.session()?.noteForegrounded()
+            case .active: model.foregrounded()
             default: break
             }
         }
+        #if DEBUG && targetEnvironment(simulator)
+        .background(alignment: .topLeading) {
+            SetupTaskCount(count: model.pendingTasks)
+        }
+        #endif
         .privacyCover()
     }
 
@@ -84,7 +90,9 @@ struct SetupFlowView: View {
 
 private struct WelcomeScreen: View {
     let model: SetupModel
+    #if DEBUG
     @State private var showsSelfTest = false
+    #endif
 
     var body: some View {
         SetupPage(step: nil, title: "paw", titleFont: PawFont.homeTitle, identifier: "setup-welcome") {
@@ -109,7 +117,7 @@ private struct WelcomeScreen: View {
             }
             .padding(.top, PawMetrics.Spacing.s)
             if let problem = model.problem {
-                SetupProblemView(problem: problem) { model.performProblemAction() }
+                SetupProblemView(problem: problem, act: { model.performProblemAction() }, offer: { model.performOffer() })
             }
         } buttons: {
             Button {
@@ -119,6 +127,7 @@ private struct WelcomeScreen: View {
             }
             .buttonStyle(.pawPrimary)
             .accessibilityIdentifier("setup-start")
+            #if DEBUG
             Button("Test my key") {
                 showsSelfTest = true
             }
@@ -127,11 +136,14 @@ private struct WelcomeScreen: View {
             .foregroundStyle(PawColor.label)
             .frame(minHeight: PawMetrics.tapMin)
             .accessibilityIdentifier("setup-test-key")
+            #endif
         }
+        #if DEBUG
         .sheet(isPresented: $showsSelfTest) {
             SelfTestView(host: "app")
                 .privacyCover()
         }
+        #endif
     }
 }
 
@@ -154,20 +166,37 @@ private struct PlugInScreen: View {
             .padding(.vertical, PawMetrics.Spacing.l)
             if let working = model.working, !working.isEmpty {
                 SetupWorkingLine(text: working)
-            } else if model.problem == nil {
+            } else if model.problem == nil, model.attachProblem == nil, !model.noSmartCards {
                 Text("paw goes on by itself once your key is in.")
                     .font(PawFont.footnote)
                     .foregroundStyle(PawColor.labelSecondary)
             }
+            if model.noSmartCards {
+                ErrorRow(
+                    kind: .error, problem: "This iPhone can't talk to USB keys",
+                    nextStep: "paw needs an iPhone that can use a YubiKey over USB-C.", isBanner: true)
+            } else if let attachProblem = model.attachProblem {
+                ErrorRow(kind: .error, problem: "paw couldn't read your key", nextStep: attachProblem, isBanner: true)
+            }
             if let problem = model.problem {
-                SetupProblemView(problem: problem) { model.performProblemAction() }
+                SetupProblemView(problem: problem, act: { model.performProblemAction() }, offer: { model.performOffer() })
             }
         } buttons: {
+            if model.attachProblem != nil, !model.noSmartCards {
+                // Reading the key again needs it in, but no PIN or touch.
+                Button {
+                    model.retryAttach()
+                } label: {
+                    KeyButtonLabel(title: "Try again")
+                }
+                .buttonStyle(.pawPrimary)
+                .disabled(model.working != nil)
+                .accessibilityIdentifier("plug-in-retry")
+            }
             #if targetEnvironment(simulator)
             if !model.keyPresent {
                 SetupSimulatorButton(title: "plug in the key", identifier: "simulated-plug-in") {
                     model.simulatedPlugIn()
-                    model.readKey()
                 }
             } else if model.problem != nil {
                 SetupSimulatorButton(title: "read the key again", identifier: "simulated-read-key") {
@@ -208,7 +237,7 @@ private struct YourKeyScreen: View {
                 ErrorRow(kind: .warning, problem: warning.problem, nextStep: warning.nextStep)
             }
             if let problem = model.problem {
-                SetupProblemView(problem: problem) { model.performProblemAction() }
+                SetupProblemView(problem: problem, act: { model.performProblemAction() }, offer: { model.performOffer() })
             }
         } buttons: {
             Button("Continue") { model.continueFromKey() }
@@ -274,14 +303,23 @@ private struct AddressScreen: View {
         ) {
             VStack(alignment: .leading, spacing: PawMetrics.Spacing.s) {
                 HStack(spacing: PawMetrics.Spacing.s) {
-                    TextField("git@github.com:you/password-store.git", text: $model.addressText)
+                    // Vertical, so a long address wraps instead of being cut
+                    // off. Return then types a newline: it is taken out and
+                    // connects, as Go would.
+                    TextField("git@github.com:you/password-store.git", text: $model.addressText, axis: .vertical)
+                        .lineLimit(1...4)
                         .font(PawFont.body.monospaced())
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
                         .submitLabel(.go)
                         .focused($focused)
-                        .onSubmit { connect() }
+                        .onChange(of: model.addressText) { _, text in
+                            model.addressProblem = nil
+                            guard text.contains(where: \.isNewline) else { return }
+                            model.addressText = text.filter { !$0.isNewline }
+                            connect()
+                        }
                         .accessibilityLabel("Store address")
                         .accessibilityIdentifier("repo-address")
                     PasteButton(payloadType: String.self) { strings in
@@ -298,6 +336,7 @@ private struct AddressScreen: View {
                 }
                 .padding(.leading, PawMetrics.Spacing.l)
                 .padding(.trailing, PawMetrics.Spacing.s)
+                .padding(.vertical, PawMetrics.Spacing.xs)
                 .frame(minHeight: PawMetrics.control)
                 .background(
                     model.addressProblem == nil ? PawColor.surface : PawColor.dangerFill,
@@ -308,24 +347,41 @@ private struct AddressScreen: View {
                         .foregroundStyle(PawColor.danger)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("address-problem")
-                } else if let notice {
-                    Text(notice)
-                        .font(PawFont.footnote)
-                        .foregroundStyle(PawColor.labelSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("address-notice")
                 } else {
-                    Text("paw checks that the server knows your key before it asks for your PIN.")
-                        .font(PawFont.footnote)
-                        .foregroundStyle(PawColor.labelSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if let reading {
+                        Text(SetupModel.readingLine(reading))
+                            .font(PawFont.footnote)
+                            .foregroundStyle(PawColor.label)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("address-reading")
+                        if let readingNotice = reading.notice {
+                            Text(readingNotice)
+                                .font(PawFont.footnote)
+                                .foregroundStyle(PawColor.labelSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("address-reading-notice")
+                        }
+                    }
+                    if let notice, notice != reading?.notice {
+                        Text(notice)
+                            .font(PawFont.footnote)
+                            .foregroundStyle(PawColor.labelSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("address-notice")
+                    }
+                    if reading == nil, notice == nil {
+                        Text("paw checks that the server knows your key before it asks for your PIN.")
+                            .font(PawFont.footnote)
+                            .foregroundStyle(PawColor.labelSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
             if let working = model.working, !working.isEmpty {
                 SetupWorkingLine(text: working)
             }
             if let problem = model.problem {
-                SetupProblemView(problem: problem) { model.performProblemAction() }
+                SetupProblemView(problem: problem, act: { model.performProblemAction() }, offer: { model.performOffer() })
             }
             #if targetEnvironment(simulator)
             if let simulator = model.simulator {
@@ -343,7 +399,13 @@ private struct AddressScreen: View {
         }
     }
 
+    /// Where paw will connect, as the address reads now.
+    private var reading: AddressReading? {
+        model.addressReading
+    }
+
     private func connect() {
+        guard model.working == nil, !model.addressText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         focused = false
         model.connectToHost()
     }
@@ -376,7 +438,7 @@ private struct ConfirmHostScreen: View {
                 SetupWorkingLine(text: working)
             }
             if let problem = model.problem {
-                SetupProblemView(problem: problem) { model.performProblemAction() }
+                SetupProblemView(problem: problem, act: { model.performProblemAction() }, offer: { model.performOffer() })
             }
         } buttons: {
             Button("Trust this server") { model.trustHost(fingerprint: fingerprint) }
@@ -418,7 +480,10 @@ private struct KeyNotAcceptedScreen: View {
                     .accessibilityIdentifier("ssh-public-key")
                 HStack(spacing: PawMetrics.Spacing.s) {
                     Button {
-                        UIPasteboard.general.string = publicKey
+                        // A public key, not a secret: it stays on this
+                        // iPhone's pasteboard with no expiry.
+                        UIPasteboard.general.setItems(
+                            [[UTType.utf8PlainText.identifier: publicKey]], options: [.localOnly: true])
                         toast = "SSH key copied."
                     } label: {
                         Label("Copy", systemImage: PawSymbol.copy)
@@ -446,7 +511,7 @@ private struct KeyNotAcceptedScreen: View {
                 SetupWorkingLine(text: working)
             }
             if let problem = model.problem {
-                SetupProblemView(problem: problem) { model.performProblemAction() }
+                SetupProblemView(problem: problem, act: { model.performProblemAction() }, offer: { model.performOffer() })
             }
             #if targetEnvironment(simulator)
             if let simulator = model.simulator {
@@ -481,6 +546,7 @@ private struct DownloadScreen: View {
                 Text(address)
                     .font(PawFont.footnote.monospaced())
                     .foregroundStyle(PawColor.label)
+                    .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
                     .accessibilityIdentifier("download-address")
                 Text("You'll enter your key's PIN once, then touch your key.")
@@ -489,8 +555,15 @@ private struct DownloadScreen: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let problem = model.problem {
-                SetupProblemView(problem: problem) { model.performProblemAction() }
+                SetupProblemView(problem: problem, act: { model.performProblemAction() }, offer: { model.performOffer() })
             }
+            #if targetEnvironment(simulator)
+            if model.touchLeftWaiting, model.sheet == nil {
+                SetupSimulatorButton(title: "time out the key's touch", identifier: "simulated-time-out-touch") {
+                    model.simulatedTouchTimeout()
+                }
+            }
+            #endif
         } buttons: {
             // After the host's identity changed, the only way on is to
             // start again: no button invites another try.
@@ -530,7 +603,7 @@ private struct CheckScreen: View {
             }
             .accessibilityIdentifier("check-count")
             if let problem = model.problem {
-                SetupProblemView(problem: problem) { model.performProblemAction() }
+                SetupProblemView(problem: problem, act: { model.performProblemAction() }, offer: { model.performOffer() })
             }
         } buttons: {
             Button {
@@ -637,7 +710,13 @@ private struct SetupKeySheet: View {
             onContinue: { model.continueWithPin() },
             onCancel: { model.cancelSheet() },
             onRetry: { model.retrySheet() },
-            simulatorAction: simulatorAction)
+            simulatorAction: simulatorAction,
+            moreSimulatorActions: moreSimulatorActions)
+            #if DEBUG && targetEnvironment(simulator)
+            .background(alignment: .topLeading) {
+                SetupTaskCount(count: model.pendingTasks)
+            }
+            #endif
             .presentationDetents([.height(PawMetrics.keySheetHeight), .large], selection: $detent)
             .presentationDragIndicator(.visible)
             .onChange(of: stage, initial: true) {
@@ -665,6 +744,17 @@ private struct SetupKeySheet: View {
         #endif
     }
 
+    private var moreSimulatorActions: [SimulatorAction] {
+        #if targetEnvironment(simulator)
+        if stage == .touch {
+            return [SimulatorAction(title: "time out the touch", identifier: "simulated-touch-timeout") {
+                KeyConnection.simulateTouchTimeout()
+            }]
+        }
+        #endif
+        return []
+    }
+
     private static func needsKeyboard(_ stage: KeySheetStage) -> Bool {
         switch stage {
         case .pin, .wrongPin, .pinAgain: true
@@ -672,3 +762,15 @@ private struct SetupKeySheet: View {
         }
     }
 }
+
+#if DEBUG && targetEnvironment(simulator)
+/// For the UI tests: how many core tasks have not ended, so a test can
+/// wait for "0" before checking that something did not happen.
+private struct SetupTaskCount: View {
+    let count: Int
+
+    var body: some View {
+        KeyTasksSignal(tasks: count)
+    }
+}
+#endif

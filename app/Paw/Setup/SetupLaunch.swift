@@ -9,19 +9,21 @@ import Foundation
 ///   "doesn't know this key yet" adds it;
 /// - `changedHostKey`: it presents another key once the first was trusted,
 ///   as an attacker in the way would;
-/// - `dropMidClone`: the first download is cut off part way; the next works.
+/// - `dropMidClone`: the first download is cut off part way; the next works;
+/// - `repositoryNotFound`: it accepts the key's login but answers every git
+///   command as GitHub does for a repository the account can't see.
 /// The simulated key's own arguments (`-pawSimPin` and the rest) apply too.
 enum SetupLaunch {
     static var isRequested: Bool {
-        UserDefaults.standard.bool(forKey: "pawSetup")
+        LaunchArguments.bool("pawSetup")
     }
 
     static var keepsState: Bool {
-        UserDefaults.standard.bool(forKey: "pawSetupKeep")
+        LaunchArguments.bool("pawSetupKeep")
     }
 
     fileprivate static var remoteMode: String? {
-        UserDefaults.standard.string(forKey: "pawSimRemote")
+        LaunchArguments.string("pawSimRemote")
     }
 }
 
@@ -44,6 +46,7 @@ final class SimulatedHostHolder: @unchecked Sendable {
             switch SetupLaunch.remoteMode {
             case "refuseKey": host.setRefuseKey(refuse: true)
             case "dropMidClone": host.setDropMidClone(drop: true)
+            case "repositoryNotFound": host.setRepositoryNotFound(notFound: true)
             default: break
             }
             SimRemoteHandle.shared.register(host, key: SimulatedKeyHolder.shared.key)
