@@ -151,9 +151,8 @@ fn a_push_the_host_refuses_is_reported() {
     sync::clone(&connection, &server.remote(), dir.path()).unwrap();
     let before = server.tip();
 
-    let hook = server.bare().join("hooks/pre-receive");
-    std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
-    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    // As a pre-receive hook that exits with an error would.
+    server.sim.set_refuse_pushes(true);
     commit_entry(dir.path());
 
     match sync::push(&connection, dir.path()) {

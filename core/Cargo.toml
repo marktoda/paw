@@ -11,12 +11,23 @@ crate-type = ["lib", "staticlib"]
 name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
 
+[features]
+# The simulated key, the fixture store, the software keystore and clock, and
+# the simulated git host (`src/sim`). On by default, so tests, the iOS
+# simulator and Debug builds have them; a Release device build is made with
+# `--no-default-features` and `scripts/check-no-sim.sh` proves they are gone
+# (design.md 5.5).
+default = ["sim"]
+sim = ["dep:flate2", "tokio/io-util"]
+
 [dependencies]
 base64 = "0.22"
 card-backend = "0.2.0"
 # Seals Face ID copies (see src/copies/format.rs).
 chacha20poly1305 = "0.10"
 ed25519-dalek = "2"
+# Only the simulated git host uses it, to find where a pushed pack ends.
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"], optional = true }
 # libgit2 is compiled from the vendored source with no TLS and no libssh2:
 # the only transport is our own, over russh (see src/sync/transport.rs).
 git2 = { version = "0.21", default-features = false, features = ["vendored-libgit2"] }

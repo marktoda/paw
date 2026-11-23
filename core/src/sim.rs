@@ -18,6 +18,7 @@
 
 pub mod copies;
 pub mod fixture;
+pub mod remote;
 
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
