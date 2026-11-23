@@ -168,7 +168,11 @@ private struct EntryFormView: View {
     private var newFolderBinding: Binding<String> {
         Binding(
             get: { form.newFolder ?? "" },
-            set: { form.newFolder = $0; form.changed() })
+            set: { value in
+                guard value != form.newFolder else { return }
+                form.newFolder = value
+                form.changed()
+            })
     }
 
     private var folderRow: some View {
@@ -251,6 +255,7 @@ private struct EntryFormView: View {
                 .accessibilityIdentifier("form-generate")
             }
             .padding(.vertical, PawMetrics.Spacing.s)
+            .listRowSeparator(.hidden)
             .pawListRow()
             Button {
                 withAnimation { showsOptions.toggle() }

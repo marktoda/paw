@@ -32,10 +32,11 @@ final class EntryFormModel {
 
     let purpose: EntryFormPurpose
     let isEditing: Bool
-    /// Add, and "Rename or move", start with the name field focused.
+    /// "Rename or move" starts with the name field focused. Add does not,
+    /// so the whole form shows before the keyboard covers half of it.
     var startsOnName: Bool {
         switch purpose {
-        case .add: true
+        case .add: false
         case .edit(_, let focusName): focusName
         }
     }
@@ -132,6 +133,8 @@ final class EntryFormModel {
         Binding(
             get: { self[keyPath: keyPath] },
             set: { value in
+                // A field can be set to what it holds as it gains focus.
+                guard value != self[keyPath: keyPath] else { return }
                 self[keyPath: keyPath] = value
                 self.touched.insert(field)
                 self.changed()
@@ -143,6 +146,7 @@ final class EntryFormModel {
             get: { self.extraFields.first { $0.id == id }.map { key ? $0.key : $0.value } ?? "" },
             set: { value in
                 guard let index = self.extraFields.firstIndex(where: { $0.id == id }) else { return }
+                guard value != (key ? self.extraFields[index].key : self.extraFields[index].value) else { return }
                 if key {
                     self.extraFields[index].key = value
                 } else {

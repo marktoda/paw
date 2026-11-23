@@ -106,12 +106,25 @@ final class EditTests: XCTestCase {
         let found = element(identifier)
         _ = found.waitForExistence(timeout: 10)
         var swipes = 0
-        while !(found.exists && found.isHittable) && swipes < 6 {
+        while !(found.exists && found.isHittable && !underKeyboard(found)) && swipes < 6 {
             app.swipeUp()
             swipes += 1
         }
         XCTAssertTrue(found.exists, "\"\(identifier)\" should be on screen", file: file, line: line)
         return found
+    }
+
+    /// The keyboard covers it, though it counts as hittable.
+    private func underKeyboard(_ found: XCUIElement) -> Bool {
+        let keyboard = app.keyboards.firstMatch
+        return keyboard.exists && found.frame.maxY > keyboard.frame.minY
+    }
+
+    /// Save is dimmed and does nothing: the sheet stays and nothing is saved.
+    private func expectSaveBlocked(file: StaticString = #filePath, line: UInt = #line) {
+        app.buttons["form-save"].firstMatch.tap()
+        XCTAssertTrue(element("form-name").exists, "Save should not close the form", file: file, line: line)
+        XCTAssertFalse(element("sim-last-app-toast").exists, "Nothing should have been saved", file: file, line: line)
     }
 
     private func tap(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {
@@ -205,6 +218,7 @@ final class EditTests: XCTestCase {
         XCTAssertEqual((password.value as? String)?.count, 20, "Generate should fill a 20-character password")
         type("https://shop.example/login", into: "form-website")
         snapshot("add-filled-light")
+        scrollTo("form-recipients")
         expectLabel("form-recipients", contains: "Encrypted for your key")
 
         tap("form-save")
@@ -261,21 +275,21 @@ final class EditTests: XCTestCase {
             if appearance == "dark" {
                 snapshot("add-empty-dark")
             }
-            expectEnabled("form-save", false)
+            expectSaveBlocked()
 
             type("x", into: "form-name")
             clear("form-name")
             expectLabel("problem-name", contains: "Give it a name.")
-            expectEnabled("form-save", false)
+            expectSaveBlocked()
 
             type("work/vpn", into: "form-name")
             expectLabel("problem-name", contains: "Names can't contain /.")
-            expectEnabled("form-save", false)
+            expectSaveBlocked()
 
             chooseFolder("web")
             type("GitHub.com", into: "form-name")
             expectLabel("problem-name", contains: "There's already an entry called 'github.com' in web.")
-            expectEnabled("form-save", false)
+            expectSaveBlocked()
             snapshot("add-errors-\(appearance)")
 
             type("github.com-2", into: "form-name")
@@ -294,6 +308,7 @@ final class EditTests: XCTestCase {
         XCTAssertTrue(slider.waitForExistence(timeout: 10), "The options should show the length")
         expectLabel("form-strength", contains: "very strong")
 
+        scrollTo("form-length")
         slider.adjust(toNormalizedSliderPosition: 0)
         expectValue("form-length", "8 characters")
         expectLabel("form-strength", contains: "fair")
@@ -441,13 +456,15 @@ final class EditTests: XCTestCase {
         expectValue("form-folder", "work")
         type("intranet", into: "form-name")
         type("Typed-pass-42", into: "form-password")
+        scrollTo("warning-row")
         expectLabel("warning-row", contains: "Who can open work changed")
-        expectEnabled("form-save", false)
+        expectSaveBlocked()
         snapshot("recipients-changed")
-        tap("error-action")
+        scrollTo("error-action").tap()
         expect("recipients-accept")
         snapshot("recipients-review")
         tap("recipients-accept")
+        scrollTo("form-recipients")
         expectLabel("form-recipients", contains: "Encrypted for your key")
         expectEnabled("form-save", true)
         tap("form-save")
@@ -463,8 +480,9 @@ final class EditTests: XCTestCase {
         type("intranet", into: "form-name")
         tap("error-action")
         tap("recipients-accept")
+        scrollTo("warning-row")
         expectLabel("warning-row", contains: "also encrypted for a key paw doesn't have")
-        expectEnabled("form-save", false)
+        expectSaveBlocked()
         snapshot("recipients-missing")
     }
 
