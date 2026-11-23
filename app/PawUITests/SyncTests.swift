@@ -80,12 +80,25 @@ final class SyncTests: XCTestCase {
         let found = element(identifier)
         _ = found.waitForExistence(timeout: 20)
         var swipes = 0
-        while !(found.exists && found.isHittable && !underKeyboard(found)) && swipes < 6 {
+        while !(found.exists && found.isHittable && !underKeyboard(found) && !underSyncActions(found, identifier))
+                && swipes < 6 {
             app.swipeUp()
             swipes += 1
         }
         XCTAssertTrue(found.exists, "\"\(identifier)\" should be on screen", file: file, line: line)
         return found
+    }
+
+    /// The sync sheet pins Send and Check under its list. A row that has
+    /// scrolled beneath them would take a tap meant for it to them.
+    private func underSyncActions(_ found: XCUIElement, _ identifier: String) -> Bool {
+        for pinned in ["sync-send", "sync-check"] where pinned != identifier {
+            let button = app.buttons[pinned]
+            if button.exists && found.frame.maxY > button.frame.minY {
+                return true
+            }
+        }
+        return false
     }
 
     private func underKeyboard(_ found: XCUIElement) -> Bool {
