@@ -380,6 +380,7 @@ final class SyncModel {
         case .send: tasks[taskID] = sync.sendWithKey(port: app.keyPort, listener: listener)
         case .refresh: tasks[taskID] = sync.refreshWithKey(port: app.keyPort, listener: listener)
         }
+        BackgroundTime.hold("Sync", while: tasks[taskID])
         taskChanged(taskID)
     }
 
@@ -737,12 +738,14 @@ final class SyncModel {
         let sync = sync
         let store = app.store
         let repoDir = repoDir
+        let time = BackgroundTime.begin("Sync")
         workQueue.async { [weak self] in
             let snapshot = StoreSnapshot.take(store: store, repoDir: repoDir)
             let result = Result { try sync.acceptReplacedRemote(keepChanges: keepChanges) }
             let handoff = SyncHandoff(value: (snapshot, result))
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
+                    time.end()
                     self?.accepted(handoff.value.0, handoff.value.1, keepChanges: keepChanges)
                 }
             }

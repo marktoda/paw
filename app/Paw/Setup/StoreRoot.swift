@@ -154,6 +154,10 @@ final class StoreRootModel {
     /// Settings › Remove: ends every Face ID copy and forgets the PIN,
     /// deletes the store and everything setup kept, and starts setup again.
     private func removeStore() -> String? {
+        BackgroundTime.run("Remove store") { removeStoreNow() }
+    }
+
+    private func removeStoreNow() -> String? {
         if case .home(let model, _) = phase {
             model.lockNow()
         }

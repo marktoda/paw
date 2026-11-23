@@ -67,6 +67,8 @@ final class AutoFillModel {
         /// Handed to the completion.
         case filled
         case noStore
+        /// paw is using the store; Try again opens it again.
+        case busy
         /// One short line, one next step; the only action is Close.
         case problem(String, String)
     }
@@ -158,6 +160,8 @@ final class AutoFillModel {
         switch opening {
         case .noStore:
             screen = .noStore
+        case .busy:
+            screen = .busy
         case .unreadable:
             screen = .problem("paw couldn't read your store", "Open paw to fix it.")
         case .ready(let source):
@@ -178,6 +182,14 @@ final class AutoFillModel {
                 pick(entry)
             }
         }
+    }
+
+    /// Try again after "The store is busy".
+    func reopen() {
+        guard screen == .busy else { return }
+        screen = .loading
+        started = false
+        start()
     }
 
     // MARK: The list
@@ -255,6 +267,9 @@ final class AutoFillModel {
     }
 
     private static func faceIdNotice(_ error: Error, entry: EntryRef) -> AutoFillNotice {
+        if isStoreBusy(message: String(describing: error)) {
+            return AutoFillNotice(problem: "The store is busy.", nextStep: "Tap \(entry.name) again.")
+        }
         switch error as? PawError {
         case .FaceIdCancelled?:
             return AutoFillNotice(problem: "Face ID was cancelled.", nextStep: "Tap \(entry.name) to try again.",
@@ -393,6 +408,8 @@ final class AutoFillModel {
             keyStage = .locked
         case .failed(.Cancelled), .cancelled:
             break
+        case .failed(let error) where isStoreBusy(message: String(describing: error)):
+            keyStage = .failed(problem: "The store is busy", nextStep: "Nothing was opened. Try again.")
         case .failed(let error):
             if case .KeyRemoved = error {
                 readKey()

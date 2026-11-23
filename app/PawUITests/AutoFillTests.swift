@@ -137,6 +137,13 @@ final class AutoFillTests: PawUITestCase {
         expectResult("ended userCanceled")
     }
 
+    func testBusyStoreTriesAgain() {
+        launchProvider(["-pawHostProvider", "https://github.com", "-pawHostProviderStore", "busy"])
+        expectLabel("warning-row", contains: "The store is busy.")
+        tap("autofill-retry")
+        expect(row("web/github.com"))
+    }
+
     func testAnotherKeysEntrySaysSoBeforeThePin() {
         launchProvider(["-pawHostProvider", "https://nothing.example"])
         let search = app.searchFields.firstMatch

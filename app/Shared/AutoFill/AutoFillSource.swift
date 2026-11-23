@@ -15,6 +15,9 @@ enum AutoFillOpening: @unchecked Sendable {
     case ready(AutoFillSource)
     /// Setup has not finished on this iPhone.
     case noStore
+    /// paw held the store lock longer than the core waits (a save, a
+    /// download). Nothing is wrong: trying again works.
+    case busy
     /// There is a store, but it could not be read. The raw reason, for no
     /// one but a debugger: the screen says only what to do.
     case unreadable(String)
@@ -54,7 +57,8 @@ enum StoreForAutoFill {
                 store: store, copies: copies, keyPort: keyPort,
                 connect: { try KeyConnection.openForSession() }))
         } catch {
-            return .unreadable(String(describing: error))
+            let detail = String(describing: error)
+            return isStoreBusy(message: detail) ? .busy : .unreadable(detail)
         }
     }
 
@@ -62,6 +66,8 @@ enum StoreForAutoFill {
     /// is sealed behind Face ID, which needs a screen, so there is never a
     /// fill without one: the entry is there (ask for the screen) or not.
     static func quickTypeAnswer(_ opening: AutoFillOpening, path: String) -> AutoFillEnd {
+        // Busy: the screen says so, with Try again.
+        if case .busy = opening { return .userInteractionRequired }
         guard case .ready(let source) = opening, SiteMatch.entry(path, in: source.store) != nil else {
             return .credentialIdentityNotFound
         }

@@ -62,6 +62,7 @@ targets:
       - path: Shared
         excludes:
           - "AutoFill/App/**"
+          - "Store/App/**"
       - Generated
     dependencies:
       - framework: build/PawCore.xcframework

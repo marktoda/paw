@@ -48,7 +48,7 @@ extension AppModel {
         guard let edits else { return }
         edits.confirmingDelete = nil
         do {
-            try edits.writer.delete(entry: session.ref.path, copies: copies)
+            try BackgroundTime.run("Delete") { try edits.writer.delete(entry: session.ref.path, copies: copies) }
         } catch let error as WriteError {
             notice = Notice(
                 problem: editProblem(error, folder: session.ref.folder).problem,
@@ -82,7 +82,7 @@ extension AppModel {
             return
         }
         do {
-            _ = try sync.undoLast()
+            _ = try BackgroundTime.run("Undo") { try sync.undoLast() }
             reloadAfterWrite()
             toast = "\(offer.entryName) is back."
         } catch {
@@ -108,7 +108,7 @@ extension AppModel {
         guard let edits, let sync = edits.sync else { return }
         edits.undoOffer = nil
         do {
-            try change(sync)
+            try BackgroundTime.run("Change") { try change(sync) }
             reloadAfterWrite()
             edits.queueProblem = nil
         } catch {

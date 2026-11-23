@@ -10,7 +10,8 @@ import SwiftUI
 /// - `-pawHostProviderEntry web/github.com`: a tapped suggestion above the
 ///   keyboard, which first asks what `provideCredentialWithoutUserInteraction`
 ///   would answer.
-/// - `-pawHostProviderStore none`: no store set up.
+/// - `-pawHostProviderStore none`: no store set up; `busy`: the store is
+///   busy the first time it is opened.
 /// - `-pawMatchTable 1`: the site-matching table (`MatchTableView`).
 ///
 /// The fixture store, the simulated key (`-pawSimPin` and the rest) and a
@@ -58,6 +59,19 @@ private final class HarnessWorld: @unchecked Sendable {
     let opening: AutoFillOpening
     /// The key port behind `opening`, to read whether a PIN is held.
     private(set) var keyPort: KeyPort?
+    private let lock = NSLock()
+    private var busyOnce = LaunchArguments.string("pawHostProviderStore") == "busy"
+
+    /// What the model's open finds: busy once if asked, then `opening`.
+    func open() -> AutoFillOpening {
+        lock.withLock {
+            if busyOnce {
+                busyOnce = false
+                return .busy
+            }
+            return opening
+        }
+    }
 
     init() {
         if LaunchArguments.string("pawHostProviderStore") == "none" {
@@ -109,8 +123,8 @@ private final class HarnessRun: AutoFillCompletion {
                 return
             }
         }
-        let opening = world.opening
-        model = AutoFillModel(request: request, completion: self, open: { opening })
+        let world = world
+        model = AutoFillModel(request: request, completion: self, open: { world.open() })
     }
 
     func fill(user: String, password: String) {

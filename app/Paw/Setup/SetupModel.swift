@@ -600,10 +600,12 @@ final class SetupModel {
         guard working == nil else { return }
         working = message ?? ""
         let setup = setup
+        let time = BackgroundTime.begin("Setup")
         workQueue.async {
             let handoff = SetupHandoff(value: Result { try work(setup) })
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
+                    time.end()
                     guard let self else { return }
                     self.working = nil
                     switch handoff.value {
@@ -666,6 +668,7 @@ final class SetupModel {
         case .download: tasks[id] = setup.downloadWithKey(port: keyPort, listener: listener)
         case .check: tasks[id] = setup.testDecryptWithKey(port: keyPort, listener: listener)
         }
+        BackgroundTime.hold("Setup", while: tasks[id])
         return id
     }
 

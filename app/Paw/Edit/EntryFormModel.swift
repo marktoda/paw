@@ -342,7 +342,9 @@ final class EntryFormModel {
             // phone, usually to fill it straight in. An edit keeps the
             // copy's deadline, which the core handles.
             let ttl = isEditing ? 0 : AppModel.faceIdWindowSecs
-            let outcome = try writer.save(draft: draft, copies: copies, newCopyTtlSecs: ttl)
+            let outcome = try BackgroundTime.run("Save") {
+                try writer.save(draft: draft, copies: copies, newCopyTtlSecs: ttl)
+            }
             return (outcome, isEditing ? draft.text() : "")
         } catch let error as WriteError {
             if case .Invalid(let found) = error {

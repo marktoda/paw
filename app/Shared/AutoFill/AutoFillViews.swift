@@ -27,7 +27,7 @@ struct AutoFillRootView: View {
 
     private var showsCancel: Bool {
         switch model.screen {
-        case .list, .faceId, .loading: true
+        case .list, .faceId, .loading, .busy: true
         default: false
         }
     }
@@ -48,6 +48,18 @@ struct AutoFillRootView: View {
                 message: "Open paw and set up your store. Then try again here.",
                 primary: EmptyState.Action(title: "Close", identifier: "autofill-close") { model.cancel() })
                 .background(PawColor.bg.ignoresSafeArea())
+        case .busy:
+            VStack(spacing: PawMetrics.Spacing.l) {
+                ErrorRow(kind: .warning, problem: "The store is busy.", nextStep: "paw is saving or downloading.",
+                         isBanner: true)
+                Button("Try again") { model.reopen() }
+                    .buttonStyle(.pawPrimary)
+                    .accessibilityIdentifier("autofill-retry")
+                Spacer(minLength: 0)
+            }
+            .padding(PawMetrics.Spacing.l)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(PawColor.bg.ignoresSafeArea())
         case .problem(let problem, let nextStep):
             VStack(spacing: PawMetrics.Spacing.l) {
                 ErrorRow(kind: .error, problem: problem, nextStep: nextStep, isBanner: true)
