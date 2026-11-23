@@ -12,12 +12,15 @@ enum Route: Hashable {
     case entry(UUID)
     /// An entry the plugged-in key cannot open, explained.
     case anotherKey(String)
+    /// Changes saved on this iPhone and not sent yet.
+    case unpushed
 }
 
 /// An entry that is open on screen. The plaintext stays in Rust, behind
 /// `entry`; `close()` wipes it when the screen goes away.
 struct OpenSession: Identifiable {
-    let id = UUID()
+    /// Kept when a save replaces the entry's text, so the screen stays.
+    var id = UUID()
     let ref: EntryRef
     let entry: OpenedEntry
     let view: EntryView
@@ -73,7 +76,8 @@ final class AppModel {
     /// How long an entry opened with the key stays available to Face ID.
     static let faceIdWindowSecs: UInt32 = 8 * 60 * 60
 
-    let store: PassStore
+    /// Replaced after each save, delete or undo (`storeChanged`).
+    private(set) var store: PassStore
     /// `nil` where Face ID copies cannot be kept: on a device until the
     /// Secure Enclave keystore exists. Every open then uses the key.
     let copies: CopyCache?
@@ -84,8 +88,11 @@ final class AppModel {
     let simulator: SimulatorControls?
 
     var path: [Route] = []
-    let home: FolderListing
-    let entryCount: Int
+    private(set) var home: FolderListing
+    private(set) var entryCount: Int
+    /// Adding, editing and deleting, and the unpushed changes; `nil` where
+    /// the store cannot be written (see `AppModel+Edit.swift`).
+    var edits: StoreEdits?
     private(set) var liveCopies: [LiveCopy] = []
     /// Entry paths opened in this run, most recent first.
     private(set) var recentPaths: [String] = []
@@ -561,6 +568,27 @@ final class AppModel {
 
     func session(_ id: UUID) -> OpenSession? {
         sessions[id]
+    }
+
+    /// A save changed an open entry: the screen shows `entry`, the saved
+    /// text, under the same id, and the text it showed is wiped.
+    func replaceSession(_ id: UUID, ref: EntryRef, entry: OpenedEntry) {
+        sessions[id]?.entry.close()
+        sessions[id] = OpenSession(id: id, ref: ref, entry: entry, view: entry.view())
+    }
+
+    /// The store on disk changed (a save, a delete, an undo): lists and
+    /// search read it again. Recent entries follow a rename and drop
+    /// entries that are gone.
+    func storeChanged(_ store: PassStore, renamed: (from: String, to: String)? = nil) {
+        self.store = store
+        home = store.home()
+        entryCount = Int(store.entryCount())
+        let exists = Set(allEntryPaths())
+        recentPaths = recentPaths
+            .map { $0 == renamed?.from ? (renamed?.to ?? $0) : $0 }
+            .filter { exists.contains($0) }
+        refreshCopies()
     }
 
     /// Closes every opened entry that is no longer on the navigation stack.

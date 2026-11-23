@@ -1,0 +1,221 @@
+import SwiftUI
+
+/// On Home, under the title: "3 changes not sent", while there are any.
+/// Tapping it opens the list. No key is involved, so no gold.
+struct UnpushedSection: View {
+    let model: AppModel
+
+    var body: some View {
+        if let edits = model.edits, !edits.unpushed.isEmpty {
+            Section {
+                UnpushedBanner(
+                    reason: .waiting, title: edits.bannerTitle,
+                    detail: "Saved on this iPhone. See what changed."
+                ) {
+                    model.path.append(.unpushed)
+                }
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+            }
+        }
+    }
+}
+
+/// "Not sent yet": what each unpushed change did, newest first, with Undo
+/// for the newest, and discarding one or all after an inline confirm.
+struct UnpushedScreen: View {
+    let model: AppModel
+
+    /// The change whose discard is waiting for its confirm; "all" for all.
+    @State private var confirming: String?
+
+    var body: some View {
+        let edits = model.edits
+        let items = edits?.unpushed ?? []
+        List {
+            if let problem = edits?.queueProblem {
+                Section {
+                    ErrorRow(kind: .error, problem: "That didn't work.", nextStep: problem)
+                        .pawListRow()
+                }
+            }
+            if items.isEmpty {
+                Section {
+                    EmptyState(
+                        symbol: PawSymbol.synced, title: "Nothing waiting",
+                        message: "Every change on this iPhone has been sent or taken back.")
+                        .listRowBackground(Color.clear)
+                }
+            } else {
+                Section {
+                    Button("Undo the last change") {
+                        confirming = nil
+                        model.undoLastChange()
+                    }
+                    .buttonStyle(.pawSecondary)
+                    .accessibilityIdentifier("unpushed-undo-last")
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                }
+                Section {
+                    ForEach(items, id: \.id) { item in
+                        if confirming == item.id {
+                            InlineConfirmRow(
+                                question: "Discard \u{201C}\(Self.title(item))\u{201D}?",
+                                detail: Self.discardDetail(item),
+                                confirmTitle: "Discard", cancelTitle: "Keep",
+                                identifier: "unpushed-discard-\(Self.name(item.entry))",
+                                onConfirm: {
+                                    confirming = nil
+                                    model.discardChange(item.id)
+                                },
+                                onCancel: { confirming = nil })
+                                .pawListRow()
+                        } else {
+                            QueueRow(item: item) { confirming = item.id }
+                        }
+                    }
+                } header: {
+                    PawSectionHeader(items.count == 1 ? "1 change, newest first" : "\(items.count) changes, newest first")
+                        .accessibilityIdentifier("unpushed-count")
+                } footer: {
+                    if let note = edits?.sendingNote {
+                        Text(note)
+                            .font(PawFont.footnote)
+                            .foregroundStyle(PawColor.labelSecondary)
+                            .accessibilityIdentifier("unpushed-sending-note")
+                    }
+                }
+                Section {
+                    if confirming == "all" {
+                        InlineConfirmRow(
+                            question: items.count == 1 ? "Discard 1 change?" : "Discard \(items.count) changes?",
+                            detail: "The store goes back to what was last downloaded from your git remote.",
+                            confirmTitle: "Discard all", cancelTitle: "Keep them", identifier: "unpushed-discard-all",
+                            onConfirm: {
+                                confirming = nil
+                                model.discardAllChanges()
+                            },
+                            onCancel: { confirming = nil })
+                            .pawListRow()
+                    } else {
+                        Button {
+                            confirming = "all"
+                        } label: {
+                            Text("Discard all changes")
+                                .font(PawFont.body.weight(.semibold))
+                                .foregroundStyle(PawColor.danger)
+                                .frame(maxWidth: .infinity, minHeight: PawMetrics.tapMin, alignment: .leading)
+                        }
+                        .accessibilityIdentifier("unpushed-discard-all")
+                        .pawListRow()
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .environment(\.defaultMinListRowHeight, PawMetrics.tapMin)
+        .navigationTitle("Not sent yet")
+        .navigationBarTitleDisplayMode(.large)
+        .onAppear { edits?.refreshQueue() }
+    }
+
+    static func name(_ path: String) -> String {
+        EntryRef(path: path).name
+    }
+
+    /// "Added github.com", "Renamed vpn to vpn-old".
+    static func title(_ item: QueueItem) -> String {
+        let name = name(item.entry)
+        switch item.kind {
+        case .added: return "Added \(name)"
+        case .edited: return "Edited \(name)"
+        case .deleted: return "Deleted \(name)"
+        case .renamed:
+            guard let previous = item.previous else { return "Renamed \(name)" }
+            let before = EntryRef(path: previous)
+            let after = EntryRef(path: item.entry)
+            return before.folder == after.folder
+                ? "Renamed \(before.name) to \(after.name)"
+                : "Moved \(after.name) to \(after.folder.isEmpty ? "the top" : after.folder)"
+        }
+    }
+
+    static func discardDetail(_ item: QueueItem) -> String {
+        let name = name(item.entry)
+        switch item.kind {
+        case .added: return "\(name) is removed from this iPhone. Later changes are kept."
+        case .edited: return "\(name) goes back to how it was. Later changes are kept."
+        case .deleted: return "\(name) comes back. Later changes are kept."
+        case .renamed: return "\(name) gets its old name back. Later changes are kept."
+        }
+    }
+
+    /// "14:02" today, "yesterday", "Mon" this week, else "3 Nov".
+    static func when(_ seconds: Int64, now: Date = Date()) -> String {
+        let date = Date(timeIntervalSince1970: TimeInterval(seconds))
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) {
+            return date.formatted(date: .omitted, time: .shortened)
+        }
+        if calendar.isDateInYesterday(date) {
+            return "yesterday"
+        }
+        if let days = calendar.dateComponents([.day], from: date, to: now).day, days < 7 {
+            return date.formatted(.dateTime.weekday(.abbreviated))
+        }
+        return date.formatted(.dateTime.day().month(.abbreviated))
+    }
+}
+
+/// One unpushed change: what it did, where, when, and Discard.
+private struct QueueRow: View {
+    let item: QueueItem
+    let onDiscard: () -> Void
+
+    var body: some View {
+        let entry = EntryRef(path: item.entry)
+        HStack(spacing: PawMetrics.Spacing.m) {
+            IconChip(symbol: Self.symbol(item.kind), tint: FolderTint(folder: entry.topFolder))
+            VStack(alignment: .leading, spacing: 0) {
+                Text(UnpushedScreen.title(item))
+                    .font(PawFont.body)
+                    .foregroundStyle(PawColor.label)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(subtitle(entry))
+                    .font(PawFont.footnote)
+                    .foregroundStyle(PawColor.labelSecondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("unpushed-\(item.kind)-\(entry.name)")
+            Button("Discard", action: onDiscard)
+                .buttonStyle(.borderless)
+                .font(PawFont.subheadline.weight(.semibold))
+                .foregroundStyle(PawColor.label)
+                .padding(.horizontal, PawMetrics.Spacing.m)
+                .frame(minHeight: PawMetrics.pill)
+                .background(PawColor.fill, in: Capsule())
+                .frame(minHeight: PawMetrics.tapMin)
+                .accessibilityLabel("Discard \(UnpushedScreen.title(item))")
+                .accessibilityIdentifier("unpushed-discard-button-\(entry.name)")
+        }
+        .padding(.vertical, PawMetrics.Spacing.s)
+        .frame(minHeight: PawMetrics.rowTwoLine)
+        .pawListRow()
+    }
+
+    private func subtitle(_ entry: EntryRef) -> String {
+        let place = entry.folder.isEmpty ? "Not in a folder" : entry.folder
+        return "\(place) \u{00B7} \(UnpushedScreen.when(item.when))"
+    }
+
+    private static func symbol(_ kind: ChangeKind) -> String {
+        switch kind {
+        case .added: "plus"
+        case .edited: "pencil"
+        case .deleted: "trash"
+        case .renamed: "arrow.right"
+        }
+    }
+}

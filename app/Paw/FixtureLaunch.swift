@@ -7,7 +7,8 @@ import SwiftUI
 /// Face ID (`-pawSimFaceId ok|cancel|nomatch|lockout|notenrolled`) and a
 /// simulated clock that the settings sheet can move on, and that moves on
 /// by `-pawSimAwayMs` each time paw goes to the background. Simulator only.
-/// `-pawAppearance dark|light` picks the theme.
+/// `-pawAppearance dark|light` picks the theme. The store can be written
+/// (`WritableFixture`, `-pawSimRecipients changed|missing`).
 enum FixtureLaunch {
     static var isRequested: Bool {
         UserDefaults.standard.bool(forKey: "pawFixture")
@@ -39,9 +40,18 @@ enum FixtureLaunch {
         let storeDir = root.appendingPathComponent("store", isDirectory: true)
         let copiesDir = root.appendingPathComponent("window", isDirectory: true)
         try FileManager.default.createDirectory(at: copiesDir, withIntermediateDirectories: true)
-        try writeFixtureStore(dir: storeDir.path)
+        // Set up through the simulated git host so it can be written; the
+        // plain files, read-only, if that fails (Home then says why).
+        let writable = Result { try WritableFixture.prepare(root: root) }
+        let storePath: String
+        if case .success(let prepared) = writable {
+            storePath = prepared.repoDir
+        } else {
+            try writeFixtureStore(dir: storeDir.path)
+            storePath = storeDir.path
+        }
 
-        let store = try PassStore(dir: storeDir.path)
+        let store = try PassStore(dir: storePath)
         let keystore = SimKeystore()
         keystore.setFaceId(answer: faceId)
         let clock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000))
@@ -52,7 +62,7 @@ enum FixtureLaunch {
             dir: copiesDir.path, keystore: SimKeystoreAdapter(sim: keystore), clock: sharedClock)
         let key = SimulatedKeyHolder.shared
         let away = UserDefaults.standard.integer(forKey: "pawSimAwayMs")
-        return AppModel(
+        let model = AppModel(
             store: store, copies: copies, clock: sharedClock,
             connect: { try KeyConnection.openForSession() },
             simulator: SimulatorControls(
@@ -60,6 +70,8 @@ enum FixtureLaunch {
                 plugIn: { key.key.plugIn() },
                 startsUnplugged: key.startsUnplugged,
                 awayMs: UInt64(max(away, 0))))
+        WritableFixture.attach(writable, to: model)
+        return model
     }
 }
 

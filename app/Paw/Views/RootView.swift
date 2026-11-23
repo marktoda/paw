@@ -30,10 +30,13 @@ struct RootView: View {
                         }
                     case .anotherKey(let path):
                         AnotherKeyScreen(model: model, entry: EntryRef(path: path))
+                    case .unpushed:
+                        UnpushedScreen(model: model)
                     }
                 }
         }
         .copyToast($model.toast)
+        .pawEditing(model)
         .sheet(item: keySheet, onDismiss: { model.keySheetDismissed() }) { _ in
             KeySheetHost(model: model)
         }

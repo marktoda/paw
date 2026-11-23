@@ -16,8 +16,9 @@ struct HomeScreen: View {
             }
         }
         .environment(\.defaultMinListRowHeight, PawMetrics.tapMin)
-        // Adding passwords comes in a later milestone.
-        .pawBottomSearch(text: $query, prompt: searchPrompt, addDisabled: true) {}
+        .pawBottomSearch(text: $query, prompt: searchPrompt, addDisabled: model.edits == nil) {
+            model.startAdd(folder: "")
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -56,6 +57,7 @@ struct HomeScreen: View {
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
             }
+            UnpushedSection(model: model)
             NoticeSection(model: model)
             if let problem = model.copiesProblem {
                 Section {

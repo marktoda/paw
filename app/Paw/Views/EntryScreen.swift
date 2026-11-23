@@ -5,7 +5,17 @@ import SwiftUI
 /// seconds, when the app leaves the foreground and when the screen goes.
 struct EntryScreen: View {
     let model: AppModel
-    let session: OpenSession
+    private let opened: OpenSession
+
+    init(model: AppModel, session: OpenSession) {
+        self.model = model
+        opened = session
+    }
+
+    /// The session as it is now: a save replaces its text under the same id.
+    private var session: OpenSession {
+        model.session(opened.id) ?? opened
+    }
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var username: String?
@@ -25,6 +35,7 @@ struct EntryScreen: View {
 
     var body: some View {
         List {
+            EntryDeleteConfirm(model: model, session: session)
             Section {
                 VStack(alignment: .leading, spacing: PawMetrics.Spacing.l) {
                     header
@@ -82,6 +93,8 @@ struct EntryScreen: View {
             LargeTypeSheet(item: item) { largeType = nil }
         }
         .onAppear { load() }
+        .onChange(of: ObjectIdentifier(session.entry)) { load() }
+        .entryEditing(model, session: session)
         .onChange(of: scenePhase) {
             if scenePhase != .active {
                 hideAll()

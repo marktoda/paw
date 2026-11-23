@@ -6,6 +6,8 @@ struct UnpushedBanner: View {
         /// Sending needs the key: the banner carries the gold disc.
         case waitingForKey
         case offline
+        /// Saved here, nothing tried yet: no colour, `arrow.up.circle`.
+        case waiting
         /// The git remote refused the push. The only state that is a warning.
         case refused
     }
@@ -46,6 +48,11 @@ struct UnpushedBanner: View {
         switch reason {
         case .waitingForKey:
             KeyDisc(size: .banner)
+        case .waiting:
+            Image(systemName: PawSymbol.notPushed)
+                .font(.title2)
+                .foregroundStyle(PawColor.label)
+                .frame(minWidth: PawMetrics.discBanner)
         case .offline:
             Image(systemName: PawSymbol.offline)
                 .font(.title2)
@@ -62,7 +69,7 @@ struct UnpushedBanner: View {
     private var ground: Color {
         switch reason {
         case .waitingForKey: PawColor.panel
-        case .offline: PawColor.surface
+        case .offline, .waiting: PawColor.surface
         case .refused: PawColor.warningFill
         }
     }

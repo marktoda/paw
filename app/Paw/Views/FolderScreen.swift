@@ -23,6 +23,7 @@ struct FolderScreen: View {
         .environment(\.defaultMinListRowHeight, PawMetrics.tapMin)
         .navigationTitle(EntryRef(path: path).name)
         .navigationBarTitleDisplayMode(.large)
+        .addEntryButton(model, folder: path)
         .onAppear { model.refreshCopies() }
     }
 
