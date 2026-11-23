@@ -190,8 +190,8 @@ final class SimRemoteHandle: @unchecked Sendable {
     private func rewrite() throws {
         // The old host stops when its last reference goes, in here.
         let taken: (port: UInt16, key: SimulatedKey)? = lock.withLock {
-            guard let old = current, let key else { return nil }
-            current = nil
+            guard let old = self.current, let key = self.key else { return nil }
+            self.current = nil
             return (old.port(), key)
         }
         guard let taken else {
