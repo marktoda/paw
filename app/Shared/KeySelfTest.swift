@@ -1,5 +1,6 @@
 import Foundation
 
+#if DEBUG
 /// The spike's whole job: prove this process can reach the key and decrypt
 /// with it. Used by both the app and the AutoFill extension.
 enum KeySelfTest {
@@ -35,3 +36,4 @@ enum KeySelfTest {
             .joined(separator: "\n")
     }
 }
+#endif

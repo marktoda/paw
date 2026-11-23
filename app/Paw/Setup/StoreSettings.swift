@@ -4,6 +4,7 @@ import SwiftUI
 /// Remove (design.md 2.12). The store's part shows only on a set-up store,
 /// not on the simulator's fixture.
 struct StoreSettingsSections: View {
+    let model: AppModel
     @Environment(\.storeControls) private var controls
     @Environment(\.dismiss) private var dismiss
     @State private var confirmingRemove = false
@@ -55,13 +56,17 @@ struct StoreSettingsSections: View {
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("settings-key-diagnostics")
                 .sheet(isPresented: $showsDiagnostics) {
-                    SelfTestView(host: "app")
+                    // What the key session read when the key was plugged
+                    // in: no PIN is asked here, and nothing is sent to the
+                    // key. Opening a password is the test that uses the PIN,
+                    // through the same session and its checks.
+                    KeyDiagnosticsView(model: model)
                         .privacyCover()
                 }
         } header: {
             PawSectionHeader("Key")
         } footer: {
-            Text("Reads your key and decrypts a test message, to check the key and this iPhone work together.")
+            Text("Shows what paw read from your key: its serial, PIN tries left and touch settings. No PIN is needed.")
                 .font(PawFont.footnote)
                 .foregroundStyle(PawColor.labelSecondary)
         }

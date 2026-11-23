@@ -1,5 +1,12 @@
 import SwiftUI
 
+#if DEBUG
+/// The spike's key test, for debug builds only (the simulator's KeyTests and
+/// a developer's own checks): it opens its own card connection and sends a
+/// typed PIN outside the key session, so none of the session's checks (the
+/// enrolled key, the PIN KDF) apply. Release builds don't contain it; a
+/// set-up store's Settings shows `KeyDiagnosticsView` instead.
+///
 /// One screen that exercises the key. `host` says which process is running
 /// it, since the point is to compare the app with the AutoFill extension.
 struct SelfTestView: View {
@@ -19,8 +26,9 @@ struct SelfTestView: View {
                         .disabled(busy)
                 }
                 Section("Decrypt") {
+                    // As the key sheet's field: no content type, so iOS
+                    // offers no password AutoFill and no "Save Password?".
                     SecureField("Key PIN", text: $pin)
-                        .textContentType(.password)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                         .accessibilityIdentifier("pin-field")
@@ -112,6 +120,8 @@ struct SelfTestView: View {
 
     private func run(_ work: @escaping @Sendable () throws -> String) {
         busy = true
+        // Each run has already captured the PIN it needs: the field empties.
+        pin = ""
         let started = Date()
         DispatchQueue.global(qos: .userInitiated).async {
             let outcome: String
@@ -129,3 +139,4 @@ struct SelfTestView: View {
         }
     }
 }
+#endif

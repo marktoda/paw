@@ -1,13 +1,13 @@
 import AuthenticationServices
 import SwiftUI
 
-/// Spike: shows the same key test inside the AutoFill extension, to learn
-/// whether an extension can reach a USB-C key at all.
+/// The AutoFill extension, until filling is built (design 2.10): it says
+/// so and closes. It asks for no PIN and opens no connection to the key.
 final class CredentialProviderViewController: ASCredentialProviderViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        let host = UIHostingController(rootView: ExtensionRoot { [weak self] in
+        let host = UIHostingController(rootView: ComingSoon { [weak self] in
             self?.extensionContext.cancelRequest(
                 withError: NSError(
                     domain: ASExtensionErrorDomain,
@@ -23,14 +23,28 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     override func prepareCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {}
 }
 
-private struct ExtensionRoot: View {
+private struct ComingSoon: View {
     let close: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            SelfTestView(host: "AutoFill")
+        VStack(spacing: PawMetrics.Spacing.l) {
+            Spacer(minLength: 0)
+            Text("AutoFill is coming")
+                .font(PawFont.title)
+                .foregroundStyle(PawColor.label)
+                .multilineTextAlignment(.center)
+                .accessibilityAddTraits(.isHeader)
+            Text("paw can't fill passwords yet. Open paw to copy one.")
+                .font(PawFont.body)
+                .foregroundStyle(PawColor.labelSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
             Button("Close", action: close)
-                .padding()
+                .buttonStyle(.pawSecondary)
         }
+        .padding(PawMetrics.Spacing.xl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(PawColor.bg.ignoresSafeArea())
     }
 }
