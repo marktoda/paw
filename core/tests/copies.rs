@@ -207,6 +207,26 @@ fn reboot_ends_every_copy() {
 }
 
 #[test]
+fn a_copy_made_right_after_a_reboot_or_a_clock_change_is_kept() {
+    for end_all in ["reboot", "clock moved back"] {
+        let w = World::new();
+        w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
+        match end_all {
+            "reboot" => w.clock.reboot(),
+            _ => w.clock.set_wall_ms(START - HOUR as i64),
+        }
+        // The first thing after it is a new copy: it ends the old ones, and
+        // must still be there itself.
+        let promised = w.put(BANK, BANK_TEXT, DEFAULT_TTL);
+
+        assert!(promised.is_some(), "{end_all}");
+        assert!(matches!(w.status(BANK), CopyStatus::Available { .. }), "{end_all}: {:?}", w.status(BANK));
+        assert_eq!(w.open(BANK).unwrap(), BANK_TEXT, "{end_all}");
+        assert!(matches!(w.status(GITHUB), CopyStatus::NeedsKey), "{end_all}");
+    }
+}
+
+#[test]
 fn lock_now_ends_every_copy_and_resets_the_keystore() {
     let w = World::new();
     w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);

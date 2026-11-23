@@ -245,9 +245,12 @@ impl CopyCache {
         content_id: &[u8],
         ttl: Duration,
     ) -> Result<Option<i64>, PawError> {
+        // Applies the end-all rules before anything new is added. Ending
+        // everything (a reboot, a clock set back) resets the keystore, so
+        // the index keys are derived again afterwards: a copy written under
+        // the old ones would be unreadable, and lost, at once.
+        self.scan(&self.keys()?)?;
         let keys = self.keys()?;
-        // Applies the end-all rules before anything new is added.
-        self.scan(&keys)?;
         if ttl.is_zero() {
             dir::remove(&self.path(&keys, entry)).map_err(io_err)?;
             return Ok(None);
