@@ -189,7 +189,7 @@ final class GitHubTests: PawUITestCase {
         toAddress()
         expect("address-github")
         tap("simulated-address")
-        expectText("address-reading", contains: "paw will connect to 127.0.0.1 as git")
+        expectText("address-reading", contains: "Connects to 127.0.0.1 as git")
         tap("address-connect")
         finishSetup()
         openSettings()
