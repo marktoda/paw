@@ -216,23 +216,34 @@ pub fn commit(
     message: &str,
     author: &Author,
 ) -> Result<String, PawError> {
-    if let Some(why) = unsafe_path(path) {
-        return Err(unsafe_path_err(path, why));
+    commit_edits(dir, &[TreeEdit::Write { path, contents }], message, author)
+}
+
+/// One change to one file in a commit made by [`commit_edits`].
+pub(crate) enum TreeEdit<'a> {
+    /// Add or replace the file `path` with `contents`.
+    Write { path: &'a str, contents: &'a [u8] },
+    /// Remove the file `path`, which must be a regular file in the tree.
+    Remove { path: &'a str },
+    /// Move the file `from` to `to` unchanged: the same blob, so git and
+    /// the replay see a rename.
+    Rename { from: &'a str, to: &'a str },
+}
+
+impl TreeEdit<'_> {
+    fn paths(&self) -> Vec<&str> {
+        match self {
+            Self::Write { path, .. } | Self::Remove { path } => vec![path],
+            Self::Rename { from, to } => vec![from, to],
+        }
     }
-    let repo = Repository::open(dir).map_err(git_err)?;
-    let parent = repo
-        .head()
-        .and_then(|head| head.peel_to_commit())
-        .map_err(git_err)?;
-    let base = parent.tree().map_err(git_err)?;
+}
 
-    // Every folder on the way must be a real folder in the tree (or not
-    // exist yet), and the entry itself a regular file (or not exist yet).
-    history::check_tree_path(&base, path)?;
-
-    // The working copy can differ from the tree, and checkout does follow a
-    // folder link it finds there (seen with libgit2 1.9), so look before
-    // anything is changed. `symlink_metadata` does not follow links.
+/// Checks `path` in the working copy before anything is written: no link
+/// on the way and no file where a folder should be. The working copy can
+/// differ from the tree, and checkout does follow a folder link it finds
+/// there (seen with libgit2 1.9). `symlink_metadata` does not follow links.
+fn check_disk_path(dir: &Path, path: &str) -> Result<(), PawError> {
     let mut on_disk = dir.to_path_buf();
     let mut components = path.split('/').peekable();
     while let Some(component) = components.next() {
@@ -246,13 +257,64 @@ pub fn commit(
             _ => {}
         }
     }
+    Ok(())
+}
+
+/// Commits `edits` on the current branch as one commit, and changes
+/// nothing else; see [`commit`] for the protections. Returns the commit id.
+pub(crate) fn commit_edits(
+    dir: &Path,
+    edits: &[TreeEdit<'_>],
+    message: &str,
+    author: &Author,
+) -> Result<String, PawError> {
+    for path in edits.iter().flat_map(TreeEdit::paths) {
+        if let Some(why) = unsafe_path(path) {
+            return Err(unsafe_path_err(path, why));
+        }
+    }
+    let repo = Repository::open(dir).map_err(git_err)?;
+    let parent = repo
+        .head()
+        .and_then(|head| head.peel_to_commit())
+        .map_err(git_err)?;
+    let base = parent.tree().map_err(git_err)?;
+
+    // Every folder on the way must be a real folder in the tree (or not
+    // exist yet), and the entry itself a regular file (or not exist yet).
+    for path in edits.iter().flat_map(TreeEdit::paths) {
+        history::check_tree_path(&base, path)?;
+        check_disk_path(dir, path)?;
+    }
 
     let mut index = git2::Index::new().map_err(git_err)?;
     index.read_tree(&base).map_err(git_err)?;
-    let blob = repo.blob(contents).map_err(git_err)?;
-    index
-        .add(&history::index_entry(path, blob, FileMode::Blob.into()))
-        .map_err(git_err)?;
+    for edit in edits {
+        let existing = |path: &str| {
+            base.get_path(Path::new(path))
+                .map(|entry| entry.id())
+                .map_err(|_| PawError::Store(format!("there is no file called {path}")))
+        };
+        match edit {
+            TreeEdit::Write { path, contents } => {
+                let blob = repo.blob(contents).map_err(git_err)?;
+                index
+                    .add(&history::index_entry(path, blob, FileMode::Blob.into()))
+                    .map_err(git_err)?;
+            }
+            TreeEdit::Remove { path } => {
+                existing(path)?;
+                index.remove_path(Path::new(path)).map_err(git_err)?;
+            }
+            TreeEdit::Rename { from, to } => {
+                let blob = existing(from)?;
+                index.remove_path(Path::new(from)).map_err(git_err)?;
+                index
+                    .add(&history::index_entry(to, blob, FileMode::Blob.into()))
+                    .map_err(git_err)?;
+            }
+        }
+    }
     let tree = repo
         .find_tree(index.write_tree_to(&repo).map_err(git_err)?)
         .map_err(git_err)?;
@@ -261,11 +323,14 @@ pub fn commit(
     let id = repo
         .commit(Some("HEAD"), &signature, &signature, message, &tree, &[&parent])
         .map_err(git_err)?;
-    // The name is taken literally. Left to itself, checkout reads it as a
-    // pattern, and an entry called `web/*` would overwrite its neighbours.
-    let mut only_this_file = CheckoutBuilder::new();
-    only_this_file.force().disable_pathspec_match(true).path(path);
-    repo.checkout_head(Some(&mut only_this_file)).map_err(git_err)?;
+    // The names are taken literally. Left to itself, checkout reads them as
+    // patterns, and an entry called `web/*` would overwrite its neighbours.
+    let mut only_these_files = CheckoutBuilder::new();
+    only_these_files.force().disable_pathspec_match(true);
+    for path in edits.iter().flat_map(TreeEdit::paths) {
+        only_these_files.path(path);
+    }
+    repo.checkout_head(Some(&mut only_these_files)).map_err(git_err)?;
     Ok(id.to_string())
 }
 

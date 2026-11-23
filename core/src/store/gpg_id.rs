@@ -23,13 +23,20 @@ pub fn parse_gpg_id(text: &str) -> Vec<String> {
 /// The recipients for entries in `folder` (`/` separated, empty for the top
 /// of the store). The folder need not exist yet.
 pub fn recipients_for(root: &Path, folder: &str) -> Result<Vec<String>, PawError> {
+    let (file, bytes) = governing_gpg_id(root, folder)?;
+    let text = String::from_utf8(bytes)
+        .map_err(|_| PawError::Store(format!("{file} is not a text file")))?;
+    Ok(parse_gpg_id(&text))
+}
+
+/// The `.gpg-id` file that decides the recipients for entries in `folder`:
+/// its path in the store (e.g. `work/.gpg-id`) and its bytes.
+pub fn governing_gpg_id(root: &Path, folder: &str) -> Result<(String, Vec<u8>), PawError> {
     let mut at = folder;
     loop {
         let file = if at.is_empty() { ".gpg-id".to_owned() } else { format!("{at}/.gpg-id") };
         if let Some(bytes) = read_file(root, &file)? {
-            let text = String::from_utf8(bytes)
-                .map_err(|_| PawError::Store(format!("{file} is not a text file")))?;
-            return Ok(parse_gpg_id(&text));
+            return Ok((file, bytes));
         }
         if at.is_empty() {
             return Err(PawError::Store(

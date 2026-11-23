@@ -128,7 +128,12 @@ pub(crate) fn classify<'r>(repo: &'r Repository, commit: Commit<'r>) -> Result<P
         ([(path, blob)], [], []) => (Change::Write { path: path.clone(), blob: *blob }, ChangeKind::Added),
         ([], [], [(path, blob)]) => (Change::Write { path: path.clone(), blob: *blob }, ChangeKind::Edited),
         ([], [(path, _)], []) => (Change::Delete { path: path.clone() }, ChangeKind::Deleted),
-        ([(to, blob)], [(from, old)], []) if blob.0 == old.0 => (
+        // A rename keeps the blob. A move into a folder with other
+        // recipients re-encrypts it (as `pass mv` does), so the blob
+        // differs; it is still one entry, moved.
+        ([(to, blob)], [(from, old)], [])
+            if blob.0 == old.0 || (from.ends_with(".gpg") && to.ends_with(".gpg")) =>
+        (
             Change::Rename { from: from.clone(), to: to.clone(), blob: *blob },
             ChangeKind::Renamed,
         ),
