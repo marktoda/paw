@@ -764,6 +764,15 @@ Rules:
 - `Touch` is reported only after the actor has sent this attempt's command. If a cancelled command is still waiting on the card, the new attempt is `KeyBusy`. Otherwise the user's touch would release the cancelled entry and be thrown away.
 - With a `Cached` touch policy, one touch can cover a second command within about 15 seconds. paw cannot prevent that; S1 says so, and rule 2 of 5.6 is weakened for such keys.
 
+**Outcome (2026-11-22, `core/src/key/`).** Built smaller than the above, tested on Linux against the simulated key only:
+- `KeyPort` (held for the app's life: `plugged_in`, `unplugged`, task constructors) makes one `KeySession` per plug-in. The session reads identity and both touch policies without a PIN, holds the verified PIN in zeroising memory, asks the card with an empty VERIFY whether it is still verified and re-verifies silently if not, and drops the PIN on a refusal (one try), on removal, on `forget_pin`, and after 15 minutes in the background (injected `Clock`). If paw holds no PIN it asks for one even when the card says it is verified.
+- There is no `CardActor` thread and no `UnlockAttempt`/`SyncOp` split. Each `KeyTask` runs on its own thread; a per-session gate lets one card job (SELECT, PIN check, decipher or sign) run at a time, and a task waiting for it shows `Busy` (queue, not refuse). PIN entry happens between jobs.
+- Stages are `PlugIn | Pin{tries_left, forgot_after_background, last_error} | Busy | Touch | Working{progress} | Done | Failed | Cancelled`. No `Reading`, `Verifying`, `ConfirmHost` or `TouchTimedOut`: those show as `Working`, the host prompt stays in setup, and a touch timeout fails the task (`TouchTimeout`, PIN kept) so that "Try again" is a new task that opens at `Touch`.
+- `Touch` is reported by the session's transport wrapper as PSO:DECIPHER or INTERNAL AUTHENTICATE is handed to the reader; for a cached or unknown policy only if the card is still waiting 400 ms later.
+- A sign-in task covers the key half only: it verifies the PIN before the connection opens, then hands Rust callers an `SshSigner` that signs through the session; the caller reports progress and ends it. Sync and setup are not yet rewired to it.
+- Errors are a new `KeyError`; status words are read in `key/status.rs`. A security-status refusal after a command that may have waited for a touch is taken as a touch timeout, unverified on a YubiKey. Any reader failure is `KeyRemoved` and ends the session.
+- Not built: the enrolled-fingerprint and serial check before the PIN is sent, the KDF refusal, `ErrorPresentation`, `Handoff`.
+
 ### 3.6 State machine: sync
 
 ```rust
