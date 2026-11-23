@@ -7,6 +7,8 @@ struct PawApp: App {
             #if DEBUG
             if GalleryLaunch.isRequested {
                 GalleryRoot()
+            } else if EnclaveCheckLaunch.isRequested {
+                EnclaveCheckView()
             } else {
                 LaunchRoot()
             }

@@ -40,6 +40,7 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false
+        NSFaceIDUsageDescription: "Face ID opens an entry you recently opened with your key, until the time you chose runs out. Your passcode cannot be used instead."
     entitlements:
       path: Paw/Paw.entitlements
       properties:
