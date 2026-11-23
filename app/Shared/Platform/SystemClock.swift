@@ -71,16 +71,23 @@ enum BootSession {
 
     /// The id, and where it came from (for the check screen).
     static func read() -> (id: String, source: String) {
+        var refusals: [String] = []
         for name in semaphoreNames {
-            if let created = sem_open(name, O_CREAT | O_EXCL, 0o600, 0) {
-                sem_close(created)
+            let opened = sem_open(name, O_CREAT | O_EXCL, 0o600, 0)
+            let error = errno
+            // SEM_FAILED is (sem_t *)-1, not NULL: check both.
+            if let opened, Int(bitPattern: opened) != -1 {
+                // Deliberately never closed: whether Darwin keeps a named
+                // semaphore after its last handle closes is not relied on.
                 let id = "boot-" + UUID().uuidString
                 if write(id, replacing: true) { return (id, "semaphore \(name), first since boot") }
                 sem_unlink(name)
                 return ("unsaved-" + UUID().uuidString, "semaphore \(name), could not save the id")
             }
-            let error = errno
-            guard error == EEXIST else { continue }
+            guard error == EEXIST else {
+                refusals.append("\(name): errno \(error)")
+                continue
+            }
             // Another process may have created it a moment ago and not
             // written the file yet.
             var why = ""
@@ -100,7 +107,7 @@ enum BootSession {
         var boot = timeval()
         var size = MemoryLayout<timeval>.size
         if sysctlbyname("kern.boottime", &boot, &size, nil, 0) == 0, boot.tv_sec > 0 {
-            return ("boottime-\(boot.tv_sec).\(boot.tv_usec)", "kern.boottime (no semaphore: errno \(errno))")
+            return ("boottime-\(boot.tv_sec).\(boot.tv_usec)", "kern.boottime (no semaphore: \(refusals.joined(separator: ", ")))")
         }
         return ("unknown-" + UUID().uuidString, "none (errno \(errno))")
     }
