@@ -337,7 +337,7 @@ fn commit_refuses_gits_own_directory_however_it_is_spelled() {
 }
 
 #[test]
-fn commit_refuses_to_write_through_a_link_in_the_repository() {
+fn a_clone_with_links_in_it_is_refused() {
     let card = card();
     let server = GitServer::start(&[authorised_line(&card)]);
     let outside = tempfile::tempdir().unwrap();
@@ -345,9 +345,31 @@ fn commit_refuses_to_write_through_a_link_in_the_repository() {
     // The repository carries a folder link and a file link out of the store.
     server.desktop_symlink("shared", outside.path());
     server.desktop_symlink("victim.gpg", &outside.path().join("victim.gpg"));
+    let dir = tempfile::tempdir().unwrap();
+
+    let result = sync::clone(&connect(&server, &card), &server.remote(), dir.path());
+
+    let Err(PawError::UnsafePath(said)) = result else { panic!("{result:?}") };
+    assert!(said.contains("shared (it is a symbolic link)"), "{said}");
+    assert!(said.contains("victim.gpg (it is a symbolic link)"), "{said}");
+    assert!(!dir.path().join("shared").exists());
+    assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn commit_refuses_to_write_through_a_link_in_the_repository() {
+    let card = card();
+    let server = GitServer::start(&[authorised_line(&card)]);
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("victim.gpg"), "untouched").unwrap();
+    // A copy that has links in its history: made before paw refused them,
+    // or by another tool.
     let dir = cloned(&server, &card);
+    std::os::unix::fs::symlink(outside.path(), dir.path().join("shared")).unwrap();
+    std::os::unix::fs::symlink(outside.path().join("victim.gpg"), dir.path().join("victim.gpg")).unwrap();
+    git(dir.path(), &["add", "shared", "victim.gpg"]);
+    git(dir.path(), &["commit", "--quiet", "-m", "Links."]);
     let head = git(dir.path(), &["rev-parse", "HEAD"]);
-    assert!(dir.path().join("shared").is_symlink());
 
     let through_folder = refused_path(dir.path(), "shared/new.gpg");
     let through_file = refused_path(dir.path(), "victim.gpg");

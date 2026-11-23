@@ -8,8 +8,6 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use git2::Repository;
-
 use super::history::commits_between;
 use super::integrate::{IntegrateReport, Integration, Replaced, integrate};
 use super::transport::{Connection, Remote};
@@ -80,7 +78,7 @@ pub(crate) fn connect_error(remote: &Remote, error: PawError) -> SyncError {
 
 /// Local commits the remote-tracking branch does not have.
 fn unpushed(dir: &Path) -> Result<u32, SyncError> {
-    let repo = Repository::open(dir).map_err(git_err)?;
+    let repo = super::guard::open(dir)?;
     let (branch, short) = current_branch(&repo)?;
     let head = repo.refname_to_id(&branch).map_err(git_err)?;
     let Ok(remote) = repo.refname_to_id(&format!("refs/remotes/origin/{short}")) else {

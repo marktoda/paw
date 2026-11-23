@@ -34,7 +34,7 @@ use crate::{KeyTouch, PawError};
 use crate::sync::hosts::pin_for;
 use crate::sync::operation::{self, SyncReport};
 use crate::sync::queue::{self, QueueItem};
-use crate::sync::{IntegrateReport, SyncError, accept_replaced_remote};
+use crate::sync::{IntegrateReport, RefusedPath, SyncError, accept_replaced_remote};
 
 /// Told how a download is going.
 #[uniffi::export(with_foreign)]
@@ -275,6 +275,13 @@ impl Setup {
         }
     }
 
+    /// After a download failed with "the remote contains something paw
+    /// will not check out": the paths it refused and why, for the screen
+    /// that says so. Empty otherwise. Nothing was checked out.
+    pub fn refused_remote(&self) -> Vec<RefusedPath> {
+        self.flow().refused_remote()
+    }
+
     /// Once setup is done: whether new entries can be saved with no
     /// further step, and if not, which recipients paw needs keys for.
     pub fn write_readiness(&self) -> Result<SetupWriteReadiness, SetupError> {
@@ -457,6 +464,16 @@ impl StoreSync {
 
     pub fn discard_all(&self) -> Result<(), SyncError> {
         queue::discard_all(&self.repo())
+    }
+
+    /// What the fetched remote holds that paw will not check out (links,
+    /// submodules, unsafe names, names that are the same on an iPhone),
+    /// with why; empty if nothing. When a sync fails with a message
+    /// starting "the remote contains something paw will not check out",
+    /// show these: the store and the unpushed changes were left as they
+    /// were, and the remote has to be fixed from another computer.
+    pub fn refused_remote(&self) -> Result<Vec<RefusedPath>, SyncError> {
+        crate::sync::refused_remote(&self.repo())
     }
 
     /// After `RemoteReplaced`: take the remote's history, keeping or

@@ -44,7 +44,7 @@ use crate::recipients::Access;
 use crate::ssh::{CardSigner, SshPublicKey, card_ssh_public_key};
 use crate::store::PassStore;
 use crate::sync::hosts::{KnownHosts, pin_for};
-use crate::sync::{self, Cloned, Connection, PresentedHostKey};
+use crate::sync::{self, Cloned, Connection, PresentedHostKey, RefusedPath};
 use crate::write::{Keyring, LineStatus, WriteError};
 use crate::{ApduTransport, CardInfo, KeyTouch, PawError, card_info};
 use address::StoreAddress;
@@ -284,6 +284,8 @@ pub struct SetupFlow {
     unconfirmed: Option<PresentedHostKey>,
     authentication: TouchClock,
     decryption: TouchClock,
+    /// What the last download refused to check out, if it did. Not saved.
+    refused: Vec<RefusedPath>,
 }
 
 fn remove_dir(path: &Path) -> Result<(), SetupError> {
@@ -327,6 +329,7 @@ impl SetupFlow {
             decryption: touch(|k| k.decryption_touch),
             saved,
             unconfirmed: None,
+            refused: Vec::new(),
         };
         let repo = flow.repo_dir();
         let cloned = repo.join(".git").is_dir() && repo.join(".gpg-id").is_file();
@@ -623,6 +626,7 @@ impl SetupFlow {
         let remote = self.remote()?;
         let repo = self.repo_dir();
         remove_dir(&repo)?;
+        self.refused.clear();
         self.go(Step::Cloning)?;
         Ok((remote, repo))
     }
@@ -652,6 +656,12 @@ impl SetupFlow {
         let outcome = match cloned {
             Err(e) => Err(self.connection_error(remote, e)),
             Ok(Cloned::Empty) => Err(SetupError::EmptyRepository),
+            // Nothing was checked out; the download is removed below.
+            Ok(Cloned::Refused(paths)) => {
+                let error = failed(sync::Refused(paths.clone()));
+                self.refused = paths;
+                Err(error)
+            }
             Ok(Cloned::Store) => {
                 let gpg_id = std::fs::symlink_metadata(repo.join(".gpg-id"));
                 if gpg_id.map(|m| m.is_file()).unwrap_or(false) {
@@ -807,6 +817,13 @@ impl SetupFlow {
             }
         }
         Ok(SetupWriteReadiness { can_save: top.writable(), missing_recipients, folders_needing_keys })
+    }
+
+    /// What the last download refused to check out: the paths and why.
+    /// Empty unless the last download failed with "the remote contains
+    /// something paw will not check out".
+    pub fn refused_remote(&self) -> Vec<RefusedPath> {
+        self.refused.clone()
     }
 
     /// The key setup read at the start, as an identity to hold a session to.

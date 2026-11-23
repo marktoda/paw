@@ -11,12 +11,12 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use git2::build::CheckoutBuilder;
 use git2::{
     Commit, Delta, DiffOptions, FileMode, ObjectType, Oid, Repository, Signature, Sort,
     StatusOptions, Tree,
 };
 
+use super::guard::{self, Refused};
 use super::{SyncError, git_err};
 use crate::PawError;
 use crate::path::{unsafe_path, unsafe_path_err};
@@ -315,6 +315,12 @@ impl<'r> Replay<'r> {
             // Already there, or nothing left to do.
             return Ok(());
         }
+        // Every rebuilt commit is pushed, and checked out by other copies:
+        // a name of this change may collide with one the remote added.
+        let refused = guard::check_tree(self.repo, tree_id).map_err(git_err)?;
+        if !refused.is_empty() {
+            return Err(Refused(refused).into());
+        }
         let tree = self.repo.find_tree(tree_id).map_err(git_err)?;
         let author = local.commit.author();
         let committer = local.commit.committer();
@@ -413,7 +419,8 @@ pub(crate) fn ensure_clean(repo: &Repository) -> Result<(), SyncError> {
 }
 
 /// Moves `branch` from `from` to `to`, makes the working copy and the index
-/// match, and records `seen` as the remote tip last accepted. Either all of
+/// match, and records `seen` as the remote tip last accepted. `to` is
+/// checked first ([`guard::check_tree`]); if refused, nothing changes. Either all of
 /// that happens, or the branch, the index file and the working copy are put
 /// back exactly as they were. The working copy must be clean.
 pub(crate) fn move_branch(
@@ -425,20 +432,21 @@ pub(crate) fn move_branch(
     why: &str,
 ) -> Result<(), SyncError> {
     if from != to {
+        // Nothing reaches the working copy that has not been checked.
+        guard::check_commit(repo, to)?;
         let old_tree = repo.find_commit(from).and_then(|c| c.tree()).map_err(git_err)?;
         let new_tree = repo.find_commit(to).and_then(|c| c.tree()).map_err(git_err)?;
         let index_file = repo.path().join("index");
         let saved_index = std::fs::read(&index_file).ok();
         let restore = || {
             put_back_index(&index_file, saved_index.as_deref());
-            let mut back = CheckoutBuilder::new();
-            back.force().remove_untracked(true);
+            let mut back = guard::checkout();
+            back.remove_untracked(true);
             let _ = repo.checkout_tree(old_tree.as_object(), Some(&mut back));
             put_back_index(&index_file, saved_index.as_deref());
         };
 
-        let mut forward = CheckoutBuilder::new();
-        forward.force();
+        let mut forward = guard::checkout();
         if let Err(e) = repo.checkout_tree(new_tree.as_object(), Some(&mut forward)) {
             restore();
             return Err(git_err(e).into());

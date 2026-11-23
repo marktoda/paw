@@ -9,6 +9,7 @@
 //! A push only ever fast-forwards. If the remote has moved, [`push`] fails
 //! with [`PawError::NotFastForward`] and changes nothing.
 
+mod guard;
 mod history;
 pub mod hosts;
 pub mod integrate;
@@ -18,12 +19,10 @@ mod transport;
 
 use std::path::Path;
 
-use git2::build::CheckoutBuilder;
-use git2::{
-    AutotagOption, Direction, FetchOptions, FileMode, PushOptions, RemoteCallbacks,
-    Repository,
-};
+use git2::{AutotagOption, Direction, FetchOptions, FileMode, PushOptions, RemoteCallbacks, Repository};
 
+pub(crate) use guard::Refused;
+pub use guard::RefusedPath;
 pub use history::{ChangeKind, KeptBoth};
 pub use integrate::{
     IntegrateReport, Integration, RecipientsChange, Replaced, accept_replaced_remote, integrate,
@@ -85,12 +84,16 @@ impl From<PawError> for SyncError {
 pub type Progress<'a> = &'a mut dyn FnMut(u32, u32) -> bool;
 
 /// What a clone found.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cloned {
     /// The default branch is checked out.
     Store,
     /// The repository has no commits. `dir` holds an empty repository.
     Empty,
+    /// The default branch holds something paw will not check out (see
+    /// [`refused_remote`]). Nothing was checked out; `dir` holds the
+    /// fetched objects only.
+    Refused(Vec<RefusedPath>),
 }
 
 /// Every branch of the remote is mirrored under `origin/`.
@@ -151,6 +154,7 @@ pub fn clone(connection: &Connection, remote: &Remote, dir: &Path) -> Result<(),
     match clone_with_progress(connection, remote, dir, None)? {
         Cloned::Store => Ok(()),
         Cloned::Empty => Err(PawError::Git("the remote repository is empty".into())),
+        Cloned::Refused(paths) => Err(guard::Refused(paths).into()),
     }
 }
 
@@ -162,7 +166,7 @@ pub fn clone_with_progress(
     dir: &Path,
     progress: Option<Progress<'_>>,
 ) -> Result<Cloned, PawError> {
-    let repo = Repository::init(dir).map_err(git_err)?;
+    let repo = guard::init(dir)?;
     // Recorded so the copy is readable with ordinary git tools. paw itself
     // always goes through a `Connection`.
     repo.remote("origin", &remote.url()).map_err(git_err)?;
@@ -176,20 +180,40 @@ pub fn clone_with_progress(
     let tip = repo
         .refname_to_id(&format!("refs/remotes/origin/{short}"))
         .map_err(git_err)?;
+    // Before anything is checked out, or the branch made.
+    let tree = repo.find_commit(tip).map_err(git_err)?.tree_id();
+    let refused = guard::check_tree(&repo, tree).map_err(git_err)?;
+    if !refused.is_empty() {
+        return Ok(Cloned::Refused(refused));
+    }
 
     repo.reference(&branch, tip, false, "clone").map_err(git_err)?;
     repo.reference(&history::last_seen_ref(short), tip, true, "clone")
         .map_err(git_err)?;
     repo.set_head(&branch).map_err(git_err)?;
-    repo.checkout_head(Some(CheckoutBuilder::new().force()))
-        .map_err(git_err)?;
+    repo.checkout_head(Some(&mut guard::checkout())).map_err(git_err)?;
     Ok(Cloned::Store)
+}
+
+/// What the fetched tip of the current branch's remote counterpart holds
+/// that paw will not check out; empty if nothing (or nothing was fetched).
+/// A sync that failed with a message starting "the remote contains
+/// something paw will not check out" failed because of these: the store
+/// and the unpushed changes were left as they were.
+pub fn refused_remote(dir: &Path) -> Result<Vec<RefusedPath>, SyncError> {
+    let repo = guard::open(dir)?;
+    let (_, short) = current_branch(&repo)?;
+    let Ok(tip) = repo.refname_to_id(&format!("refs/remotes/origin/{short}")) else {
+        return Ok(Vec::new());
+    };
+    let tree = repo.find_commit(tip).map_err(git_err)?.tree_id();
+    Ok(guard::check_tree(&repo, tree).map_err(git_err)?)
 }
 
 /// Updates `origin/*` from the remote and returns the new tip of the current
 /// branch's remote counterpart. The working copy is not changed.
 pub fn fetch(connection: &Connection, dir: &Path) -> Result<String, PawError> {
-    let repo = Repository::open(dir).map_err(git_err)?;
+    let repo = guard::open(dir)?;
     fetch_branches(connection, &repo, None)?;
     let (_, short) = current_branch(&repo)?;
     repo.refname_to_id(&format!("refs/remotes/origin/{short}"))
@@ -273,7 +297,7 @@ pub(crate) fn commit_edits(
             return Err(unsafe_path_err(path, why));
         }
     }
-    let repo = Repository::open(dir).map_err(git_err)?;
+    let repo = guard::open(dir)?;
     let parent = repo
         .head()
         .and_then(|head| head.peel_to_commit())
@@ -315,9 +339,13 @@ pub(crate) fn commit_edits(
             }
         }
     }
-    let tree = repo
-        .find_tree(index.write_tree_to(&repo).map_err(git_err)?)
-        .map_err(git_err)?;
+    let tree_id = index.write_tree_to(&repo).map_err(git_err)?;
+    // A new name can collide with one already there (`Web/x` beside `web/`).
+    let refused = guard::check_tree(&repo, tree_id).map_err(git_err)?;
+    if !refused.is_empty() {
+        return Err(guard::Refused(refused).into());
+    }
+    let tree = repo.find_tree(tree_id).map_err(git_err)?;
 
     let signature = git2::Signature::now(&author.name, &author.email).map_err(git_err)?;
     let id = repo
@@ -325,8 +353,8 @@ pub(crate) fn commit_edits(
         .map_err(git_err)?;
     // The names are taken literally. Left to itself, checkout reads them as
     // patterns, and an entry called `web/*` would overwrite its neighbours.
-    let mut only_these_files = CheckoutBuilder::new();
-    only_these_files.force().disable_pathspec_match(true);
+    let mut only_these_files = guard::checkout();
+    only_these_files.disable_pathspec_match(true);
     for path in edits.iter().flat_map(TreeEdit::paths) {
         only_these_files.path(path);
     }
@@ -337,7 +365,7 @@ pub(crate) fn commit_edits(
 /// Pushes the current branch to the branch of the same name, as a
 /// fast-forward only.
 pub fn push(connection: &Connection, dir: &Path) -> Result<(), PawError> {
-    let repo = Repository::open(dir).map_err(git_err)?;
+    let repo = guard::open(dir)?;
     let (branch, short) = current_branch(&repo)?;
     let tip = repo.refname_to_id(&branch).map_err(git_err)?;
 

@@ -20,6 +20,7 @@ use super::history::{
     KeptBoth, Replay, ReplayNotes, commits_between, ensure_clean, last_seen_ref, move_branch,
     paw_commits,
 };
+use super::guard::check_commit;
 use super::{SyncError, current_branch, git_err};
 use crate::store::gpg_id::parse_gpg_id;
 
@@ -105,12 +106,19 @@ fn tips(repo: &Repository) -> Result<Tips, SyncError> {
 
 /// Integrates `origin/<branch>` into the current branch of the store at
 /// `dir`. Run after [`super::fetch`].
+///
+/// If the remote's tip, or a commit rebuilt on it, holds something paw
+/// will not check out ([`super::refused_remote`]), this fails with
+/// [`SyncError::Failed`] naming the paths, and the branch, the working
+/// copy and the unpushed changes stay as they were.
 pub fn integrate(dir: &Path) -> Result<Integration, SyncError> {
-    let repo = Repository::open(dir).map_err(git_err)?;
+    let repo = super::guard::open(dir)?;
     let tips = tips(&repo)?;
     let Some(remote) = tips.remote else {
         return Ok(Integration::Integrated(IntegrateReport::default()));
     };
+    // What was fetched is checked before anything else is done with it.
+    check_commit(&repo, remote)?;
     // A copy cloned before paw kept this ref: what it builds on counts as seen.
     let seen = match tips.seen {
         Some(seen) => seen,
@@ -153,11 +161,12 @@ pub fn integrate(dir: &Path) -> Result<Integration, SyncError> {
 /// with this device's unpushed changes replayed onto it (`keep_changes`),
 /// or without them.
 pub fn accept_replaced_remote(dir: &Path, keep_changes: bool) -> Result<IntegrateReport, SyncError> {
-    let repo = Repository::open(dir).map_err(git_err)?;
+    let repo = super::guard::open(dir)?;
     let tips = tips(&repo)?;
     let Some(remote) = tips.remote else {
         return Ok(IntegrateReport::default());
     };
+    check_commit(&repo, remote)?;
     let seen = tips.seen.unwrap_or(remote);
     let local = if keep_changes { paw_commits(&repo, tips.head, &[seen, remote])? } else { Vec::new() };
     ensure_clean(&repo)?;

@@ -335,6 +335,33 @@ fn an_empty_repository_is_its_own_failure() {
 }
 
 #[test]
+fn a_store_with_a_link_in_it_is_refused_and_says_where() {
+    let card = card(false);
+    let server = GitServer::start(&[authorised(&card)]);
+    push_fixture_store(&server);
+    let state = tempfile::tempdir().unwrap();
+    server.desktop_symlink("up", Path::new(".."));
+    let mut flow = at_need_pin(state.path(), &card, &server);
+
+    let error = download(&mut flow, &card, &events(&card, true)).unwrap_err();
+
+    let SetupError::Failed { message } = &error else { panic!("{error:?}") };
+    assert!(message.starts_with("the remote contains something paw will not check out"), "{message}");
+    let refused = flow.refused_remote();
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    assert_eq!((refused[0].path.as_str(), refused[0].reason.as_str()), ("up", "it is a symbolic link"));
+    assert!(!flow.repo_dir().exists());
+    assert!(matches!(flow.state(), SetupState::NeedPin { .. }));
+    // A download that succeeds forgets it.
+    let desktop = server.desktop();
+    git(desktop.path(), &["rm", "--quiet", "up"]);
+    git(desktop.path(), &["commit", "--quiet", "-m", "No link."]);
+    git(desktop.path(), &["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
+    download(&mut flow, &card, &events(&card, true)).unwrap();
+    assert!(flow.refused_remote().is_empty());
+}
+
+#[test]
 fn a_repository_without_gpg_id_is_not_a_pass_store() {
     let card = card(false);
     let server = GitServer::start(&[authorised(&card)]);

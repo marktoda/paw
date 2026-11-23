@@ -60,7 +60,7 @@ fn item(commit: &PawCommit<'_>) -> QueueItem {
 
 /// The unpushed changes, newest first.
 pub fn unpushed(dir: &Path) -> Result<Vec<QueueItem>, SyncError> {
-    let repo = Repository::open(dir).map_err(git_err)?;
+    let repo = super::guard::open(dir)?;
     let local = local(&repo)?;
     Ok(local.commits.iter().rev().map(item).collect())
 }
@@ -68,7 +68,7 @@ pub fn unpushed(dir: &Path) -> Result<Vec<QueueItem>, SyncError> {
 /// Takes back the unpushed change `id`. Later changes are kept, rebuilt
 /// without it. Returns the queue afterwards.
 pub fn discard(dir: &Path, id: &str) -> Result<Vec<QueueItem>, SyncError> {
-    let repo = Repository::open(dir).map_err(git_err)?;
+    let repo = super::guard::open(dir)?;
     let local = local(&repo)?;
     let Some(position) = local.commits.iter().position(|c| c.commit.id().to_string() == id) else {
         return Err(SyncError::Failed { message: format!("{id} is not an unpushed change") });
@@ -96,7 +96,7 @@ pub fn undo_last(dir: &Path) -> Result<Vec<QueueItem>, SyncError> {
 /// Takes back every unpushed change: the store goes back to what was last
 /// fetched from the remote.
 pub fn discard_all(dir: &Path) -> Result<(), SyncError> {
-    let repo = Repository::open(dir).map_err(git_err)?;
+    let repo = super::guard::open(dir)?;
     let local = local(&repo)?;
     let Some(oldest) = local.commits.first() else {
         return Ok(());
