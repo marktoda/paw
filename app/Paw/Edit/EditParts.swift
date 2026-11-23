@@ -174,7 +174,7 @@ struct RecipientsReviewScreen: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, PawMetrics.Spacing.s)
                     .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets())
+                    .listRowInsets(EdgeInsets(top: 0, leading: PawMetrics.Spacing.l, bottom: 0, trailing: PawMetrics.Spacing.l))
             }
             switch recipients {
             case .success(let found)?:
