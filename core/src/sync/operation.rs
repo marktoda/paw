@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use super::history::commits_between;
 use super::integrate::{IntegrateReport, Integration, Replaced, integrate};
 use super::transport::{Connection, Remote};
-use super::{SyncError, current_branch, fetch, git_err, push};
+use super::{SyncError, TransferCallback, current_branch, fetch_with_transfer, git_err, push};
 use crate::PawError;
 use crate::ssh::{SshPublicKey, SshSigner};
 
@@ -93,8 +93,9 @@ fn fetch_and_integrate(
     connection: &Connection,
     dir: &Path,
     report: &mut IntegrateReport,
+    progress: Option<TransferCallback<'_>>,
 ) -> Result<Result<(), Replaced>, SyncError> {
-    fetch(connection, dir)?;
+    fetch_with_transfer(connection, dir, progress)?;
     match integrate(dir)? {
         Integration::Integrated(this_round) => {
             report.absorb(this_round);
@@ -119,6 +120,14 @@ fn holding_back(dir: &Path, state_dir: Option<&Path>) -> Result<bool, SyncError>
     }
 }
 
+/// `progress` for one step, keeping it for the next.
+fn reborrow<'b>(progress: &'b mut Option<TransferCallback<'_>>) -> Option<TransferCallback<'b>> {
+    match progress {
+        Some(progress) => Some(&mut **progress),
+        None => None,
+    }
+}
+
 fn run(
     remote: &Remote,
     signer: &dyn SshSigner,
@@ -126,6 +135,7 @@ fn run(
     state_dir: Option<&Path>,
     send: bool,
     stop: &dyn Fn() -> bool,
+    mut progress: Option<TransferCallback<'_>>,
 ) -> Result<SyncReport, SyncError> {
     let counting = Counting { inner: signer, count: AtomicU32::new(0) };
     let connection = connect(remote, &counting)?;
@@ -145,7 +155,7 @@ fn run(
         report
     };
 
-    if let Err(replaced) = fetch_and_integrate(&connection, dir, &mut report.integration)? {
+    if let Err(replaced) = fetch_and_integrate(&connection, dir, &mut report.integration, reborrow(&mut progress))? {
         return Ok(finish(report, SyncState::RemoteReplaced { replaced }));
     }
     let mut waiting = unpushed(dir)?;
@@ -166,7 +176,7 @@ fn run(
                 return Err(stopped());
             }
             report.retried = true;
-            if let Err(replaced) = fetch_and_integrate(&connection, dir, &mut report.integration)? {
+            if let Err(replaced) = fetch_and_integrate(&connection, dir, &mut report.integration, reborrow(&mut progress))? {
                 return Ok(finish(report, SyncState::RemoteReplaced { replaced }));
             }
             waiting = unpushed(dir)?;
@@ -190,7 +200,7 @@ fn run(
 /// connection, if the remote moved before the push. Does not check the
 /// waiting changes' recipients: the app uses [`send_checked`].
 pub fn send(remote: &Remote, signer: &dyn SshSigner, dir: &Path) -> Result<SyncReport, SyncError> {
-    run(remote, signer, dir, None, true, &|| false)
+    run(remote, signer, dir, None, true, &|| false, None)
 }
 
 /// [`send`] for the store whose state directory is `state_dir`: after
@@ -203,16 +213,16 @@ pub fn send_checked(
     dir: &Path,
     state_dir: &Path,
 ) -> Result<SyncReport, SyncError> {
-    run(remote, signer, dir, Some(state_dir), true, &|| false)
+    run(remote, signer, dir, Some(state_dir), true, &|| false, None)
 }
 
 /// Fetches and integrates on one login; pushes nothing.
 pub fn refresh(remote: &Remote, signer: &dyn SshSigner, dir: &Path) -> Result<SyncReport, SyncError> {
-    run(remote, signer, dir, None, false, &|| false)
+    run(remote, signer, dir, None, false, &|| false, None)
 }
 
 /// [`send`] (or [`refresh`] if `push` is false) that stops between steps
-/// once `stop` says so.
+/// once `stop` says so, reporting each fetch's progress to `progress`.
 pub(crate) fn run_until(
     remote: &Remote,
     signer: &dyn SshSigner,
@@ -220,6 +230,7 @@ pub(crate) fn run_until(
     state_dir: &Path,
     push: bool,
     stop: &dyn Fn() -> bool,
+    progress: Option<TransferCallback<'_>>,
 ) -> Result<SyncReport, SyncError> {
-    run(remote, signer, dir, Some(state_dir), push, stop)
+    run(remote, signer, dir, Some(state_dir), push, stop, progress)
 }

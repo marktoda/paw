@@ -183,6 +183,11 @@ pub trait SetupEvents: Send + Sync {
     fn touch_needed(&self, expectation: TouchExpectation);
     /// Objects received and expected while cloning. Return `false` to stop.
     fn progress(&self, received: u32, total: u32) -> bool;
+    /// The same, with the bytes received. At most ten a second, and never
+    /// again once either has returned `false`.
+    fn transfer(&self, update: sync::TransferProgress) -> bool {
+        self.progress(update.received_objects, update.total_objects)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -784,12 +789,12 @@ impl SetupFlow {
         self.authentication.used_at(Instant::now());
 
         let mut cancelled = false;
-        let mut progress = |received, total| {
-            let go_on = events.progress(received, total);
+        let mut progress = |update| {
+            let go_on = events.transfer(update);
             cancelled |= !go_on;
             go_on
         };
-        let cloned = sync::clone_with_progress(&connection, &remote, &repo, Some(&mut progress));
+        let cloned = sync::clone_with_transfer(&connection, &remote, &repo, Some(&mut progress));
         let said = connection.remote_said();
         drop(connection);
         match cloned {

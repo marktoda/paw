@@ -18,6 +18,7 @@ pub mod queue;
 mod transport;
 
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use git2::{AutotagOption, Direction, FetchOptions, FileMode, PushOptions, RemoteCallbacks, Repository};
 
@@ -83,8 +84,97 @@ impl From<PawError> for SyncError {
     }
 }
 
-/// How far a clone or fetch has got, for a progress bar.
+/// How far a clone or fetch has got, for a progress bar: objects received
+/// and expected. Return `false` to stop.
 pub type Progress<'a> = &'a mut dyn FnMut(u32, u32) -> bool;
+
+/// [`Progress`] with the bytes received too.
+pub type TransferCallback<'a> = &'a mut dyn FnMut(TransferProgress) -> bool;
+
+/// How far a clone or fetch has got.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct TransferProgress {
+    /// Objects received so far.
+    pub received_objects: u32,
+    /// Objects the host is sending in all; 0 until it has said.
+    pub total_objects: u32,
+    /// Bytes of the pack received so far.
+    pub received_bytes: u64,
+}
+
+/// The shortest time between two progress reports: at most ten a second.
+pub const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Decides which of libgit2's progress updates (one per object, and more
+/// while it indexes) are reported: the first, then at most one per
+/// [`PROGRESS_INTERVAL`], plus the moment the last object arrives, so a
+/// bar does not stop short of the end. A repeat of the last report is never
+/// sent, and once [`Self::stop`] is called (the listener said stop, or the
+/// work was cancelled) nothing is.
+#[derive(Debug, Clone)]
+pub struct ProgressThrottle {
+    interval: Duration,
+    last: Option<(Instant, TransferProgress)>,
+    stopped: bool,
+}
+
+impl ProgressThrottle {
+    pub fn new(interval: Duration) -> Self {
+        Self { interval, last: None, stopped: false }
+    }
+
+    /// Whether to report `update`, arriving at `now`. Records it if so.
+    pub fn should_report(&mut self, now: Instant, update: TransferProgress) -> bool {
+        if self.stopped {
+            return false;
+        }
+        let report = match self.last {
+            None => true,
+            Some((_, last)) if last == update => false,
+            Some((_, last)) if update.total_objects > 0 && update.received_objects == update.total_objects => {
+                last.received_objects != update.received_objects
+            }
+            Some((at, _)) => now.saturating_duration_since(at) >= self.interval,
+        };
+        if report {
+            self.last = Some((now, update));
+        }
+        report
+    }
+
+    /// Nothing more is reported.
+    pub fn stop(&mut self) {
+        self.stopped = true;
+    }
+
+    pub fn stopped(&self) -> bool {
+        self.stopped
+    }
+}
+
+/// libgit2's progress callback for `report`, throttled: `report` returning
+/// `false` stops the transfer, and it is not called again.
+fn throttled<'a>(report: TransferCallback<'a>) -> impl FnMut(git2::Progress<'_>) -> bool + 'a {
+    let mut throttle = ProgressThrottle::new(PROGRESS_INTERVAL);
+    move |stats| {
+        if throttle.stopped() {
+            return false;
+        }
+        let update = TransferProgress {
+            received_objects: u32::try_from(stats.received_objects()).unwrap_or(u32::MAX),
+            total_objects: u32::try_from(stats.total_objects()).unwrap_or(u32::MAX),
+            received_bytes: stats.received_bytes() as u64,
+        };
+        if !throttle.should_report(Instant::now(), update) {
+            return true;
+        }
+        let go_on = report(update);
+        if !go_on {
+            throttle.stop();
+        }
+        go_on
+    }
+}
 
 /// What a clone found.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,7 +207,7 @@ pub(crate) fn git_err(e: git2::Error) -> PawError {
 fn fetch_branches(
     connection: &Connection,
     repo: &Repository,
-    progress: Option<Progress<'_>>,
+    progress: Option<TransferCallback<'_>>,
 ) -> Result<Option<String>, PawError> {
     connection.with_remote(repo, |remote| {
         let mut connected = remote.connect_auth(Direction::Fetch, None, None)?;
@@ -130,9 +220,7 @@ fn fetch_branches(
         options.download_tags(AutotagOption::None);
         if let Some(progress) = progress {
             let mut callbacks = RemoteCallbacks::new();
-            callbacks.transfer_progress(move |stats| {
-                progress(stats.received_objects() as u32, stats.total_objects() as u32)
-            });
+            callbacks.transfer_progress(throttled(progress));
             options.remote_callbacks(callbacks);
         }
         connected
@@ -163,11 +251,28 @@ pub fn clone(connection: &Connection, remote: &Remote, dir: &Path) -> Result<(),
 
 /// [`clone`], reporting objects received and expected to `progress`, which
 /// returns `false` to stop. An empty repository is not an error here.
+/// Reports are throttled as [`ProgressThrottle`] says.
 pub fn clone_with_progress(
     connection: &Connection,
     remote: &Remote,
     dir: &Path,
     progress: Option<Progress<'_>>,
+) -> Result<Cloned, PawError> {
+    match progress {
+        Some(progress) => {
+            let mut report = |update: TransferProgress| progress(update.received_objects, update.total_objects);
+            clone_with_transfer(connection, remote, dir, Some(&mut report))
+        }
+        None => clone_with_transfer(connection, remote, dir, None),
+    }
+}
+
+/// [`clone_with_progress`], reporting bytes too.
+pub fn clone_with_transfer(
+    connection: &Connection,
+    remote: &Remote,
+    dir: &Path,
+    progress: Option<TransferCallback<'_>>,
 ) -> Result<Cloned, PawError> {
     let repo = guard::init(dir)?;
     // Recorded so the copy is readable with ordinary git tools. paw itself
@@ -216,8 +321,18 @@ pub fn refused_remote(dir: &Path) -> Result<Vec<RefusedPath>, SyncError> {
 /// Updates `origin/*` from the remote and returns the new tip of the current
 /// branch's remote counterpart. The working copy is not changed.
 pub fn fetch(connection: &Connection, dir: &Path) -> Result<String, PawError> {
+    fetch_with_transfer(connection, dir, None)
+}
+
+/// [`fetch`], reporting how far it has got to `progress` (throttled), which
+/// returns `false` to stop.
+pub fn fetch_with_transfer(
+    connection: &Connection,
+    dir: &Path,
+    progress: Option<TransferCallback<'_>>,
+) -> Result<String, PawError> {
     let repo = guard::open(dir)?;
-    fetch_branches(connection, &repo, None)?;
+    fetch_branches(connection, &repo, progress)?;
     let (_, short) = current_branch(&repo)?;
     repo.refname_to_id(&format!("refs/remotes/origin/{short}"))
         .map(|id| id.to_string())

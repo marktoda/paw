@@ -483,6 +483,8 @@ fn setup_resumes_after_a_kill_at_every_step() {
     events.stop.store(true, Ordering::SeqCst);
     let error = download(&mut flow, &card, &events).unwrap_err();
     assert!(matches!(error, SetupError::Cancelled), "{error:?}");
+    // Nothing is reported after the listener said stop.
+    assert_eq!(events.progress.load(Ordering::SeqCst), 1);
     drop(flow);
     assert!(dir.path().join("repo").exists());
     let mut flow = SetupFlow::open(dir.path()).unwrap();

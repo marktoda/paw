@@ -502,3 +502,42 @@ fn a_pin_kdf_paw_does_not_support_stops_setup_at_your_key_before_any_pin() {
         assert_eq!(sim.verify_attempts() + sim.pin_queries(), 0);
     }
 }
+
+#[test]
+fn a_download_reports_objects_and_bytes_received() {
+    let w = world();
+    to_need_pin(&w);
+    assert_eq!(w.setup.transfer_progress(), None);
+    let driver = Driver::helpful(PIN, &w.sim);
+    let task = w.setup.clone().download_with_key(w.port.clone(), driver.clone());
+    driver.drive(&task);
+    assert!(matches!(finish(&task), KeyTaskState::Done { .. }));
+
+    let transfer = task.transfer_progress().unwrap();
+    assert!(transfer.total_objects > 0);
+    assert_eq!(transfer.received_objects, transfer.total_objects);
+    assert!(transfer.received_bytes > 0);
+    assert_eq!(w.setup.transfer_progress(), Some(transfer));
+    // The sheet saw it as Working with objects done and expected, ending
+    // at the total.
+    assert!(driver.saw(|state| matches!(
+        state,
+        KeyTaskState::Working { progress: Some(p) } if p.done == transfer.total_objects && p.total == transfer.total_objects
+    )));
+}
+
+#[test]
+fn a_refresh_reports_what_its_fetch_received() {
+    let w = world();
+    full_setup(&w);
+    w.server.sim.commit_file("new.gpg".into(), vec![7; 4096], "From the desktop.".into()).unwrap();
+    let sync = StoreSync::open(w.dir.path().to_string_lossy().into_owned()).unwrap();
+    let driver = Driver::helpful(PIN, &w.sim);
+    let task = sync.clone().refresh_with_key(w.port.clone(), driver.clone());
+    driver.drive(&task);
+    assert!(matches!(finish(&task), KeyTaskState::Done { .. }), "{:?}", sync.last_task_result());
+
+    let transfer = task.transfer_progress().unwrap();
+    assert!(transfer.received_objects > 0 && transfer.received_objects == transfer.total_objects, "{transfer:?}");
+    assert!(transfer.received_bytes > 0);
+}

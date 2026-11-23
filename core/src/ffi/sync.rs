@@ -22,7 +22,7 @@ use zeroize::Zeroizing;
 use super::{Adapter, CardConnection};
 use crate::key::{
     After, Halt, KeyError, KeyIdentity, KeyOutcome, KeyPort, KeyPurpose, KeySession, KeyTask, KeyTaskListener,
-    KeyTaskState, LoginPurpose, SessionSigner, TaskCore, TaskProgress, Work,
+    LoginPurpose, SessionSigner, TaskCore, Work,
 };
 use crate::setup::address::StoreAddress;
 use crate::setup::touch::{TouchClock, TouchExpectation};
@@ -34,7 +34,7 @@ use crate::{KeyTouch, PawError};
 use crate::sync::hosts::pin_for;
 use crate::sync::operation::{self, SyncReport};
 use crate::sync::queue::{self, HeldBack, QueueItem};
-use crate::sync::{IntegrateReport, RefusedPath, SyncError, accept_replaced_remote};
+use crate::sync::{IntegrateReport, RefusedPath, SyncError, TransferProgress, accept_replaced_remote};
 
 /// Told how a download is going.
 #[uniffi::export(with_foreign)]
@@ -46,6 +46,7 @@ pub trait ProgressListener: Send + Sync {
 struct Events {
     connection: Arc<dyn CardConnection>,
     listener: Option<Arc<dyn ProgressListener>>,
+    transfer: Arc<Mutex<Option<TransferProgress>>>,
 }
 
 impl SetupEvents for Events {
@@ -58,6 +59,11 @@ impl SetupEvents for Events {
     fn progress(&self, received: u32, total: u32) -> bool {
         self.listener.as_ref().is_none_or(|l| l.progress(received, total))
     }
+
+    fn transfer(&self, update: TransferProgress) -> bool {
+        *lock(&self.transfer) = Some(update);
+        self.progress(update.received_objects, update.total_objects)
+    }
 }
 
 /// First-run setup; see [`crate::setup`]. Each call is one step and returns
@@ -67,6 +73,9 @@ pub struct Setup {
     flow: Mutex<SetupFlow>,
     /// Why the last key task setup started failed, if for a setup reason.
     last_error: Mutex<Option<SetupError>>,
+    /// How far the last download's clone got. Outside `flow`, which the
+    /// older download holds while it runs.
+    transfer: Arc<Mutex<Option<TransferProgress>>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -124,11 +133,14 @@ impl Setup {
             }
         };
         self.flow().note_login();
-        let mut progress = |received: u32, total: u32| {
-            task.set(KeyTaskState::Working { progress: Some(TaskProgress { done: received, total }) });
-            !task.cancelled()
+        let mut progress = |update: TransferProgress| {
+            if task.cancelled() {
+                return false;
+            }
+            *lock(&self.transfer) = Some(update);
+            task.report_transfer(update)
         };
-        let cloned = crate::sync::clone_with_progress(&connection, &remote, &repo, Some(&mut progress));
+        let cloned = crate::sync::clone_with_transfer(&connection, &remote, &repo, Some(&mut progress));
         let said = connection.remote_said();
         drop(connection);
         if !task.begin_commit() {
@@ -147,7 +159,7 @@ impl Setup {
     #[uniffi::constructor]
     pub fn open(state_dir: String) -> Result<Arc<Self>, SetupError> {
         let flow = SetupFlow::open(&PathBuf::from(state_dir))?;
-        Ok(Arc::new(Self { flow: Mutex::new(flow), last_error: Mutex::new(None) }))
+        Ok(Arc::new(Self { flow: Mutex::new(flow), last_error: Mutex::new(None), transfer: Arc::default() }))
     }
 
     pub fn state(&self) -> SetupState {
@@ -185,7 +197,9 @@ impl Setup {
         listener: Arc<dyn ProgressListener>,
     ) -> Result<SetupState, SetupError> {
         let pin = Zeroizing::new(pin);
-        let events = Arc::new(Events { connection: connection.clone(), listener: Some(listener) });
+        *lock(&self.transfer) = None;
+        let events =
+            Arc::new(Events { connection: connection.clone(), listener: Some(listener), transfer: self.transfer.clone() });
         self.flow().download(Arc::new(Adapter(connection)), &pin, events)
     }
 
@@ -196,7 +210,7 @@ impl Setup {
         pin: String,
     ) -> Result<SetupState, SetupError> {
         let pin = Zeroizing::new(pin);
-        let events = Arc::new(Events { connection: connection.clone(), listener: None });
+        let events = Arc::new(Events { connection: connection.clone(), listener: None, transfer: Arc::default() });
         self.flow().test_decrypt(Arc::new(Adapter(connection)), &pin, events)
     }
 
@@ -217,6 +231,7 @@ impl Setup {
     /// than the one read at "Your key" is refused before the PIN.
     pub fn download_with_key(self: Arc<Self>, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
         *lock(&self.last_error) = None;
+        *lock(&self.transfer) = None;
         let expected = self.flow().expected_key();
         let setup = self.clone();
         let work: Work = Box::new(move |task, signer| setup.run_download(task, &signer));
@@ -292,6 +307,14 @@ impl Setup {
     /// host whose keys ship with paw, such as github.com.
     pub fn forget_host_key(&self) -> Result<SetupState, SetupError> {
         self.flow().forget_host_key()
+    }
+
+    /// How far the current or last download's clone has got: objects and
+    /// bytes received, updated at most ten times a second, on either
+    /// download path. `None` before its transfer starts. Answers while a
+    /// download runs.
+    pub fn transfer_progress(&self) -> Option<TransferProgress> {
+        *lock(&self.transfer)
     }
 
     /// After a host check or download that made no connection at all to
@@ -408,7 +431,9 @@ impl StoreSync {
                 }
             };
             let stop = || task.cancelled();
-            let result = operation::run_until(&remote, &signer, &sync.repo(), &sync.state_dir, push, &stop);
+            let mut progress = |update: TransferProgress| task.report_transfer(update);
+            let result =
+                operation::run_until(&remote, &signer, &sync.repo(), &sync.state_dir, push, &stop, Some(&mut progress));
             if task.cancelled() {
                 return Err(Halt::Fail(KeyError::Cancelled));
             }

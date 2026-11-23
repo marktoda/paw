@@ -45,6 +45,8 @@ struct Inner {
     signer_ready: bool,
     /// The task refused a card that is not the enrolled key.
     mismatch: Option<KeyMismatch>,
+    /// How far the clone or fetch after a sign-in has got.
+    transfer: Option<crate::sync::TransferProgress>,
 }
 
 pub(crate) struct TaskCore {
@@ -153,6 +155,27 @@ impl TaskCore {
         if let Some(session) = session {
             session.wake_card_waiters();
         }
+    }
+
+    /// The clone or fetch after a sign-in has got this far: shown as
+    /// `Working` with objects done and expected, and kept for
+    /// `transfer_progress`. Nothing once the task has been cancelled or has
+    /// finished.
+    pub(crate) fn report_transfer(&self, update: crate::sync::TransferProgress) -> bool {
+        if self.cancelled() {
+            return false;
+        }
+        {
+            let mut inner = self.lock();
+            if inner.state.is_final() {
+                return false;
+            }
+            inner.transfer = Some(update);
+        }
+        self.set(KeyTaskState::Working {
+            progress: Some(TaskProgress { done: update.received_objects, total: update.total_objects }),
+        });
+        !self.cancelled()
     }
 
     /// From here on, cancel is too late. `false` if it already came.
@@ -291,6 +314,7 @@ impl KeyTask {
                 session: None,
                 signer_ready: false,
                 mismatch,
+                transfer: None,
             }),
             changed: Condvar::new(),
         });
@@ -421,5 +445,13 @@ impl KeyTask {
     /// `NotForThisKey`, and no PIN was sent.
     pub fn key_mismatch(&self) -> Option<KeyMismatch> {
         self.core.lock().mismatch.clone()
+    }
+
+    /// For a download or sync: objects and bytes received so far by its
+    /// clone or fetch, at most ten updates a second (each also shown as
+    /// `Working` with objects done and expected). `None` before the
+    /// transfer starts. Not updated after the task is cancelled.
+    pub fn transfer_progress(&self) -> Option<crate::sync::TransferProgress> {
+        self.core.lock().transfer
     }
 }
