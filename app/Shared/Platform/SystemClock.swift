@@ -47,109 +47,52 @@ final class SystemClock: Clock, @unchecked Sendable {
 }
 
 /// Which boot this is, the same in every process until the next restart.
+/// Read from the kernel on every call; nothing is stored.
 ///
-/// `kern.bootsessionuuid` is not readable from the iOS 18 sandbox, so
-/// this uses the restart check Apple DTS describes: a POSIX named
-/// semaphore, which lives in the kernel and does not survive a reboot.
-/// The first caller after a boot creates it (`O_CREAT | O_EXCL`) and writes
-/// a new random id to a file in the App Group container; every later
-/// caller finds the semaphore (`EEXIST`) and reads the file.
-///
-/// Failure modes, all ending copies rather than stretching them:
-/// - The first caller cannot write the file: it removes the semaphore
-///   again and returns a fresh random id, so the next call tries again.
-/// - The file cannot be read (it is `Complete`-protected, so while the
-///   phone is locked): a fresh random id, which ends every copy. Copies
-///   are never read while locked.
-/// - The semaphore cannot be used at all (the sandbox refuses): the boot
-///   time from `kern.boottime`. The kernel moves that when the clock is
-///   set, so a clock change also ends every copy.
+/// 1. `kern.bootsessionuuid`: a UUID the kernel makes at each boot. The
+///    core's seam notes say the iOS 18 sandbox refuses it; the simulator
+///    and the check screen show whether this phone allows it.
+/// 2. Otherwise `kern.boottime`, seconds only. The kernel moves the boot
+///    time when the wall clock is set (and may when NTP steps it), so a
+///    clock change then changes the id and ends every copy: it fails
+///    closed, never stretching a copy.
+/// 3. If neither can be read, a fresh random id per call, which ends every
+///    copy each time.
 enum BootSession {
-    /// design.md 3.15's App Group; POSIX names are at most 31 bytes.
-    static let appGroup = "group.com.marktoda.paw"
-    private static let semaphoreNames = ["\(appGroup)/boot", "paw.boot"]
-
-    /// The id, and where it came from (for the check screen).
+    /// The id, and which source gave it (for the check screen).
     static func read() -> (id: String, source: String) {
-        var refusals: [String] = []
-        for name in semaphoreNames {
-            let opened = sem_open(name, O_CREAT | O_EXCL, 0o600, 0)
-            let error = errno
-            // SEM_FAILED is (sem_t *)-1, not NULL: check both.
-            if let opened, Int(bitPattern: opened) != -1 {
-                // Deliberately never closed: whether Darwin keeps a named
-                // semaphore after its last handle closes is not relied on.
-                let id = "boot-" + UUID().uuidString
-                if write(id, replacing: true) { return (id, "semaphore \(name), first since boot") }
-                sem_unlink(name)
-                return ("unsaved-" + UUID().uuidString, "semaphore \(name), could not save the id")
-            }
-            guard error == EEXIST else {
-                refusals.append("\(name): errno \(error)")
-                continue
-            }
-            // Another process may have created it a moment ago and not
-            // written the file yet.
-            var why = ""
-            for _ in 0..<20 {
-                switch readFile() {
-                case .success(let id): return (id, "semaphore \(name)")
-                case .failure(let reason): why = reason.text
-                }
-                usleep(5_000)
-            }
-            // Created this boot but the file is gone (e.g. reinstalled since
-            // boot): make one, without replacing one that just appeared.
-            _ = write("boot-" + UUID().uuidString, replacing: false)
-            if case .success(let id) = readFile() { return (id, "semaphore \(name), id remade") }
-            return ("unreadable-" + UUID().uuidString, "semaphore \(name), id file unreadable: \(why)")
+        var why: [String] = []
+        switch sysctlString("kern.bootsessionuuid") {
+        case .success(let uuid) where !uuid.isEmpty:
+            return ("session-" + uuid, "kern.bootsessionuuid")
+        case .success:
+            why.append("bootsessionuuid empty")
+        case .failure(let errorNumber):
+            why.append("bootsessionuuid errno \(errorNumber)")
         }
         var boot = timeval()
         var size = MemoryLayout<timeval>.size
         if sysctlbyname("kern.boottime", &boot, &size, nil, 0) == 0, boot.tv_sec > 0 {
-            return ("boottime-\(boot.tv_sec).\(boot.tv_usec)", "kern.boottime (no semaphore: \(refusals.joined(separator: ", ")))")
+            return ("boottime-\(boot.tv_sec)", "kern.boottime (\(why.joined(separator: ", ")))")
         }
-        return ("unknown-" + UUID().uuidString, "none (errno \(errno))")
+        why.append("boottime errno \(errno)")
+        return ("unknown-" + UUID().uuidString, "none (\(why.joined(separator: ", ")))")
     }
 
-    private static var fileURL: URL? {
-        let base = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)
-            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-        return base?.appendingPathComponent("boot-id", isDirectory: false)
+    /// A string sysctl, or the errno that refused it.
+    private static func sysctlString(_ name: String) -> Result<String, Int32Error> {
+        var size = 0
+        guard sysctlbyname(name, nil, &size, nil, 0) == 0 else { return .failure(Int32Error(errno)) }
+        guard size > 0, size <= 256 else { return .success("") }
+        var buffer = [CChar](repeating: 0, count: size + 1)
+        guard sysctlbyname(name, &buffer, &size, nil, 0) == 0 else { return .failure(Int32Error(errno)) }
+        let text = String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        return .success(text.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    struct Unreadable: Error {
-        let text: String
-    }
-
-    private static func readFile() -> Result<String, Unreadable> {
-        guard let url = fileURL else { return .failure(Unreadable(text: "no container")) }
-        let data: Data
-        do {
-            data = try Data(contentsOf: url)
-        } catch {
-            let code = (error as NSError).code
-            return .failure(Unreadable(text: "read error \((error as NSError).domain) \(code)"))
-        }
-        guard let text = String(data: data, encoding: .utf8), text.hasPrefix("boot-"),
-              UUID(uuidString: String(text.dropFirst("boot-".count))) != nil else {
-            return .failure(Unreadable(text: "\(data.count) bytes, not an id"))
-        }
-        return .success(text)
-    }
-
-    private static func write(_ id: String, replacing: Bool) -> Bool {
-        guard let url = fileURL else { return false }
-        do {
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let options: Data.WritingOptions = replacing
-                ? [.atomic, .completeFileProtection]
-                : [.withoutOverwriting, .completeFileProtection]
-            try Data(id.utf8).write(to: url, options: options)
-            return true
-        } catch {
-            return false
-        }
+    struct Int32Error: Error, CustomStringConvertible {
+        let value: Int32
+        init(_ value: Int32) { self.value = value }
+        var description: String { String(value) }
     }
 }

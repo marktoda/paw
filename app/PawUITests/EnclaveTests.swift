@@ -90,6 +90,28 @@ final class EnclaveTests: XCTestCase {
         XCTAssertEqual(text("enclave-done"), "Storage checks: done")
     }
 
+    /// Runs the storage checks and returns the boot id line.
+    private func shownBootId() -> String {
+        let run = element("enclave-run-storage")
+        XCTAssertTrue(run.waitForExistence(timeout: 10))
+        run.tap()
+        XCTAssertTrue(element("enclave-probe").waitForExistence(timeout: 30), "the checks should finish")
+        return text("enclave-boot-shown")
+    }
+
+    /// The boot id must outlive the process: copies survive a relaunch
+    /// until the phone restarts.
+    func testBootIdSurvivesRelaunch() {
+        let before = shownBootId()
+        record("boot-before", before)
+        XCTAssertTrue(before.hasPrefix("Boot id ") && !before.contains("unknown-"), before)
+        app.terminate()
+        app.launch()
+        let after = shownBootId()
+        record("boot-after", after)
+        XCTAssertEqual(after, before, "the boot id should be the same after a relaunch")
+    }
+
     func testFaceIdCheckAnswersWithoutHanging() {
         let check = element("enclave-check-faceid")
         XCTAssertTrue(check.waitForExistence(timeout: 10))
