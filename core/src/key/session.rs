@@ -109,6 +109,9 @@ struct State {
 /// One connected key, from plug-in to removal.
 #[derive(uniffi::Object)]
 pub struct KeySession {
+    /// This session, for the thread that de-verifies the card after a
+    /// forget: the caller of `forget_pin` never waits for the card.
+    me: Weak<KeySession>,
     wire: Arc<Wire>,
     identity: Identity,
     clock: Arc<dyn Clock>,
@@ -148,7 +151,8 @@ impl KeySession {
         };
         let pin_kdf = PinKdf::read(&wire)?;
         let tries_left = info.pin_tries_left;
-        Ok(Arc::new(Self {
+        Ok(Arc::new_cyclic(|me| Self {
+            me: me.clone(),
             wire,
             identity: Identity { info, decryption_key, ssh_key, pin_kdf },
             clock,
@@ -252,8 +256,10 @@ impl KeySession {
         }
     }
 
-    /// Drops the PIN and de-verifies the card: now if it is free, after
-    /// the running job otherwise.
+    /// Drops the PIN at once and de-verifies the card without waiting for
+    /// it: on a thread of its own if the card is free, after the running
+    /// job otherwise. Never sends anything on the caller's thread, which is
+    /// often the app's main thread: a reader can take seconds to answer.
     fn forget(&self, after_background: bool) {
         let deverify_now = {
             let mut state = self.lock();
@@ -269,17 +275,39 @@ impl KeySession {
                 state.deverify_pending = true;
                 false
             } else {
+                // Taken now, so a task started meanwhile waits (`Busy`)
+                // until the de-verify has gone out.
                 state.card_busy = true;
                 true
             }
         };
         if deverify_now {
-            self.deverify();
-            self.lock().card_busy = false;
+            self.deverify_in_background();
+        }
+    }
+
+    /// Sends the de-verify on its own thread, then frees the card. The card
+    /// must already be marked busy.
+    fn deverify_in_background(&self) {
+        let spawned = self.me.upgrade().map(|session| {
+            std::thread::Builder::new().name("paw-card-forget".into()).spawn(move || session.deverify_and_release())
+        });
+        if !matches!(spawned, Some(Ok(_))) {
+            // No thread: the next card job de-verifies first.
+            let mut state = self.lock();
+            state.deverify_pending = true;
+            state.card_busy = false;
+            drop(state);
             self.card_free.notify_all();
-            if self.wire.failed() {
-                self.end();
-            }
+        }
+    }
+
+    fn deverify_and_release(&self) {
+        self.deverify();
+        self.lock().card_busy = false;
+        self.card_free.notify_all();
+        if self.wire.failed() {
+            self.end();
         }
     }
 
@@ -530,6 +558,8 @@ impl KeySession {
     }
 
     /// Whether paw holds the PIN, so the next task skips the PIN stage.
+    /// Answered from memory: if the background limit has passed, the PIN
+    /// is dropped and the card de-verified on another thread.
     pub fn holds_pin(&self) -> bool {
         self.holds_pin_now()
     }
@@ -539,8 +569,10 @@ impl KeySession {
         !self.ended()
     }
 
-    /// Lock now: drops the PIN and de-verifies the card (after the running
-    /// command, if one is waiting for a touch).
+    /// Lock now: drops the PIN from memory before it returns, and
+    /// de-verifies the card afterwards on another thread (after the running
+    /// command, if one is waiting for a touch). Sends nothing to the card on
+    /// the caller's thread, so it is safe on the main thread.
     pub fn forget_pin(&self) {
         self.forget(false);
     }

@@ -140,6 +140,9 @@ struct State {
     touch_cache: Duration,
     /// A key operation is waiting for a touch right now.
     waiting_for_touch: bool,
+    /// [`SimulatedKey::time_out_touch`] asked the waiting operation to
+    /// fail now, as if the key's timeout had run out.
+    time_out_now: bool,
     /// VERIFY commands with a PIN in them: each may use a try.
     verify_attempts: u32,
     /// Empty VERIFY commands: "is the PIN verified?", which uses no try.
@@ -193,6 +196,18 @@ impl SimulatedKey {
     /// operation (a decrypt or an authentication signature).
     pub fn touch(&self) {
         self.lock().touch_pending = true;
+        self.touched.notify_all();
+    }
+
+    /// The key operation waiting for a touch fails now, as it would once
+    /// the key's own timeout ran out, so a test about the timeout need not
+    /// wait for it. Does nothing if no operation is waiting.
+    pub fn time_out_touch(&self) {
+        let mut state = self.lock();
+        if state.waiting_for_touch {
+            state.time_out_now = true;
+        }
+        drop(state);
         self.touched.notify_all();
     }
 
@@ -405,6 +420,7 @@ impl SimulatedKey {
                 last_touch: [None, None],
                 touch_cache: TOUCH_CACHE,
                 waiting_for_touch: false,
+                time_out_now: false,
                 verify_attempts: 0,
                 pin_queries: 0,
                 kdf: None,
@@ -641,11 +657,14 @@ impl SimulatedKey {
             let (guard, _) = self
                 .touched
                 .wait_timeout_while(state, self.options.touch_timeout, |s| {
-                    !s.touch_pending && s.present
+                    !s.touch_pending && s.present && !s.time_out_now
                 })
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             state = guard;
             state.waiting_for_touch = false;
+            if std::mem::take(&mut state.time_out_now) {
+                return Err(0x6982);
+            }
             if !state.touch_pending || !state.present {
                 return Err(0x6982);
             }

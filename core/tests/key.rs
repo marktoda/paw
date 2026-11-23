@@ -222,7 +222,7 @@ fn fourteen_minutes_in_the_background_keeps_the_pin_fifteen_forget_it() {
     rig.clock.advance_ms(PIN_BACKGROUND_LIMIT.as_millis() as u64);
     session.note_foregrounded();
     assert!(!session.holds_pin());
-    assert!(!rig.sim.pin_verified(), "the card was de-verified too");
+    assert!(eventually(|| !rig.sim.pin_verified()), "the card was de-verified too");
 
     let task = open(&rig, OTHER_ENTRY, &Driver::new());
     assert_eq!(pin_stage(&task.state()), (None, true, None));
@@ -258,12 +258,131 @@ fn forget_pin_asks_again_and_deverifies_the_card() {
     open_ok(&rig);
     assert!(rig.sim.pin_verified());
     rig.port.session().unwrap().forget_pin();
-    assert!(!rig.sim.pin_verified());
+    assert!(eventually(|| !rig.sim.pin_verified()));
 
     let driver = Driver::helpful(PIN, &rig.sim);
     let task = open(&rig, ENTRY, &driver);
     finish(&task);
     assert_eq!(rig.sim.verify_attempts(), 2, "the PIN was asked and verified again");
+}
+
+/// A transport that holds the de-verify (`00 20 FF 82`) until released,
+/// as a slow or stuck reader would.
+struct HeldDeverify {
+    inner: Arc<paw_core::sim::SimulatedKey>,
+    gate: std::sync::Mutex<bool>,
+    opened: std::sync::Condvar,
+    arrived: std::sync::atomic::AtomicBool,
+}
+
+impl HeldDeverify {
+    fn release(&self) {
+        *self.gate.lock().unwrap() = true;
+        self.opened.notify_all();
+    }
+}
+
+impl paw_core::ApduTransport for HeldDeverify {
+    fn transmit(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
+        if apdu.starts_with(&[0x00, 0x20, 0xFF, 0x82]) {
+            self.arrived.store(true, std::sync::atomic::Ordering::SeqCst);
+            let mut open = self.gate.lock().unwrap();
+            while !*open {
+                open = self.opened.wait(open).unwrap();
+            }
+        }
+        self.inner.transmit(apdu)
+    }
+}
+
+#[test]
+fn forget_pin_returns_at_once_while_the_reader_is_slow_and_deverifies_after() {
+    let rig = rig(SimTouch::Off, SimTouch::Off);
+    let held = Arc::new(HeldDeverify {
+        inner: rig.sim.clone(),
+        gate: std::sync::Mutex::new(false),
+        opened: std::sync::Condvar::new(),
+        arrived: std::sync::atomic::AtomicBool::new(false),
+    });
+    let session = rig.port.attach(held.clone()).unwrap();
+    open_ok(&rig);
+    assert!(rig.sim.pin_verified());
+
+    let started = Instant::now();
+    session.forget_pin();
+    assert!(started.elapsed() < Duration::from_millis(200), "forget_pin waited for the card");
+    assert!(!session.holds_pin(), "the PIN is gone from memory before forget_pin returns");
+    assert!(eventually(|| held.arrived.load(std::sync::atomic::Ordering::SeqCst)), "the de-verify was sent");
+    assert!(rig.sim.pin_verified(), "the reader has not answered yet");
+
+    // A task started meanwhile waits for the card, then asks for the PIN.
+    let driver = Driver::new();
+    let task = open(&rig, ENTRY, &driver);
+    held.release();
+    assert!(eventually(|| !rig.sim.pin_verified()), "the de-verify went through afterwards");
+    assert!(eventually(|| is_pin(&task.state())));
+    task.cancel();
+}
+
+#[test]
+fn holds_pin_after_the_background_limit_answers_without_the_card() {
+    let rig = rig(SimTouch::Off, SimTouch::Off);
+    let held = Arc::new(HeldDeverify {
+        inner: rig.sim.clone(),
+        gate: std::sync::Mutex::new(false),
+        opened: std::sync::Condvar::new(),
+        arrived: std::sync::atomic::AtomicBool::new(false),
+    });
+    let session = rig.port.attach(held.clone()).unwrap();
+    open_ok(&rig);
+    session.note_backgrounded();
+    rig.clock.advance_ms(PIN_BACKGROUND_LIMIT.as_millis() as u64);
+
+    let started = Instant::now();
+    assert!(!session.holds_pin());
+    session.note_foregrounded();
+    assert!(started.elapsed() < Duration::from_millis(200), "holds_pin waited for the card");
+    held.release();
+    assert!(eventually(|| !rig.sim.pin_verified()));
+}
+
+#[test]
+fn forget_pin_during_a_touch_wait_returns_at_once_and_deverifies_after_the_command() {
+    let rig = rig(SimTouch::EachUse, SimTouch::EachUse);
+    open_ok(&rig);
+    let session = rig.port.session().unwrap();
+
+    let driver = Driver::new();
+    let task = open(&rig, OTHER_ENTRY, &driver);
+    driver.wait_for(is_touch);
+    assert!(eventually(|| rig.sim.waiting_for_touch()));
+
+    let started = Instant::now();
+    session.forget_pin();
+    assert!(started.elapsed() < Duration::from_millis(200), "forget_pin waited for the touch");
+    assert!(!session.holds_pin());
+    assert!(rig.sim.pin_verified(), "the card is still busy with the decrypt");
+
+    rig.sim.touch();
+    finish(&task);
+    assert!(eventually(|| !rig.sim.pin_verified()), "de-verified once the command ended");
+}
+
+#[test]
+fn time_out_touch_ends_the_wait_as_the_keys_timeout_would() {
+    let rig = rig(SimTouch::EachUse, SimTouch::EachUse);
+    open_ok(&rig);
+    let driver = Driver::new();
+    let task = open(&rig, OTHER_ENTRY, &driver);
+    driver.wait_for(is_touch);
+    assert!(eventually(|| rig.sim.waiting_for_touch()));
+    let started = Instant::now();
+    rig.sim.time_out_touch();
+    assert_eq!(failed(&finish(&task)), KeyError::TouchTimeout);
+    assert!(started.elapsed() < Duration::from_secs(2));
+    // The PIN is still held, and the next touch works.
+    let task = open(&rig, OTHER_ENTRY, &Driver::helpful(PIN, &rig.sim));
+    assert_eq!(opened(&finish(&task)).0, "4071");
 }
 
 // Removal.
