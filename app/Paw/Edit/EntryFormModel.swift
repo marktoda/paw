@@ -337,7 +337,12 @@ final class EntryFormModel {
         changed()
         guard problems.isEmpty else { return nil }
         do {
-            let outcome = try writer.save(draft: draft, copies: copies, newCopyTtlSecs: 0)
+            // A new entry gets a Face ID copy from the save (design 2.5,
+            // owner's decision 8.1.10): the person just typed it on this
+            // phone, usually to fill it straight in. An edit keeps the
+            // copy's deadline, which the core handles.
+            let ttl = isEditing ? 0 : AppModel.faceIdWindowSecs
+            let outcome = try writer.save(draft: draft, copies: copies, newCopyTtlSecs: ttl)
             return (outcome, isEditing ? draft.text() : "")
         } catch let error as WriteError {
             if case .Invalid(let found) = error {
