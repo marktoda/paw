@@ -28,6 +28,7 @@ use sha1::{Digest, Sha1};
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::ApduTransport;
+use crate::ffi::{CardConnection, ConnectionError};
 
 const CREATED: u32 = 1_780_000_000;
 const OID_CV25519: [u8; 10] = [0x2B, 0x06, 0x01, 0x04, 0x01, 0x97, 0x55, 0x01, 0x05, 0x01];
@@ -66,6 +67,21 @@ impl SimTouch {
     }
 }
 
+/// The fixed, public key material of a simulated key: the byte each
+/// private key repeats, and the serial.
+#[derive(Clone, Copy)]
+struct SimKeys {
+    decryption: u8,
+    authentication: u8,
+    serial: [u8; 4],
+}
+
+/// The usual simulated key, which the fixture store is encrypted for.
+const KEYS: SimKeys = SimKeys { decryption: 7, authentication: 9, serial: [0x12, 0x34, 0x56, 0x78] };
+/// A second simulated key. Its decryption key is not the fixture's other
+/// key (that one is `[8; 32]`), so it opens nothing in the fixture store.
+const OTHER_KEYS: SimKeys = SimKeys { decryption: 11, authentication: 13, serial: [0x87, 0x65, 0x43, 0x21] };
+
 /// The two slots that can wait for a touch.
 #[derive(Clone, Copy)]
 enum Slot {
@@ -92,6 +108,8 @@ pub struct SimOptions {
 pub struct SimulatedKey {
     secret: StaticSecret,
     auth_key: SigningKey,
+    /// The serial in the application identifier.
+    serial: [u8; 4],
     options: SimOptions,
     state: Mutex<State>,
     touched: Condvar,
@@ -104,6 +122,8 @@ struct State {
     touch_pending: bool,
     deciphers: u32,
     authentications: u32,
+    /// Touches a key operation waited for and used.
+    touches: u32,
     /// Data of a chained command received so far (CLA bit 0x10).
     chain: Vec<u8>,
     /// Plugged in. While not, every exchange fails as a removed card's does.
@@ -143,6 +163,20 @@ impl SimulatedKey {
     #[uniffi::constructor]
     pub fn new(pin: String, touch_required: bool, touch_timeout_ms: u32) -> Arc<Self> {
         Self::with_options(SimOptions {
+            pin,
+            decrypt_touch: touch_required,
+            auth_touch: touch_required,
+            touch_timeout: Duration::from_millis(touch_timeout_ms.into()),
+            extended_length: false,
+        })
+    }
+
+    /// A second, different simulated key (other key material and serial),
+    /// for the "different key" and "replace my key" screens. It opens
+    /// nothing in the fixture store.
+    #[uniffi::constructor]
+    pub fn new_other(pin: String, touch_required: bool, touch_timeout_ms: u32) -> Arc<Self> {
+        Self::other_with_options(SimOptions {
             pin,
             decrypt_touch: touch_required,
             auth_touch: touch_required,
@@ -255,6 +289,33 @@ impl SimulatedKey {
     pub fn pin_tries_left(&self) -> u8 {
         self.lock().tries_left
     }
+
+    /// Touches the key waited for and used, over both slots. A use covered
+    /// by a cached touch adds none.
+    pub fn touch_count(&self) -> u32 {
+        self.lock().touches
+    }
+
+    /// The key as a card connection, to hand to `KeyPort.plugged_in`,
+    /// `Setup` and the other calls that take one, with no Swift adapter.
+    /// `touch_needed` does nothing: the simulator's UI touches it.
+    pub fn as_connection(self: Arc<Self>) -> Arc<dyn CardConnection> {
+        self
+    }
+
+    /// The SSH public key line of the authentication slot, as setup shows
+    /// it for adding to the git host.
+    pub fn ssh_public_key(&self) -> String {
+        crate::ssh::SshPublicKey::ed25519(&self.authentication_public_key()).authorized_key()
+    }
+}
+
+impl CardConnection for SimulatedKey {
+    fn transmit(&self, apdu: Vec<u8>) -> Result<Vec<u8>, ConnectionError> {
+        self.transmit_checked(&apdu).map_err(|message| ConnectionError::Failed { message })
+    }
+
+    fn touch_needed(&self) {}
 }
 
 /// OpenPGP v4 fingerprint of a Curve25519 key: `algorithm` is 18 (ECDH) or
@@ -296,9 +357,20 @@ fn command_data(body: &[u8]) -> Option<&[u8]> {
 
 impl SimulatedKey {
     pub fn with_options(options: SimOptions) -> Arc<Self> {
+        Self::with_keys(options, KEYS)
+    }
+
+    /// A simulated key with other key material and serial: a second
+    /// YubiKey, for "this is a different key" and "replace my key".
+    pub fn other_with_options(options: SimOptions) -> Arc<Self> {
+        Self::with_keys(options, OTHER_KEYS)
+    }
+
+    fn with_keys(options: SimOptions, keys: SimKeys) -> Arc<Self> {
         Arc::new(Self {
-            secret: StaticSecret::from([7u8; 32]),
-            auth_key: SigningKey::from_bytes(&[9u8; 32]),
+            secret: StaticSecret::from([keys.decryption; 32]),
+            auth_key: SigningKey::from_bytes(&[keys.authentication; 32]),
+            serial: keys.serial,
             state: Mutex::new(State {
                 pin: options.pin.clone(),
                 tries_left: 3,
@@ -306,6 +378,7 @@ impl SimulatedKey {
                 touch_pending: false,
                 deciphers: 0,
                 authentications: 0,
+                touches: 0,
                 chain: Vec::new(),
                 present: true,
                 plugged: 0,
@@ -428,10 +501,8 @@ impl SimulatedKey {
         discretionary.extend(tlv(&[0xD7], &self.uif(Slot::Decryption)));
         discretionary.extend(tlv(&[0xD8], &self.uif(Slot::Authentication)));
 
-        let aid = [
-            0xD2, 0x76, 0x00, 0x01, 0x24, 0x01, 0x03, 0x04, 0x00, 0x06, 0x12, 0x34, 0x56, 0x78,
-            0x00, 0x00,
-        ];
+        let [s0, s1, s2, s3] = self.serial;
+        let aid = [0xD2, 0x76, 0x00, 0x01, 0x24, 0x01, 0x03, 0x04, 0x00, 0x06, s0, s1, s2, s3, 0x00, 0x00];
         let mut ard = tlv(&[0x4F], &aid);
         // Historical bytes: command chaining (0x80), and extended Lc and Le
         // (0x40) if asked for.
@@ -556,6 +627,7 @@ impl SimulatedKey {
                 return Err(0x6982);
             }
             state.touch_pending = false;
+            state.touches += 1;
             state.last_touch[slot as usize] = Some(Instant::now());
         }
         Ok(state)

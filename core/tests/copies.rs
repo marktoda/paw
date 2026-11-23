@@ -2,6 +2,8 @@
 //! the simulated keystore and clock; the keystore really encrypts, so what
 //! lands on disk is what a device would write.
 
+#![cfg(feature = "sim")]
+
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -219,6 +221,38 @@ fn lock_now_ends_every_copy_and_resets_the_keystore() {
     std::fs::write(&path, before).unwrap();
     assert!(matches!(w.open(GITHUB), Err(PawError::CopyUnavailable)));
     assert!(w.files().is_empty());
+}
+
+#[test]
+fn forgetting_one_entry_removes_only_its_copy_and_keeps_the_keystore() {
+    let w = World::new();
+    w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
+    w.put(BANK, BANK_TEXT, DEFAULT_TTL);
+
+    w.cache.forget_entry(GITHUB.into()).unwrap();
+    assert_eq!(w.status(GITHUB), CopyStatus::NeedsKey);
+    assert!(matches!(w.open(GITHUB), Err(PawError::CopyUnavailable)));
+    assert_eq!(w.open(BANK).unwrap(), BANK_TEXT);
+    assert_eq!(w.cache.list().unwrap().iter().map(|c| c.entry.as_str()).collect::<Vec<_>>(), [BANK]);
+    assert_eq!(w.files().len(), 1);
+    assert_eq!(w.keystore.reset_count(), 0);
+    // Only the open of BANK prompted.
+    assert_eq!(w.keystore.prompt_count(), 1);
+
+    // An entry with no copy (a cancelled open) is not an error.
+    w.cache.forget_entry("never/opened".into()).unwrap();
+    assert_eq!(w.files().len(), 1);
+}
+
+#[test]
+fn the_simulated_keystore_and_clock_go_straight_to_the_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let keystore = SimKeystore::new();
+    let clock = SimClock::new(START);
+    let cache = CopyCache::new(window(&dir), keystore.clone().as_keystore(), clock.clone().as_clock());
+    cache.put(GITHUB, GITHUB_TEXT, b"v1", DEFAULT_TTL).unwrap();
+    clock.advance_ms(9 * HOUR);
+    assert_eq!(cache.status(GITHUB, b"v1").unwrap(), CopyStatus::NeedsKey);
 }
 
 impl World {

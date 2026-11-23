@@ -309,15 +309,14 @@ impl SimRemote {
     }
 
     /// The host as paw's sync code addresses it, pinned to its usual key.
-    pub fn remote(&self) -> Remote {
-        Remote {
+    pub fn remote(&self) -> Result<Remote, PawError> {
+        Ok(Remote {
             host: "127.0.0.1".into(),
             port: self.port,
             user: USER.into(),
             path: REPO.into(),
-            // A key this file made; it parses.
-            host_key: HostKeyPin::parse(&ed25519_host_key()).unwrap_or_else(|_| unreachable!()),
-        }
+            host_key: HostKeyPin::parse(&ed25519_host_key())?,
+        })
     }
 
     /// The bare repository on disk.
@@ -622,9 +621,12 @@ async fn send(out: &mut (impl AsyncWrite + Unpin), bytes: &[u8]) -> Result<(), S
     out.flush().await.map_err(|e| e.to_string())
 }
 
+/// The branches as (commit, name), and the branch `HEAD` names.
+type Branches = (Vec<(Oid, String)>, Option<String>);
+
 /// The branches, as (commit, name), sorted by name; and where `HEAD` points
 /// if that branch exists.
-fn branches(repo: &Path) -> Result<(Vec<(Oid, String)>, Option<String>), String> {
+fn branches(repo: &Path) -> Result<Branches, String> {
     let repo = Repository::open_bare(repo).map_err(|e| e.message().to_owned())?;
     let mut found = Vec::new();
     for reference in repo.references_glob("refs/heads/*").map_err(|e| e.message().to_owned())? {

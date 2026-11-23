@@ -160,6 +160,14 @@ impl CopyCache {
     pub fn lock_now(&self) -> Result<(), PawError> {
         self.end_all()
     }
+
+    /// Removes `entry`'s copy, if it has one, and no other: "Lock now" on
+    /// an entry's screen, or an open that was cancelled. Never prompts and
+    /// never resets the keystore. Copies that have ended are wiped too, as
+    /// by every call.
+    pub fn forget_entry(&self, entry: String) -> Result<(), PawError> {
+        self.forget(&entry)
+    }
 }
 
 impl CopyCache {

@@ -92,7 +92,7 @@ impl GitServer {
     }
 
     pub fn remote(&self) -> Remote {
-        self.sim.remote()
+        self.sim.remote().unwrap()
     }
 
     pub fn bare(&self) -> PathBuf {

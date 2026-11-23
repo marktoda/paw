@@ -140,6 +140,12 @@ impl SimKeystore {
         Ok(lock(&self.state).index_key.to_vec())
     }
 
+    /// This keystore as the Secure Enclave seam, to hand straight to
+    /// `CopyCache` with no Swift adapter.
+    pub fn as_keystore(self: Arc<Self>) -> Arc<dyn DeviceKeystore> {
+        self
+    }
+
     /// Makes new keys: nothing sealed before can be opened.
     pub fn reset(&self) -> Result<(), KeystoreError> {
         let mut state = lock(&self.state);
@@ -219,6 +225,12 @@ impl SimClock {
 
     pub fn boot_id(&self) -> String {
         format!("sim-boot-{}", lock(&self.state).boot)
+    }
+
+    /// These clocks as the clock seam, to hand straight to `CopyCache` and
+    /// `KeyPort` with no Swift adapter.
+    pub fn as_clock(self: Arc<Self>) -> Arc<dyn Clock> {
+        self
     }
 }
 
