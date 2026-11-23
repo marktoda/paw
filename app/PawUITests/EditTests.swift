@@ -323,11 +323,14 @@ final class EditTests: XCTestCase {
             predicate: NSPredicate(format: "value MATCHES %@", "^(4[89]|5[0-9]|6[0-4]) characters$"), object: slider)
         XCTAssertEqual(XCTWaiter().wait(for: [settled], timeout: 10), .completed,
                        "The slider should move to a long length, it shows \(slider.value ?? "nothing")")
-        let length = Int(((slider.value as? String) ?? "").prefix { $0.isNumber }) ?? 0
         expectLabel("form-strength", contains: "very strong")
-        let regenerated = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value MATCHES %@", "^.{\(length)}$"), object: element("form-password"))
-        XCTAssertEqual(XCTWaiter().wait(for: [regenerated], timeout: 10), .completed,
+        // Compare live values: the slider may still be settling as this runs.
+        let password = element("form-password")
+        let regenerated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let length = Int(((slider.value as? String) ?? "").prefix { $0.isNumber }) ?? 0
+            return length >= 48 && (password.value as? String)?.count == length
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter().wait(for: [regenerated], timeout: 15), .completed,
                        "A generated password should follow the new length")
     }
 
