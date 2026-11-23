@@ -22,7 +22,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
 use base64::Engine;
@@ -128,6 +128,39 @@ fn decode(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// A gate that packs wait at, halfway through, while it is armed: a fetch
+/// stalled mid-transfer, for tests that check what waits for it.
+#[derive(Default)]
+struct Stall {
+    state: Mutex<StallState>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct StallState {
+    armed: bool,
+    waiting: u32,
+}
+
+impl Stall {
+    /// Waits while armed, at most 30 seconds.
+    fn wait(&self) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let mut state = lock(&self.state);
+        state.waiting += 1;
+        self.changed.notify_all();
+        while state.armed {
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            state = self.changed.wait_timeout(state, deadline - now).unwrap_or_else(|p| p.into_inner()).0;
+        }
+        state.waiting -= 1;
+        self.changed.notify_all();
+    }
+}
+
 /// An answer.
 struct Reply {
     status: u16,
@@ -136,15 +169,17 @@ struct Reply {
     body: Vec<u8>,
     /// Send only this many bytes of the body, then close.
     cut_at: Option<usize>,
+    /// Send half the body, wait here, then the rest.
+    stall: Option<Arc<Stall>>,
 }
 
 impl Reply {
     fn json(status: u16, value: serde_json::Value) -> Self {
-        Self { status, content_type: "application/json; charset=utf-8".into(), headers: Vec::new(), body: value.to_string().into_bytes(), cut_at: None }
+        Self { status, content_type: "application/json; charset=utf-8".into(), headers: Vec::new(), body: value.to_string().into_bytes(), cut_at: None, stall: None }
     }
 
     fn bytes(status: u16, content_type: &str, body: Vec<u8>) -> Self {
-        Self { status, content_type: content_type.into(), headers: Vec::new(), body, cut_at: None }
+        Self { status, content_type: content_type.into(), headers: Vec::new(), body, cut_at: None, stall: None }
     }
 
     fn status(status: u16) -> Self {
@@ -243,7 +278,16 @@ fn serve_one(stream: TcpStream, record: &Mutex<Vec<SimHttpRequest>>, handler: &H
     head.push_str("\r\n");
     out.write_all(head.as_bytes())?;
     let end = reply.cut_at.unwrap_or(reply.body.len()).min(reply.body.len());
-    out.write_all(&reply.body[..end])?;
+    match &reply.stall {
+        Some(stall) => {
+            let half = end / 2;
+            out.write_all(&reply.body[..half])?;
+            out.flush()?;
+            stall.wait();
+            out.write_all(&reply.body[half..end])?;
+        }
+        None => out.write_all(&reply.body[..end])?,
+    }
     out.flush()?;
     let _ = out.shutdown(Shutdown::Both);
     Ok(())
@@ -302,6 +346,7 @@ struct Shared {
     state: Mutex<State>,
     web: Mutex<String>,
     probes: AtomicU64,
+    stall: Arc<Stall>,
 }
 
 /// A simulated GitHub. See the module comment. Stops when dropped.
@@ -342,6 +387,7 @@ impl SimGitHub {
             }),
             web: Mutex::new(String::new()),
             probes: AtomicU64::new(0),
+            stall: Arc::new(Stall::default()),
         });
         let record = Arc::new(Mutex::new(Vec::new()));
         let handling = shared.clone();
@@ -489,6 +535,26 @@ impl SimGitHub {
     /// How many requests have been made.
     pub fn request_count(&self) -> u32 {
         lock(&self.record).len() as u32
+    }
+}
+
+/// For Rust tests only (not in the app's simulator API).
+impl SimGitHub {
+    /// From now on, every pack stops halfway until [`Self::release_packs`]
+    /// (or 30 seconds): a fetch stalled mid-transfer.
+    pub fn stall_packs(&self) {
+        lock(&self.shared.stall.state).armed = true;
+    }
+
+    /// How many packs are waiting halfway now.
+    pub fn stalled_packs(&self) -> u32 {
+        lock(&self.shared.stall.state).waiting
+    }
+
+    /// Lets every stalled pack finish, and stalls no more.
+    pub fn release_packs(&self) {
+        lock(&self.shared.stall.state).armed = false;
+        self.shared.stall.changed.notify_all();
     }
 }
 
@@ -757,7 +823,10 @@ fn git(shared: &Shared, request: &SimHttpRequest, rest: &str) -> Reply {
             };
             let mut body = pkt_line("# service=git-upload-pack\n");
             body.extend_from_slice(FLUSH);
-            body.extend(advertisement(&refs, head.as_deref(), &format!("ofs-delta {AGENT}")));
+            // `multi_ack_detailed`, as GitHub: without it libgit2's
+            // stateless negotiation, past 20 haves, ends with a request
+            // that has no wants.
+            body.extend(advertisement(&refs, head.as_deref(), &format!("multi_ack_detailed ofs-delta {AGENT}")));
             Reply::bytes(200, "application/x-git-upload-pack-advertisement", body)
         }
         ("POST", "git-upload-pack") => match upload_pack(shared, &request.body) {
@@ -766,6 +835,9 @@ fn git(shared: &Shared, request: &SimHttpRequest, rest: &str) -> Reply {
                 if drop_mid_pack {
                     reply.cut_at = Some(reply.body.len() / 2);
                 }
+                if lock(&shared.stall.state).armed {
+                    reply.stall = Some(shared.stall.clone());
+                }
                 reply
             }
             Err(_) => Reply::status(400),
@@ -773,6 +845,11 @@ fn git(shared: &Shared, request: &SimHttpRequest, rest: &str) -> Reply {
         // No push over HTTPS here either.
         _ => Reply::status(403),
     }
+}
+
+/// Whether `id` is in the history of `tip` in the bare repository.
+fn reachable(bare: &std::path::Path, tip: Oid, id: Oid) -> bool {
+    git2::Repository::open_bare(bare).and_then(|repo| repo.graph_descendant_of(tip, id)).unwrap_or(false)
 }
 
 /// One stateless upload-pack round: wants, haves, then `done` or a flush.
@@ -804,7 +881,10 @@ fn upload_pack(shared: &Shared, body: &[u8]) -> Result<Vec<u8>, String> {
             Some(line) if in_wants => {
                 let id = line.strip_prefix("want ").ok_or("expected want")?.split(' ').next().unwrap_or_default();
                 let id = parse_oid(id)?;
-                if !refs.iter().any(|(tip, _)| *tip == id) {
+                // Each round is a new request, and the branch may have moved
+                // since the advertisement: a commit reachable from a branch
+                // is served, as GitHub does.
+                if !refs.iter().any(|(tip, _)| *tip == id || reachable(&shared.bare, *tip, id)) {
                     return Err("not our ref".into());
                 }
                 wants.push(id);
@@ -814,13 +894,19 @@ fn upload_pack(shared: &Shared, body: &[u8]) -> Result<Vec<u8>, String> {
         }
     }
     let common = known_commits(&shared.bare, &haves)?;
+    // `multi_ack_detailed`: a round that is not the last names each have
+    // in common, then NAK; the last ends with one plain ACK (or NAK) and
+    // the pack.
+    if !done {
+        let mut out: Vec<u8> = common.iter().flat_map(|id| pkt_line(&format!("ACK {id} common\n"))).collect();
+        out.extend(pkt_line("NAK\n"));
+        return Ok(out);
+    }
     let mut out = match common.first() {
         Some(id) => pkt_line(&format!("ACK {id}\n")),
         None => pkt_line("NAK\n"),
     };
-    if done {
-        out.extend(build_pack(&shared.bare, &wants, &common)?);
-    }
+    out.extend(build_pack(&shared.bare, &wants, &common)?);
     Ok(out)
 }
 
