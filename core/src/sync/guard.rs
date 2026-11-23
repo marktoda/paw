@@ -43,9 +43,9 @@ pub(crate) struct Refused(pub Vec<RefusedPath>);
 
 /// At most this many paths are named in a refusal's message.
 const NAMED_IN_MESSAGE: usize = 5;
-/// Folders deeper than this are refused: no store needs them, and a crafted
+/// Folders this deep or deeper are refused: no store needs them, and a crafted
 /// tree could otherwise make the walk very long.
-const MAX_DEPTH: usize = 64;
+const MAX_DEPTH: usize = 32;
 /// The words the app shows; [`std::fmt::Display`] starts with them.
 pub(crate) const REFUSED_PREFIX: &str = "the remote contains something paw will not check out";
 
@@ -77,17 +77,30 @@ impl From<Refused> for super::SyncError {
     }
 }
 
-/// The name a case- and normalisation-insensitive file system (APFS, HFS+,
-/// a Linux casefold directory) files `component` under: without the code
-/// points HFS+ ignores, decomposed (NFD), in lower case.
-fn folded(component: &str) -> String {
-    component
-        .chars()
-        .filter(|c| !is_hfs_ignored(*c))
-        .nfd()
-        .flat_map(char::to_lowercase)
-        .nfd()
-        .collect()
+/// How many ways of comparing names [`folded`] gives.
+const SCHEMES: usize = 3;
+
+/// The names a case- and normalisation-insensitive file system (APFS,
+/// HFS+, a Linux casefold directory) might file `component` under: without
+/// the code points HFS+ ignores, decomposed (NFD) before and after, and
+/// then (0) fully case-folded (Unicode CaseFolding.txt C+F: `ß` is `ss`,
+/// `ﬁ` is `fi`, `ς` is `σ`, the Kelvin sign is `k`), (1) lower-cased and
+/// (2) upper-cased. The exact tables APFS uses on a given iOS cannot be
+/// checked from here, so two names equal under any one of these are
+/// treated as one name.
+fn folded(component: &str) -> [String; SCHEMES] {
+    // Most names are ASCII: there all three come down to plain ASCII case.
+    if component.is_ascii() {
+        let lower = component.to_ascii_lowercase();
+        return [lower.clone(), lower, component.to_ascii_uppercase()];
+    }
+    let visible: String = component.chars().filter(|c| !is_hfs_ignored(*c)).nfd().collect();
+    let full = unicase::UniCase::unicode(visible.as_str()).to_folded_case();
+    [
+        full.nfd().collect(),
+        visible.chars().flat_map(char::to_lowercase).nfd().collect(),
+        visible.chars().flat_map(char::to_uppercase).nfd().collect(),
+    ]
 }
 
 const TREE: i32 = 0o040000;
@@ -97,6 +110,16 @@ const BLOB_EXECUTABLE: i32 = 0o100755;
 const BLOB_GROUP_WRITABLE: i32 = 0o100664;
 const LINK: i32 = 0o120000;
 const GITLINK: i32 = 0o160000;
+
+/// At most this many files and folders are looked at in one tree. A store
+/// of thousands of entries is far below it; a few crafted tree objects
+/// that name one subtree many times at each level are far above it.
+const MAX_ENTRIES: usize = 100_000;
+/// Paths longer than this, in bytes, are refused.
+const MAX_PATH_BYTES: usize = 1024;
+/// The walk keeps every path (and its folded forms); past this many bytes
+/// of paths the tree is refused, so the check itself stays small.
+const MAX_TOTAL_PATH_BYTES: usize = 16 << 20;
 
 /// Every path in `tree` paw will not check out, sorted by path; empty if
 /// it may be checked out. Refused:
@@ -109,22 +132,39 @@ const GITLINK: i32 = 0o160000;
 ///   refuses (`..`, `.git` in any spelling some file system accepts);
 /// - names some file system would take for `.gpg-id` that are not exactly
 ///   `.gpg-id`, and a `.gpg-id` that is not a regular file;
-/// - two paths that are the same name once case, Unicode normalisation and
-///   the code points HFS+ ignores are set aside, whether files or folders
-///   (so a file `A` and a folder `a/` collide), and a name that appears
-///   twice in one tree;
-/// - folders nested more than 64 deep.
+/// - two paths that are the same name once case (any of the ways in
+///   [`folded`]), Unicode normalisation and the code points HFS+ ignores
+///   are set aside, whether files or folders (so a file `A` and a folder
+///   `a/` collide), and a name that appears twice in one tree;
+/// - folders nested 32 deep or more, and paths over 1024 bytes;
+/// - the whole tree, when it has more than 100,000 files and folders or
+///   more than 16 MiB of paths. The walk stops there, so its time and
+///   memory are bounded whatever the repository holds.
 pub(crate) fn check_tree(repo: &Repository, tree: Oid) -> Result<Vec<RefusedPath>, git2::Error> {
     let mut refused = Vec::new();
     let mut refuse = |path: &str, reason: &str| {
         refused.push(RefusedPath { path: path.to_owned(), reason: reason.to_owned() });
     };
-    // Folded path -> the first path filed under it.
-    let mut seen: HashMap<String, String> = HashMap::new();
-    let mut folders = vec![(String::new(), String::new(), tree, 0usize)];
+    // (scheme, folded path) -> the first path filed under it.
+    let mut seen: HashMap<(usize, String), String> = HashMap::new();
+    let mut folders = vec![(String::new(), [String::new(), String::new(), String::new()], tree, 0usize)];
+    let (mut entries, mut path_bytes) = (0usize, 0usize);
     while let Some((prefix, folded_prefix, id, depth)) = folders.pop() {
         let tree = repo.find_tree(id)?;
         for entry in tree.iter() {
+            entries += 1;
+            path_bytes += prefix.len() + entry.name_bytes().len() + 1;
+            if entries > MAX_ENTRIES || path_bytes > MAX_TOTAL_PATH_BYTES {
+                refused.clear();
+                refused.push(RefusedPath {
+                    path: "/".into(),
+                    reason: format!(
+                        "the repository holds more than {MAX_ENTRIES} files and folders, or more than {} MiB of names",
+                        MAX_TOTAL_PATH_BYTES >> 20
+                    ),
+                });
+                return Ok(refused);
+            }
             let join = |name: &str| if prefix.is_empty() { name.to_owned() } else { format!("{prefix}/{name}") };
             let Ok(name) = std::str::from_utf8(entry.name_bytes()) else {
                 refuse(&join(&String::from_utf8_lossy(entry.name_bytes())), "its name is not UTF-8");
@@ -136,7 +176,12 @@ pub(crate) fn check_tree(repo: &Repository, tree: Oid) -> Result<Vec<RefusedPath
                 refuse(&path, "its name contains a slash");
                 continue;
             }
-            if let Some(why) = unsafe_path(&path) {
+            if path.len() > MAX_PATH_BYTES {
+                refuse(&path, "its path is too long");
+                continue;
+            }
+            // The folders above were checked already; the name has no slash.
+            if let Some(why) = unsafe_path(name) {
                 refuse(&path, why);
                 continue;
             }
@@ -144,11 +189,14 @@ pub(crate) fn check_tree(repo: &Repository, tree: Oid) -> Result<Vec<RefusedPath
                 refuse(&path, "some file systems would take it for .gpg-id");
                 continue;
             }
-            let folded_path = if folded_prefix.is_empty() {
-                folded(name)
-            } else {
-                format!("{folded_prefix}/{}", folded(name))
-            };
+            let names = folded(name);
+            let folded_path: [String; SCHEMES] = std::array::from_fn(|scheme| {
+                if folded_prefix[scheme].is_empty() {
+                    names[scheme].clone()
+                } else {
+                    format!("{}/{}", folded_prefix[scheme], names[scheme])
+                }
+            });
             let mut reasons = Vec::new();
             match mode {
                 TREE if name == ".gpg-id" => reasons.push("a .gpg-id must be a file".to_owned()),
@@ -158,11 +206,14 @@ pub(crate) fn check_tree(repo: &Repository, tree: Oid) -> Result<Vec<RefusedPath
                 GITLINK => reasons.push("it is a submodule, a link to another repository".to_owned()),
                 _ => reasons.push("it is not a regular file".to_owned()),
             }
-            match seen.get(&folded_path) {
+            let first = (0..SCHEMES).find_map(|scheme| seen.get(&(scheme, folded_path[scheme].clone())));
+            match first {
                 Some(first) if *first == path => reasons.push("it appears twice in the same folder".to_owned()),
                 Some(first) => reasons.push(format!("on an iPhone it is the same name as {first}")),
                 None => {
-                    seen.insert(folded_path.clone(), path.clone());
+                    for (scheme, key) in folded_path.iter().enumerate() {
+                        seen.insert((scheme, key.clone()), path.clone());
+                    }
                 }
             }
             if !reasons.is_empty() {
@@ -283,13 +334,98 @@ mod tests {
 
     use super::*;
 
+    /// Whether two names collide under any of [`folded`]'s schemes.
+    fn same(a: &str, b: &str) -> bool {
+        let (a, b) = (folded(a), folded(b));
+        (0..SCHEMES).any(|scheme| a[scheme] == b[scheme])
+    }
+
+    /// Pairs a case- or normalisation-insensitive file system may take for
+    /// one name; lower-casing alone misses most of them.
+    const ONE_NAME: [(&str, &str); 12] = [
+        ("Caf\u{e9}", "cafe\u{301}"),
+        ("a\u{200c}b", "ab"),
+        ("stra\u{df}e", "STRASSE"),
+        ("stra\u{df}e", "strasse"),
+        ("\u{17f}ecret", "secret"),
+        ("\u{212a}ey", "key"),
+        ("\u{3c3}\u{3bf}\u{3c6}\u{3bf}\u{3c2}", "\u{3c3}\u{3bf}\u{3c6}\u{3bf}\u{3c3}"),
+        ("\u{3a3}", "\u{3c2}"),
+        ("\u{131}", "i"),
+        ("\u{130}", "i\u{307}"),
+        ("\u{fb01}le", "file"),
+        ("\u{fb01}le", "FILE"),
+    ];
+
     #[test]
     fn folding_matches_case_and_normalisation() {
-        assert_eq!(folded("Caf\u{e9}"), folded("cafe\u{301}"));
-        assert_eq!(folded("CAFE\u{301}"), folded("caf\u{e9}"));
-        assert_eq!(folded("a\u{200c}b"), folded("ab"));
-        assert_eq!(folded("\u{212a}ey"), folded("key"));
-        assert_ne!(folded("a."), folded("a"));
+        for (a, b) in ONE_NAME {
+            assert!(same(a, b), "{a:?} {b:?}");
+        }
+        assert!(!same("a.", "a"));
+        assert!(!same("caf\u{e9}", "cafe"));
+    }
+
+    /// A tree of `(path, mode)` built through an index, so any names go.
+    fn tree_of(repo: &Repository, files: &[(&str, i32)]) -> Oid {
+        let mut index = git2::Index::new().unwrap();
+        for (path, mode) in files {
+            let blob = repo.blob(b"x").unwrap();
+            index.add(&crate::sync::history::index_entry(path, blob, *mode as u32)).unwrap();
+        }
+        index.write_tree_to(repo).unwrap()
+    }
+
+    #[test]
+    fn names_that_are_one_name_on_an_iphone_are_refused() {
+        let (_dir, repo) = new_repo(true);
+        for (a, b) in ONE_NAME {
+            // Siblings.
+            let refused = check_tree(&repo, tree_of(&repo, &[(a, BLOB), (b, BLOB)])).unwrap();
+            assert_eq!(refused.len(), 1, "{a:?} {b:?}: {refused:?}");
+            assert!(refused[0].reason.contains("same name as"), "{refused:?}");
+            // A link, then a file through it under the other spelling.
+            let through = format!("{b}/recipients");
+            let refused = check_tree(&repo, tree_of(&repo, &[(a, LINK), (&through, BLOB)])).unwrap();
+            assert!(refused.iter().any(|r| r.reason.contains("same name as")), "{a:?} {b:?}: {refused:?}");
+            assert!(refused.iter().any(|r| r.path == a && r.reason.contains("symbolic link")), "{refused:?}");
+        }
+    }
+
+    #[test]
+    fn a_tree_that_names_one_subtree_many_times_is_refused_quickly() {
+        let (_dir, repo) = new_repo(true);
+        // 12 tree objects; 4^11, about four million, paths.
+        let blob = repo.blob(b"x").unwrap();
+        let mut builder = repo.treebuilder(None).unwrap();
+        builder.insert("a.gpg", blob, BLOB).unwrap();
+        let mut tree = builder.write().unwrap();
+        for _ in 0..11 {
+            let mut builder = repo.treebuilder(None).unwrap();
+            for name in ["a", "b", "c", "d"] {
+                builder.insert(name, tree, TREE).unwrap();
+            }
+            tree = builder.write().unwrap();
+        }
+        let started = std::time::Instant::now();
+        let refused = check_tree(&repo, tree).unwrap();
+        let took = started.elapsed();
+
+        assert_eq!(refused.len(), 1, "{refused:?}");
+        assert!(refused[0].reason.contains("more than 100000"), "{refused:?}");
+        // Stopped at the cap: well under a minute even unoptimised, on a busy machine.
+        assert!(took < std::time::Duration::from_secs(60), "{took:?}");
+    }
+
+    #[test]
+    fn folders_nested_too_deeply_are_refused() {
+        let (_dir, repo) = new_repo(true);
+        let deep = vec!["d"; 40].join("/") + "/a.gpg";
+        let refused = check_tree(&repo, tree_of(&repo, &[(&deep, BLOB)])).unwrap();
+        assert_eq!(refused.len(), 1, "{refused:?}");
+        assert!(refused[0].reason.contains("nested too deeply"));
+        let fine = vec!["d"; 30].join("/") + "/a.gpg";
+        assert!(check_tree(&repo, tree_of(&repo, &[(&fine, BLOB)])).unwrap().is_empty());
     }
 
     /// A repository at a fresh directory, hardened or as libgit2 makes it.

@@ -45,6 +45,8 @@ sha2 = "0.10"
 thiserror = "2.0.21"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time"] }
 unicode-normalization = "0.1"
+# Full Unicode case folding, for names that are one name on an iPhone.
+unicase = "2.9"
 uniffi = { version = "0.32.2", features = ["cli"] }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 zeroize = "1"
