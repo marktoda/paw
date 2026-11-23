@@ -20,6 +20,10 @@
 //! after a reinstall, or an attacker), and to drop the connection halfway
 //! through sending a pack.
 //!
+//! It can listen on a chosen port and keep its repository in a chosen
+//! folder, so an app that is killed and launched again can serve the same
+//! repository at the same address ([`SimRemote::serve`]).
+//!
 //! Its host keys are fixed values in this file and protect nothing.
 
 use std::path::{Path, PathBuf};
@@ -135,6 +139,8 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 pub struct SimRemote {
     runtime: Option<tokio::runtime::Runtime>,
     root: PathBuf,
+    /// The folder was given, not made: it stays when the host stops.
+    keep_root: bool,
     port: u16,
     shared: Arc<Shared>,
 }
@@ -220,34 +226,89 @@ fn commit_files(repo: &Path, files: &[(String, Vec<u8>)], message: &str) -> Resu
         .map_err(git_failed("commit"))
 }
 
+/// Listens on `port` of 127.0.0.1. A host on the same port that was just
+/// stopped may hold it a moment longer, so a busy port is tried again for a
+/// few seconds.
+async fn bind(port: u16) -> Result<tokio::net::TcpListener, PawError> {
+    let mut tries = 0;
+    loop {
+        match tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
+            Ok(listener) => return Ok(listener),
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && port != 0 && tries < 60 => {
+                tries += 1;
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Err(e) => return Err(failed(&format!("listen on port {port}"), e)),
+        }
+    }
+}
+
+fn fixture_options(key: &SimulatedKey) -> SimRemoteOptions {
+    SimRemoteOptions {
+        authorised: vec![SshPublicKey::ed25519(&key.authentication_public_key()).authorized_key()],
+        contents: SimRemoteContents::FixtureStore,
+        ecdsa_host_key: false,
+    }
+}
+
 impl SimRemote {
     /// Starts a host as `options` say.
     pub fn start_with(options: SimRemoteOptions) -> Result<Arc<Self>, PawError> {
+        Self::start_with_on(options, 0)
+    }
+
+    /// Starts a host as `options` say, listening on `port` of 127.0.0.1
+    /// (0: any free port).
+    pub fn start_with_on(options: SimRemoteOptions, port: u16) -> Result<Arc<Self>, PawError> {
         let root = fresh_dir()?;
-        let started = Self::start_in(&root, options);
+        let started = Self::start_in(&root, false, options, port);
         if started.is_err() {
             let _ = std::fs::remove_dir_all(&root);
         }
         started
     }
 
-    fn start_in(root: &Path, options: SimRemoteOptions) -> Result<Arc<Self>, PawError> {
+    /// Serves the repository kept in `dir` (made with `options.contents`
+    /// if it has none yet) on `port`. The folder stays when the host stops.
+    pub fn serve_with(dir: &Path, options: SimRemoteOptions, port: u16) -> Result<Arc<Self>, PawError> {
+        std::fs::create_dir_all(dir).map_err(|e| failed("make its folder", e))?;
+        Self::start_in(dir, true, options, port)
+    }
+
+    fn start_in(root: &Path, keep_root: bool, options: SimRemoteOptions, port: u16) -> Result<Arc<Self>, PawError> {
         let repo = root.join(REPO);
+        if Repository::open_bare(&repo).is_err() {
+            Self::make_repository(root, &repo, &options.contents)?;
+        }
+        Self::listen(root, keep_root, repo, &options, port)
+    }
+
+    fn make_repository(root: &Path, repo: &Path, contents: &SimRemoteContents) -> Result<(), PawError> {
         let mut init = git2::RepositoryInitOptions::new();
         init.bare(true).initial_head("main");
-        Repository::init_opts(&repo, &init).map_err(git_failed("make the repository"))?;
-        match &options.contents {
+        Repository::init_opts(repo, &init).map_err(git_failed("make the repository"))?;
+        match contents {
             SimRemoteContents::Empty => {}
             SimRemoteContents::Files(files) => {
-                commit_files(&repo, files, "A password store.")?;
+                commit_files(repo, files, "A password store.")?;
             }
             SimRemoteContents::FixtureStore => {
                 let fixture = root.join("fixture");
                 super::fixture::write_fixture_store(fixture.to_string_lossy().into_owned())?;
-                commit_files(&repo, &files_under(&fixture)?, "The fixture store.")?;
+                commit_files(repo, &files_under(&fixture)?, "The fixture store.")?;
                 std::fs::remove_dir_all(&fixture).map_err(|e| failed("tidy up", e))?;
             }
         }
+        Ok(())
+    }
+
+    fn listen(
+        root: &Path,
+        keep_root: bool,
+        repo: PathBuf,
+        options: &SimRemoteOptions,
+        port: u16,
+    ) -> Result<Arc<Self>, PawError> {
 
         let authorised = options
             .authorised
@@ -287,9 +348,7 @@ impl SimRemote {
             .enable_all()
             .build()
             .map_err(|e| failed("start", e))?;
-        let listener = runtime
-            .block_on(tokio::net::TcpListener::bind(("127.0.0.1", 0)))
-            .map_err(|e| failed("listen", e))?;
+        let listener = runtime.block_on(bind(port))?;
         let port = listener.local_addr().map_err(|e| failed("listen", e))?.port();
         let accepting = shared.clone();
         runtime.spawn(async move {
@@ -305,7 +364,7 @@ impl SimRemote {
             }
         });
 
-        Ok(Arc::new(Self { runtime: Some(runtime), root: root.to_path_buf(), port, shared }))
+        Ok(Arc::new(Self { runtime: Some(runtime), root: root.to_path_buf(), keep_root, port, shared }))
     }
 
     /// The host as paw's sync code addresses it, pinned to its usual key.
@@ -342,12 +401,25 @@ impl SimRemote {
     /// store, accepting `key`'s SSH key.
     #[uniffi::constructor]
     pub fn start(key: Arc<SimulatedKey>) -> Result<Arc<Self>, PawError> {
-        let line = SshPublicKey::ed25519(&key.authentication_public_key()).authorized_key();
-        Self::start_with(SimRemoteOptions {
-            authorised: vec![line],
-            contents: SimRemoteContents::FixtureStore,
-            ecdsa_host_key: false,
-        })
+        Self::start_with(fixture_options(&key))
+    }
+
+    /// As `start`, listening on `port` (0: any free port).
+    #[uniffi::constructor]
+    pub fn start_on(key: Arc<SimulatedKey>, port: u16) -> Result<Arc<Self>, PawError> {
+        Self::start_with_on(fixture_options(&key), port)
+    }
+
+    /// Serves the repository kept in the folder `dir` on `port` (0: any
+    /// free port), accepting `key`'s SSH key. The first time, the folder
+    /// gets a fresh copy of the fixture store; after that, whatever the
+    /// repository holds (pushes included) is served again. The folder stays
+    /// when the host stops, and the host keys are always the same, so an
+    /// app launched again can serve the same store at the same address and
+    /// its pinned host key still holds.
+    #[uniffi::constructor]
+    pub fn serve(key: Arc<SimulatedKey>, dir: String, port: u16) -> Result<Arc<Self>, PawError> {
+        Self::serve_with(Path::new(&dir), fixture_options(&key), port)
     }
 
     /// The address to type at setup's "Where is your password store?".
@@ -424,7 +496,9 @@ impl Drop for SimRemote {
         if let Some(runtime) = self.runtime.take() {
             runtime.shutdown_background();
         }
-        let _ = std::fs::remove_dir_all(&self.root);
+        if !self.keep_root {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
     }
 }
 
