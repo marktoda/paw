@@ -53,9 +53,10 @@ struct AnotherKeyScreen: View {
                 } header: {
                     PawSectionHeader(keys.count == 1 ? "The key that can open it" : "The keys that can open it")
                 } footer: {
-                    Text("Open it on a computer that has one of these keys. paw checked this from the file alone, without asking your key for anything.")
+                    Text(footer)
                         .font(PawFont.footnote)
                         .foregroundStyle(PawColor.labelSecondary)
+                        .accessibilityIdentifier("another-key-footer")
                 }
             }
         }
@@ -73,6 +74,11 @@ struct AnotherKeyScreen: View {
 
     private var keys: [String] {
         recipients.map(\.spoken)
+    }
+
+    private var footer: String {
+        let which = keys.count == 1 ? "that key" : "one of these keys"
+        return "Open it on a computer that has \(which). paw checked this from the file alone, without asking your key for anything."
     }
 
     private var explanation: String {

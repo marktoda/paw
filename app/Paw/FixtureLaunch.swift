@@ -2,9 +2,11 @@ import SwiftUI
 
 #if targetEnvironment(simulator)
 /// `-pawFixture 1`: the app on a made-up store, with the simulated key
-/// (`-pawSimPin`, `-pawSimTouch`, `-pawSimTouchTimeoutMs`), a simulated
+/// (`-pawSimPin`, `-pawSimTouch`, `-pawSimTouchTimeoutMs`, `-pawSimPinTries`,
+/// `-pawSimUnplugged`), a simulated
 /// Face ID (`-pawSimFaceId ok|cancel|nomatch|lockout|notenrolled`) and a
-/// simulated clock that the settings sheet can move on. Simulator only.
+/// simulated clock that the settings sheet can move on, and that moves on
+/// by `-pawSimAwayMs` each time paw goes to the background. Simulator only.
 /// `-pawAppearance dark|light` picks the theme.
 enum FixtureLaunch {
     static var isRequested: Bool {
@@ -43,12 +45,21 @@ enum FixtureLaunch {
         let keystore = SimKeystore()
         keystore.setFaceId(answer: faceId)
         let clock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000))
+        // One clock for the copies and the key port, so moving it on ends
+        // copies and, in the background, the held PIN.
+        let sharedClock = SimClockAdapter(sim: clock)
         let copies = CopyCache(
-            dir: copiesDir.path, keystore: SimKeystoreAdapter(sim: keystore), clock: SimClockAdapter(sim: clock))
+            dir: copiesDir.path, keystore: SimKeystoreAdapter(sim: keystore), clock: sharedClock)
+        let key = SimulatedKeyHolder.shared
+        let away = UserDefaults.standard.integer(forKey: "pawSimAwayMs")
         return AppModel(
-            store: store, copies: copies,
-            connect: { onTouchNeeded in try KeyConnection.open(onTouchNeeded: onTouchNeeded) },
-            simulator: SimulatorControls(advanceClock: { clock.advanceMs(ms: $0) }))
+            store: store, copies: copies, clock: sharedClock,
+            connect: { try KeyConnection.openForSession() },
+            simulator: SimulatorControls(
+                advanceClock: { clock.advanceMs(ms: $0) },
+                plugIn: { key.key.plugIn() },
+                startsUnplugged: key.startsUnplugged,
+                awayMs: UInt64(max(away, 0))))
     }
 }
 

@@ -1,6 +1,9 @@
 import Foundation
 import Observation
 import SwiftUI
+#if !targetEnvironment(simulator)
+import CryptoTokenKit
+#endif
 
 /// Where the navigation stack can go.
 enum Route: Hashable {
@@ -20,14 +23,14 @@ struct OpenSession: Identifiable {
     let view: EntryView
 }
 
-/// The key sheet while it is up. `nil` in `AppModel.keyTask` means no sheet.
+/// The key sheet while it is up. `nil` in `AppModel.keyRequest` means no
+/// sheet. The sheet stays up across "Try again", which starts a new core
+/// task: `taskID` names the one the sheet follows now.
 struct KeyRequest: Identifiable {
     let id = UUID()
     let entry: EntryRef
+    var taskID: UUID
     var stage: KeySheetStage
-    /// The core reported that the key is waiting for a touch: the PIN was
-    /// accepted by then.
-    var touchRequested = false
 }
 
 /// A problem shown inline at the top of the list it happened in.
@@ -38,26 +41,42 @@ struct Notice: Equatable {
     var keyEntry: EntryRef? = nil
 }
 
-/// Wraps a value that crosses from the card thread to the main actor once.
+/// Wraps a value that crosses from a card or Face ID thread to the main actor once.
 private struct Handoff<Value>: @unchecked Sendable {
     let value: Value
 }
 
-/// The one model of the app: owns the store, the Face ID copies, the key
-/// connection and the held PIN, and gives views plain values. Card and
-/// Face ID calls block for seconds, so they run off the main thread and
-/// their results are published here.
+/// Hands a core task's stage changes to the main queue. The core calls it
+/// on its own threads, in order, and it must not block: it only queues.
+private final class SheetListener: KeyTaskListener, @unchecked Sendable {
+    private let changed: @Sendable () -> Void
+
+    init(changed: @escaping @Sendable () -> Void) {
+        self.changed = changed
+    }
+
+    func stateChanged(state: KeyTaskState) {
+        // The state itself is read again on the main queue, so the sheet
+        // always shows the latest one and never steps back.
+        DispatchQueue.main.async(execute: changed)
+    }
+}
+
+/// The one model of the app: owns the store, the Face ID copies and the key
+/// port, and gives views plain values. The PIN lives in the core's key
+/// session, never here. Card and Face ID calls block for seconds, so they
+/// run off the main thread and their results are published here.
 @MainActor @Observable
 final class AppModel {
-    typealias Connect = @Sendable (@escaping @Sendable () -> Void) throws -> CardConnection
+    typealias Connect = @Sendable () throws -> CardConnection
 
     /// How long an entry opened with the key stays available to Face ID.
     static let faceIdWindowSecs: UInt32 = 8 * 60 * 60
-    /// The PIN is forgotten after this long with paw in the background.
-    static let pinForgetAfter: TimeInterval = 15 * 60
 
     let store: PassStore
     let copies: CopyCache
+    /// Held for the app's life: plug-ins and removals, and every key task.
+    let keyPort: KeyPort
     private let connect: Connect
     /// Debug-only controls for the simulated hardware, `nil` on a device.
     let simulator: SimulatorControls?
@@ -68,12 +87,12 @@ final class AppModel {
     private(set) var liveCopies: [LiveCopy] = []
     /// Entry paths opened in this run, most recent first.
     private(set) var recentPaths: [String] = []
-    /// What the core says about each entry for the plugged-in key.
+    /// What the core says about each entry for the last key plugged in.
     private(set) var accessByPath: [String: Access] = [:]
-    private(set) var card: CardInfo?
-    var keyTask: KeyRequest?
-    /// What is typed in the key sheet's PIN field.
-    var pin = ""
+    var keyRequest: KeyRequest?
+    /// What is typed in the key sheet's PIN field. Handed to the core and
+    /// cleared at once on Continue; cleared too whenever the sheet moves on.
+    var pinEntry = ""
     private(set) var sessions: [UUID: OpenSession] = [:]
     var notice: Notice?
     /// A problem with the Face ID copies themselves, shown on Home.
@@ -83,28 +102,39 @@ final class AppModel {
     /// The entry Face ID is being asked for, to ignore a second tap.
     private(set) var faceIdOpening: String?
 
-    @ObservationIgnored private var heldPin: String?
-    @ObservationIgnored private var pinForgotten = false
-    /// Bumped by Lock now. A card or Face ID call that started before the
-    /// latest bump finished into a locked app: it must leave nothing behind.
+    /// Every core task whose end has not been seen yet: the one the sheet
+    /// follows, and any it let go of (Cancel, Lock now) that may still
+    /// finish. Each finishes exactly once here.
+    @ObservationIgnored private var tasks: [UUID: KeyTask] = [:]
+    /// Bumped by Lock now. A Face ID open that started before the latest
+    /// bump finished into a locked app: it must leave nothing behind.
     @ObservationIgnored private var lockGeneration = 0
-    /// Bumped by Lock now and whenever the held PIN is forgotten. A call
-    /// started before the latest bump may not hold its PIN again.
-    @ObservationIgnored private var pinGeneration = 0
     @ObservationIgnored private var pendingRoute: Route?
-    @ObservationIgnored private var backgroundedAt: Date?
+    @ObservationIgnored private var plugInCount = 0
+    #if !targetEnvironment(simulator)
+    @ObservationIgnored private var slotWatch: NSKeyValueObservation?
+    #endif
     private let cardQueue = DispatchQueue(label: "paw-card", qos: .userInitiated)
     private let faceIdQueue = DispatchQueue(label: "paw-bio", qos: .userInitiated)
 
-    init(store: PassStore, copies: CopyCache, connect: @escaping Connect, simulator: SimulatorControls?) {
+    /// `clock` is the one the copies use: the PIN's 15 minutes in the
+    /// background are measured on it.
+    init(store: PassStore, copies: CopyCache, clock: Clock, connect: @escaping Connect, simulator: SimulatorControls?) {
         self.store = store
         self.copies = copies
         self.connect = connect
         self.simulator = simulator
+        keyPort = KeyPort(clock: clock)
         home = store.home()
         entryCount = Int(store.entryCount())
         sweepCopies()
-        readKey()
+        #if targetEnvironment(simulator)
+        if simulator?.startsUnplugged != true {
+            plugIn()
+        }
+        #else
+        watchReaders()
+        #endif
     }
 
     // MARK: Lists
@@ -152,33 +182,77 @@ final class AppModel {
         refreshCopies()
     }
 
-    // MARK: The key
+    // MARK: Plugging the key in and out
 
-    /// Reads the plugged-in key (no PIN, no touch), then asks the core
-    /// which entries it can open.
-    private func readKey(then next: (@MainActor @Sendable () -> Void)? = nil) {
+    /// A key is there: the core reads it (no PIN, no touch) and makes its
+    /// session, and a task waiting at Plug in goes on by itself. Then asks
+    /// the core which entries this key can open.
+    func plugIn() {
+        plugInCount += 1
+        let attempt = plugInCount
         let connect = connect
+        let port = keyPort
         let store = store
         let paths = allEntryPaths()
         cardQueue.async {
-            let read = Result { try readCard(connection: connect {}) }
             var access: [String: Access] = [:]
-            if case .success(let info) = read, let fingerprint = info.decryptionFingerprint {
+            if let session = try? port.pluggedIn(connection: connect()),
+               let fingerprint = session.info().decryptionFingerprint {
                 for path in paths {
                     access[path] = store.access(entry: path, cardFingerprint: fingerprint)
                 }
             }
-            let result = Handoff(value: (read, access))
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                if case .success(let info) = result.value.0 {
-                    card = info
-                    accessByPath = result.value.1
+            // A key that cannot be read leaves any task at Plug in, which
+            // is still true: no key paw can use is plugged in.
+            let found = Handoff(value: access)
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, attempt == plugInCount, !found.value.isEmpty else { return }
+                    accessByPath = found.value
                 }
-                next?()
             }
         }
     }
+
+    /// The key went away: its session ends and the core drops the PIN. A
+    /// task using it fails with "Your key was unplugged".
+    func unplugged() {
+        plugInCount += 1
+        keyPort.unplugged()
+    }
+
+    #if targetEnvironment(simulator)
+    /// The debug control on the Plug in stage.
+    func simulatedPlugIn() {
+        simulator?.plugIn()
+        plugIn()
+    }
+    #else
+    /// Follows the system's list of smart card readers: a YubiKey on the
+    /// USB-C port shows up as one. Minimal, and unverified on hardware: a
+    /// reader appearing plugs in, the list emptying unplugs. A key pulled
+    /// out mid-command is also caught by the core as a reader failure.
+    private func watchReaders() {
+        guard let manager = TKSmartCardSlotManager.default else { return }
+        // Called on whatever thread the system changes the list on.
+        slotWatch = manager.observe(\.slotNames, options: [.initial, .new]) { [weak self] manager, _ in
+            let present = !manager.slotNames.isEmpty
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self?.readersChanged(present: present)
+                }
+            }
+        }
+    }
+
+    private func readersChanged(present: Bool) {
+        if !present {
+            unplugged()
+        } else if keyPort.session() == nil {
+            plugIn()
+        }
+    }
+    #endif
 
     private func allEntryPaths() -> [String] {
         var paths: [String] = []
@@ -206,82 +280,66 @@ final class AppModel {
         }
     }
 
-    /// Opens with the key: says so first if this key cannot open it, then
-    /// shows the key sheet at the first stage still needed.
+    /// Opens with the key: says so first if the plugged-in key cannot open
+    /// it, otherwise shows the key sheet at the first stage still needed.
     func openWithKey(_ entry: EntryRef) {
         notice = nil
-        guard keyTask == nil else { return }
-        guard let fingerprint = card?.decryptionFingerprint else {
-            // No key read yet: read it now and decide then.
-            readKey { [weak self] in
-                guard let self else { return }
-                if card?.decryptionFingerprint != nil {
-                    openWithKey(entry)
-                } else {
-                    presentKeySheet(entry)
-                }
-            }
-            return
-        }
-        let access = accessByPath[entry.path] ?? store.access(entry: entry.path, cardFingerprint: fingerprint)
-        accessByPath[entry.path] = access
-        if case .notForThisKey = access {
+        guard keyRequest == nil else { return }
+        if keyPort.session() != nil, case .notForThisKey = accessByPath[entry.path] {
             path.append(.anotherKey(entry.path))
             return
         }
-        presentKeySheet(entry)
+        pendingRoute = nil
+        let taskID = startTask(entry)
+        keyRequest = KeyRequest(entry: entry, taskID: taskID, stage: .busy)
+        taskChanged(taskID)
     }
 
-    private func presentKeySheet(_ entry: EntryRef) {
-        keyTask = KeyRequest(entry: entry, stage: .busy)
-        start()
-    }
-
-    /// Puts the sheet at the first stage still needed, and starts the key
-    /// when the PIN is already held.
-    private func start() {
-        guard var task = keyTask else { return }
-        pin = ""
-        task.touchRequested = false
-        if let card {
-            if card.pinTriesLeft == 0 {
-                task.stage = .locked
-            } else if heldPin != nil {
-                task.stage = .busy
-            } else {
-                task.stage = .pin(triesLeft: Int(card.pinTriesLeft), forgotten: pinForgotten)
+    /// Starts a core task that opens `entry` and keeps its Face ID copy.
+    private func startTask(_ entry: EntryRef) -> UUID {
+        pinEntry = ""
+        let id = UUID()
+        let listener = SheetListener { [weak self] in
+            MainActor.assumeIsolated {
+                self?.taskChanged(id)
             }
-        } else {
-            task.stage = .plugIn
         }
-        keyTask = task
-        if task.stage == .busy, let heldPin {
-            run(heldPin)
-        }
+        tasks[id] = keyPort.openEntry(
+            store: store, entry: entry.path, copies: copies, ttlSecs: Self.faceIdWindowSecs, listener: listener)
+        return id
     }
 
-    /// Continue on the PIN stage.
+    /// Continue on the PIN stage. The PIN goes straight to the core, which
+    /// refuses one that is not 6 to 127 characters without using a try.
     func continueWithPin() {
-        guard var task = keyTask, pin.count >= 6 else { return }
-        switch task.stage {
-        case .pin, .wrongPin: break
+        guard let request = keyRequest, let task = tasks[request.taskID], !pinEntry.isEmpty else { return }
+        switch request.stage {
+        case .pin, .wrongPin, .pinAgain: break
         default: return
         }
-        task.stage = .busy
-        keyTask = task
-        run(pin)
+        task.supplyPin(pin: Data(pinEntry.utf8))
+        pinEntry = ""
     }
 
-    /// "Try again" on the failed stage.
+    /// "Try again" on the failed stage: a new task, which opens at the
+    /// first stage still needed (Touch if the PIN is still held).
     func retry() {
-        start()
+        guard var request = keyRequest else { return }
+        letGo(request.taskID)
+        request.taskID = startTask(request.entry)
+        request.stage = .busy
+        keyRequest = request
+        taskChanged(request.taskID)
     }
 
-    /// Cancel always works. A card call already under way cannot be
-    /// stopped; its result is thrown away when it comes.
+    /// Cancel always works. A card command already waiting for a touch
+    /// cannot be stopped; the core throws its answer away.
     func cancelKeyTask() {
-        keyTask = nil
-        pin = ""
+        if let request = keyRequest {
+            letGo(request.taskID)
+        }
+        keyRequest = nil
+        pinEntry = ""
     }
 
     /// The sheet went away, by a button, a swipe or by itself after Done.
@@ -292,93 +350,118 @@ final class AppModel {
         }
     }
 
-    private func run(_ pin: String) {
-        guard let task = keyTask else { return }
-        let taskID = task.id
-        let entry = task.entry
-        let connect = connect
-        let store = store
-        let copies = copies
-        let ttl = Self.faceIdWindowSecs
-        let started = Generations(lock: lockGeneration, pin: pinGeneration)
-        cardQueue.async {
-            let result = Result { () throws -> KeyOpen in
-                let connection = try connect {
-                    Task { @MainActor [weak self] in self?.touchNeeded(taskID, pin: pin, started: started) }
-                }
-                return try store.openEntryKeepingCopy(
-                    connection: connection, pin: pin, entry: entry.path, copies: copies, ttlSecs: ttl)
-            }
-            let handoff = Handoff(value: result)
-            Task { @MainActor [weak self] in
-                self?.keyOpenFinished(taskID, entry: entry, pin: pin, started: started, result: handoff.value)
-            }
-        }
-    }
-
-    /// The PIN may be held again only if nothing forgot it since the call
-    /// started. A plain Cancel does not forget it: the person typed the
-    /// right PIN and the key stayed plugged in, so the next open in this
-    /// run skips the PIN stage. Lock now forgets it, and a call that was
-    /// under way during Lock now never brings it back.
-    private func holdPin(_ pin: String, started: Generations) {
-        guard started.pin == pinGeneration else { return }
-        heldPin = pin
-        pinForgotten = false
-    }
-
-    private func touchNeeded(_ taskID: UUID, pin: String, started: Generations) {
-        // The key only waits for a touch once it has accepted the PIN.
-        holdPin(pin, started: started)
-        guard started.lock == lockGeneration, var task = keyTask, task.id == taskID else { return }
-        task.stage = .touch
-        task.touchRequested = true
-        keyTask = task
-        self.pin = ""
-    }
-
-    private func keyOpenFinished(
-        _ taskID: UUID, entry: EntryRef, pin: String, started: Generations, result: Result<KeyOpen, Error>
-    ) {
-        guard started.lock == lockGeneration else {
-            // Lock now ran while the key was working. The core has already
-            // kept a Face ID copy for this entry: end every copy again, close
-            // the entry, and leave the PIN and the recents alone.
-            if case .success(let opened) = result {
-                opened.entry.close()
-                endCopiesLeftByLateOpen()
-            }
+    /// A task changed stage (or was just started): show it if the sheet
+    /// follows it, settle it if the sheet let go of it.
+    private func taskChanged(_ id: UUID) {
+        guard let task = tasks[id] else { return }
+        let state = task.state()
+        guard var request = keyRequest, request.taskID == id else {
+            settle(id, state)
             return
         }
-        let current = keyTask?.id == taskID ? keyTask : nil
-        switch result {
-        case .success(let opened):
-            holdPin(pin, started: started)
-            guard var task = current else {
-                // Cancelled: nothing opens after a cancel, and nothing is
-                // remembered. The core kept a copy before this answer came;
-                // it has no way to remove one entry's copy, so every copy
-                // ends (core request: per-entry copy removal).
-                opened.entry.close()
-                if opened.faceIdUntilMs != nil {
-                    endCopiesLeftByLateOpen()
-                }
-                return
+        if state.isFinal {
+            tasks[id] = nil
+        }
+        switch state {
+        case .plugIn:
+            request.stage = .plugIn
+        case .pin(let triesLeft, let forgotten, let lastError):
+            let tries = Int(triesLeft ?? 3)
+            switch lastError {
+            case nil:
+                request.stage = .pin(triesLeft: tries, forgotten: forgotten)
+            case .WrongPin(let left)?:
+                request.stage = .wrongPin(triesLeft: Int(left))
+            case let error?:
+                let words = KeyErrorWords(error, entry: request.entry.name)
+                request.stage = .pinAgain(triesLeft: tries, problem: words.problem, nextStep: words.nextStep)
             }
-            noteOpened(entry.path)
-            refreshCopies()
-            let session = OpenSession(ref: entry, entry: opened.entry, view: opened.entry.view())
-            sessions[session.id] = session
-            pendingRoute = .entry(session.id)
-            task.stage = .done
-            keyTask = task
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(1))
-                guard let self, keyTask?.id == taskID else { return }
-                keyTask = nil
-            }
-        case .failure(let error):
-            handleKeyFailure(error, task: current, pin: pin)
+        case .busy:
+            request.stage = .busy
+        case .touch:
+            request.stage = .touch
+        case .working(let progress):
+            request.stage = .working(
+                message: "Opening \(request.entry.name)\u{2026}",
+                progress: progress.map { "\($0.done) of \($0.total)" })
+        case .done(let outcome):
+            finished(outcome, request: &request)
+        case .failed(.NotForThisKey):
+            keyRequest = nil
+            showAnotherKey(request.entry)
+            return
+        case .failed(.PinBlocked):
+            request.stage = .locked
+        case .failed(.Cancelled), .cancelled:
+            keyRequest = nil
+            return
+        case .failed(let error):
+            let words = KeyErrorWords(error, entry: request.entry.name)
+            request.stage = .failed(problem: words.problem, nextStep: words.nextStep)
+        }
+        if !Self.asksForPin(request.stage) {
+            pinEntry = ""
+        }
+        keyRequest = request
+    }
+
+    private static func asksForPin(_ stage: KeySheetStage) -> Bool {
+        switch stage {
+        case .pin, .wrongPin, .pinAgain: true
+        default: false
+        }
+    }
+
+    private func finished(_ outcome: KeyOutcome, request: inout KeyRequest) {
+        guard case .opened(let opened, _) = outcome else {
+            request.stage = .done
+            return
+        }
+        noteOpened(request.entry.path)
+        refreshCopies()
+        let session = OpenSession(ref: request.entry, entry: opened, view: opened.view())
+        sessions[session.id] = session
+        pendingRoute = .entry(session.id)
+        request.stage = .done
+        let sheet = request.id
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard let self, keyRequest?.id == sheet else { return }
+            keyRequest = nil
+        }
+    }
+
+    /// The core found, before any PIN or touch, that this key cannot open
+    /// the entry: say which keys can.
+    private func showAnotherKey(_ entry: EntryRef) {
+        // The key may have been plugged in after the list was worked out.
+        if let fingerprint = keyPort.session()?.info().decryptionFingerprint {
+            accessByPath[entry.path] = store.access(entry: entry.path, cardFingerprint: fingerprint)
+        }
+        path.append(.anotherKey(entry.path))
+    }
+
+    /// The sheet stops following a task: it is cancelled, and settled when
+    /// it ends.
+    private func letGo(_ id: UUID) {
+        guard let task = tasks[id] else { return }
+        task.cancel()
+        settle(id, task.state())
+    }
+
+    /// A task the sheet no longer follows. Cancel stops it before any copy
+    /// is kept, except in the last milliseconds of an open, after the card
+    /// has answered (`core/src/key/task.rs`). Such a task still finishes
+    /// with the entry open and its copy kept: close the entry, and end the
+    /// copies, because the core cannot remove one entry's copy (core
+    /// request). Lock now relies on this too.
+    private func settle(_ id: UUID, _ state: KeyTaskState) {
+        guard state.isFinal else { return }
+        tasks[id] = nil
+        guard case .done(.opened(let entry, let faceIdUntilMs)) = state else { return }
+        entry.close()
+        if faceIdUntilMs != nil {
+            endCopiesLeftByLateOpen()
         }
     }
 
@@ -389,40 +472,6 @@ final class AppModel {
             copiesProblem = describe(error)
         }
         refreshCopies()
-    }
-
-    private func handleKeyFailure(_ error: Error, task: KeyRequest?, pin: String) {
-        let pawError = error as? PawError
-        switch pawError {
-        case .WrongPin(let triesLeft):
-            heldPin = nil
-            card?.pinTriesLeft = triesLeft
-        case .PinBlocked:
-            heldPin = nil
-            card?.pinTriesLeft = 0
-        default:
-            break
-        }
-        guard var task else { return }
-        switch pawError {
-        case .WrongPin(let triesLeft):
-            self.pin = ""
-            task.stage = .wrongPin(triesLeft: Int(triesLeft))
-        case .PinBlocked:
-            self.pin = ""
-            task.stage = .locked
-        case .NotForThisKey:
-            keyTask = nil
-            path.append(.anotherKey(task.entry.path))
-            return
-        case .Decrypt where task.touchRequested:
-            task.stage = .failed(
-                problem: "Your key wasn't touched in time",
-                nextStep: "Nothing was opened. Try again, and touch the gold part of your key while it blinks.")
-        default:
-            task.stage = .failed(problem: "\(task.entry.name) didn't open", nextStep: describe(error))
-        }
-        keyTask = task
     }
 
     /// Opens from the entry's Face ID copy, with no key sheet. Falls back
@@ -515,17 +564,25 @@ final class AppModel {
 
     /// The panic control: ends every Face ID copy, forgets the PIN, closes
     /// open entries and clears a password paw put on the clipboard.
+    ///
+    /// The core guarantees the rest: `forgetPin` stops a PIN check already
+    /// under way from holding the PIN again, and a cancelled task keeps no
+    /// copy. A task past the point where cancel works ends the copies again
+    /// when it finishes (`settle`).
     func lockNow() {
         let ended = liveCopies.count
+        if let request = keyRequest {
+            letGo(request.taskID)
+        }
+        keyRequest = nil
+        pinEntry = ""
+        keyPort.session()?.forgetPin()
         do {
             try copies.lockNow()
         } catch {
             copiesProblem = describe(error)
         }
-        heldPin = nil
         lockGeneration += 1
-        pinGeneration += 1
-        keyTask = nil
         pendingRoute = nil
         path = []
         pathChanged()
@@ -534,17 +591,15 @@ final class AppModel {
         toast = ended == 1 ? "Locked. 1 entry now needs your key." : "Locked. \(ended) entries now need your key."
     }
 
+    /// The core forgets the PIN after 15 minutes in the background, on the
+    /// clock given to the key port.
     func scenePhaseChanged(_ phase: ScenePhase) {
         switch phase {
         case .background:
-            backgroundedAt = backgroundedAt ?? Date()
+            keyPort.session()?.noteBackgrounded()
+            simulator?.timePassesInBackground()
         case .active:
-            if let away = backgroundedAt, Date().timeIntervalSince(away) > Self.pinForgetAfter, heldPin != nil {
-                heldPin = nil
-                pinGeneration += 1
-                pinForgotten = true
-            }
-            backgroundedAt = nil
+            keyPort.session()?.noteForegrounded()
             Clipboard.clearIfExpired()
             sweepCopies()
         default:
@@ -559,15 +614,32 @@ final class AppModel {
     }
 }
 
-/// The lock and PIN generations a call started in.
-private struct Generations: Sendable {
-    let lock: Int
-    let pin: Int
+extension KeyTaskState {
+    /// Done, failed or cancelled: nothing changes it any more.
+    var isFinal: Bool {
+        switch self {
+        case .done, .failed, .cancelled: true
+        default: false
+        }
+    }
 }
 
 /// Hooks into the simulated hardware, for the debug controls.
 struct SimulatorControls {
     let advanceClock: (UInt64) -> Void
+    /// Plugs the simulated key back in.
+    let plugIn: () -> Void
+    /// The simulated key is not plugged in at launch.
+    let startsUnplugged: Bool
+    /// Time that passes on the simulated clock each time paw goes to the
+    /// background, so a test can stay away for 15 minutes in a second.
+    let awayMs: UInt64
+
+    func timePassesInBackground() {
+        if awayMs > 0 {
+            advanceClock(awayMs)
+        }
+    }
 }
 
 extension EntryRef {

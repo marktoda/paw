@@ -1,50 +1,56 @@
 import SwiftUI
 
-/// The one key sheet, following `model.keyTask`. Tall while the keyboard
+/// The one key sheet, following `model.keyRequest`. Tall while the keyboard
 /// is up for the PIN, 480pt otherwise.
 struct KeySheetHost: View {
     @Bindable var model: AppModel
     @State private var detent = PresentationDetent.height(PawMetrics.keySheetHeight)
 
     private var stage: KeySheetStage {
-        model.keyTask?.stage ?? .busy
+        model.keyRequest?.stage ?? .busy
     }
 
     var body: some View {
         KeySheetContent(
-            purpose: "Open \(model.keyTask?.entry.name ?? "")",
+            purpose: "Open \(model.keyRequest?.entry.name ?? "")",
             stage: stage,
-            pin: $model.pin,
+            pin: $model.pinEntry,
             note: "Afterwards it opens with Face ID for \(AppModel.faceIdWindowSecs / 3600) hours.",
             onContinue: { model.continueWithPin() },
             onCancel: { model.cancelKeyTask() },
-            onRetry: { model.retry() })
+            onRetry: { model.retry() },
+            simulatorAction: simulatorAction)
             .presentationDetents([.height(PawMetrics.keySheetHeight), .large], selection: $detent)
             .presentationDragIndicator(.visible)
             .onChange(of: stage, initial: true) {
                 detent = Self.needsKeyboard(stage) ? .large : .height(PawMetrics.keySheetHeight)
             }
-            #if targetEnvironment(simulator)
-            .overlay(alignment: .topLeading) {
-                if stage == .touch {
-                    // Stands in for a finger on the simulated key.
-                    Button("Simulate touch") { KeyConnection.simulateTouch() }
-                        .font(PawFont.footnote.weight(.semibold))
-                        .foregroundStyle(PawColor.label)
-                        .padding(.horizontal, PawMetrics.Spacing.m)
-                        .frame(minHeight: PawMetrics.pill)
-                        .background(PawColor.fill, in: Capsule())
-                        .padding(PawMetrics.Spacing.l)
-                        .accessibilityIdentifier("simulated-touch")
-                }
-            }
-            #endif
             .privacyCover()
+    }
+
+    /// In the simulator, a finger on the key and a key going in.
+    private var simulatorAction: SimulatorAction? {
+        #if targetEnvironment(simulator)
+        switch stage {
+        case .touch:
+            return SimulatorAction(title: "touch the key", identifier: "simulated-touch") {
+                KeyConnection.simulateTouch()
+            }
+        case .plugIn:
+            return SimulatorAction(title: "plug in the key", identifier: "simulated-plug-in") {
+                model.simulatedPlugIn()
+            }
+        default:
+            return nil
+        }
+        #else
+        return nil
+        #endif
     }
 
     private static func needsKeyboard(_ stage: KeySheetStage) -> Bool {
         switch stage {
-        case .pin, .wrongPin: true
+        case .pin, .wrongPin, .pinAgain: true
         default: false
         }
     }

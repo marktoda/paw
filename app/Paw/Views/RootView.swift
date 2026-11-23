@@ -6,6 +6,15 @@ struct RootView: View {
     @Bindable var model: AppModel
     @Environment(\.scenePhase) private var scenePhase
 
+    /// Swiping the key sheet down is Cancel: the core task stops too.
+    private var keySheet: Binding<KeyRequest?> {
+        Binding(
+            get: { model.keyRequest },
+            set: { request in
+                if request == nil { model.cancelKeyTask() }
+            })
+    }
+
     var body: some View {
         NavigationStack(path: $model.path) {
             HomeScreen(model: model)
@@ -25,7 +34,7 @@ struct RootView: View {
                 }
         }
         .copyToast($model.toast)
-        .sheet(item: $model.keyTask, onDismiss: { model.keySheetDismissed() }) { _ in
+        .sheet(item: keySheet, onDismiss: { model.keySheetDismissed() }) { _ in
             KeySheetHost(model: model)
         }
         .sheet(isPresented: $model.showsSettings) {
@@ -66,6 +75,8 @@ private struct PrivacyCover: ViewModifier {
             if scenePhase != .active {
                 PawColor.bg
                     .ignoresSafeArea()
+                    .accessibilityElement()
+                    .accessibilityLabel("paw is hidden")
                     .accessibilityIdentifier("privacy-cover")
             }
         }

@@ -8,6 +8,9 @@ enum KeySheetStage: Equatable {
     case pin(triesLeft: Int, forgotten: Bool)
     /// The PIN just entered was wrong.
     case wrongPin(triesLeft: Int)
+    /// The PIN is asked again for another reason: it was not 6 to 127
+    /// characters (no try used), or the key no longer takes the PIN paw had.
+    case pinAgain(triesLeft: Int, problem: String, nextStep: String)
     /// The key is finishing something else.
     case busy
     /// The key is blinking and waiting for a touch.
@@ -36,6 +39,9 @@ struct KeySheetContent: View {
     var onCancel: () -> Void = {}
     /// "Try again" on the failed stage.
     var onRetry: () -> Void = {}
+    /// A control that stands in for the hardware in the simulator, drawn
+    /// below everything else and styled so it cannot pass for the app's own.
+    var simulatorAction: SimulatorAction? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showPin = false
@@ -105,6 +111,9 @@ struct KeySheetContent: View {
                 Spacer(minLength: 0)
             }
             buttons
+            if let simulatorAction {
+                SimulatorActionButton(action: simulatorAction)
+            }
         }
     }
 
@@ -112,7 +121,7 @@ struct KeySheetContent: View {
         switch stage {
         case .plugIn, .busy:
             KeyDisc(size: .hero)
-        case .pin, .wrongPin:
+        case .pin, .wrongPin, .pinAgain:
             // Smaller, so the field and both buttons stay above the keyboard.
             KeyDisc(size: .banner)
                 .accessibilityHidden(true)
@@ -195,7 +204,9 @@ struct KeySheetContent: View {
             .keyboardType(.asciiCapable)
             .submitLabel(.continue)
             .onSubmit {
-                if canContinue { onContinue() }
+                // The button waits for 6 characters; the return key sends what
+                // was typed, and the core refuses a short PIN without using a try.
+                if !pin.isEmpty { onContinue() }
             }
             .accessibilityLabel("Key PIN")
             .accessibilityIdentifier("pin-field")
@@ -222,7 +233,7 @@ struct KeySheetContent: View {
     @ViewBuilder private var buttons: some View {
         VStack(spacing: PawMetrics.Spacing.s) {
             switch stage {
-            case .pin, .wrongPin:
+            case .pin, .wrongPin, .pinAgain:
                 Button(triesLeft == 1 ? "Use last try" : "Continue", action: onContinue)
                     .buttonStyle(.pawPrimary)
                     .disabled(!canContinue)
@@ -256,6 +267,7 @@ struct KeySheetContent: View {
         case .plugIn: "Plug in your key"
         case .pin: "Enter your key's PIN"
         case .wrongPin: "Wrong PIN"
+        case .pinAgain(_, let problem, _): problem
         case .busy: "One moment"
         case .touch: "Touch your key"
         case .working(let message, _): message
@@ -274,6 +286,8 @@ struct KeySheetContent: View {
             return forgotten ? "paw forgot your PIN after 15 minutes away. " + usual : usual
         case .wrongPin:
             return "Enter the PIN for the key, not your iPhone passcode."
+        case .pinAgain(_, _, let nextStep):
+            return nextStep
         case .busy:
             return "Your key is finishing something else."
         case .touch:
@@ -291,7 +305,7 @@ struct KeySheetContent: View {
 
     private var triesLeft: Int? {
         switch stage {
-        case .pin(let triesLeft, _), .wrongPin(let triesLeft): return triesLeft
+        case .pin(let triesLeft, _), .wrongPin(let triesLeft), .pinAgain(let triesLeft, _, _): return triesLeft
         default: return nil
         }
     }
@@ -299,6 +313,7 @@ struct KeySheetContent: View {
     private static func haptic(for stage: KeySheetStage) -> SensoryFeedback? {
         switch stage {
         case .wrongPin(let triesLeft): return triesLeft == 1 ? .warning : .error
+        case .pinAgain: return .error
         case .done: return .success
         default: return nil
         }
@@ -332,8 +347,10 @@ struct KeySheetContent: View {
     }
 
     private var isWrongPin: Bool {
-        if case .wrongPin = stage { return true }
-        return false
+        switch stage {
+        case .wrongPin, .pinAgain: return true
+        default: return false
+        }
     }
 
     private var canContinue: Bool {
@@ -343,7 +360,7 @@ struct KeySheetContent: View {
     private var currentStep: Int {
         switch stage {
         case .plugIn: 0
-        case .pin, .wrongPin, .locked: 1
+        case .pin, .wrongPin, .pinAgain, .locked: 1
         case .busy, .touch, .failed: 2
         case .working, .done: 3
         }
@@ -362,6 +379,39 @@ struct KeySheetContent: View {
             withAnimation(.linear(duration: 0.4)) { shake += 1 }
         }
         AccessibilityNotification.Announcement(announcement).post()
+    }
+}
+
+/// A stand-in for the hardware, for the simulator's debug builds.
+struct SimulatorAction {
+    let title: String
+    let identifier: String
+    let perform: () -> Void
+}
+
+/// Dashed, small and labelled "Simulator", below the sheet's own buttons,
+/// so a screenshot never shows it as part of the design.
+private struct SimulatorActionButton: View {
+    let action: SimulatorAction
+
+    var body: some View {
+        Button(action: action.perform) {
+            HStack(spacing: PawMetrics.Spacing.xs) {
+                Image(systemName: "hammer")
+                    .font(PawFont.caption.weight(.semibold))
+                Text("Simulator: \(action.title)")
+                    .font(PawFont.footnote.weight(.semibold))
+            }
+            .foregroundStyle(PawColor.labelSecondary)
+            .padding(.horizontal, PawMetrics.Spacing.m)
+            .frame(minHeight: PawMetrics.tapMin)
+            .overlay(
+                Capsule().strokeBorder(
+                    PawColor.labelTertiary, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(action.title)
+        .accessibilityIdentifier(action.identifier)
     }
 }
 

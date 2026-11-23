@@ -115,17 +115,36 @@ final class AppTests: XCTestCase {
         }
     }
 
+    /// The PIN field, secure or shown (it is shown with one try left).
+    @discardableResult
+    private func pinField(file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
+        let field = element("pin-field")
+        XCTAssertTrue(field.waitForExistence(timeout: 10), "The key sheet should ask for the PIN",
+                      file: file, line: line)
+        return field
+    }
+
     private func enterPin(_ pin: String) {
-        let field = app.secureTextFields["pin-field"]
-        XCTAssertTrue(field.waitForExistence(timeout: 10), "The key sheet should ask for the PIN")
+        let field = pinField()
         field.tap()
         field.typeText(pin)
         app.buttons["pin-continue"].tap()
     }
 
+    /// A simulator control drawn below the key sheet's own buttons.
+    private func tapSimulated(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {
+        let button = app.buttons[identifier]
+        XCTAssertTrue(button.waitForExistence(timeout: 10), "\"\(identifier)\" should be on the sheet",
+                      file: file, line: line)
+        if !button.isHittable {
+            app.swipeUp()
+        }
+        button.tap()
+    }
+
     private func touchTheKey() {
         expect("touch-prompt")
-        app.buttons["simulated-touch"].tap()
+        tapSimulated("simulated-touch")
     }
 
     /// From Home: the web folder, then github.com with PIN and touch.
@@ -209,8 +228,8 @@ final class AppTests: XCTestCase {
             tap("folder-web")
             tap("entry-github.com")
             expectLabel("key-sheet-purpose", contains: "Open github.com")
-            let field = app.secureTextFields["pin-field"]
-            XCTAssertTrue(field.waitForExistence(timeout: 10), "The first open should ask for the PIN")
+            let field = pinField()
+            expectAbsent("pin-tries-left", "A fresh key has all 3 tries, so none are counted out")
             expectAbsent("touch-prompt", "No touch before the PIN")
             if appearance == "light" { snapshot("key-sheet-pin") }
             field.tap()
@@ -220,7 +239,7 @@ final class AppTests: XCTestCase {
             expect("touch-prompt")
             expectAbsent("entry-title", "Nothing opens before the key is touched")
             if appearance == "light" { snapshot("key-sheet-touch") }
-            app.buttons["simulated-touch"].tap()
+            tapSimulated("simulated-touch")
 
             expectLabel("entry-title", contains: "github.com")
             expectGone("key-sheet-purpose")
@@ -253,7 +272,7 @@ final class AppTests: XCTestCase {
         expect("touch-prompt")
         expectAbsent("pin-field", "The PIN is held for the run")
         snapshot("touch-only")
-        app.buttons["simulated-touch"].tap()
+        tapSimulated("simulated-touch")
         expectLabel("entry-title", contains: "gitlab.com")
     }
 
@@ -427,6 +446,138 @@ final class AppTests: XCTestCase {
         expectLabel("another-key-explanation", contains: "key ID")
         expectAbsent("pin-field", "No PIN for a key that cannot open it")
         expectAbsent("key-sheet-purpose", "No key sheet for a key that cannot open it")
+        expectLabel("another-key-footer", contains: "a computer that has that key")
         snapshot("another-key")
+    }
+
+    // MARK: The key session
+
+    func testTriesLeftAreShownBeforeAnythingIsTyped() {
+        // Another computer has used two of the key's three tries.
+        launch(extra: ["-pawSimPinTries", "1"])
+        tap("folder-web")
+        tap("entry-github.com")
+        pinField()
+        expectLabel("pin-tries-left", contains: "1 try left before the key locks.")
+        expectLabel("pin-continue", contains: "Use last try")
+        expectLabel("pin-show", contains: "Hide PIN")
+        snapshot("last-try")
+        enterPin(Self.pin)
+        touchTheKey()
+        expectLabel("entry-title", contains: "github.com")
+    }
+
+    func testAShortPinIsRefusedWithoutUsingATry() {
+        launch()
+        tap("folder-web")
+        tap("entry-github.com")
+        let field = pinField()
+        field.tap()
+        field.typeText("12345")
+        XCTAssertFalse(app.buttons["pin-continue"].isEnabled, "Continue waits for 6 characters")
+        // The return key sends it anyway; the core refuses it before the card.
+        field.typeText("\n")
+        expectLabel("key-sheet-headline", contains: "A PIN has 6 to 127 characters")
+        expectLabel("key-sheet-body", contains: "no try was used")
+        expectAbsent("pin-tries-left", "The key still has all 3 tries")
+        expectAbsent("touch-prompt", "A refused PIN never reaches the touch")
+        snapshot("short-pin")
+
+        enterPin(Self.pin)
+        touchTheKey()
+        expectLabel("entry-title", contains: "github.com")
+    }
+
+    func testAKeyPluggedInAfterTheSheetOpensCarriesOn() {
+        launch(extra: ["-pawSimUnplugged", "1"])
+        tap("folder-web")
+        tap("entry-github.com")
+        expectLabel("key-sheet-headline", contains: "Plug in your key")
+        expectAbsent("pin-field", "No PIN before a key is plugged in")
+        snapshot("plug-in")
+
+        tapSimulated("simulated-plug-in")
+        enterPin(Self.pin)
+        touchTheKey()
+        expectLabel("entry-title", contains: "github.com")
+    }
+
+    func testThePinIsForgottenAfter15MinutesInTheBackground() {
+        // Each trip to the background moves the simulated clock 16 minutes on.
+        launch(extra: ["-pawSimAwayMs", String(16 * 60 * 1000)])
+        openGitHubWithKey()
+        goBack()
+
+        XCUIDevice.shared.press(.home)
+        sleep(2)
+        app.activate()
+        tap("entry-gitlab.com")
+        expectLabel("key-sheet-purpose", contains: "Open gitlab.com")
+        pinField()
+        expectLabel("key-sheet-body", contains: "paw forgot your PIN after 15 minutes away.")
+        snapshot("pin-forgotten")
+
+        enterPin(Self.pin)
+        touchTheKey()
+        expectLabel("entry-title", contains: "gitlab.com")
+    }
+
+    func testATouchTimeoutCanBeTriedAgainWithoutThePin() {
+        launch(extra: ["-pawSimTouchTimeoutMs", "3000"])
+        tap("folder-web")
+        tap("entry-github.com")
+        enterPin(Self.pin)
+        expect("touch-prompt")
+
+        expectLabel("key-sheet-headline", contains: "Your key wasn't touched in time", timeout: 15)
+        expectLabel("key-sheet-body", contains: "Nothing was opened.")
+        expectAbsent("entry-title", "Nothing opens without a touch")
+        snapshot("touch-timeout")
+
+        app.buttons["key-sheet-retry"].tap()
+        expect("touch-prompt")
+        expectAbsent("pin-field", "The PIN is still held after a touch timeout")
+        snapshot("touch-again")
+        tapSimulated("simulated-touch")
+        expectLabel("entry-title", contains: "github.com")
+    }
+
+    func testARevealedPasswordHidesWhenPawLeavesTheScreen() {
+        launch()
+        openGitHubWithKey()
+        app.buttons["password-reveal"].tap()
+        expectValue("password-value", Self.githubPassword)
+
+        // Notification Center over paw: paw is inactive and the cover is up.
+        let top = app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.001))
+        let middle = app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.6))
+        top.press(forDuration: 0.1, thenDragTo: middle)
+        expect("privacy-cover")
+        snapshot("cover")
+
+        // Then to the background and back.
+        XCUIDevice.shared.press(.home)
+        sleep(2)
+        app.activate()
+        expectGone("privacy-cover")
+        expectValue("password-value", "hidden")
+        snapshot("hidden-after-background")
+    }
+
+    func testLargeTypeShowsThePasswordInGroups() {
+        launch()
+        openGitHubWithKey()
+        app.buttons["password-reveal"].tap()
+        expectValue("password-value", Self.githubPassword)
+        app.buttons["password-large-type"].tap()
+
+        expect("large-type-group-1")
+        expect("large-type-group-2")
+        expectLabel("large-type-cell-1", contains: "Lowercase t, 1 of 21")
+        expectLabel("large-type-cell-6", contains: "Hyphen, 6 of 21")
+        snapshot("large-type")
+
+        app.buttons["large-type-done"].tap()
+        expectGone("large-type-group-1")
     }
 }

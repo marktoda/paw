@@ -13,6 +13,12 @@ enum KeyConnection {
         #endif
     }
 
+    /// A connection for the key session (`KeyPort.pluggedIn`), which reports
+    /// touches itself. Blocks; call off the main thread.
+    static func openForSession() throws -> CardConnection {
+        try open(onTouchNeeded: {})
+    }
+
     static var readerNames: [String] {
         #if targetEnvironment(simulator)
         return ["Simulated key"]
@@ -40,10 +46,13 @@ enum KeyConnection {
 #if targetEnvironment(simulator)
 /// One simulated key per app launch, so PIN tries carry across operations
 /// the way they do on a real key. Launch arguments configure it:
-/// `-pawSimPin 123456 -pawSimTouch 1 -pawSimTouchTimeoutMs 15000`.
+/// `-pawSimPin 123456 -pawSimTouch 1 -pawSimTouchTimeoutMs 15000`, and
+/// `-pawSimPinTries 1` for a key another computer has already used tries on,
+/// `-pawSimUnplugged 1` for a key that is not plugged in at launch.
 final class SimulatedKeyHolder: @unchecked Sendable {
     static let shared = SimulatedKeyHolder()
     let key: SimulatedKey
+    let startsUnplugged: Bool
 
     private init() {
         let defaults = UserDefaults.standard
@@ -52,6 +61,13 @@ final class SimulatedKeyHolder: @unchecked Sendable {
         let timeout = defaults.object(forKey: "pawSimTouchTimeoutMs") == nil
             ? 15_000 : defaults.integer(forKey: "pawSimTouchTimeoutMs")
         key = SimulatedKey(pin: pin, touchRequired: touch, touchTimeoutMs: UInt32(timeout))
+        if defaults.object(forKey: "pawSimPinTries") != nil {
+            key.setPinTriesLeft(tries: UInt8(clamping: defaults.integer(forKey: "pawSimPinTries")))
+        }
+        startsUnplugged = defaults.bool(forKey: "pawSimUnplugged")
+        if startsUnplugged {
+            key.unplug()
+        }
     }
 }
 
