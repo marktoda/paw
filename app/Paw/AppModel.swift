@@ -21,7 +21,7 @@ struct OpenSession: Identifiable {
 }
 
 /// The key sheet while it is up. `nil` in `AppModel.keyTask` means no sheet.
-struct KeyTask: Identifiable {
+struct KeyRequest: Identifiable {
     let id = UUID()
     let entry: EntryRef
     var stage: KeySheetStage
@@ -71,7 +71,7 @@ final class AppModel {
     /// What the core says about each entry for the plugged-in key.
     private(set) var accessByPath: [String: Access] = [:]
     private(set) var card: CardInfo?
-    var keyTask: KeyTask?
+    var keyTask: KeyRequest?
     /// What is typed in the key sheet's PIN field.
     var pin = ""
     private(set) var sessions: [UUID: OpenSession] = [:]
@@ -233,7 +233,7 @@ final class AppModel {
     }
 
     private func presentKeySheet(_ entry: EntryRef) {
-        keyTask = KeyTask(entry: entry, stage: .busy)
+        keyTask = KeyRequest(entry: entry, stage: .busy)
         start()
     }
 
@@ -391,7 +391,7 @@ final class AppModel {
         refreshCopies()
     }
 
-    private func handleKeyFailure(_ error: Error, task: KeyTask?, pin: String) {
+    private func handleKeyFailure(_ error: Error, task: KeyRequest?, pin: String) {
         let pawError = error as? PawError
         switch pawError {
         case .WrongPin(let triesLeft):
