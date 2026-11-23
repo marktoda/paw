@@ -291,6 +291,14 @@ Toolbar: **Edit**, and a menu with Rename or Move, "Always ask for my key", "For
 
 UI tests (`EditTests`): `testAddWithoutKey`, `testEditWithLiveCopyQueues`, `testFiveSavesOnePushOneTouch`, `testPushDrainsQueue` (simulated remote head equals local head), `testUndoNewest`, `testDuplicateName`, `testDeleteConfirm`, `testSendNowFromInsideEditorSheet` (the key sheet presents over a presented sheet, 3.12).
 
+**Outcome (branch `write-path`).** Built in `core/src/write/` (`draft`, `ops`, `keyring`, `cert`), `core/src/generate.rs` and `core/src/ffi/write.rs` (`StoreWriter`, `EntryDraft`), tested on Linux against GnuPG and git. Each change is one commit of one entry in pass's wording, author "paw <paw@paw.invalid>" unless an identity is set for the store; all of them list, undo and replay with the existing queue and integrate. Differences from the above:
+- Moving to a folder with other recipients is built, not "later": it re-encrypts, as `pass mv` does, and so needs the entry open (`move_open_entry`, or an edit whose folder changed); without it the move is refused with `NeedsOpenEntry`. It is one commit worded "Rename …", which the replay now accepts with a changed blob.
+- An edit that also renames is two commits, "Rename …" then "Edit …".
+- A rename without the entry open drops its Face ID copy (re-sealing needs the plaintext, and opening the copy would need Face ID); an edit or a move of an open entry re-seals it for the time it had left. A new entry gets a copy for the length passed in.
+- Recipient keys are pinned in a small text file `recipients` in the state directory, not `keyring.json`. A `.gpg-id` line is satisfied by an explicit binding (setup binds the one line the card's subkey answers for after the test decrypt), or else by exactly one pinned key it names by full fingerprint (key, primary or subkey), long key ID or exact e-mail address. Short IDs and names need a binding. `inspect_certificate` shows what a certificate would satisfy before `import_certificate` pins it. A `.gpg-id` is pinned by SHA-256 the first time paw encrypts for it, not at setup; after a change, saving there waits for `accept_recipients`.
+- Names are checked for collisions ignoring letter case and Unicode normalisation, as APFS does.
+- The generator takes a policy; the button uses the fixed default (20 characters, all four classes, symbols `!#%+-.=?@_`, look-alikes `0O1lIo` left out, about 120.7 bits). There is no word mode: no word list with a clear licence is embedded yet.
+
 ### 2.9 Sync
 
 **Silent pull.** Runs on foreground, pull to refresh and system background refresh, with the device key. No UI except the footer. With no local changes it fast-forwards. With local changes the core replays them onto the server's tip, without the key. paw's commits are unsigned. **OWNER.**
