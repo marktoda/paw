@@ -497,17 +497,32 @@ impl SetupFlow {
     }
 
     /// Reads the plugged-in key: no PIN, no touch.
+    /// A key whose PIN KDF paw cannot follow is refused here
+    /// (`UnusableKey`), before any PIN is asked.
     pub fn read_key(&mut self, card: Arc<dyn ApduTransport>) -> Result<SetupState, SetupError> {
         self.expect(&[Step::ReadKey, Step::Address], "read the key")?;
         let info = card_info(card.clone()).map_err(failed)?;
+        let kdf = crate::key::kdf::read_from(card.clone()).map_err(failed)?;
+        if !kdf.status().supported {
+            return Err(SetupError::UnusableKey { message: crate::key::kdf::UNSUPPORTED_AT_SETUP.into() });
+        }
         let ssh = card_ssh_public_key(card).map_err(|e| SetupError::UnusableKey { message: e.to_string() })?;
         self.use_key(info, &ssh)
     }
 
     /// The key as its session read it when it was plugged in: no card
-    /// exchange at all.
-    pub fn read_key_from(&mut self, info: &CardInfo, ssh: Option<&SshPublicKey>) -> Result<SetupState, SetupError> {
+    /// exchange at all. `pin_kdf_supported` is the session's; a key whose
+    /// PIN KDF paw cannot follow is refused here (`UnusableKey`).
+    pub fn read_key_from(
+        &mut self,
+        info: &CardInfo,
+        ssh: Option<&SshPublicKey>,
+        pin_kdf_supported: bool,
+    ) -> Result<SetupState, SetupError> {
         self.expect(&[Step::ReadKey, Step::Address], "read the key")?;
+        if !pin_kdf_supported {
+            return Err(SetupError::UnusableKey { message: crate::key::kdf::UNSUPPORTED_AT_SETUP.into() });
+        }
         let ssh = ssh.ok_or_else(|| SetupError::UnusableKey {
             message: "it has no authentication key, so it cannot log in to a git host".into(),
         })?;

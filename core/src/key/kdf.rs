@@ -104,6 +104,39 @@ impl PinKdf {
     }
 }
 
+/// Whether the card's PIN KDF is on, and whether paw can follow it. Read
+/// when the key is plugged in, with no PIN.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PinKdfStatus {
+    /// The card expects a hash of the PIN, not the PIN (`ykman openpgp
+    /// access set-kdf`).
+    pub enabled: bool,
+    /// paw can send the PIN the way this card wants it. `false` means paw
+    /// must not ask for the PIN at all: setup stops at "Your key".
+    pub supported: bool,
+    /// Why not, when not supported.
+    pub detail: Option<String>,
+}
+
+impl PinKdf {
+    pub(crate) fn status(&self) -> PinKdfStatus {
+        match self {
+            Self::Plain => PinKdfStatus { enabled: false, supported: true, detail: None },
+            Self::IterSalted { .. } => PinKdfStatus { enabled: true, supported: true, detail: None },
+            Self::Unsupported(why) => PinKdfStatus { enabled: true, supported: false, detail: Some(why.clone()) },
+        }
+    }
+}
+
+/// Reads the PIN KDF of the card behind `transport`. No PIN, no touch.
+pub(crate) fn read_from(transport: std::sync::Arc<dyn crate::ApduTransport>) -> Result<PinKdf, KeyError> {
+    PinKdf::read(&Wire::new(transport))
+}
+
+/// What setup says when it stops at "Your key" for a KDF paw cannot follow.
+pub(crate) const UNSUPPORTED_AT_SETUP: &str =
+    "this key uses a PIN setting (KDF) that paw doesn't support yet. paw has not sent it the PIN, so no try was used";
+
 /// The refusal for a card whose KDF paw cannot follow. No VERIFY was sent.
 pub(crate) fn unsupported(why: &str) -> KeyError {
     KeyError::Reader { detail: format!("{why}; paw has not sent it the PIN, so no try was used") }

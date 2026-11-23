@@ -516,6 +516,19 @@ impl KeySession {
         self.identity.info.clone()
     }
 
+    /// Whether the key's PIN KDF is on and whether paw can follow it, as
+    /// read when it was plugged in. For "Your key": a key whose KDF paw
+    /// does not support is refused there, before any PIN is asked.
+    pub fn pin_kdf(&self) -> super::kdf::PinKdfStatus {
+        self.identity.pin_kdf.status()
+    }
+
+    /// Whether paw can send this key its PIN: `false` for a PIN KDF paw does
+    /// not support, which every task would refuse before the PIN stage.
+    pub fn pin_kdf_supported(&self) -> bool {
+        !matches!(self.identity.pin_kdf, PinKdf::Unsupported(_))
+    }
+
     /// Whether paw holds the PIN, so the next task skips the PIN stage.
     pub fn holds_pin(&self) -> bool {
         self.holds_pin_now()

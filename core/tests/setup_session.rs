@@ -470,3 +470,35 @@ fn settings_cannot_forget_a_bundled_hosts_key_either() {
 
     assert!(matches!(&error, paw_core::sync::SyncError::Failed { message } if message.contains("can't be forgotten")), "{error:?}");
 }
+
+#[test]
+fn a_pin_kdf_paw_does_not_support_stops_setup_at_your_key_before_any_pin() {
+    for (algorithm, enabled, supported) in [(None, false, true), (Some(3), true, true), (Some(7), true, false)] {
+        let sim = cached_login_key();
+        if let Some(algorithm) = algorithm {
+            sim.set_pin_kdf(algorithm);
+        }
+        let port = KeyPort::new(SimClock::new(1_790_000_000_000));
+        let session = port.attach(sim.clone()).unwrap();
+        let status = session.pin_kdf();
+        assert_eq!((status.enabled, status.supported), (enabled, supported), "{algorithm:?}");
+        assert_eq!(session.pin_kdf_supported(), supported);
+        assert_eq!(status.detail.is_some(), !supported);
+
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::open(dir.path().to_string_lossy().into_owned()).unwrap();
+        let read = setup.read_key_from_session(session);
+        if supported {
+            assert!(matches!(read, Ok(SetupState::Address { .. })), "{read:?}");
+        } else {
+            assert!(matches!(&read, Err(SetupError::UnusableKey { message }) if message.contains("KDF")), "{read:?}");
+            assert_eq!(setup.state(), SetupState::ReadKey);
+        }
+
+        // The older path, straight from the card, says the same.
+        let flow_dir = tempfile::tempdir().unwrap();
+        let mut flow = paw_core::setup::SetupFlow::open(flow_dir.path()).unwrap();
+        assert_eq!(flow.read_key(sim.clone()).is_ok(), supported, "{algorithm:?}");
+        assert_eq!(sim.verify_attempts() + sim.pin_queries(), 0);
+    }
+}

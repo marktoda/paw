@@ -32,6 +32,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub use enrolment::{KeyIdentity, KeyMismatch};
+pub use kdf::PinKdfStatus;
 pub use port::KeyPort;
 pub(crate) use port::{After, Work};
 pub(crate) use session::Halt;
