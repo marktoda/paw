@@ -15,7 +15,8 @@ struct KeySheetHost: View {
             purpose: "Open \(model.keyRequest?.entry.name ?? "")",
             stage: stage,
             pin: $model.pinEntry,
-            note: "Afterwards it opens with Face ID for \(AppModel.faceIdWindowSecs / 3600) hours.",
+            note: model.copies == nil
+                ? nil : "Afterwards it opens with Face ID for \(AppModel.faceIdWindowSecs / 3600) hours.",
             onContinue: { model.continueWithPin() },
             onCancel: { model.cancelKeyTask() },
             onRetry: { model.retry() },
@@ -80,6 +81,7 @@ struct SettingsSheet: View {
                         .font(PawFont.footnote)
                         .foregroundStyle(PawColor.labelSecondary)
                 }
+                StoreSettingsSections()
                 #if targetEnvironment(simulator)
                 if model.simulator != nil {
                     Section {

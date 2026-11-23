@@ -74,7 +74,9 @@ final class AppModel {
     static let faceIdWindowSecs: UInt32 = 8 * 60 * 60
 
     let store: PassStore
-    let copies: CopyCache
+    /// `nil` where Face ID copies cannot be kept: on a device until the
+    /// Secure Enclave keystore exists. Every open then uses the key.
+    let copies: CopyCache?
     /// Held for the app's life: plug-ins and removals, and every key task.
     let keyPort: KeyPort
     private let connect: Connect
@@ -119,18 +121,21 @@ final class AppModel {
 
     /// `clock` is the one the copies use: the PIN's 15 minutes in the
     /// background are measured on it.
-    init(store: PassStore, copies: CopyCache, clock: Clock, connect: @escaping Connect, simulator: SimulatorControls?) {
+    /// `keyPort` is setup's when Home follows setup, so the PIN typed there
+    /// is still held.
+    init(store: PassStore, copies: CopyCache?, clock: Clock, connect: @escaping Connect, simulator: SimulatorControls?,
+         keyPort: KeyPort? = nil) {
         self.store = store
         self.copies = copies
         self.connect = connect
         self.simulator = simulator
-        keyPort = KeyPort(clock: clock)
+        self.keyPort = keyPort ?? KeyPort(clock: clock)
         home = store.home()
         entryCount = Int(store.entryCount())
         sweepCopies()
         #if targetEnvironment(simulator)
         if simulator?.startsUnplugged != true {
-            plugIn()
+            plugIn(reusingSession: true)
         }
         #else
         watchReaders()
@@ -164,6 +169,10 @@ final class AppModel {
     }
 
     func refreshCopies() {
+        guard let copies else {
+            liveCopies = []
+            return
+        }
         do {
             liveCopies = try copies.list()
             copiesProblem = nil
@@ -175,7 +184,7 @@ final class AppModel {
 
     private func sweepCopies() {
         do {
-            try copies.sweep()
+            try copies?.sweep()
         } catch {
             copiesProblem = describe(error)
         }
@@ -188,6 +197,12 @@ final class AppModel {
     /// session, and a task waiting at Plug in goes on by itself. Then asks
     /// the core which entries this key can open.
     func plugIn() {
+        plugIn(reusingSession: false)
+    }
+
+    /// `reusingSession`: a key session already open (setup's) is kept,
+    /// with the PIN it holds, instead of reading the key again.
+    private func plugIn(reusingSession: Bool) {
         plugInCount += 1
         let attempt = plugInCount
         let connect = connect
@@ -196,7 +211,8 @@ final class AppModel {
         let paths = allEntryPaths()
         cardQueue.async {
             var access: [String: Access] = [:]
-            if let session = try? port.pluggedIn(connection: connect()),
+            let held = reusingSession ? port.session() : nil
+            if let session = held ?? (try? port.pluggedIn(connection: connect())),
                let fingerprint = session.info().decryptionFingerprint {
                 for path in paths {
                     access[path] = store.access(entry: path, cardFingerprint: fingerprint)
@@ -467,7 +483,7 @@ final class AppModel {
 
     private func endCopiesLeftByLateOpen() {
         do {
-            try copies.lockNow()
+            try copies?.lockNow()
         } catch {
             copiesProblem = describe(error)
         }
@@ -477,10 +493,9 @@ final class AppModel {
     /// Opens from the entry's Face ID copy, with no key sheet. Falls back
     /// to the key when the copy has ended.
     private func openWithFaceId(_ entry: EntryRef) {
-        guard faceIdOpening == nil else { return }
+        guard faceIdOpening == nil, let copies else { return }
         faceIdOpening = entry.path
         let store = store
-        let copies = copies
         let started = lockGeneration
         faceIdQueue.async {
             let result = Result {
@@ -578,7 +593,7 @@ final class AppModel {
         pinEntry = ""
         keyPort.session()?.forgetPin()
         do {
-            try copies.lockNow()
+            try copies?.lockNow()
         } catch {
             copiesProblem = describe(error)
         }

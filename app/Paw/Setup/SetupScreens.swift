@@ -1,0 +1,672 @@
+import SwiftUI
+import UIKit
+
+/// First-run setup (design.md 2.4): one screen per step, Back on all but
+/// the first, the shared key sheet for the steps that need the key.
+struct SetupFlowView: View {
+    @Bindable var model: SetupModel
+    @Environment(\.scenePhase) private var scenePhase
+
+    /// Swiping the key sheet down is Cancel: the core task stops too.
+    private var keySheet: Binding<SetupSheet?> {
+        Binding(
+            get: { model.sheet },
+            set: { sheet in
+                if sheet == nil { model.cancelSheet() }
+            })
+    }
+
+    var body: some View {
+        NavigationStack {
+            screen
+                .toolbar {
+                    if showsBack {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button {
+                                model.back()
+                            } label: {
+                                Label("Back", systemImage: "chevron.left")
+                            }
+                            .disabled(model.working != nil)
+                            .accessibilityLabel("Back")
+                            .accessibilityIdentifier("setup-back")
+                        }
+                    }
+                }
+                .navigationBarTitleDisplayMode(.inline)
+                .animation(.default, value: model.screen)
+        }
+        .sheet(item: keySheet) { _ in
+            SetupKeySheet(model: model)
+        }
+        .onChange(of: scenePhase) {
+            switch scenePhase {
+            case .background: model.keyPort.session()?.noteBackgrounded()
+            case .active: model.keyPort.session()?.noteForegrounded()
+            default: break
+            }
+        }
+        .privacyCover()
+    }
+
+    private var showsBack: Bool {
+        switch model.screen {
+        case .welcome, .done: false
+        default: true
+        }
+    }
+
+    @ViewBuilder private var screen: some View {
+        switch model.screen {
+        case .welcome:
+            WelcomeScreen(model: model)
+        case .plugIn:
+            PlugInScreen(model: model)
+        case .yourKey(let key):
+            YourKeyScreen(model: model, key: key)
+        case .address(let notice):
+            AddressScreen(model: model, notice: notice)
+        case .confirmHost(let host, let algorithm, let fingerprint):
+            ConfirmHostScreen(model: model, host: host, algorithm: algorithm, fingerprint: fingerprint)
+        case .keyNotAccepted(let host, let publicKey):
+            KeyNotAcceptedScreen(model: model, host: host, publicKey: publicKey)
+        case .download(let address):
+            DownloadScreen(model: model, address: address)
+        case .check(let entries):
+            CheckScreen(model: model, entries: entries)
+        case .done(let opened, let entries):
+            DoneScreen(model: model, opened: opened, entries: entries)
+        }
+    }
+}
+
+// MARK: S0 Welcome
+
+private struct WelcomeScreen: View {
+    let model: SetupModel
+    @State private var showsSelfTest = false
+
+    var body: some View {
+        SetupPage(step: nil, title: "paw", identifier: "setup-welcome") {
+            VStack(alignment: .leading, spacing: PawMetrics.Spacing.xl) {
+                Text("Your pass store, opened with your YubiKey.")
+                    .font(PawFont.columnTitle)
+                    .foregroundStyle(PawColor.label)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Passwords stay encrypted in your git repository. paw downloads a copy and opens each one with your key.")
+                    .font(PawFont.body)
+                    .foregroundStyle(PawColor.labelSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Label {
+                    Text("You'll need your YubiKey and the SSH address of your password store.")
+                        .font(PawFont.footnote)
+                        .foregroundStyle(PawColor.labelSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: PawSymbol.plugIn)
+                        .foregroundStyle(PawColor.labelSecondary)
+                }
+            }
+            .padding(.top, PawMetrics.Spacing.s)
+            if let problem = model.problem {
+                SetupProblemView(problem: problem) { model.performProblemAction() }
+            }
+        } buttons: {
+            Button {
+                model.begin()
+            } label: {
+                KeyButtonLabel(title: "Set up")
+            }
+            .buttonStyle(.pawPrimary)
+            .accessibilityIdentifier("setup-start")
+            Button("Test my key") {
+                showsSelfTest = true
+            }
+            .buttonStyle(.borderless)
+            .font(PawFont.subheadline.weight(.semibold))
+            .foregroundStyle(PawColor.label)
+            .frame(minHeight: PawMetrics.tapMin)
+            .accessibilityIdentifier("setup-test-key")
+        }
+        .sheet(isPresented: $showsSelfTest) {
+            SelfTestView(host: "app")
+                .privacyCover()
+        }
+    }
+}
+
+// MARK: S1 Your key
+
+private struct PlugInScreen: View {
+    let model: SetupModel
+
+    var body: some View {
+        SetupPage(
+            step: 1, title: "Plug in your YubiKey",
+            message: "Into the USB-C port on the bottom of your iPhone. paw reads it without your PIN.",
+            identifier: "setup-plug-in"
+        ) {
+            HStack {
+                Spacer()
+                KeyDisc(size: .hero, phase: .waiting)
+                Spacer()
+            }
+            .padding(.vertical, PawMetrics.Spacing.l)
+            if let working = model.working, !working.isEmpty {
+                SetupWorkingLine(text: working)
+            } else if model.problem == nil {
+                Text("paw goes on by itself once your key is in.")
+                    .font(PawFont.footnote)
+                    .foregroundStyle(PawColor.labelSecondary)
+            }
+            if let problem = model.problem {
+                SetupProblemView(problem: problem) { model.performProblemAction() }
+            }
+        } buttons: {
+            #if targetEnvironment(simulator)
+            if !model.keyPresent {
+                SetupSimulatorButton(title: "plug in the key", identifier: "simulated-plug-in") {
+                    model.simulatedPlugIn()
+                    model.readKey()
+                }
+            } else if model.problem != nil {
+                SetupSimulatorButton(title: "read the key again", identifier: "simulated-read-key") {
+                    model.readKey()
+                }
+            }
+            #endif
+        }
+        .onAppear { model.readKey() }
+    }
+}
+
+private struct YourKeyScreen: View {
+    let model: SetupModel
+    let key: KeySummary
+
+    var body: some View {
+        SetupPage(
+            step: 1, title: "Your key",
+            message: "paw read it without your PIN. It has the two keys paw needs.",
+            identifier: "setup-your-key"
+        ) {
+            SetupCard {
+                Text("YubiKey \u{00B7} serial \(spokenSerial(key.ident))")
+                    .font(PawFont.headline)
+                    .foregroundStyle(PawColor.label)
+                    .accessibilityIdentifier("key-serial")
+                Divider()
+                slot(
+                    name: "Decryption key", ending: fingerprintEnding(key.decryptionFingerprint),
+                    touch: key.decryptionTouch, identifier: "key-decryption")
+                Divider()
+                slot(
+                    name: "SSH key", ending: model.sshFingerprint.map(fingerprintEnding),
+                    touch: key.authenticationTouch, identifier: "key-ssh")
+            }
+            ForEach(warnings, id: \.self) { warning in
+                ErrorRow(kind: .warning, problem: warning.problem, nextStep: warning.nextStep)
+            }
+            if let problem = model.problem {
+                SetupProblemView(problem: problem) { model.performProblemAction() }
+            }
+        } buttons: {
+            Button("Continue") { model.continueFromKey() }
+                .buttonStyle(.pawPrimary)
+                .accessibilityIdentifier("key-continue")
+        }
+    }
+
+    private func slot(name: String, ending: String?, touch: KeyTouch, identifier: String) -> some View {
+        VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
+            Label {
+                Text(name)
+                    .font(PawFont.body)
+                    .foregroundStyle(PawColor.label)
+            } icon: {
+                Image(systemName: PawSymbol.synced)
+                    .foregroundStyle(PawColor.success)
+            }
+            Text([ending.map { "ends \($0)" }, touch.phrase].compactMap { $0 }.joined(separator: " \u{00B7} "))
+                .font(PawFont.footnote.monospacedDigit())
+                .foregroundStyle(PawColor.labelSecondary)
+                .padding(.leading, 30)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(identifier)
+    }
+
+    private struct Warning: Hashable {
+        let problem: String
+        let nextStep: String
+    }
+
+    /// What a weaker touch policy means, said once per kind.
+    private var warnings: [Warning] {
+        var found: [Warning] = []
+        let touches = [key.decryptionTouch, key.authenticationTouch]
+        if touches.contains(.off) {
+            found.append(Warning(
+                problem: "Your key doesn't ask for a touch for this",
+                nextStep: "Anyone with this iPhone, your key and its PIN could read everything."))
+        }
+        if touches.contains(.cached) {
+            found.append(Warning(
+                problem: "One touch covers about 15 seconds",
+                nextStep: "During those seconds a second password can be opened without another touch."))
+        }
+        return found
+    }
+}
+
+// MARK: S2 Address
+
+private struct AddressScreen: View {
+    @Bindable var model: SetupModel
+    let notice: String?
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        SetupPage(
+            step: 2, title: "Where is your password store?",
+            message: "Its SSH address, as your git host shows it under Code \u{203A} SSH.",
+            identifier: "setup-address"
+        ) {
+            VStack(alignment: .leading, spacing: PawMetrics.Spacing.s) {
+                HStack(spacing: PawMetrics.Spacing.s) {
+                    TextField("git@github.com:you/password-store.git", text: $model.addressText)
+                        .font(PawFont.body.monospaced())
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                        .submitLabel(.go)
+                        .focused($focused)
+                        .onSubmit { connect() }
+                        .accessibilityLabel("Store address")
+                        .accessibilityIdentifier("repo-address")
+                    PasteButton(payloadType: String.self) { strings in
+                        if let text = strings.first {
+                            model.addressText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                            model.addressProblem = nil
+                        }
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonBorderShape(.capsule)
+                    .accessibilityIdentifier("address-paste")
+                }
+                .padding(.leading, PawMetrics.Spacing.l)
+                .padding(.trailing, PawMetrics.Spacing.s)
+                .frame(minHeight: PawMetrics.control)
+                .background(
+                    model.addressProblem == nil ? PawColor.surface : PawColor.dangerFill,
+                    in: RoundedRectangle(cornerRadius: PawMetrics.inlineRadius, style: .continuous))
+                if let addressProblem = model.addressProblem {
+                    Label(addressProblem, systemImage: PawSymbol.error)
+                        .font(PawFont.footnote)
+                        .foregroundStyle(PawColor.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("address-problem")
+                } else if let notice {
+                    Text(notice)
+                        .font(PawFont.footnote)
+                        .foregroundStyle(PawColor.labelSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("address-notice")
+                } else {
+                    Text("paw checks that the server knows your key before it asks for your PIN.")
+                        .font(PawFont.footnote)
+                        .foregroundStyle(PawColor.labelSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if let working = model.working, !working.isEmpty {
+                SetupWorkingLine(text: working)
+            }
+            if let problem = model.problem {
+                SetupProblemView(problem: problem) { model.performProblemAction() }
+            }
+            #if targetEnvironment(simulator)
+            if let simulator = model.simulator {
+                SetupSimulatorButton(title: "use the simulated host", identifier: "simulated-address") {
+                    model.addressText = simulator.address
+                    model.addressProblem = nil
+                }
+            }
+            #endif
+        } buttons: {
+            Button("Connect") { connect() }
+                .buttonStyle(.pawPrimary)
+                .disabled(model.working != nil || model.addressText.trimmingCharacters(in: .whitespaces).isEmpty)
+                .accessibilityIdentifier("address-connect")
+        }
+    }
+
+    private func connect() {
+        focused = false
+        model.connectToHost()
+    }
+}
+
+private struct ConfirmHostScreen: View {
+    let model: SetupModel
+    let host: String
+    let algorithm: String
+    let fingerprint: String
+
+    var body: some View {
+        SetupPage(
+            step: 2, title: "First time connecting to \(host)",
+            message: "paw hasn't seen this server before. Compare its fingerprint with the one your server's admin gave you.",
+            identifier: "setup-confirm-host"
+        ) {
+            SetupCard {
+                Text(algorithm)
+                    .font(PawFont.footnote.weight(.semibold))
+                    .foregroundStyle(PawColor.labelSecondary)
+                GroupedFingerprint(fingerprint: fingerprint)
+                    .accessibilityIdentifier("host-fingerprint")
+            }
+            Text("If they match, paw remembers this server and refuses it if its identity ever changes. If they don't, go back: someone may be in the way.")
+                .font(PawFont.footnote)
+                .foregroundStyle(PawColor.labelSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let working = model.working, !working.isEmpty {
+                SetupWorkingLine(text: working)
+            }
+            if let problem = model.problem {
+                SetupProblemView(problem: problem) { model.performProblemAction() }
+            }
+        } buttons: {
+            Button("Trust this server") { model.trustHost(fingerprint: fingerprint) }
+                .buttonStyle(.pawPrimary)
+                .disabled(model.working != nil)
+                .accessibilityIdentifier("host-trust")
+            Button("Back") { model.back() }
+                .buttonStyle(.pawSecondary)
+                .disabled(model.working != nil)
+                .accessibilityIdentifier("host-back")
+        }
+    }
+}
+
+private struct KeyNotAcceptedScreen: View {
+    let model: SetupModel
+    let host: String
+    let publicKey: String
+    @State private var toast: String?
+
+    var body: some View {
+        SetupPage(
+            step: 2, title: "\(host) doesn't know this key yet",
+            message: "Add your key's SSH key to your account on \(host), then check again. Nothing was sent, and no PIN was used.",
+            identifier: "setup-key-not-accepted"
+        ) {
+            SetupCard {
+                Text("Your key's SSH key")
+                    .font(PawFont.footnote.weight(.semibold))
+                    .foregroundStyle(PawColor.labelSecondary)
+                Text(publicKey)
+                    .font(PawFont.footnote.monospaced())
+                    .foregroundStyle(PawColor.label)
+                    .lineLimit(3)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .accessibilityLabel("SSH key")
+                    .accessibilityValue(publicKey)
+                    .accessibilityIdentifier("ssh-public-key")
+                HStack(spacing: PawMetrics.Spacing.s) {
+                    Button {
+                        UIPasteboard.general.string = publicKey
+                        toast = "SSH key copied."
+                    } label: {
+                        Label("Copy", systemImage: PawSymbol.copy)
+                    }
+                    .accessibilityIdentifier("copy-ssh-key")
+                    ShareLink(item: publicKey) {
+                        Label("Share\u{2026}", systemImage: "square.and.arrow.up")
+                    }
+                    .accessibilityIdentifier("share-ssh-key")
+                }
+                .buttonStyle(.borderless)
+                .font(PawFont.subheadline.weight(.semibold))
+                .foregroundStyle(PawColor.label)
+                .labelStyle(.titleAndIcon)
+            }
+            if host == "github.com", let url = URL(string: "https://github.com/settings/ssh/new") {
+                Link(destination: url) {
+                    Label("Open GitHub's SSH keys page", systemImage: "arrow.up.right")
+                        .font(PawFont.subheadline.weight(.semibold))
+                        .foregroundStyle(PawColor.label)
+                }
+                .accessibilityIdentifier("open-github")
+            }
+            if let working = model.working, !working.isEmpty {
+                SetupWorkingLine(text: working)
+            }
+            if let problem = model.problem {
+                SetupProblemView(problem: problem) { model.performProblemAction() }
+            }
+            #if targetEnvironment(simulator)
+            if let simulator = model.simulator {
+                SetupSimulatorButton(title: "add the key on the host", identifier: "simulated-accept-key") {
+                    simulator.acceptKey()
+                }
+            }
+            #endif
+        } buttons: {
+            Button("Check again") { model.checkAgain() }
+                .buttonStyle(.pawPrimary)
+                .disabled(model.working != nil)
+                .accessibilityIdentifier("check-again")
+        }
+        .copyToast($toast)
+    }
+}
+
+// MARK: S3 Download
+
+private struct DownloadScreen: View {
+    let model: SetupModel
+    let address: String
+
+    var body: some View {
+        SetupPage(
+            step: 3, title: "Download your store",
+            message: "\(SetupModel.host(of: address)) knows your key. paw signs in with it and downloads a copy of your store to this iPhone.",
+            identifier: "setup-download"
+        ) {
+            SetupCard {
+                Text(address)
+                    .font(PawFont.footnote.monospaced())
+                    .foregroundStyle(PawColor.label)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("download-address")
+                Text("You'll enter your key's PIN once, then touch your key.")
+                    .font(PawFont.footnote)
+                    .foregroundStyle(PawColor.labelSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let problem = model.problem {
+                SetupProblemView(problem: problem) { model.performProblemAction() }
+            }
+        } buttons: {
+            Button {
+                model.startDownload()
+            } label: {
+                KeyButtonLabel(title: "Download")
+            }
+            .buttonStyle(.pawPrimary)
+            .disabled(model.working != nil)
+            .accessibilityIdentifier("download-start")
+        }
+    }
+}
+
+// MARK: S4 Check
+
+private struct CheckScreen: View {
+    let model: SetupModel
+    let entries: UInt32
+
+    var body: some View {
+        SetupPage(
+            step: 4, title: "Check that your key opens it",
+            message: "paw will open one password to be sure. It won't show it or keep it.",
+            identifier: "setup-check"
+        ) {
+            Label {
+                Text(entries == 1 ? "Downloaded 1 password." : "Downloaded \(entries) passwords.")
+                    .font(PawFont.body)
+                    .foregroundStyle(PawColor.label)
+            } icon: {
+                Image(systemName: PawSymbol.synced)
+                    .foregroundStyle(PawColor.success)
+            }
+            .accessibilityIdentifier("check-count")
+            if let problem = model.problem {
+                SetupProblemView(problem: problem) { model.performProblemAction() }
+            }
+        } buttons: {
+            Button {
+                model.startCheck()
+            } label: {
+                KeyButtonLabel(title: "Check my key")
+            }
+            .buttonStyle(.pawPrimary)
+            .disabled(model.working != nil)
+            .accessibilityIdentifier("check-start")
+        }
+    }
+}
+
+// MARK: Done
+
+private struct DoneScreen: View {
+    let model: SetupModel
+    let opened: String
+    let entries: UInt32
+
+    var body: some View {
+        SetupPage(
+            step: nil, title: "It works",
+            message: "Your key opened \(Self.name(opened)). paw didn't show or keep it.",
+            identifier: "setup-done"
+        ) {
+            SetupCard {
+                Label {
+                    Text(summary)
+                        .font(PawFont.body)
+                        .foregroundStyle(PawColor.label)
+                } icon: {
+                    Image(systemName: PawSymbol.synced)
+                        .foregroundStyle(PawColor.success)
+                }
+                .accessibilityIdentifier("done-count")
+                if let readers = whoCanOpen {
+                    Text(readers)
+                        .font(PawFont.footnote)
+                        .foregroundStyle(PawColor.labelSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("done-recipients")
+                }
+            }
+            if let readiness = model.readiness, !readiness.canSave {
+                ErrorRow(
+                    kind: .warning,
+                    problem: readiness.missingRecipients.count == 1
+                        ? "This store is also encrypted for 1 other key"
+                        : "This store is also encrypted for \(readiness.missingRecipients.count) other keys",
+                    nextStep: "You can open everything. To add or change passwords, paw needs the public part of "
+                        + readiness.missingRecipients.map(Self.spokenRecipient).joined(separator: ", ") + ".",
+                    isBanner: true)
+            }
+        } buttons: {
+            Button("Open my passwords") { model.openStore() }
+                .buttonStyle(.pawPrimary)
+                .accessibilityIdentifier("done-open")
+        }
+    }
+
+    private var summary: String {
+        let passwords = entries == 1 ? "1 password" : "\(entries) passwords"
+        guard let folders = model.storeFacts?.folders, folders > 0 else { return "Found \(passwords)." }
+        return "Found \(passwords) in \(folders == 1 ? "1 folder" : "\(folders) folders")."
+    }
+
+    /// Who can open the store's passwords, from its top-level `.gpg-id`.
+    private var whoCanOpen: String? {
+        guard let recipients = model.storeFacts?.recipients, recipients > 0 else { return nil }
+        let others = recipients - 1
+        switch others {
+        case 0: return "Encrypted for your key only."
+        case 1: return "Encrypted for your key and 1 other."
+        default: return "Encrypted for your key and \(others) others."
+        }
+    }
+
+    private static func name(_ entry: String) -> String {
+        entry.split(separator: "/").last.map(String.init) ?? entry
+    }
+
+    /// "key ending 2C11 41DE", or the line as written if it is not hex.
+    private static func spokenRecipient(_ line: String) -> String {
+        let hex = line.hasPrefix("0x") ? String(line.dropFirst(2)) : line
+        guard hex.count >= 8, hex.allSatisfy(\.isHexDigit) else { return line }
+        return "the key ending \(fingerprintEnding(hex))"
+    }
+}
+
+// MARK: The key sheet
+
+/// The shared key sheet, following `model.sheet`.
+private struct SetupKeySheet: View {
+    @Bindable var model: SetupModel
+    @State private var detent = PresentationDetent.height(PawMetrics.keySheetHeight)
+
+    private var stage: KeySheetStage {
+        model.sheet?.stage ?? .busy
+    }
+
+    var body: some View {
+        KeySheetContent(
+            purpose: model.sheet?.purpose == .check ? "Check your key" : "Download your store",
+            stage: stage,
+            pin: $model.pinEntry,
+            onContinue: { model.continueWithPin() },
+            onCancel: { model.cancelSheet() },
+            onRetry: { model.retrySheet() },
+            simulatorAction: simulatorAction)
+            .presentationDetents([.height(PawMetrics.keySheetHeight), .large], selection: $detent)
+            .presentationDragIndicator(.visible)
+            .onChange(of: stage, initial: true) {
+                detent = Self.needsKeyboard(stage) ? .large : .height(PawMetrics.keySheetHeight)
+            }
+            .privacyCover()
+    }
+
+    private var simulatorAction: SimulatorAction? {
+        #if targetEnvironment(simulator)
+        switch stage {
+        case .touch:
+            return SimulatorAction(title: "touch the key", identifier: "simulated-touch") {
+                KeyConnection.simulateTouch()
+            }
+        case .plugIn:
+            return SimulatorAction(title: "plug in the key", identifier: "simulated-plug-in") {
+                model.simulatedPlugIn()
+            }
+        default:
+            return nil
+        }
+        #else
+        return nil
+        #endif
+    }
+
+    private static func needsKeyboard(_ stage: KeySheetStage) -> Bool {
+        switch stage {
+        case .pin, .wrongPin, .pinAgain: true
+        default: false
+        }
+    }
+}

@@ -19,20 +19,21 @@ struct PawApp: App {
     }
 }
 
-/// There is no real store on a device yet, so outside the simulator's
-/// fixture (`-pawFixture 1`) the app is still the key test screen.
+/// Setup until a store is set up, then Home on it (`StoreRoot`). In the
+/// simulator, `-pawFixture 1` opens the made-up store instead, and
+/// `-pawSelfTest 1` the key test screen.
 private struct LaunchRoot: View {
     var body: some View {
         #if targetEnvironment(simulator)
         if FixtureLaunch.isRequested {
             FixtureRoot()
-        } else if UserDefaults.standard.bool(forKey: "pawSimHostProbe") {
-            SimHostProbeView()
-        } else {
+        } else if UserDefaults.standard.bool(forKey: "pawSelfTest") {
             SelfTestView(host: "app")
+        } else {
+            StoreRoot()
         }
         #else
-        SelfTestView(host: "app")
+        StoreRoot()
         #endif
     }
 }

@@ -17,6 +17,7 @@ final class KeyTests: XCTestCase {
 
     private func launch(touch: Bool = true, touchTimeoutMs: Int = 15_000) {
         app.launchArguments = [
+            "-pawSelfTest", "1",
             "-pawSimPin", "123456",
             "-pawSimTouch", touch ? "1" : "0",
             "-pawSimTouchTimeoutMs", String(touchTimeoutMs),
