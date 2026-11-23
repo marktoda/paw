@@ -15,6 +15,7 @@
 
 use std::cell::RefCell;
 use std::io::{self, Read, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Once};
 use std::time::Duration;
 
@@ -35,6 +36,10 @@ const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(60);
 /// The URL libgit2 is given. It only selects our transport; the connection
 /// itself comes from [`ACTIVE`].
 const TRANSPORT_URL: &str = "paw-ssh://connection";
+/// The most one git service may send, by default: 256 MiB. A password
+/// store with years of history is a few MiB; a host sending more is broken
+/// or hostile, and is stopped as it goes, before the pack is on disk.
+pub const DOWNLOAD_LIMIT: u64 = 256 << 20;
 /// How much of the remote's stderr is kept for error messages.
 const STDERR_LIMIT: usize = 2048;
 
@@ -165,12 +170,16 @@ struct Shared {
     /// What the remote printed on stderr and how the connection failed, kept
     /// because libgit2 reports either only as "early EOF".
     diagnostics: Mutex<Diagnostics>,
+    /// The most one service may send ([`DOWNLOAD_LIMIT`] unless lowered).
+    download_limit: AtomicU64,
 }
 
 #[derive(Default)]
 struct Diagnostics {
     stderr: Vec<u8>,
     network: Option<String>,
+    /// The service sent more than this many bytes and was stopped.
+    too_big: Option<u64>,
 }
 
 /// Accepts the pinned host key and nothing else.
@@ -368,6 +377,7 @@ impl Connection {
                 session,
                 path: remote.path.clone(),
                 diagnostics: Mutex::default(),
+                download_limit: AtomicU64::new(DOWNLOAD_LIMIT),
             }),
         })
     }
@@ -393,6 +403,13 @@ impl Connection {
                 Err(e) => Err(e),
             }
         })
+    }
+
+    /// Sets the most one git service on this connection may send, in
+    /// bytes, in place of [`DOWNLOAD_LIMIT`]. A fetch or clone that would
+    /// receive more stops with [`PawError::Git`] saying so.
+    pub fn set_download_limit(&self, bytes: u64) {
+        self.shared.download_limit.store(bytes, Ordering::SeqCst);
     }
 
     /// Runs `operation` against a libgit2 remote whose transport is this
@@ -434,6 +451,12 @@ impl Shared {
             return PawError::NotFastForward;
         }
         let mut diagnostics = self.diagnostics.lock().unwrap();
+        if let Some(limit) = diagnostics.too_big.take() {
+            return PawError::Git(format!(
+                "the git host sent more than {} MiB, far more than a password store; paw stopped the download",
+                limit >> 20
+            ));
+        }
         if let Some(network) = diagnostics.network.take() {
             return PawError::Network(network);
         }
@@ -506,7 +529,7 @@ impl SmartSubtransport for Subtransport {
             })
             .map_err(|e| git2::Error::from_str(&shared.network_failure(e).to_string()))?;
 
-        Ok(Box::new(ServiceStream { shared, channel, unread: Vec::new() }))
+        Ok(Box::new(ServiceStream { shared, channel, unread: Vec::new(), received: 0 }))
     }
 
     fn close(&self) -> Result<(), git2::Error> {
@@ -527,13 +550,23 @@ struct ServiceStream {
     channel: Channel<client::Msg>,
     /// Received bytes libgit2 has not asked for yet.
     unread: Vec<u8>,
+    /// Bytes received so far, checked against the download limit.
+    received: u64,
 }
 
 impl Read for ServiceStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         while self.unread.is_empty() {
             match self.shared.runtime.block_on(self.channel.wait()) {
-                Some(ChannelMsg::Data { data }) => self.unread = data.to_vec(),
+                Some(ChannelMsg::Data { data }) => {
+                    self.received += data.len() as u64;
+                    let limit = self.shared.download_limit.load(Ordering::SeqCst);
+                    if self.received > limit {
+                        self.shared.diagnostics.lock().unwrap().too_big = Some(limit);
+                        return Err(io::Error::other("the git host sent too much"));
+                    }
+                    self.unread = data.to_vec();
+                }
                 Some(ChannelMsg::ExtendedData { data, .. }) => {
                     let stderr = &mut self.shared.diagnostics.lock().unwrap().stderr;
                     let room = STDERR_LIMIT.saturating_sub(stderr.len());

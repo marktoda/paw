@@ -1260,6 +1260,8 @@ After losing a phone, the user should remove its deploy key from the git host an
 
 **System stores.** No CoreSpotlight, `NSUserActivity`, Siri suggestions or widgets with names in v1. `ASCredentialIdentityStore` holds path-derived data and user associations. It is cleared on store removal and when "Require Face ID to open paw" is turned on.
 
+**Outcome (branch `core-hardening`, download cap).** The "size caps" of 5.2 now include the transfer: each git service on a connection may send at most `DOWNLOAD_LIMIT` (256 MiB), counted as bytes arrive, before libgit2 writes the pack. Past it the clone or fetch stops with `PawError::Git` ("the git host sent more than 256 MiB ..."), which sync reports as `SyncError::Failed`; nothing is integrated. `Connection::set_download_limit` lowers it (tests use 1 MiB).
+
 **Outcome (branch `core-hardening`, one decipher per entry).** "Card use" above is now enforced against crafted entries: both decrypt paths ask the card to unwrap at most one recipient packet per entry (`MAX_DECIPHERS`), the first that names the card's key, or the first hidden one if none does. An entry with only hidden packets for several recipients opens only if this key's comes first.
 
 **Outcome (branch `core-hardening`, copies after an end-all).** A copy made right after a reboot or a clock set back was written under index keys from before the keystore reset that the same call caused, and was lost at once although `put` returned a deadline. `CopyCache::put` now derives the keys again after its scan.

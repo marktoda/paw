@@ -417,3 +417,43 @@ fn an_entry_named_like_a_pattern_does_not_touch_other_entries() {
 
     assert_eq!(std::fs::read_to_string(dir.path().join(ENTRY)).unwrap(), "local state");
 }
+
+/// Bytes that do not compress, so the pack is as big as they are.
+fn noise(len: usize) -> Vec<u8> {
+    let mut state = 0x2545_f491_4f6c_dd1d_u64;
+    (0..len)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state as u8
+        })
+        .collect()
+}
+
+#[test]
+fn a_download_larger_than_the_limit_is_stopped() {
+    assert_eq!(sync::DOWNLOAD_LIMIT, 256 << 20);
+    let card = card();
+    let server = GitServer::start(&[authorised_line(&card)]);
+    let small = cloned(&server, &card);
+    server.sim.commit_file("huge.gpg".into(), noise(3 << 20), "Huge.".into()).unwrap();
+
+    // A clone and a fetch, each with the limit at 1 MiB.
+    let connection = connect(&server, &card);
+    connection.set_download_limit(1 << 20);
+    let dir = tempfile::tempdir().unwrap();
+    let cloning = sync::clone(&connection, &server.remote(), dir.path());
+    let fetching = sync::fetch(&connection, small.path());
+
+    for result in [cloning.map(|_| String::new()), fetching] {
+        let Err(PawError::Git(message)) = result else { panic!("{result:?}") };
+        assert!(message.contains("more than 1 MiB"), "{message}");
+    }
+    assert!(!dir.path().join("huge.gpg").exists());
+    assert_ne!(git(small.path(), &["rev-parse", "origin/main"]), server.tip());
+
+    // Under the default limit the same store comes in.
+    let connection = connect(&server, &card);
+    assert_eq!(sync::fetch(&connection, small.path()).unwrap(), server.tip());
+}
