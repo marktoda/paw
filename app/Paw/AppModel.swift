@@ -774,6 +774,13 @@ final class AppModel {
         recentPaths = recentPaths
             .map { $0 == renamed?.from ? (renamed?.to ?? $0) : $0 }
             .filter { exists.contains($0) }
+        // A copy of an entry that is gone (a discarded add, a rename, a
+        // delete) would otherwise sit on Home until its time ran out.
+        if let copies {
+            for copy in liveCopies where !exists.contains(copy.entry) {
+                try? copies.forgetEntry(entry: copy.entry)
+            }
+        }
         refreshCopies()
     }
 
