@@ -16,6 +16,7 @@ use openpgp_card::Card;
 use openpgp_card::state::Open;
 use zeroize::Zeroizing;
 
+use super::kdf::{self, PinKdf};
 use super::status::{self, Verify};
 use super::task::TaskCore;
 use super::wire::Wire;
@@ -43,13 +44,16 @@ impl Pin {
         Self(Zeroizing::new(self.0.to_vec()))
     }
 
-    /// VERIFY for PW1 in mode 82 (decryption and authentication).
-    fn verify_apdu(&self) -> Zeroizing<Vec<u8>> {
-        let mut apdu = Zeroizing::new(Vec::with_capacity(5 + self.0.len()));
-        // The length was checked to fit a short APDU.
-        apdu.extend_from_slice(&[0x00, 0x20, 0x00, 0x82, self.0.len() as u8]);
-        apdu.extend_from_slice(&self.0);
-        apdu
+    /// VERIFY for PW1 in mode 82 (decryption and authentication), with
+    /// the PIN as the card's KDF wants it.
+    fn verify_apdu(&self, kdf: &PinKdf) -> Result<Zeroizing<Vec<u8>>, KeyError> {
+        let data = kdf.derive(&self.0)?;
+        let mut apdu = Zeroizing::new(Vec::with_capacity(5 + data.len()));
+        // The PIN's length was checked, and a KDF hash is at most 64 bytes:
+        // a short APDU either way.
+        apdu.extend_from_slice(&[0x00, 0x20, 0x00, 0x82, data.len() as u8]);
+        apdu.extend_from_slice(&data);
+        Ok(apdu)
     }
 }
 
@@ -78,6 +82,8 @@ struct Identity {
     info: CardInfo,
     decryption_key: Option<pgp::packet::PublicKey>,
     ssh_key: Option<SshPublicKey>,
+    /// How VERIFY must carry the PIN.
+    pin_kdf: PinKdf,
 }
 
 struct State {
@@ -140,10 +146,11 @@ impl KeySession {
             Err(PawError::NoSshKey(_)) => None,
             Err(e) => return Err(read_error(&wire, e)),
         };
+        let pin_kdf = PinKdf::read(&wire)?;
         let tries_left = info.pin_tries_left;
         Ok(Arc::new(Self {
             wire,
-            identity: Identity { info, decryption_key, ssh_key },
+            identity: Identity { info, decryption_key, ssh_key, pin_kdf },
             clock,
             ended: AtomicBool::new(false),
             state: Mutex::new(State {
@@ -420,9 +427,15 @@ impl<'a> CardJob<'a> {
     /// again, silently. If the card refuses the held PIN, it is dropped at
     /// once, having used one try, and the person is asked.
     ///
-    /// No VERIFY is ever sent with no tries left.
+    /// No VERIFY is ever sent with no tries left. A card with a PIN KDF
+    /// (read when it was plugged in) is sent the derived PIN.
     pub(crate) fn unlock(&mut self, supplied: Option<Pin>) -> Result<(), Halt> {
         let session = self.session;
+        // A card whose PIN KDF paw cannot follow would count any PIN as
+        // wrong: refuse before asking for one.
+        if let PinKdf::Unsupported(why) = &session.identity.pin_kdf {
+            return Err(Halt::Fail(kdf::unsupported(why)));
+        }
         if let Some(pin) = supplied {
             if session.lock().tries_left == 0 {
                 return Err(Halt::Fail(KeyError::PinBlocked));
@@ -468,7 +481,7 @@ impl<'a> CardJob<'a> {
 
     fn verify(&mut self, pin: &Pin) -> Result<Verified, KeyError> {
         let session = self.session;
-        let (_, sw) = session.wire.send(&pin.verify_apdu())?;
+        let (_, sw) = session.wire.send(&pin.verify_apdu(&session.identity.pin_kdf)?)?;
         let verified = match status::verify(sw) {
             Verify::Verified => {
                 let tries = self.read_tries()?;

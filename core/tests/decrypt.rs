@@ -160,3 +160,15 @@ fn an_entry_with_many_packets_for_this_key_costs_one_decipher() {
     assert_eq!(key.decipher_count(), 1);
     assert_eq!(asked.load(Ordering::SeqCst), 1);
 }
+
+/// The legacy path goes through the openpgp-card library's own KDF code,
+/// so this also checks the simulated key's derivation against it.
+#[test]
+fn the_legacy_path_opens_an_entry_on_a_key_with_a_pin_kdf() {
+    let key = key(false);
+    key.set_pin_kdf(3);
+    let plaintext = decrypt_entry(key.clone(), PIN, &entry_for(&key), &|| {}).unwrap();
+    assert_eq!(String::from_utf8(plaintext).unwrap(), ENTRY);
+    assert_eq!(key.verify_attempts(), 1);
+    assert_eq!(key.pin_tries_left(), 3);
+}

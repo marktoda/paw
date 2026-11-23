@@ -19,6 +19,7 @@
 
 mod decrypt;
 pub mod enrolment;
+pub(crate) mod kdf;
 mod port;
 mod session;
 mod signer;

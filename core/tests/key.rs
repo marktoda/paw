@@ -627,3 +627,37 @@ fn an_entry_with_many_packets_for_this_key_costs_one_decipher() {
     open_ok(&rig);
     assert_eq!(rig.sim.decipher_count(), 2);
 }
+
+// A key with the PIN KDF turned on.
+
+#[test]
+fn a_key_with_a_pin_kdf_is_sent_the_derived_pin_and_wastes_no_try() {
+    for kdf in [false, true] {
+        let rig = rig_unplugged(SimTouch::Off, SimTouch::Off);
+        if kdf {
+            rig.sim.set_pin_kdf(3);
+        }
+        rig.port.attach(rig.sim.clone()).unwrap();
+
+        open_ok(&rig);
+
+        assert_eq!(rig.sim.verify_attempts(), 1, "kdf: {kdf}");
+        assert_eq!(rig.sim.pin_tries_left(), 3, "kdf: {kdf}");
+    }
+}
+
+#[test]
+fn a_key_with_a_pin_kdf_paw_does_not_know_is_refused_before_the_pin() {
+    let rig = rig_unplugged(SimTouch::Off, SimTouch::Off);
+    rig.sim.set_pin_kdf(7);
+    rig.port.attach(rig.sim.clone()).unwrap();
+    let driver = Driver::helpful(PIN, &rig.sim);
+
+    let task = open(&rig, ENTRY, &driver);
+    let error = failed(&finish(&task));
+
+    assert!(matches!(&error, KeyError::Reader { detail } if detail.contains("KDF")), "{error:?}");
+    assert!(!driver.saw(is_pin));
+    assert_eq!(rig.sim.verify_attempts(), 0);
+    assert_eq!(rig.sim.pin_tries_left(), 3);
+}

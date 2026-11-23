@@ -143,6 +143,9 @@ struct State {
     verify_attempts: u32,
     /// Empty VERIFY commands: "is the PIN verified?", which uses no try.
     pin_queries: u32,
+    /// The PIN KDF data object, if KDF is on: VERIFY then expects the
+    /// derived PIN.
+    kdf: Option<Vec<u8>>,
 }
 
 fn tlv(tag: &[u8], value: &[u8]) -> Vec<u8> {
@@ -267,6 +270,17 @@ impl SimulatedKey {
 
     /// VERIFY commands that carried a PIN, wrong or right: the tries paw
     /// has put at risk.
+    /// Turns the PIN KDF on, as `ykman openpgp access set-kdf` would
+    /// (iterated and salted SHA-256, 100,000 bytes); or, with
+    /// `algorithm` other than 3, sets a KDF paw does not support.
+    pub fn set_pin_kdf(&self, algorithm: u8) {
+        let mut object = vec![0x81, 0x01, algorithm, 0x82, 0x01, 0x08, 0x83, 0x04];
+        object.extend(100_000u32.to_be_bytes());
+        object.extend([0x84, 0x08]);
+        object.extend(b"01234567");
+        self.lock().kdf = Some(object);
+    }
+
     pub fn verify_attempts(&self) -> u32 {
         self.lock().verify_attempts
     }
@@ -392,6 +406,7 @@ impl SimulatedKey {
                 waiting_for_touch: false,
                 verify_attempts: 0,
                 pin_queries: 0,
+                kdf: None,
             }),
             options,
             touched: Condvar::new(),
@@ -552,6 +567,7 @@ impl SimulatedKey {
             (0xCA, 0x00, 0xCD) => Ok(self.generation_times()),
             (0xCA, 0x00, 0xD7) => Ok(self.uif(Slot::Decryption)),
             (0xCA, 0x00, 0xD8) => Ok(self.uif(Slot::Authentication)),
+            (0xCA, 0x00, 0xF9) => self.lock().kdf.clone().ok_or(0x6A88),
             (0xCA, _, _) => Err(0x6A88),
             (0x20, 0x00, 0x82) => {
                 let mut state = self.lock();
@@ -567,7 +583,13 @@ impl SimulatedKey {
                 if data.is_empty() {
                     return if state.verified { Ok(vec![]) } else { Err(0x63C0 | u16::from(state.tries_left)) };
                 }
-                if data == state.pin.as_bytes() {
+                let expected = match &state.kdf {
+                    Some(object) => crate::key::kdf::PinKdf::parse(object)
+                        .derive(state.pin.as_bytes())
+                        .map_err(|_| 0x6F00u16)?,
+                    None => zeroize::Zeroizing::new(state.pin.as_bytes().to_vec()),
+                };
+                if data == expected.as_slice() {
                     state.tries_left = 3;
                     state.verified = true;
                     Ok(vec![])
