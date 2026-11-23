@@ -105,7 +105,9 @@ final class LifecycleTests: PawUITestCase {
     // MARK: The clipboard
 
     func testCopyPutsThePasswordOnThePasteboardAndLockNowAndExpiryClearIt() {
-        launchFixture()
+        // The system's own 45-second expiry runs on real time, which a UI
+        // test spends freely; paw's own runs on the simulated clock.
+        launchFixture(extra: ["-pawSimPasteboardSecs", "3600"])
         openGitHubWithKey()
         app.buttons["copy-password"].tap()
         expectLabel("sim-last-toast", contains: "Password copied")
@@ -130,26 +132,35 @@ final class LifecycleTests: PawUITestCase {
 
     // MARK: The key
 
-    func testAKeyWhoseFirstReadsFailRecoversWithoutAReplug() {
-        // The read at launch and the one an open retries both fail.
-        launchFixture(extra: ["-pawSimAttachFails", "2"])
+    func testAKeyWhoseReadsFailRecoversWithoutAReplug() {
+        // The key is in but doesn't answer when read, however often paw
+        // tries, until the simulator lets it.
+        let failing = ["-pawSimAttachFails", "1000"]
+        launchFixture(extra: failing)
         tap("folder-web")
         tap("entry-github.com")
         expectLabel("key-sheet-headline", contains: "paw couldn't read your key")
         expectLabel("key-sheet-body", contains: "Try again")
         expectAbsent("pin-field", "No PIN before the key is read")
         snapshot("read-failed")
+        // Still failing: Try again says so again, without a PIN.
+        tap("key-sheet-retry")
+        expectLabel("key-sheet-headline", contains: "paw couldn't read your key")
+        // The key answers now: Try again reads it, no replug.
+        tapSimulated("simulated-key-answers")
         tap("key-sheet-retry")
         enterPin(Self.pin)
         touchTheKey()
         expectLabel("entry-title", contains: "github.com")
 
-        // Only the read at launch fails: opening retries and just works.
+        // The read at launch failed; by the time an entry is opened the key
+        // answers, and opening reads it again by itself.
         app.terminate()
-        launchFixture(extra: ["-pawSimAttachFails", "1"])
+        launchFixture(extra: failing)
+        inSettings(tapping: "sim-key-answers")
         tap("folder-web")
         tap("entry-github.com")
         pinField()
-        expectAbsent("key-sheet-retry", "The retry on opening read the key")
+        expectAbsent("key-sheet-retry", "Opening read the key again by itself")
     }
 }

@@ -75,8 +75,17 @@ final class StoreTests: PawUITestCase {
         attachment.name = "file-protection"
         attachment.lifetime = .keepAlways
         add(attachment)
-        XCTAssertTrue(summary.contains("other 0"), "No file should have a weaker class: \(summary)")
-        XCTAssertTrue(summary.contains("unset 0"), "Every file should have a protection class: \(summary)")
-        XCTAssertFalse(summary.hasPrefix("complete 0 "), "The store's files should be complete: \(summary)")
+        XCTAssertFalse(summary.hasPrefix("items 0 "), "The store should have files: \(summary)")
+        XCTAssertTrue(summary.contains("refused 0"), "Every item should take the complete class: \(summary)")
+        XCTAssertTrue(summary.contains("other 0"), "No item should read back a weaker class: \(summary)")
+        // The simulator's file system takes the class without recording it,
+        // so the read-back is checked only where it is recorded.
+        if !summary.hasSuffix("complete 0 · other 0 · unset \(itemCount(summary))") {
+            XCTAssertTrue(summary.hasSuffix("unset 0"), "Every item should read back complete: \(summary)")
+        }
+    }
+
+    private func itemCount(_ summary: String) -> String {
+        summary.split(separator: " ").dropFirst().first.map(String.init) ?? ""
     }
 }

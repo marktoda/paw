@@ -63,6 +63,14 @@ struct RootView: View {
             // test can wait for "0" instead of sleeping before it checks
             // that a cancelled open left nothing.
             KeyTasksSignal(tasks: model.pendingKeyTasks)
+            // And how many times the privacy cover has been drawn.
+            Text(verbatim: "\(PrivacyCoverLog.shared.shown)")
+                .font(.caption2)
+                .frame(width: 1, height: 1)
+                .opacity(0.02)
+                .accessibilityLabel("Privacy cover drawn")
+                .accessibilityValue("\(PrivacyCoverLog.shared.shown)")
+                .accessibilityIdentifier("sim-privacy-cover-shown")
         }
         #endif
     }
@@ -95,6 +103,8 @@ private struct ClosedEntryScreen: View {
         if let closed {
             VStack(spacing: PawMetrics.Spacing.l) {
                 EmptyState(symbol: PawSymbol.entry, title: title(closed), message: message(closed))
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(title(closed)). \(message(closed))")
                     .accessibilityIdentifier("entry-closed")
                 Button {
                     model.reopen(id)
@@ -149,10 +159,23 @@ private struct PrivacyCover: ViewModifier {
                     .accessibilityElement()
                     .accessibilityLabel("paw is hidden")
                     .accessibilityIdentifier("privacy-cover")
+                    #if DEBUG && targetEnvironment(simulator)
+                    .onAppear { PrivacyCoverLog.shared.shown += 1 }
+                    #endif
             }
         }
     }
 }
+
+#if DEBUG && targetEnvironment(simulator)
+/// For the UI tests: the cover is up only while paw is not active, when a
+/// test can't look at it, so it counts each time it is drawn.
+@MainActor @Observable
+final class PrivacyCoverLog {
+    static let shared = PrivacyCoverLog()
+    var shown = 0
+}
+#endif
 
 extension View {
     /// Covers the whole view whenever the scene is not active. Apply at the

@@ -19,8 +19,21 @@ enum Clipboard {
         nowMs = { clock.wallMs() }
     }
 
+    /// The system's own expiry, on real time. In the simulator the UI tests
+    /// can lengthen it (`-pawSimPasteboardSecs`): a test reads the
+    /// pasteboard more than 45 real seconds after copying, and checks paw's
+    /// own expiry on the simulated clock instead.
+    private static var systemLifetime: TimeInterval {
+        #if DEBUG && targetEnvironment(simulator)
+        if let seconds = LaunchArguments.int("pawSimPasteboardSecs") {
+            return TimeInterval(seconds)
+        }
+        #endif
+        return lifetime
+    }
+
     static func copy(_ value: String) {
-        let expiry = Date().addingTimeInterval(lifetime)
+        let expiry = Date().addingTimeInterval(systemLifetime)
         UIPasteboard.general.setItems(
             [[UTType.utf8PlainText.identifier: value]],
             options: [.localOnly: true, .expirationDate: expiry])

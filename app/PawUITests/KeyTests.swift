@@ -134,6 +134,9 @@ final class KeyTests: XCTestCase {
 
         expectResult(containing: "The key did not decrypt this")
         XCTAssertFalse(app.staticTexts["touch-prompt"].exists)
+        // Each run forgets the PIN typed for it; typed again, it runs again.
+        XCTAssertFalse(app.buttons["decrypt"].isEnabled, "The PIN should be cleared after a run")
+        enterPin("123456")
         XCTAssertTrue(app.buttons["decrypt"].isEnabled, "The screen should be usable again")
     }
 
@@ -146,10 +149,12 @@ final class KeyTests: XCTestCase {
         XCTAssertFalse(app.staticTexts["touch-prompt"].exists,
                        "A wrong PIN must never reach the touch step")
 
+        enterPin("000000")
         tapDecrypt()
         expectResult(containing: "Wrong PIN. 1 try left before the key locks.")
         snapshot("one-try-left")
 
+        enterPin("000000")
         tapDecrypt()
         expectResult(containing: "The PIN is locked.")
 

@@ -74,9 +74,13 @@ struct StoreLocation {
         return failures
     }
 
-    /// "complete 42 · other 0 · unset 0": the protection classes under
-    /// `root`, for the simulator's Settings readback.
+    /// "items 42 · refused 0 · complete 42 · other 0 · unset 0": every
+    /// item under `root`, how many refused `.complete` when set again now,
+    /// and the classes read back, for the simulator's Settings readback.
+    /// The simulator's file system accepts the class but does not record
+    /// it, so there every item reads back unset; a device records it.
     func protectionSummary() -> String {
+        let refused = protect()
         let manager = FileManager.default
         var complete = 0, other = 0, unset = 0
         for url in allItems() {
@@ -86,7 +90,7 @@ struct StoreLocation {
             default: other += 1
             }
         }
-        return "complete \(complete) · other \(other) · unset \(unset)"
+        return "items \(complete + other + unset) · refused \(refused) · complete \(complete) · other \(other) · unset \(unset)"
     }
 
     private func allItems() -> [URL] {

@@ -393,27 +393,17 @@ final class AppTests: PawUITestCase {
         openGitHubWithKey()
         app.buttons["password-reveal"].tap()
         expectValue("password-value", Self.githubPassword)
+        let cover = expect("sim-privacy-cover-shown")
+        let before = Int((cover.value as? String) ?? "") ?? 0
 
-        // Notification Center over paw: paw is inactive and the cover is up.
-        // A slow drag from the top edge, held at the end, is what the
-        // simulator reliably takes as the gesture; a quick one is sometimes
-        // read as a tap on the status bar.
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let cover = element("privacy-cover")
-        for attempt in 0..<5 where !cover.exists {
-            let x = [0.25, 0.4, 0.15, 0.3, 0.2][attempt]
-            let top = springboard.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.001))
-            let middle = springboard.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.75))
-            top.press(forDuration: 0.5, thenDragTo: middle, withVelocity: .slow, thenHoldForDuration: 0.5)
-            _ = cover.waitForExistence(timeout: 5)
-        }
-        expect("privacy-cover")
-        snapshot("cover")
-
-        // Then to the background and back: still masked, and the entry is
-        // still open (well inside the 2 minutes).
+        // To the background and back. On the way out paw is inactive first,
+        // and the cover goes up then, before iOS takes the app switcher's
+        // picture. A test can't see it while paw is away; paw counts it.
         backgroundAndReturn()
+        wait(for: "value != '\(before)'", on: cover, timeout: Self.patience,
+             "The privacy cover should have been drawn while paw was away")
         expectGone("privacy-cover")
+        // Still masked, and the entry is still open (well inside 2 minutes).
         expectValue("password-value", "hidden")
         expectLabel("entry-title", contains: "github.com")
         snapshot("hidden-after-background")
@@ -436,7 +426,6 @@ final class AppTests: PawUITestCase {
         expectGone("large-type-group-1")
 
         // Large Type closes when paw goes to the background.
-        app.buttons["password-reveal"].tap()
         app.buttons["password-large-type"].tap()
         expect("large-type-group-1")
         backgroundAndReturn()

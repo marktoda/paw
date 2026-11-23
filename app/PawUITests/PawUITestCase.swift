@@ -149,7 +149,22 @@ class PawUITestCase: XCTestCase {
             swipes += 1
         }
         XCTAssertTrue(found.exists, "\"\(identifier)\" should be on screen", file: file, line: line)
+        if swipes > 0 {
+            waitUntilStill(found)
+        }
         return found
+    }
+
+    /// A swipe leaves the list coasting, and a tap on a coasting list only
+    /// stops it: wait until the element is in the same place twice running.
+    private func waitUntilStill(_ found: XCUIElement) {
+        var last = found.frame
+        for _ in 0..<20 {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+            let now = found.frame
+            if now == last { return }
+            last = now
+        }
     }
 
     /// The keyboard covers it, though it counts as hittable.

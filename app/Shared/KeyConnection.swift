@@ -53,6 +53,14 @@ enum KeyConnection {
         SimulatedKeyHolder.shared.key.timeOutTouch()
         #endif
     }
+
+    /// The simulated key, failing its reads (`-pawSimAttachFails`), answers
+    /// from now on. Does nothing on a device.
+    static func simulateKeyAnswersAgain() {
+        #if DEBUG && targetEnvironment(simulator)
+        SimulatedKeyHolder.shared.stopAttachFailures()
+        #endif
+    }
 }
 
 #if targetEnvironment(simulator)
@@ -88,6 +96,12 @@ final class SimulatedKeyHolder: @unchecked Sendable {
         if startsUnplugged {
             key.unplug()
         }
+    }
+
+    /// From now on the key answers when read: whatever kept it from
+    /// answering has passed (it is still the same key, never replugged).
+    func stopAttachFailures() {
+        lock.withLock { attachFailuresLeft = 0 }
     }
 
     /// Whether this attach should fail, as `-pawSimAttachFails n` asks for

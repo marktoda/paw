@@ -160,8 +160,10 @@ final class GalleryTests: XCTestCase {
                 case "pinLastTry":
                     expectLabel("pin-tries-left", "1 try left before the key locks.")
                     XCTAssertEqual(app.buttons["pin-continue"].label, "Use last try")
-                    XCTAssertTrue(app.textFields["pin-field"].exists,
-                                  "With one try left the PIN is shown from the start")
+                    XCTAssertEqual(app.buttons["pin-show"].label, "Hide PIN",
+                                   "With one try left the PIN is shown from the start")
+                    XCTAssertTrue(app.secureTextFields["pin-field"].exists,
+                                  "Shown or not, the PIN field stays a secure field")
                 case "wrongPin":
                     expectLabel("pin-tries-left", "2 tries left before the key locks.")
                 case "touch":
@@ -204,9 +206,13 @@ final class GalleryTests: XCTestCase {
         snapshot("six-characters")
 
         app.buttons["pin-show"].tap()
-        let shown = app.textFields["pin-field"]
-        XCTAssertTrue(shown.waitForExistence(timeout: 5), "Show should turn the PIN into plain text")
-        XCTAssertEqual(shown.value as? String, "123456")
+        // Shown over the field, which stays secure: a plain field would let
+        // a third-party keyboard in.
+        let shown = app.descendants(matching: .any)["pin-shown"]
+        XCTAssertTrue(shown.waitForExistence(timeout: 5), "Show should show the PIN")
+        XCTAssertEqual(shown.label, "123456")
+        XCTAssertTrue(app.secureTextFields["pin-field"].exists, "The PIN field should stay a secure field")
+        XCTAssertFalse(app.textFields["pin-field"].exists, "Show must not swap in a plain text field")
         snapshot("pin-shown")
 
         button.tap()

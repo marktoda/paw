@@ -206,7 +206,8 @@ struct KeySheetContent: View {
                             .foregroundStyle(PawColor.label)
                             .lineLimit(1)
                             .allowsHitTesting(false)
-                            .accessibilityHidden(true)
+                            .accessibilityLabel(pin)
+                            .accessibilityIdentifier("pin-shown")
                     }
                 }
                 .textInputAutocapitalization(.never)

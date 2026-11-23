@@ -55,6 +55,11 @@ struct KeySheetHost: View {
     /// In the simulator, the key's touch timeout running out now.
     private var moreSimulatorActions: [SimulatorAction] {
         #if targetEnvironment(simulator)
+        if case .failed = stage, model.attachProblem != nil {
+            return [SimulatorAction(title: "let the key answer again", identifier: "simulated-key-answers") {
+                KeyConnection.simulateKeyAnswersAgain()
+            }]
+        }
         guard stage == .touch else { return [] }
         return [SimulatorAction(title: "time out the touch", identifier: "simulated-touch-timeout") {
             KeyConnection.simulateTouchTimeout()
@@ -138,6 +143,9 @@ private struct SimulatorSettingsSection: View {
             Button("Touch the simulated key") { KeyConnection.simulateTouch() }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-touch-key")
+            Button("Let the key answer when read") { KeyConnection.simulateKeyAnswersAgain() }
+                .foregroundStyle(PawColor.label)
+                .accessibilityIdentifier("sim-key-answers")
             Button("Let the next open finish after Cancel") { model.simulatesLateCancelNext = true }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-late-cancel-next")

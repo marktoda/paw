@@ -70,6 +70,23 @@ struct EntryScreen: View {
                     .listRowBackground(Color.clear)
                 }
             }
+            Section {
+                if let notes, !notes.isEmpty {
+                    Text(notes)
+                        .font(PawFont.body)
+                        .foregroundStyle(PawColor.label)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("entry-notes")
+                }
+            } header: {
+                if notes?.isEmpty == false {
+                    PawSectionHeader("Notes")
+                }
+            } footer: {
+                Text(footer)
+                    .font(PawFont.footnote)
+                    .foregroundStyle(PawColor.labelSecondary)
+            }
             #if DEBUG && targetEnvironment(simulator)
             if model.simulator != nil {
                 // Stand-ins for the iPhone locking and time passing while
@@ -89,23 +106,6 @@ struct EntryScreen: View {
                 .listRowBackground(Color.clear)
             }
             #endif
-            Section {
-                if let notes, !notes.isEmpty {
-                    Text(notes)
-                        .font(PawFont.body)
-                        .foregroundStyle(PawColor.label)
-                        .textSelection(.enabled)
-                        .accessibilityIdentifier("entry-notes")
-                }
-            } header: {
-                if notes?.isEmpty == false {
-                    PawSectionHeader("Notes")
-                }
-            } footer: {
-                Text(footer)
-                    .font(PawFont.footnote)
-                    .foregroundStyle(PawColor.labelSecondary)
-            }
         }
         .listStyle(.insetGrouped)
         .contentMargins(.top, 0, for: .scrollContent)
