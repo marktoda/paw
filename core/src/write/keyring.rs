@@ -640,25 +640,52 @@ impl Keyring {
         self.save()
     }
 
-    /// After setup's test decrypt: binds the one line of the top-level
-    /// `.gpg-id` that no pinned key satisfies to the card's key
-    /// `card_fingerprint` (already pinned). Returns the lines bound: none if
-    /// every line was already satisfied, or if a line already means the
-    /// card's key (the open ones are then other recipients, whose keys
-    /// have to be imported). If several lines are unsatisfied,
-    /// paw cannot tell which is the card's, and the person has to choose
-    /// ([`Self::bind`]); that is [`WriteError::MissingRecipients`].
-    pub fn bind_card_after_test_decrypt(
+    /// After setup's test decrypt opened `entry` (a path in the store,
+    /// with or without `.gpg`) whose bytes are `ciphertext`: binds the card's
+    /// key `card_fingerprint` (already pinned) to the one line of the
+    /// `.gpg-id` that governs that entry which no pinned key satisfies.
+    /// Binds nothing, and returns no lines, unless the entry's own recipient
+    /// packets name the card's key (a hidden recipient proves nothing about
+    /// which line is the card's) and no line of that `.gpg-id` already
+    /// means the card. If several lines are open, the person has to choose
+    /// ([`Self::bind`]); that is [`WriteError::MissingRecipients`]. Lines of
+    /// other `.gpg-id` files are never bound: a top-level line naming a
+    /// team key is not the card's because a folder below names the owner.
+    pub fn bind_card_for_opened_entry(
         &mut self,
         root: &Path,
         card_fingerprint: &str,
+        entry: &str,
+        ciphertext: &[u8],
         now: u32,
     ) -> Result<Vec<String>, WriteError> {
+        use crate::recipients::{Recipient, entry_recipients};
         let card_fingerprint = card_fingerprint.trim().to_ascii_uppercase();
         if !self.keys.iter().any(|k| k.fingerprint == card_fingerprint && k.source == KeySource::Card) {
             return Err(WriteError::NotPinned { fingerprint: card_fingerprint });
         }
-        let recipients = self.folder_recipients(root, "", now)?;
+        let names_card = entry_recipients(ciphertext).is_ok_and(|found| {
+            found.keys.iter().any(|recipient| match recipient {
+                Recipient::KeyId { id } => key_id(&card_fingerprint) == Some(id.as_str()),
+                Recipient::Fingerprint { fingerprint } => *fingerprint == card_fingerprint,
+                Recipient::Hidden => false,
+            })
+        });
+        if !names_card {
+            return Ok(Vec::new());
+        }
+        let folder = entry.rsplit_once('/').map_or("", |(folder, _)| folder);
+        let recipients = self.folder_recipients(root, folder, now)?;
+        self.bind_one_open_line(recipients, &card_fingerprint)
+    }
+
+    /// Binds the card to the one open line of `recipients`, unless a line
+    /// already means it; see [`Self::bind_card_for_opened_entry`].
+    fn bind_one_open_line(
+        &mut self,
+        recipients: FolderRecipients,
+        card_fingerprint: &str,
+    ) -> Result<Vec<String>, WriteError> {
         // A line already means the card's key (it names it, or was bound
         // before): every line still open is someone else's, and binding one
         // of them to the card would encrypt to fewer keys than `.gpg-id`
@@ -679,11 +706,38 @@ impl Keyring {
         match open.as_slice() {
             [] => Ok(Vec::new()),
             [line] => {
-                self.bind(line, &card_fingerprint)?;
+                self.bind(line, card_fingerprint)?;
                 Ok(open)
             }
             _ => Err(WriteError::MissingRecipients { gpg_id: recipients.gpg_id, missing: open }),
         }
+    }
+
+    /// Binds the one line of the top-level
+    /// `.gpg-id` that no pinned key satisfies to the card's key
+    /// `card_fingerprint` (already pinned). Returns the lines bound: none if
+    /// every line was already satisfied, or if a line already means the
+    /// card's key (the open ones are then other recipients, whose keys
+    /// have to be imported). If several lines are unsatisfied,
+    /// paw cannot tell which is the card's, and the person has to choose
+    /// ([`Self::bind`]); that is [`WriteError::MissingRecipients`].
+    ///
+    /// It does not know which entry the card opened, so with a top-level
+    /// line naming another key and a folder below naming the owner it binds
+    /// the wrong line. Setup uses [`Self::bind_card_for_opened_entry`];
+    /// this stays for the exported `StoreWriter.bind_card_after_test_decrypt`.
+    pub fn bind_card_after_test_decrypt(
+        &mut self,
+        root: &Path,
+        card_fingerprint: &str,
+        now: u32,
+    ) -> Result<Vec<String>, WriteError> {
+        let card_fingerprint = card_fingerprint.trim().to_ascii_uppercase();
+        if !self.keys.iter().any(|k| k.fingerprint == card_fingerprint && k.source == KeySource::Card) {
+            return Err(WriteError::NotPinned { fingerprint: card_fingerprint });
+        }
+        let recipients = self.folder_recipients(root, "", now)?;
+        self.bind_one_open_line(recipients, &card_fingerprint)
     }
 }
 

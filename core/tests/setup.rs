@@ -18,6 +18,7 @@ use paw_core::sim::{SimOptions, SimulatedKey};
 use paw_core::ssh::{CardSigner, card_ssh_public_key};
 use paw_core::sync::hosts::{self, GITHUB_HOST_KEYS, KnownHosts};
 use paw_core::sync::{Connection, HostKeyPin};
+use paw_core::write::LineStatus;
 use paw_core::{ApduTransport, KeyTouch, card_info};
 use support::{GitServer, git};
 
@@ -669,4 +670,107 @@ fn a_known_hosts_entry_is_only_replaced_by_forgetting_it() {
     let pin = known.lookup("git.example.org", 22).unwrap().unwrap();
     assert_eq!(pin.lines(), [HostKeyPin::parse(&support::ecdsa_host_key()).unwrap().lines()[0].clone()]);
     assert!(known.lookup("git.example.org", 2222).unwrap().is_none());
+}
+
+// --- which .gpg-id line setup binds to the card -----------------------------
+
+/// Pushes `files`, each `(path, contents)`, from the desktop.
+fn push_files(server: &GitServer, files: &[(&str, Vec<u8>)]) {
+    let desktop = server.desktop();
+    for (path, contents) in files {
+        let file = desktop.path().join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, contents).unwrap();
+    }
+    git(desktop.path(), &["add", "-A"]);
+    git(desktop.path(), &["commit", "--quiet", "-m", "The store."]);
+    git(desktop.path(), &["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
+}
+
+fn encrypted_for(keys: &[pgp::packet::PublicKey], text: &str) -> Vec<u8> {
+    paw_core::encrypt_to_keys(rand::thread_rng(), keys, text.as_bytes()).unwrap()
+}
+
+/// Sets up `server`'s store with `card` and returns the state directory.
+fn set_up(card: &Arc<SimulatedKey>, server: &GitServer) -> tempfile::TempDir {
+    let state = tempfile::tempdir().unwrap();
+    let events = events(card, false);
+    let mut flow = at_need_pin(state.path(), card, server);
+    download(&mut flow, card, &events).unwrap();
+    let done = flow.test_decrypt(card.clone(), PIN, events.clone()).unwrap();
+    assert!(matches!(done, SetupState::Done { .. }), "{done:?}");
+    state
+}
+
+#[test]
+fn a_team_line_at_the_top_is_not_bound_to_the_card_that_opened_a_personal_entry() {
+    let card = card(false);
+    let server = GitServer::start(&[authorised(&card)]);
+    let mine = paw_core::card_decryption_key(card.clone()).unwrap();
+    let team = paw_core::sim::fixture::other_key().unwrap();
+    // The top names a team key paw has not got; `personal/` names the owner
+    // by a line that does not name the card's subkey by itself.
+    push_files(
+        &server,
+        &[
+            (".gpg-id", b"team@example.com\n".to_vec()),
+            ("shared.gpg", encrypted_for(&[team], "team secret\n")),
+            ("personal/.gpg-id", b"owner@example.com\n".to_vec()),
+            ("personal/bank.gpg", encrypted_for(&[mine], "mine\n")),
+        ],
+    );
+
+    let state = set_up(&card, &server);
+
+    let flow = SetupFlow::open(state.path()).unwrap();
+    let keyring = paw_core::write::Keyring::open(state.path()).unwrap();
+    assert_eq!(keyring.line_status("team@example.com", 0), LineStatus::Missing);
+    assert!(matches!(keyring.line_status("owner@example.com", 0), LineStatus::Ready { bound: true, .. }));
+    let readiness = flow.write_readiness().unwrap();
+    assert!(!readiness.can_save);
+    assert_eq!(readiness.missing_recipients, ["team@example.com"]);
+    assert!(readiness.folders_needing_keys.is_empty(), "{readiness:?}");
+}
+
+#[test]
+fn the_one_line_of_the_gpg_id_that_governs_the_opened_entry_is_bound() {
+    let card = card(false);
+    let server = GitServer::start(&[authorised(&card)]);
+    let mine = paw_core::card_decryption_key(card.clone()).unwrap();
+    push_files(
+        &server,
+        &[(".gpg-id", b"owner@example.com\n".to_vec()), ("bank.gpg", encrypted_for(&[mine], "mine\n"))],
+    );
+
+    let state = set_up(&card, &server);
+
+    let keyring = paw_core::write::Keyring::open(state.path()).unwrap();
+    assert!(matches!(keyring.line_status("owner@example.com", 0), LineStatus::Ready { bound: true, .. }));
+    let readiness = SetupFlow::open(state.path()).unwrap().write_readiness().unwrap();
+    assert!(readiness.can_save, "{readiness:?}");
+}
+
+#[test]
+fn nothing_is_bound_when_the_opened_entry_does_not_name_the_card() {
+    let card = card(false);
+    let server = GitServer::start(&[authorised(&card)]);
+    let mine = paw_core::card_decryption_key(card.clone()).unwrap();
+    let hidden = {
+        // A hidden recipient: the packet does not say which key it is for.
+        let mut bytes = encrypted_for(&[mine], "mine\n");
+        // A v3 PKESK: tag, length, version 3, then the eight key-ID bytes.
+        let start = if bytes[0] & 0x40 != 0 { 2 } else { 2 + (bytes[0] & 3) as usize };
+        let start = if bytes[0] & 0x40 != 0 && bytes[1] >= 192 { 3 } else { start };
+        assert_eq!(bytes[start], 3, "expected a v3 recipient packet");
+        bytes[start + 1..start + 9].fill(0);
+        bytes
+    };
+    push_files(&server, &[(".gpg-id", b"owner@example.com\n".to_vec()), ("bank.gpg", hidden)]);
+
+    let state = set_up(&card, &server);
+
+    let keyring = paw_core::write::Keyring::open(state.path()).unwrap();
+    assert_eq!(keyring.line_status("owner@example.com", 0), LineStatus::Missing);
+    let readiness = SetupFlow::open(state.path()).unwrap().write_readiness().unwrap();
+    assert_eq!(readiness.missing_recipients, ["owner@example.com"]);
 }

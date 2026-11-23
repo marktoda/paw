@@ -743,9 +743,10 @@ impl SetupFlow {
     /// key, then setup is done.
     ///
     /// - The card's decryption key (`card_key`) is pinned, and bound to the
-    ///   top-level `.gpg-id` line it answers for if no pinned key satisfies
-    ///   that line yet. If paw cannot tell which line is the card's, nothing
-    ///   is bound and [`Self::write_readiness`] says what is missing.
+    ///   one unsatisfied line of the `.gpg-id` that governs `entry`, if the
+    ///   entry's recipient packets name the card's key and no line of that
+    ///   file already means it. If paw cannot tell which line is the card's,
+    ///   nothing is bound and [`Self::write_readiness`] says what is missing.
     /// - Every `.gpg-id` is accepted as it is now.
     /// - The key's identity is recorded, so the PIN goes to no other card.
     pub(crate) fn finish_test_decrypt(
@@ -776,7 +777,12 @@ impl SetupFlow {
         let repo = self.repo_dir();
         let mut keyring = Keyring::open(&self.dir).map_err(write_failed)?;
         let fingerprint = keyring.pin_card_key(card_key).map_err(write_failed)?;
-        match keyring.bind_card_after_test_decrypt(&repo, &fingerprint, crate::write::now_secs()) {
+        // Only the `.gpg-id` that governs the entry just opened, and only if
+        // that entry names the card's key, says which line is the card's.
+        let store = PassStore::open(repo.to_string_lossy().into_owned()).map_err(failed)?;
+        let ciphertext = store.read_entry(&entry).map_err(failed)?;
+        let bound = keyring.bind_card_for_opened_entry(&repo, &fingerprint, &entry, &ciphertext, crate::write::now_secs());
+        match bound {
             // Several unknown lines: the person picks the card's later.
             Ok(_) | Err(WriteError::MissingRecipients { .. }) => {}
             Err(e) => return Err(write_failed(e)),
