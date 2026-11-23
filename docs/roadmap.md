@@ -32,7 +32,7 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 | Raw card checks on the test screen | core + app | done |
 | Exact touch policy per slot | core | done |
 | Keep the simulated key and fixture out of device builds (cargo feature, device-library scan in CI) | foundations | next |
-| App Group container and shared keychain group for app and extension, checked in the simulator | foundations | next |
+| App Group container and shared keychain group for app and extension | foundations | the owner registered `group.com.marktoda.paw` on both identifiers (2026-11-23); both provisioning profiles carry it; moving the store into it is part of the AutoFill track |
 | Key session in the core: one object per plugged-in key, PIN held for the session and forgotten after 15 minutes in the background, cancel, structured errors | key-session | done |
 | Key task state machine (plug in, PIN, touch, working, done) driving the real key sheet | key-session, then screens | core done; Swift half next |
 | Touch-timeout status word from the real key | device | blocked on the owner running one check |
