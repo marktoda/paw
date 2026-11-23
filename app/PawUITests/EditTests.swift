@@ -198,13 +198,19 @@ final class EditTests: PawUITestCase {
         XCTAssertEqual((expect("form-password").value as? String)?.count, 8)
         snapshot("generator-options")
 
-        // A synthesized drag to the end can stop a step or two short: read the
-        // length the slider settled on rather than assuming 64.
-        slider.adjust(toNormalizedSliderPosition: 1)
-        let settled = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value MATCHES %@", "^(4[89]|5[0-9]|6[0-4]) characters$"), object: slider)
-        XCTAssertEqual(XCTWaiter().wait(for: [settled], timeout: 10), .completed,
-                       "The slider should move to a long length, it shows \(slider.value ?? "nothing")")
+        // A synthesized drag to the end can stop a step or two short, and
+        // stops far short when it starts while the list is still moving
+        // after Generate (once it left the slider at 28): bring the slider
+        // to rest on screen first, then read the length it settled on
+        // rather than assuming 64. A drag cut short is dragged again.
+        let long = NSPredicate(format: "value MATCHES %@", "^(4[89]|5[0-9]|6[0-4]) characters$")
+        for _ in 0..<3 where !long.evaluate(with: slider) {
+            scrollTo("form-length")
+            slider.adjust(toNormalizedSliderPosition: 1)
+            _ = XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: long, object: slider)], timeout: 5)
+        }
+        XCTAssertTrue(long.evaluate(with: slider),
+                      "The slider should move to a long length, it shows \(slider.value ?? "nothing")")
         expectLabel("form-strength", contains: "very strong")
         // Compare live values: the slider may still be settling as this runs.
         let password = element("form-password")
