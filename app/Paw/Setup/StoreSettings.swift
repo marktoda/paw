@@ -14,7 +14,7 @@ struct StoreSettingsSections: View {
         if let controls {
             if !controls.copiesAvailable {
                 Section {
-                    Text("Face ID copies aren't available on a real iPhone yet, so every password opens with your key.")
+                    Text("Face ID copies can't be kept on this iPhone, so every password opens with your key.")
                         .font(PawFont.footnote)
                         .foregroundStyle(PawColor.labelSecondary)
                         .accessibilityIdentifier("settings-no-copies")

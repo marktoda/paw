@@ -634,7 +634,16 @@ final class SetupModel {
             state = try setup.lastTaskResult()
         } catch {
             state = setup.state()
-            show(error, during: purpose == .download ? .downloading : .checkingKey)
+            let refused = purpose == .download ? setup.refusedRemote() : []
+            if refused.isEmpty {
+                show(error, during: purpose == .download ? .downloading : .checkingKey)
+            } else {
+                problem = SetupProblem(
+                    problem: "Your store holds something paw won't put on this iPhone",
+                    nextStep: "Nothing was checked out. Rename or remove these on a computer, push, then try again.",
+                    details: refused.map { "\($0.path): \($0.reason)" },
+                    action: .retry, actionTitle: "Try again")
+            }
         }
         if purpose == .download {
             simulator?.downloadFailed()

@@ -104,11 +104,9 @@ final class StoreRootModel {
                 startsUnplugged: held.startsUnplugged && keyPort.session() == nil,
                 awayMs: UInt64(max(away, 0)))
             #else
-            // Face ID copies wait until the Secure Enclave keystore
-            // (PlatformCopies) has been checked on the owner's phone: until
-            // then every open uses the key. Turning them on is
-            // `PlatformCopies.make(dir: location.copiesDir.path)` here.
-            let copies: CopyCache? = nil
+            // Face ID copies in the Secure Enclave; `nil` where it can't be
+            // used, and then every open uses the key (Settings says so).
+            let copies = PlatformCopies.make(dir: location.copiesDir.path)
             let simulator: SimulatorControls? = nil
             #endif
             let model = AppModel(
