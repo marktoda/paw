@@ -238,3 +238,49 @@ fn a_paw_delete_of_an_entry_the_desktop_edited_is_dropped() {
     assert_eq!(w.decrypt(&w.repo(), "Work/Jira"), "jira v2\n");
     assert!(queued(&w).is_empty());
 }
+
+#[test]
+fn a_waiting_change_is_not_pushed_after_its_recipients_changed() {
+    let w = world();
+    w.write().save(&new_entry("Work", "new", "new-pw")).unwrap();
+    assert!(queue::held_back(&w.repo(), w.state.path()).unwrap().is_empty());
+    // Meanwhile the desktop adds a recipient for the whole store.
+    let card_fpr = w.card.fingerprint_hex();
+    let other_fpr = hex(paw_core::sim::fixture::other_key().unwrap().fingerprint().as_bytes());
+    w.desktop_push(&[(".gpg-id", format!("{card_fpr}\n{other_fpr}\n").into_bytes())], "Add a recipient.");
+    let desktop_tip = w.server.tip();
+    let send = || operation::send_checked(&w.server.remote(), &signer(&w.card), &w.repo(), w.state.path()).unwrap();
+
+    let report = send();
+
+    assert_eq!(report.state, SyncState::Waiting { unpushed: 1 });
+    assert_eq!(report.pushed, 0);
+    assert_eq!(w.server.tip(), desktop_tip, "nothing was pushed");
+    assert_eq!(report.integration.recipients_changed.len(), 1, "{report:?}");
+    let held = queue::held_back(&w.repo(), w.state.path()).unwrap();
+    assert_eq!(held.len(), 1, "{held:?}");
+    assert_eq!(held[0].entry, "Work/new");
+    assert_eq!(held[0].gpg_id, ".gpg-id");
+    assert_eq!(held[0].encrypted_for, [format!("key ID {}", &card_fpr[24..])]);
+    assert_eq!(held[0].recipients, [card_fpr.clone(), other_fpr.clone()]);
+    assert!(!held[0].accepted);
+
+    // Accepting the new recipients does not make the old ciphertext right.
+    Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Work").unwrap();
+    let held = queue::held_back(&w.repo(), w.state.path()).unwrap();
+    assert!(held.len() == 1 && held[0].accepted, "{held:?}");
+    assert_eq!(send().state, SyncState::Waiting { unpushed: 1 });
+    assert_eq!(w.server.tip(), desktop_tip);
+
+    // Saved again for both recipients, with the old change taken back: sent.
+    let mut again = w.open("Work/new");
+    again.set_password("newer-pw");
+    w.write().save(&again).unwrap();
+    queue::discard(&w.repo(), &held[0].id).unwrap();
+    assert!(queue::held_back(&w.repo(), w.state.path()).unwrap().is_empty());
+    let report = send();
+    assert_eq!(report.state, SyncState::UpToDate);
+    assert_eq!(report.pushed, 1);
+    git(w.desktop.path(), &["pull", "--quiet", "--ff-only"]);
+    assert_eq!(w.decrypt(w.desktop.path(), "Work/new"), "newer-pw\n");
+}

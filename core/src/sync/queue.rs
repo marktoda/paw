@@ -9,7 +9,7 @@ use std::path::Path;
 use git2::{Oid, Repository};
 
 use super::history::{
-    ChangeKind, PawCommit, Replay, ensure_clean, last_seen_ref, move_branch, paw_commits,
+    Change, ChangeKind, PawCommit, Replay, ensure_clean, last_seen_ref, move_branch, paw_commits,
 };
 use super::{SyncError, current_branch, git_err};
 
@@ -104,4 +104,106 @@ pub fn discard_all(dir: &Path) -> Result<(), SyncError> {
     ensure_clean(&repo)?;
     let base = oldest.commit.parent_id(0).map_err(git_err)?;
     move_branch(&repo, &local.branch, local.head, base, None, "paw: discard all changes")
+}
+
+/// A waiting change whose ciphertext is not encrypted for exactly the
+/// recipients its entry has now: its `.gpg-id` changed after it was saved
+/// (a pull brought a new one, or it was moved), or the new recipients are
+/// not accepted yet. paw does not push it: the ciphertext would reach the
+/// remote, and its history, encrypted for the wrong people.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct HeldBack {
+    /// The waiting change, as in [`QueueItem::id`].
+    pub id: String,
+    pub entry: String,
+    /// The `.gpg-id` that governs the entry now, e.g. `work/.gpg-id`; empty
+    /// if none does.
+    pub gpg_id: String,
+    /// Who the waiting ciphertext is encrypted for, as recipients are
+    /// described elsewhere ("key ID 0123...").
+    pub encrypted_for: Vec<String>,
+    /// The key lines of that `.gpg-id` now.
+    pub recipients: Vec<String>,
+    /// The person has accepted those recipients on this device. Until they
+    /// have, paw cannot encrypt to them either.
+    pub accepted: bool,
+}
+
+/// Whether `found` names exactly the keys of `keys`, no more, no fewer,
+/// and nothing hidden or passphrase-only.
+fn encrypted_for_exactly(found: &crate::recipients::EntryRecipients, keys: &[pgp::packet::PublicKey]) -> bool {
+    use crate::recipients::Recipient;
+    let fingerprints: Vec<String> = keys.iter().map(crate::write::cert::fingerprint_of).collect();
+    let names = |recipient: &Recipient, fingerprint: &str| match recipient {
+        Recipient::KeyId { id } => fingerprint.len() == 40 && fingerprint.ends_with(id.as_str()),
+        Recipient::Fingerprint { fingerprint: named } => named == fingerprint,
+        Recipient::Hidden => false,
+    };
+    !found.passphrase
+        && found.keys.iter().all(|r| fingerprints.iter().any(|f| names(r, f)))
+        && fingerprints.iter().all(|f| found.keys.iter().any(|r| names(r, f)))
+}
+
+/// The waiting changes paw will not push, oldest first: each whose
+/// ciphertext is not encrypted for exactly the recipients its `.gpg-id`
+/// names now, as accepted in the keyring of `state_dir` (see [`HeldBack`]).
+/// Empty if the store's recipients were never recorded (no setup), as
+/// nothing paw saved was then pinned to them.
+///
+/// What to do with one: its text has to be encrypted again for the new
+/// recipients, which needs the key. Accept the new recipients, then open
+/// the entry and save it again (or take the change back with [`discard`]
+/// and make it again); the old waiting change has to be discarded either
+/// way, since pushing it would put the old ciphertext in the history.
+pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncError> {
+    let failed = |e: crate::write::WriteError| SyncError::Failed { message: e.to_string() };
+    let keyring = crate::write::Keyring::open(state_dir).map_err(failed)?;
+    let repo = super::guard::open(dir)?;
+    let local = local(&repo)?;
+    let now = crate::write::now_secs();
+    let mut held = Vec::new();
+    for commit in &local.commits {
+        let (path, blob) = match &commit.change {
+            Change::Write { path, blob } | Change::Rename { to: path, blob, .. } => (path, blob.0),
+            Change::Delete { .. } => continue,
+        };
+        if !path.ends_with(".gpg") {
+            continue;
+        }
+        let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
+        let bytes = repo.find_blob(blob).map_err(git_err)?.content().to_vec();
+        let found = crate::recipients::entry_recipients(&bytes).ok();
+        let encrypted_for: Vec<String> = found
+            .as_ref()
+            .map(|f| f.keys.iter().map(crate::recipients::Recipient::describe).collect())
+            .unwrap_or_default();
+        let hold = |gpg_id: String, recipients: Vec<String>, accepted: bool| HeldBack {
+            id: commit.commit.id().to_string(),
+            entry: commit.entry(),
+            gpg_id,
+            encrypted_for: encrypted_for.clone(),
+            recipients,
+            accepted,
+        };
+        let recipients = match keyring.folder_recipients(dir, folder, now) {
+            Ok(recipients) => recipients,
+            Err(_) => {
+                held.push(hold(String::new(), Vec::new(), false));
+                continue;
+            }
+        };
+        if !recipients.confirmed {
+            return Ok(Vec::new());
+        }
+        let accepted = !recipients.changed;
+        let exact = accepted
+            && found.as_ref().is_some_and(|found| {
+                keyring.resolve(dir, folder, now).is_ok_and(|keys| encrypted_for_exactly(found, &keys))
+            });
+        if !exact {
+            let lines = recipients.lines.into_iter().map(|line| line.line).collect();
+            held.push(hold(recipients.gpg_id, lines, accepted));
+        }
+    }
+    Ok(held)
 }

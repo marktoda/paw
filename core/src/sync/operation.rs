@@ -111,10 +111,19 @@ fn stopped() -> SyncError {
     SyncError::Failed { message: "stopped".into() }
 }
 
+/// Whether any waiting change is held back (see [`super::queue::held_back`]).
+fn holding_back(dir: &Path, state_dir: Option<&Path>) -> Result<bool, SyncError> {
+    match state_dir {
+        Some(state_dir) => Ok(!super::queue::held_back(dir, state_dir)?.is_empty()),
+        None => Ok(false),
+    }
+}
+
 fn run(
     remote: &Remote,
     signer: &dyn SshSigner,
     dir: &Path,
+    state_dir: Option<&Path>,
     send: bool,
     stop: &dyn Fn() -> bool,
 ) -> Result<SyncReport, SyncError> {
@@ -143,7 +152,9 @@ fn run(
     if send && waiting > 0 && stop() {
         return Err(stopped());
     }
-    if !send || waiting == 0 {
+    // A waiting change encrypted for recipients its entry no longer has
+    // is not sent: nothing is, until the person has dealt with it.
+    if !send || waiting == 0 || holding_back(dir, state_dir)? {
         let state = if waiting == 0 { SyncState::UpToDate } else { SyncState::Waiting { unpushed: waiting } };
         return Ok(finish(report, state));
     }
@@ -159,6 +170,9 @@ fn run(
                 return Ok(finish(report, SyncState::RemoteReplaced { replaced }));
             }
             waiting = unpushed(dir)?;
+            if waiting > 0 && holding_back(dir, state_dir)? {
+                return Ok(finish(report, SyncState::Waiting { unpushed: waiting }));
+            }
             if waiting > 0 {
                 match push(&connection, dir) {
                     Err(PawError::NotFastForward) => return Err(SyncError::RemoteKeptMoving),
@@ -173,14 +187,28 @@ fn run(
 }
 
 /// Fetches, integrates and pushes on one login. Retries once, on the same
-/// connection, if the remote moved before the push.
+/// connection, if the remote moved before the push. Does not check the
+/// waiting changes' recipients: the app uses [`send_checked`].
 pub fn send(remote: &Remote, signer: &dyn SshSigner, dir: &Path) -> Result<SyncReport, SyncError> {
-    run(remote, signer, dir, true, &|| false)
+    run(remote, signer, dir, None, true, &|| false)
+}
+
+/// [`send`] for the store whose state directory is `state_dir`: after
+/// integrating, if any waiting change is not encrypted for exactly its
+/// entry's accepted recipients ([`super::queue::held_back`]), nothing is
+/// pushed and the state is [`SyncState::Waiting`].
+pub fn send_checked(
+    remote: &Remote,
+    signer: &dyn SshSigner,
+    dir: &Path,
+    state_dir: &Path,
+) -> Result<SyncReport, SyncError> {
+    run(remote, signer, dir, Some(state_dir), true, &|| false)
 }
 
 /// Fetches and integrates on one login; pushes nothing.
 pub fn refresh(remote: &Remote, signer: &dyn SshSigner, dir: &Path) -> Result<SyncReport, SyncError> {
-    run(remote, signer, dir, false, &|| false)
+    run(remote, signer, dir, None, false, &|| false)
 }
 
 /// [`send`] (or [`refresh`] if `push` is false) that stops between steps
@@ -189,8 +217,9 @@ pub(crate) fn run_until(
     remote: &Remote,
     signer: &dyn SshSigner,
     dir: &Path,
+    state_dir: &Path,
     push: bool,
     stop: &dyn Fn() -> bool,
 ) -> Result<SyncReport, SyncError> {
-    run(remote, signer, dir, push, stop)
+    run(remote, signer, dir, Some(state_dir), push, stop)
 }

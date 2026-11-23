@@ -33,7 +33,7 @@ use crate::sync::{Cloned, Connection};
 use crate::{KeyTouch, PawError};
 use crate::sync::hosts::pin_for;
 use crate::sync::operation::{self, SyncReport};
-use crate::sync::queue::{self, QueueItem};
+use crate::sync::queue::{self, HeldBack, QueueItem};
 use crate::sync::{IntegrateReport, RefusedPath, SyncError, accept_replaced_remote};
 
 /// Told how a download is going.
@@ -324,7 +324,7 @@ impl StoreSync {
         &self,
         connection: Arc<dyn CardConnection>,
         pin: String,
-        run: fn(&crate::sync::Remote, &dyn crate::ssh::SshSigner, &std::path::Path) -> Result<SyncReport, SyncError>,
+        run: fn(&crate::sync::Remote, &dyn crate::ssh::SshSigner, &std::path::Path, &std::path::Path) -> Result<SyncReport, SyncError>,
     ) -> Result<SyncReport, SyncError> {
         let pin = Zeroizing::new(pin);
         let remote = self.remote()?;
@@ -337,7 +337,7 @@ impl StoreSync {
             }
         })?;
         drop(pin);
-        let report = run(&remote, &signer, &self.repo());
+        let report = run(&remote, &signer, &self.repo(), &self.state_dir);
         if report.as_ref().is_ok_and(|r| r.signatures > 0) {
             *self.last_login.lock().unwrap_or_else(|p| p.into_inner()) = Some(Instant::now());
         }
@@ -364,7 +364,7 @@ impl StoreSync {
                 }
             };
             let stop = || task.cancelled();
-            let result = operation::run_until(&remote, &signer, &sync.repo(), push, &stop);
+            let result = operation::run_until(&remote, &signer, &sync.repo(), &sync.state_dir, push, &stop);
             if task.cancelled() {
                 return Err(Halt::Fail(KeyError::Cancelled));
             }
@@ -419,12 +419,12 @@ impl StoreSync {
 
     /// "Send": fetch, integrate and push on one login.
     pub fn send(&self, connection: Arc<dyn CardConnection>, pin: String) -> Result<SyncReport, SyncError> {
-        self.with_card(connection, pin, operation::send)
+        self.with_card(connection, pin, operation::send_checked)
     }
 
     /// Fetch and integrate on one login, pushing nothing.
     pub fn refresh(&self, connection: Arc<dyn CardConnection>, pin: String) -> Result<SyncReport, SyncError> {
-        self.with_card(connection, pin, operation::refresh)
+        self.with_card(connection, pin, |remote, signer, dir, _| operation::refresh(remote, signer, dir))
     }
 
     /// "Send" as a key task (sign-in, `Push`): fetch, integrate and push on
@@ -452,6 +452,18 @@ impl StoreSync {
     /// The "not yet pushed" list, newest first.
     pub fn unpushed(&self) -> Result<Vec<QueueItem>, SyncError> {
         queue::unpushed(&self.repo())
+    }
+
+    /// The waiting changes "Send" will not push, because their ciphertext
+    /// is not encrypted for exactly the recipients their entry has now (its
+    /// `.gpg-id` changed, or the change is not accepted yet). While any is
+    /// listed, a send fetches and integrates but pushes nothing and ends
+    /// `Waiting`. Show each entry with who it is encrypted for and who it
+    /// should be for; the person accepts the new recipients, then saves the
+    /// entry again (re-encrypting it, which needs the key) and discards the
+    /// old waiting change, or discards it outright.
+    pub fn held_back(&self) -> Result<Vec<HeldBack>, SyncError> {
+        queue::held_back(&self.repo(), &self.state_dir)
     }
 
     pub fn discard(&self, id: String) -> Result<Vec<QueueItem>, SyncError> {
