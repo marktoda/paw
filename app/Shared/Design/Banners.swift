@@ -17,6 +17,8 @@ struct UnpushedBanner: View {
     let detail: String
     var action: () -> Void = {}
 
+    @Environment(\.dynamicTypeSize) private var typeSize
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 14) {
@@ -34,11 +36,14 @@ struct UnpushedBanner: View {
                 }
                 .multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                // It opens the list of changes.
-                Image(systemName: PawSymbol.disclosure)
-                    .font(PawFont.footnote.weight(.semibold))
-                    .foregroundStyle(reason == .waitingForKey ? PawColor.onPanelSecondary : PawColor.labelTertiary)
-                    .accessibilityHidden(true)
+                // It opens the list of changes. At the largest sizes the
+                // words need the room more than the chevron does.
+                if !typeSize.isAccessibilitySize {
+                    Image(systemName: PawSymbol.disclosure)
+                        .font(PawFont.footnote.weight(.semibold))
+                        .foregroundStyle(reason == .waitingForKey ? PawColor.onPanelSecondary : PawColor.labelTertiary)
+                        .accessibilityHidden(true)
+                }
             }
             .padding(.horizontal, PawMetrics.Spacing.l)
             .padding(.vertical, PawMetrics.Spacing.m)

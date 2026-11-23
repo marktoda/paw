@@ -50,8 +50,8 @@ private struct SyncIntro: View {
         .accessibilityIdentifier(identifier)
         .listRowBackground(Color.clear)
         .listRowInsets(EdgeInsets(
-            top: PawMetrics.Spacing.s, leading: PawMetrics.Spacing.l,
-            bottom: PawMetrics.Spacing.s, trailing: PawMetrics.Spacing.l))
+            top: PawMetrics.Spacing.s, leading: PawMetrics.Spacing.xs,
+            bottom: PawMetrics.Spacing.s, trailing: PawMetrics.Spacing.xs))
     }
 }
 

@@ -612,6 +612,11 @@ private struct SyncSimulatorSection: View {
     }
 
     @ViewBuilder private var controls: some View {
+            // First, so it is on screen as soon as the controls open.
+            Text(syncing.simStatus.isEmpty ? syncing.simSummary : "\(syncing.simStatus) \(syncing.simSummary)")
+                .font(PawFont.footnote.monospaced())
+                .foregroundStyle(PawColor.labelSecondary)
+                .accessibilityIdentifier("sim-remote-status")
             ForEach(SimRemoteChange.allCases) { change in
                 Button(change.title) { syncing.applySimChange(change) }
                     .foregroundStyle(PawColor.label)
@@ -628,10 +633,6 @@ private struct SyncSimulatorSection: View {
             Button("Present another host key") { syncing.setSimChangedHostKey(true) }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-remote-host-key")
-            Text(syncing.simStatus.isEmpty ? syncing.simSummary : "\(syncing.simStatus) \(syncing.simSummary)")
-                .font(PawFont.footnote.monospaced())
-                .foregroundStyle(PawColor.labelSecondary)
-                .accessibilityIdentifier("sim-remote-status")
     }
 }
 #endif

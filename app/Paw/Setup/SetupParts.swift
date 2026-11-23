@@ -60,7 +60,8 @@ struct SetupPage<Content: View, Buttons: View>: View {
             .padding(.horizontal, PawMetrics.screenMargin)
             .padding(.top, PawMetrics.Spacing.s)
             .padding(.bottom, PawMetrics.Spacing.l)
-            .frame(maxWidth: .infinity)
+            // On the text's column, not centred beside it.
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(PawColor.bg)
         }
         .background(PawColor.bg.ignoresSafeArea())

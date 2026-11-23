@@ -192,6 +192,10 @@ final class EditTests: PawUITestCase {
 
         scrollTo("form-length")
         slider.adjust(toNormalizedSliderPosition: 0)
+        // A drag that starts while the form is still settling moves nothing.
+        if (slider.value as? String) != "8 characters" {
+            slider.adjust(toNormalizedSliderPosition: 0)
+        }
         expectValue("form-length", "8 characters")
         expectLabel("form-strength", contains: "fair")
         tap("form-generate")

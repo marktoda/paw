@@ -438,8 +438,8 @@ struct SimulatorStrip: View {
                     .foregroundStyle(PawColor.labelSecondary)
                     .underline()
                     .lineLimit(1)
-                    .padding(.horizontal, PawMetrics.Spacing.xs)
-                    .frame(minHeight: PawMetrics.pill)
+                    .padding(.horizontal, PawMetrics.Spacing.s)
+                    .frame(minHeight: PawMetrics.tapMin)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
