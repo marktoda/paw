@@ -207,8 +207,8 @@ final class AppModel {
             let found = Handoff(value: access)
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
-                    guard let self, attempt == plugInCount, !found.value.isEmpty else { return }
-                    accessByPath = found.value
+                    guard let self, attempt == self.plugInCount, !found.value.isEmpty else { return }
+                    self.accessByPath = found.value
                 }
             }
         }
