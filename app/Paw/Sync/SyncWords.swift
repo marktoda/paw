@@ -160,7 +160,7 @@ extension SyncFailure {
 /// How the key sheet words a key failure during a sync. The words are the
 /// shared ones (`KeyErrorWords`), with what is safe said for a sync.
 func syncKeyWords(_ error: KeyError, during kind: SyncKind, unpushed: Int) -> KeyErrorWords {
-    let words = KeyErrorWords(error, entry: "your store")
+    let words = KeyErrorWords(error, entry: "your store", purpose: kind == .send ? .send : .check)
     let safe = kind == .send ? "Nothing was sent. \(SyncFailure.waiting(unpushed))" : "Nothing was changed."
     switch error {
     case .TouchTimeout:

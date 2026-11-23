@@ -66,7 +66,7 @@ struct StoreSettingsSections: View {
         } header: {
             PawSectionHeader("Key")
         } footer: {
-            Text("Shows what paw read from your key: its serial, PIN tries left and touch settings. No PIN is needed.")
+            Text("Read from the key when it was plugged in.")
                 .font(PawFont.footnote)
                 .foregroundStyle(PawColor.labelSecondary)
         }

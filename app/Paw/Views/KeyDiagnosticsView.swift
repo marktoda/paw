@@ -39,7 +39,7 @@ struct KeyDiagnosticsView: View {
                     }
                 } else {
                     Section {
-                        Text("No key is plugged in. Plug it in to see what paw reads from it.")
+                        Text("No key plugged in.")
                             .font(PawFont.subheadline)
                             .foregroundStyle(PawColor.labelSecondary)
                             .fixedSize(horizontal: false, vertical: true)

@@ -24,7 +24,7 @@ enum SimRemoteChange: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 
     static var atLaunch: SimRemoteChange? {
-        UserDefaults.standard.string(forKey: "pawSimRemoteChange").flatMap(SimRemoteChange.init(rawValue:))
+        LaunchArguments.string("pawSimRemoteChange").flatMap(SimRemoteChange.init(rawValue:))
     }
 
     /// The debug button's words.
@@ -54,8 +54,8 @@ final class SimRemoteHandle: @unchecked Sendable {
     private var repoDir: String?
     private var rewrites = 0
     private var launchChangeApplied = false
-    private var refusesPushes = UserDefaults.standard.bool(forKey: "pawSimRemoteRefusePushes")
-    private var dropsNext = UserDefaults.standard.bool(forKey: "pawSimRemoteDrop")
+    private var refusesPushes = LaunchArguments.bool("pawSimRemoteRefusePushes")
+    private var dropsNext = LaunchArguments.bool("pawSimRemoteDrop")
 
     var host: SimRemote? {
         lock.withLock { current }

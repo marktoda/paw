@@ -132,7 +132,7 @@ private struct ClosedEntryScreen: View {
 
     private func title(_ closed: ClosedEntry) -> String {
         switch closed.reason {
-        case .away: "Closed while you were away"
+        case .away: "Closed after 2 minutes away"
         case .deviceLocked: "Closed when your iPhone locked"
         case .copyEnded: "Its Face ID time ended"
         }
@@ -140,9 +140,9 @@ private struct ClosedEntryScreen: View {
 
     private func message(_ closed: ClosedEntry) -> String {
         switch closed.reason {
-        case .away: "paw closes an open password after 2 minutes in the background."
-        case .deviceLocked: "paw closes open passwords when your iPhone locks."
-        case .copyEnded: "\(closed.ref.name) needs your key again."
+        case .away: "Passwords close after 2 minutes away."
+        case .deviceLocked: "Passwords close when the iPhone locks."
+        case .copyEnded: "It needs your key again."
         }
     }
 }

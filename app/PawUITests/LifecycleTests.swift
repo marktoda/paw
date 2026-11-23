@@ -25,7 +25,7 @@ final class LifecycleTests: PawUITestCase {
         launchFixture(extra: ["-pawSimAwayMs", String(3 * 60 * 1000)])
         openGitHubWithKey()
         backgroundAndReturn()
-        expectLabel("entry-closed", contains: "Closed while you were away")
+        expectLabel("entry-closed", contains: "Closed after 2 minutes away")
         expectAbsent("password-value", "A closed entry shows nothing of it")
         snapshot("closed-away")
 

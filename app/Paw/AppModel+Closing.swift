@@ -59,15 +59,15 @@ extension AppModel {
             try copies?.forgetEntry(entry: session.ref.path)
         } catch {
             notice = Notice(
-                problem: "paw couldn't end the Face ID copy of \(session.ref.name).",
-                nextStep: "Use Lock now in Settings to end every copy.")
+                problem: "paw couldn't lock \(session.ref.name).",
+                nextStep: "Use Lock now in Settings.")
         }
         closeSession(session.id, because: .copyEnded)
         if path.last == .entry(session.id) {
             path.removeLast()
         }
         refreshCopies()
-        toast = "\(session.ref.name) now needs your key."
+        toast = "Locked. \(session.ref.name) now needs your key."
     }
 
     /// "Open again" on a closed entry: back to the list, then open it as a
