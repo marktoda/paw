@@ -9,7 +9,7 @@
 //! A push only ever fast-forwards. If the remote has moved, [`push`] fails
 //! with [`PawError::NotFastForward`] and changes nothing.
 
-mod guard;
+pub(crate) mod guard;
 mod history;
 pub mod hosts;
 pub mod integrate;
@@ -209,25 +209,34 @@ fn fetch_branches(
     repo: &Repository,
     progress: Option<TransferCallback<'_>>,
 ) -> Result<Option<String>, PawError> {
-    connection.with_remote(repo, |remote| {
-        let mut connected = remote.connect_auth(Direction::Fetch, None, None)?;
-        // An empty repository has no default branch; that is not an error.
-        let default = connected
-            .default_branch()
-            .ok()
-            .and_then(|name| name.as_str().map(str::to_owned).ok());
-        let mut options = FetchOptions::new();
-        options.download_tags(AutotagOption::None);
-        if let Some(progress) = progress {
-            let mut callbacks = RemoteCallbacks::new();
-            callbacks.transfer_progress(throttled(progress));
-            options.remote_callbacks(callbacks);
-        }
-        connected
-            .remote()
-            .fetch(&[FETCH_REFSPEC], Some(&mut options), None)?;
-        Ok(default)
-    })
+    connection.with_remote(repo, |remote| fetch_connected(remote, progress))
+}
+
+/// Fetches all branches through `remote`, whose transport the caller has
+/// chosen (SSH here, GitHub's HTTPS in `crate::github`), and returns the
+/// remote's default branch, if it has one. Both transports fetch exactly
+/// this way.
+pub(crate) fn fetch_connected(
+    remote: &mut git2::Remote<'_>,
+    progress: Option<TransferCallback<'_>>,
+) -> Result<Option<String>, git2::Error> {
+    let mut connected = remote.connect_auth(Direction::Fetch, None, None)?;
+    // An empty repository has no default branch; that is not an error.
+    let default = connected
+        .default_branch()
+        .ok()
+        .and_then(|name| name.as_str().map(str::to_owned).ok());
+    let mut options = FetchOptions::new();
+    options.download_tags(AutotagOption::None);
+    if let Some(progress) = progress {
+        let mut callbacks = RemoteCallbacks::new();
+        callbacks.transfer_progress(throttled(progress));
+        options.remote_callbacks(callbacks);
+    }
+    connected
+        .remote()
+        .fetch(&[FETCH_REFSPEC], Some(&mut options), None)?;
+    Ok(default)
 }
 
 /// The branch `HEAD` points at, as `(refs/heads/<name>, <name>)`.

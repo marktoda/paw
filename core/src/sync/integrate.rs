@@ -184,6 +184,27 @@ pub fn accept_replaced_remote(dir: &Path, keep_changes: bool) -> Result<Integrat
     Ok(report)
 }
 
+/// The `.gpg-id` changes an [`integrate`] would report now: between the
+/// remote tip paw saw last and the fetched one. Empty when nothing was
+/// fetched, or the remote's history was replaced (that is its own
+/// decision). Changes nothing; for the background refresh, which leaves
+/// such a change for the person instead of integrating it.
+pub(crate) fn pending_recipients_changes(dir: &Path) -> Result<Vec<RecipientsChange>, SyncError> {
+    let repo = super::guard::open(dir)?;
+    let tips = tips(&repo)?;
+    let Some(remote) = tips.remote else {
+        return Ok(Vec::new());
+    };
+    let seen = match tips.seen {
+        Some(seen) => seen,
+        None => repo.merge_base(tips.head, remote).unwrap_or(remote),
+    };
+    if seen != remote && !repo.graph_descendant_of(remote, seen).map_err(git_err)? {
+        return Ok(Vec::new());
+    }
+    recipients_changes(&repo, seen, remote)
+}
+
 /// Every `.gpg-id` that differs between `before` and `after`.
 fn recipients_changes(repo: &Repository, before: Oid, after: Oid) -> Result<Vec<RecipientsChange>, SyncError> {
     if before == after {

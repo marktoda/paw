@@ -48,7 +48,7 @@ use crate::sync::{HostKeyPin, Remote};
 pub const REPO: &str = "store.git";
 const BRANCH: &str = "refs/heads/main";
 const USER: &str = "git";
-const AGENT: &str = "agent=paw-sim/1";
+pub(crate) const AGENT: &str = "agent=paw-sim/1";
 /// The most a push may send. The simulated store is a few kilobytes.
 const MAX_PUSH: usize = 64 << 20;
 const ZERO_HEX: &str = "0000000000000000000000000000000000000000";
@@ -717,13 +717,13 @@ impl Input {
     }
 }
 
-fn pkt_line(text: &str) -> Vec<u8> {
+pub(crate) fn pkt_line(text: &str) -> Vec<u8> {
     let mut out = format!("{:04x}", text.len() + 4).into_bytes();
     out.extend_from_slice(text.as_bytes());
     out
 }
 
-const FLUSH: &[u8] = b"0000";
+pub(crate) const FLUSH: &[u8] = b"0000";
 
 async fn send(out: &mut (impl AsyncWrite + Unpin), bytes: &[u8]) -> Result<(), String> {
     out.write_all(bytes).await.map_err(|e| e.to_string())?;
@@ -731,11 +731,11 @@ async fn send(out: &mut (impl AsyncWrite + Unpin), bytes: &[u8]) -> Result<(), S
 }
 
 /// The branches as (commit, name), and the branch `HEAD` names.
-type Branches = (Vec<(Oid, String)>, Option<String>);
+pub(crate) type Branches = (Vec<(Oid, String)>, Option<String>);
 
 /// The branches, as (commit, name), sorted by name; and where `HEAD` points
 /// if that branch exists.
-fn branches(repo: &Path) -> Result<Branches, String> {
+pub(crate) fn branches(repo: &Path) -> Result<Branches, String> {
     let repo = Repository::open_bare(repo).map_err(|e| e.message().to_owned())?;
     let mut found = Vec::new();
     for reference in repo.references_glob("refs/heads/*").map_err(|e| e.message().to_owned())? {
@@ -754,7 +754,7 @@ fn branches(repo: &Path) -> Result<Branches, String> {
 }
 
 /// The ref advertisement: the first line carries the capabilities.
-fn advertisement(refs: &[(Oid, String)], head: Option<&str>, capabilities: &str) -> Vec<u8> {
+pub(crate) fn advertisement(refs: &[(Oid, String)], head: Option<&str>, capabilities: &str) -> Vec<u8> {
     let mut lines: Vec<(Oid, String)> = Vec::new();
     let mut capabilities = capabilities.to_owned();
     if let Some(head) = head
@@ -779,7 +779,7 @@ fn advertisement(refs: &[(Oid, String)], head: Option<&str>, capabilities: &str)
     out
 }
 
-fn parse_oid(text: &str) -> Result<Oid, String> {
+pub(crate) fn parse_oid(text: &str) -> Result<Oid, String> {
     if text.len() != 40 {
         return Err(format!("not an object id: {text}"));
     }
@@ -787,13 +787,13 @@ fn parse_oid(text: &str) -> Result<Oid, String> {
 }
 
 /// The commits of `haves` the repository has.
-fn known_commits(repo: &Path, haves: &[Oid]) -> Result<Vec<Oid>, String> {
+pub(crate) fn known_commits(repo: &Path, haves: &[Oid]) -> Result<Vec<Oid>, String> {
     let repo = Repository::open_bare(repo).map_err(|e| e.message().to_owned())?;
     Ok(haves.iter().copied().filter(|id| repo.find_commit(*id).is_ok()).collect())
 }
 
 /// A pack of everything reachable from `wants` and not from `common`.
-fn build_pack(repo: &Path, wants: &[Oid], common: &[Oid]) -> Result<Vec<u8>, String> {
+pub(crate) fn build_pack(repo: &Path, wants: &[Oid], common: &[Oid]) -> Result<Vec<u8>, String> {
     let message = |e: git2::Error| e.message().to_owned();
     let repo = Repository::open_bare(repo).map_err(message)?;
     let mut walk = repo.revwalk().map_err(message)?;

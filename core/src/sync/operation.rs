@@ -234,3 +234,29 @@ pub(crate) fn run_until(
 ) -> Result<SyncReport, SyncError> {
     run(remote, signer, dir, Some(state_dir), push, stop, progress)
 }
+
+/// After a fetch by some other transport (GitHub's HTTPS, in
+/// `crate::github`): integrates and reports exactly as [`refresh`] does
+/// after its own fetch, so both paths give the same results for the same
+/// remote (recipients changed, replaced history, refused trees).
+pub(crate) fn integrate_fetched(dir: &Path) -> Result<SyncReport, SyncError> {
+    let mut report = SyncReport {
+        state: SyncState::UpToDate,
+        integration: IntegrateReport::default(),
+        pushed: 0,
+        retried: false,
+        signatures: 0,
+    };
+    match integrate(dir)? {
+        Integration::Integrated(this_round) => report.integration.absorb(this_round),
+        Integration::RemoteReplaced(replaced) => {
+            report.state = SyncState::RemoteReplaced { replaced };
+            return Ok(report);
+        }
+    }
+    let waiting = unpushed(dir)?;
+    if waiting > 0 {
+        report.state = SyncState::Waiting { unpushed: waiting };
+    }
+    Ok(report)
+}
