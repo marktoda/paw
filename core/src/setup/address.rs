@@ -1,10 +1,17 @@
 //! The address of a password store, as a person types or pastes it.
 //!
 //! paw speaks git over SSH only. It accepts the two forms git hosts show:
-//! `git@github.com:owner/repo.git` and `ssh://git@host[:port]/path`. A web
-//! address of a GitHub repository is turned into its SSH address, and the
-//! person is told. Everything else is refused with a sentence that says
-//! what to do instead.
+//! `git@github.com:owner/repo.git` and `ssh://git@host[:port]/path`, and
+//! three short ways of naming a GitHub repository, each turned into its SSH
+//! address with a notice saying so: `owner/repo`, `github.com/owner/repo`
+//! and the repository's web address `https://github.com/owner/repo`. Spaces
+//! around the address and a slash at its end are ignored.
+//!
+//! Everything else is refused with a sentence that says what to do instead,
+//! in particular anything that could reach `ssh` or `git` as an option (a
+//! user, host or path starting with `-`), control characters, a password or
+//! token inside the address (never repeated back), and git's other
+//! transports (`file://`, `ext::`, `git://`).
 
 use crate::sync::{HostKeyPin, Remote};
 
@@ -50,6 +57,75 @@ fn valid_path(path: &str) -> bool {
     !bare.is_empty() && !path.starts_with('-') && !path.chars().any(char::is_control)
 }
 
+/// Never repeats what was pasted: it may be a live password or token.
+const HAS_SECRET: &str = "That address has a user name, password or token in it. paw logs in with your YubiKey and needs none of them: remove that part. If it was a password or token, change it, since it has been copied.";
+
+/// git's `<transport>::<address>` form (`ext::`, `fd::`, ...), which runs
+/// whatever the transport says.
+fn is_remote_helper(text: &str) -> bool {
+    text.split_once("::").is_some_and(|(scheme, _)| {
+        !scheme.is_empty() && scheme.chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
+    })
+}
+
+/// A GitHub account name: letters, digits and single hyphens inside.
+fn github_owner(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 39
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+/// A GitHub repository name: letters, digits, `.`, `_` and `-`; never `.`
+/// or `..`, and not starting with `-`.
+fn github_repo(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 100
+        && name != "."
+        && name != ".."
+        && !name.starts_with('-')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+}
+
+/// The SSH address of the GitHub repository `owner/repo`, and the notice
+/// that says paw read it that way.
+fn github(owner: &str, repo: &str, what: &str) -> Result<ParsedAddress, String> {
+    let repo = repo.strip_suffix(".git").unwrap_or(repo);
+    if !github_owner(owner) || !github_repo(repo) {
+        return Err(NOT_GIT.into());
+    }
+    let address = StoreAddress {
+        user: "git".into(),
+        host: "github.com".into(),
+        port: 22,
+        path: format!("{owner}/{repo}.git"),
+    };
+    let notice = format!("{what} paw connects over SSH, so it will use {} instead.", address.display());
+    Ok(ParsedAddress { address, notice: Some(notice) })
+}
+
+/// `owner/repo` or `github.com/owner/repo` (with or without `.git`), or
+/// `None` if the text is neither.
+fn github_short_form(text: &str) -> Result<Option<ParsedAddress>, String> {
+    if text.contains([':', '@', '\\']) || text.starts_with('/') {
+        return Ok(None);
+    }
+    let parts: Vec<&str> = text.split('/').collect();
+    match parts.as_slice() {
+        [owner, repo] if !owner.contains('.') => {
+            github(owner, repo, &format!("That was GitHub's short form for {owner}/{repo}.")).map(Some)
+        }
+        [host, owner, repo] if ["github.com", "www.github.com"].contains(&host.to_ascii_lowercase().as_str()) => {
+            github(owner, repo, "That was a GitHub address without its user name.").map(Some)
+        }
+        [host, ..] if host.contains('.') && valid_host(host) => Err(format!(
+            "paw needs the SSH address, as in git@{host}:you/password-store.git. Your git host shows it beside the Clone button."
+        )),
+        _ => Ok(None),
+    }
+}
+
 impl StoreAddress {
     /// Reads an address as typed or pasted. Spaces around it are ignored.
     pub fn parse(text: &str) -> Result<ParsedAddress, String> {
@@ -60,6 +136,12 @@ impl StoreAddress {
         if text.chars().any(|c| c.is_whitespace() || c.is_control()) {
             return Err("An address has no spaces in it. Check what was pasted.".into());
         }
+        // `git@host:you/store/` and `https://github.com/you/store/` name
+        // the same repository as without the slash.
+        let text = text.trim_end_matches('/');
+        if text.is_empty() {
+            return Err(NOT_GIT.into());
+        }
         let lower = text.to_ascii_lowercase();
         if lower.starts_with("https://") || lower.starts_with("http://") {
             return from_web(text);
@@ -67,8 +149,11 @@ impl StoreAddress {
         if let Some(rest) = lower.strip_prefix("ssh://").map(|_| &text["ssh://".len()..]) {
             return from_ssh_url(rest).map(|address| ParsedAddress { address, notice: None });
         }
-        if text.contains("://") {
+        if text.contains("://") || is_remote_helper(text) {
             return Err(USE_SSH.into());
+        }
+        if let Some(parsed) = github_short_form(text)? {
+            return Ok(parsed);
         }
         from_scp(text).map(|address| ParsedAddress { address, notice: None })
     }
@@ -104,6 +189,10 @@ impl StoreAddress {
 
 /// `user@host:path`.
 fn from_scp(text: &str) -> Result<StoreAddress, String> {
+    // `user:password@host:path`.
+    if text.split_once('@').is_some_and(|(before, _)| before.contains(':')) {
+        return Err(HAS_SECRET.into());
+    }
     let Some((login, path)) = text.split_once(':') else {
         return Err(NOT_GIT.into());
     };
@@ -132,6 +221,9 @@ fn from_ssh_url(rest: &str) -> Result<StoreAddress, String> {
     let Some((user, host_port)) = authority.rsplit_once('@') else {
         return Err("Add the user name, as in ssh://git@example.com/you/password-store.git.".into());
     };
+    if user.contains(':') {
+        return Err(HAS_SECRET.into());
+    }
     let (host, port) = if let Some(end) = host_port.find(']') {
         let (host, after) = host_port.split_at(end + 1);
         (host, after.strip_prefix(':'))
@@ -163,31 +255,52 @@ fn from_ssh_url(rest: &str) -> Result<StoreAddress, String> {
 fn from_web(text: &str) -> Result<ParsedAddress, String> {
     let rest = text.split_once("://").map(|(_, rest)| rest).unwrap_or_default();
     let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+    // `https://name:token@github.com/...`, or a token as the user name.
+    if host.contains('@') {
+        return Err(HAS_SECRET.into());
+    }
     let host = host.to_ascii_lowercase();
     if host != "github.com" && host != "www.github.com" {
         return Err(USE_SSH.into());
     }
-    let path = path.trim_end_matches('/');
     let parts: Vec<&str> = path.split('/').collect();
     let [owner, repo] = parts.as_slice() else {
         return Err("Use the address of the repository itself, as in https://github.com/you/password-store, or its SSH address.".into());
     };
-    let repo = repo.strip_suffix(".git").unwrap_or(repo);
-    let fine = |part: &str| {
-        !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
-    };
-    if !fine(owner) || !fine(repo) {
-        return Err(NOT_GIT.into());
-    }
-    let address = StoreAddress {
-        user: "git".into(),
-        host: "github.com".into(),
-        port: 22,
-        path: format!("{owner}/{repo}.git"),
-    };
-    let notice = format!(
-        "That was a web address. paw connects over SSH, so it will use {} instead.",
-        address.display()
-    );
-    Ok(ParsedAddress { address, notice: Some(notice) })
+    github(owner, repo, "That was a web address.")
+}
+
+/// An address as paw read it, for the line under the field: "paw will
+/// connect to github.com as git".
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AddressReading {
+    /// What paw saves and shows, e.g. `git@github.com:you/store.git`.
+    pub address: String,
+    /// The user paw logs in as, e.g. `git`.
+    pub user: String,
+    /// The host paw connects to, without brackets, e.g. `github.com`.
+    pub host: String,
+    pub port: u16,
+    /// Set when paw changed what was typed (a GitHub short form or web
+    /// address), saying how.
+    pub notice: Option<String>,
+    /// paw ships this host's keys, so there is no fingerprint to confirm.
+    pub host_key_bundled: bool,
+}
+
+/// Reads an address as `Setup.set_address` would, without changing
+/// anything: for showing where paw will connect while the person types.
+/// The error is `SetupError::BadAddress` with what to do instead.
+#[uniffi::export]
+pub fn read_store_address(text: String) -> Result<AddressReading, crate::setup::SetupError> {
+    let parsed = StoreAddress::parse(&text).map_err(|message| crate::setup::SetupError::BadAddress { message })?;
+    let address = parsed.address;
+    Ok(AddressReading {
+        address: address.display(),
+        user: address.user.clone(),
+        host: address.connect_host().to_owned(),
+        port: address.port,
+        notice: parsed.notice,
+        host_key_bundled: crate::sync::hosts::bundled(address.connect_host(), address.port).is_some(),
+    })
 }
