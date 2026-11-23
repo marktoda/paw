@@ -17,8 +17,9 @@
 //!   tags, no shallow clones.
 //!
 //! It can also be told to refuse the key, to present another host key (as
-//! after a reinstall, or an attacker), and to drop the connection halfway
-//! through sending a pack.
+//! after a reinstall, or an attacker), to drop the connection halfway
+//! through sending a pack, and to answer as GitHub does for a repository the
+//! key's account cannot see.
 //!
 //! It can listen on a chosen port and keep its repository in a chosen
 //! folder, so an app that is killed and launched again can serve the same
@@ -122,6 +123,7 @@ struct Shared {
     changed_host_key: AtomicBool,
     drop_mid_pack: AtomicBool,
     refuse_pushes: AtomicBool,
+    repository_not_found: AtomicBool,
     logins: AtomicU32,
     /// One entry per successful login: the services it ran, in order.
     services: Mutex<Vec<Vec<String>>>,
@@ -322,6 +324,7 @@ impl SimRemote {
             changed_host_key: AtomicBool::new(false),
             drop_mid_pack: AtomicBool::new(false),
             refuse_pushes: AtomicBool::new(false),
+            repository_not_found: AtomicBool::new(false),
             logins: AtomicU32::new(0),
             services: Mutex::new(Vec::new()),
             before_push: Mutex::new(None),
@@ -474,6 +477,13 @@ impl SimRemote {
         self.shared.refuse_pushes.store(refuse, Ordering::SeqCst);
     }
 
+    /// Answer every git command as GitHub does for a repository the
+    /// logged-in key's account cannot see ("ERROR: Repository not found."
+    /// on stderr, exit status 1), or serve the repository again.
+    pub fn set_repository_not_found(&self, not_found: bool) {
+        self.shared.repository_not_found.store(not_found, Ordering::SeqCst);
+    }
+
     /// Successful logins so far: each one cost the key one signature.
     pub fn logins(&self) -> u32 {
         self.shared.logins.load(Ordering::SeqCst)
@@ -592,7 +602,11 @@ impl server::Handler for Connection {
             }
         }
         session.channel_success(id)?;
-        tokio::spawn(serve(self.shared.clone(), service, channel, session.handle()));
+        if self.shared.repository_not_found.load(Ordering::SeqCst) {
+            tokio::spawn(not_found(channel));
+        } else {
+            tokio::spawn(serve(self.shared.clone(), service, channel, session.handle()));
+        }
         Ok(())
     }
 }
@@ -625,6 +639,18 @@ async fn serve(shared: Arc<Shared>, service: Service, channel: Channel<Msg>, han
     };
     let _ = out.flush().await;
     let _ = write.exit_status(status).await;
+    let _ = write.eof().await;
+    let _ = write.close().await;
+}
+
+/// What GitHub answers a logged-in key whose account cannot see the
+/// repository: a line on stderr and exit status 1, with nothing on stdout.
+async fn not_found(channel: Channel<Msg>) {
+    let (_read, write) = channel.split();
+    let mut err = write.make_writer_ext(Some(1));
+    let _ = err.write_all(b"ERROR: Repository not found.\n").await;
+    let _ = err.flush().await;
+    let _ = write.exit_status(1).await;
     let _ = write.eof().await;
     let _ = write.close().await;
 }

@@ -30,6 +30,7 @@
 //! the same state and leave the same files.
 
 pub mod address;
+pub mod outcome;
 pub mod touch;
 
 use std::path::{Path, PathBuf};
@@ -48,6 +49,7 @@ use crate::sync::{self, Cloned, Connection, PresentedHostKey, RefusedPath};
 use crate::write::{Keyring, LineStatus, WriteError};
 use crate::{ApduTransport, CardInfo, KeyTouch, PawError, card_info};
 use address::StoreAddress;
+use outcome::{RemoteMessage, RemoteReason, says_repository_missing};
 use touch::{TouchClock, TouchExpectation};
 
 const STATE_FILE: &str = "setup";
@@ -286,6 +288,8 @@ pub struct SetupFlow {
     decryption: TouchClock,
     /// What the last download refused to check out, if it did. Not saved.
     refused: Vec<RefusedPath>,
+    /// What the last host check or download found out about the remote.
+    remote_message: Option<RemoteMessage>,
 }
 
 fn remove_dir(path: &Path) -> Result<(), SetupError> {
@@ -330,6 +334,7 @@ impl SetupFlow {
             saved,
             unconfirmed: None,
             refused: Vec::new(),
+            remote_message: None,
         };
         let repo = flow.repo_dir();
         let cloned = repo.join(".git").is_dir() && repo.join(".gpg-id").is_file();
@@ -484,6 +489,7 @@ impl SetupFlow {
     pub fn set_address(&mut self, text: &str) -> Result<SetupState, SetupError> {
         self.expect(&[Step::Address, Step::CheckHost], "set the address")?;
         let parsed = StoreAddress::parse(text).map_err(|message| SetupError::BadAddress { message })?;
+        self.remote_message = None;
         self.saved.address = Some(parsed.address.display());
         self.saved.notice = parsed.notice;
         self.go(Step::CheckHost)
@@ -497,11 +503,16 @@ impl SetupFlow {
         self.expect(&[Step::CheckHost, Step::NeedPin], "check the host")?;
         let address = self.address()?;
         let host = address.connect_host().to_owned();
+        self.remote_message = None;
         match pin_for(&self.known_hosts(), &host, address.port).map_err(failed)? {
             Some(_) => self.ask_host(),
             None => {
-                let key = sync::scan_host_key(&host, address.port).map_err(|e| match e {
-                    PawError::Network(detail) => SetupError::HostUnreachable { host: host.clone(), detail },
+                let scanned = sync::scan_host_key(&host, address.port);
+                let key = scanned.map_err(|e| match e {
+                    PawError::Network(detail) => {
+                        self.note_remote(RemoteReason::Unreachable, None);
+                        SetupError::HostUnreachable { host: host.clone(), detail }
+                    }
                     other => failed(other),
                 })?;
                 self.unconfirmed = Some(key);
@@ -536,30 +547,68 @@ impl SetupFlow {
         Ok(address.remote(pin))
     }
 
-    pub(crate) fn connection_error(&self, remote: &sync::Remote, error: PawError) -> SetupError {
-        match error {
-            PawError::Network(detail) => SetupError::HostUnreachable { host: remote.host.clone(), detail },
-            PawError::HostKeyMismatch { presented } => SetupError::HostKeyChanged {
-                host: remote.host.clone(),
-                expected: remote.host_key.fingerprints(),
-                presented,
-            },
-            PawError::KeyRejected => SetupError::KeyNotAccepted {
-                host: remote.host.clone(),
-                public_key: self.saved.key.as_ref().map(|k| k.ssh_public_key.clone()).unwrap_or_default(),
-            },
-            other => failed(other),
-        }
+    /// The setup error for a failed connection or git command, noting what
+    /// it says about the remote for [`Self::last_remote_message`]. `said`
+    /// is what the host printed, if anything.
+    pub(crate) fn connection_error(&mut self, remote: &sync::Remote, error: PawError, said: Option<String>) -> SetupError {
+        let (reason, error) = match error {
+            PawError::Network(detail) => {
+                (RemoteReason::Unreachable, SetupError::HostUnreachable { host: remote.host.clone(), detail })
+            }
+            PawError::HostKeyMismatch { presented } => (
+                RemoteReason::HostKeyChanged,
+                SetupError::HostKeyChanged {
+                    host: remote.host.clone(),
+                    expected: remote.host_key.fingerprints(),
+                    presented,
+                },
+            ),
+            PawError::KeyRejected => (
+                RemoteReason::KeyNotAccepted,
+                SetupError::KeyNotAccepted {
+                    host: remote.host.clone(),
+                    public_key: self.saved.key.as_ref().map(|k| k.ssh_public_key.clone()).unwrap_or_default(),
+                },
+            ),
+            // The login went through, and the host refused the repository.
+            _ if said.as_deref().is_some_and(says_repository_missing) => (
+                RemoteReason::RepositoryNotFound,
+                failed(format!(
+                    "no store at that address: {} says {} doesn't exist, or this key can't see it",
+                    remote.host, remote.path
+                )),
+            ),
+            other => (RemoteReason::Other, failed(other)),
+        };
+        self.note_remote(reason, said);
+        error
+    }
+
+    fn note_remote(&mut self, reason: RemoteReason, said: Option<String>) {
+        let (host, repository) = match self.address() {
+            Ok(address) => (address.connect_host().to_owned(), address.path.trim_start_matches('/').to_owned()),
+            Err(_) => (String::new(), String::new()),
+        };
+        self.remote_message = Some(RemoteMessage { reason, host, repository, said });
+    }
+
+    /// What the last host check or download found out about the remote,
+    /// if it stopped for the remote's sake: which screen to show for a
+    /// `SetupError::Failed` in particular. `None` after a step that went
+    /// through, and after a failure that was the key's or the store's.
+    pub fn last_remote_message(&self) -> Option<RemoteMessage> {
+        self.remote_message.clone()
     }
 
     /// Asks the pinned host whether it accepts the key. No signature.
     fn ask_host(&mut self) -> Result<SetupState, SetupError> {
+        self.remote_message = None;
         let remote = self.remote()?;
         let key = ssh_key(self.key()?)?;
         match Connection::probe(&remote, &key) {
             Ok(true) => self.go(Step::NeedPin),
-            Ok(false) => Err(self.connection_error(&remote, PawError::KeyRejected)),
-            Err(e) => Err(self.connection_error(&remote, e)),
+            Ok(false) => Err(self.connection_error(&remote, PawError::KeyRejected, None)),
+            Err(e) => Err(self.connection_error(&remote, e, None)),
         }
     }
 
@@ -588,7 +637,7 @@ impl SetupFlow {
             let opened = signer.and_then(|signer| {
                 Connection::open(&remote, &signer).map_err(|e| match e {
                     e @ (PawError::Network(_) | PawError::HostKeyMismatch { .. } | PawError::KeyRejected) => {
-                        self.connection_error(&remote, e)
+                        self.connection_error(&remote, e, None)
                     }
                     other => key_error(other, asked.load(std::sync::atomic::Ordering::SeqCst)),
                 })
@@ -610,11 +659,12 @@ impl SetupFlow {
             go_on
         };
         let cloned = sync::clone_with_progress(&connection, &remote, &repo, Some(&mut progress));
+        let said = connection.remote_said();
         drop(connection);
         match cloned {
             // Left as a kill would leave it: `open` cleans up.
             Err(_) if cancelled => Err(SetupError::Cancelled),
-            other => self.finish_download(&remote, other),
+            other => self.finish_download(&remote, other, said),
         }
     }
 
@@ -627,6 +677,7 @@ impl SetupFlow {
         let repo = self.repo_dir();
         remove_dir(&repo)?;
         self.refused.clear();
+        self.remote_message = None;
         self.go(Step::Cloning)?;
         Ok((remote, repo))
     }
@@ -646,15 +697,17 @@ impl SetupFlow {
     }
 
     /// The end of a download: checks what arrived is a pass store and moves
-    /// on to the test decrypt, or starts the download over.
+    /// on to the test decrypt, or starts the download over. `said` is what
+    /// the host printed on stderr, if anything.
     pub(crate) fn finish_download(
         &mut self,
         remote: &sync::Remote,
         cloned: Result<Cloned, PawError>,
+        said: Option<String>,
     ) -> Result<SetupState, SetupError> {
         let repo = self.repo_dir();
         let outcome = match cloned {
-            Err(e) => Err(self.connection_error(remote, e)),
+            Err(e) => Err(self.connection_error(remote, e, said)),
             Ok(Cloned::Empty) => Err(SetupError::EmptyRepository),
             // Nothing was checked out; the download is removed below.
             Ok(Cloned::Refused(paths)) => {

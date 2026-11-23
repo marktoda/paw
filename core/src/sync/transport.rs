@@ -412,6 +412,20 @@ impl Connection {
         self.shared.download_limit.store(bytes, Ordering::SeqCst);
     }
 
+    /// What the host printed on stderr during the last git service on this
+    /// connection, e.g. GitHub's "ERROR: Repository not found.": control
+    /// characters made spaces, trimmed, at most 2 KiB. `None` if nothing.
+    /// It is the host's text, not paw's: show it only as a quote.
+    pub fn remote_said(&self) -> Option<String> {
+        let diagnostics = self.shared.diagnostics.lock().unwrap_or_else(|p| p.into_inner());
+        let said: String = String::from_utf8_lossy(&diagnostics.stderr)
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect();
+        let said = said.trim();
+        (!said.is_empty()).then(|| said.to_owned())
+    }
+
     /// Runs `operation` against a libgit2 remote whose transport is this
     /// connection.
     pub(super) fn with_remote<T>(

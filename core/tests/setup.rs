@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use paw_core::setup::address::StoreAddress;
 use paw_core::setup::touch::{TouchClock, TouchExpectation};
+use paw_core::setup::outcome::RemoteReason;
 use paw_core::setup::{SetupError, SetupEvents, SetupFlow, SetupState};
 use paw_core::sim::{SimOptions, SimulatedKey};
 use paw_core::ssh::{CardSigner, card_ssh_public_key};
@@ -229,6 +230,7 @@ fn an_unreachable_host_is_its_own_failure() {
 
     assert!(matches!(&error, SetupError::HostUnreachable { host, .. } if host == "127.0.0.1"), "{error:?}");
     assert!(matches!(flow.state(), SetupState::CheckHost { .. }));
+    assert_eq!(flow.last_remote_message().unwrap().reason, RemoteReason::Unreachable);
 }
 
 #[test]
@@ -274,6 +276,25 @@ fn a_key_the_host_does_not_know_is_reported_with_the_line_to_add_before_any_pin(
     assert_eq!(card.authentication_count(), 0);
     assert_eq!(card_info(card).unwrap().pin_tries_left, 3);
     assert!(matches!(flow.state(), SetupState::CheckHost { .. }));
+    assert_eq!(flow.last_remote_message().unwrap().reason, RemoteReason::KeyNotAccepted);
+}
+
+#[test]
+fn a_repository_the_key_cannot_see_is_its_own_outcome_on_the_one_shot_path() {
+    let card = card(false);
+    let server = GitServer::start(&[authorised(&card)]);
+    push_fixture_store(&server);
+    let dir = tempfile::tempdir().unwrap();
+    let mut flow = at_need_pin(dir.path(), &card, &server);
+    server.sim.set_repository_not_found(true);
+
+    let error = download(&mut flow, &card, &events(&card, true)).unwrap_err();
+
+    assert!(matches!(&error, SetupError::Failed { message } if message.contains("can't see it")), "{error:?}");
+    let message = flow.last_remote_message().unwrap();
+    assert_eq!(message.reason, RemoteReason::RepositoryNotFound);
+    assert_eq!(message.said.as_deref(), Some("ERROR: Repository not found."));
+    assert!(matches!(flow.state(), SetupState::NeedPin { .. }));
 }
 
 #[test]

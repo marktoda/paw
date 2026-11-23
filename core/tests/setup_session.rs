@@ -13,6 +13,7 @@ use std::sync::Arc;
 use key_common::{Driver, PIN, WAIT, finish, is_pin, is_touch};
 use paw_core::ffi::sync::{Setup, StoreSync};
 use paw_core::key::{KeyError, KeyIdentity, KeyOutcome, KeyPort, KeyTaskListener, KeyTaskState, enrolment};
+use paw_core::setup::outcome::{RemoteMessage, RemoteReason};
 use paw_core::setup::{SetupError, SetupState};
 use paw_core::sim::copies::SimClock;
 use paw_core::sim::fixture::other_key_fingerprint_hex;
@@ -352,4 +353,46 @@ fn another_key_plugged_in_mid_setup_is_refused_before_the_pin() {
         authentication_fingerprint: Some(other.authentication_fingerprint_hex()),
     });
     assert_eq!(other.verify_attempts() + other.pin_queries(), 0);
+}
+
+#[test]
+fn a_repository_the_key_cannot_see_is_told_apart_from_a_refused_key() {
+    let w = world();
+    // A key the host does not know: found at the host check.
+    w.server.sim.set_refuse_key(true);
+    let session = w.port.session().unwrap();
+    w.setup.read_key_from_session(session).unwrap();
+    w.setup.set_address(address(&w)).unwrap();
+    let SetupState::ConfirmHost { fingerprint, .. } = w.setup.check_host().unwrap() else { panic!() };
+    assert!(matches!(w.setup.confirm_host(fingerprint).unwrap_err(), SetupError::KeyNotAccepted { .. }));
+    assert_eq!(w.setup.last_remote_message().unwrap().reason, RemoteReason::KeyNotAccepted);
+    w.server.sim.set_refuse_key(false);
+    assert!(matches!(w.setup.check_host().unwrap(), SetupState::NeedPin { .. }));
+    assert_eq!(w.setup.last_remote_message(), None);
+
+    // The key logs in, and the host says there is no such repository for it.
+    w.server.sim.set_repository_not_found(true);
+    let driver = Driver::helpful(PIN, &w.sim);
+    let state = download(&w, &driver);
+
+    assert!(matches!(state, KeyTaskState::Failed { error: KeyError::Reader { .. } }), "{state:?}");
+    let Err(SetupError::Failed { message }) = w.setup.last_task_result() else { panic!() };
+    assert!(message.contains("doesn't exist, or this key can't see it"), "{message}");
+    assert_eq!(
+        w.setup.last_remote_message(),
+        Some(RemoteMessage {
+            reason: RemoteReason::RepositoryNotFound,
+            host: "127.0.0.1".into(),
+            repository: "store.git".into(),
+            said: Some("ERROR: Repository not found.".into()),
+        })
+    );
+    assert_eq!(w.server.logins(), 1);
+    assert!(matches!(w.setup.state(), SetupState::NeedPin { .. }));
+    assert!(!w.dir.path().join("repo").exists());
+
+    // Access granted: the next try goes through and the message is gone.
+    w.server.sim.set_repository_not_found(false);
+    assert!(matches!(download(&w, &Driver::helpful(PIN, &w.sim)), KeyTaskState::Done { .. }));
+    assert_eq!(w.setup.last_remote_message(), None);
 }

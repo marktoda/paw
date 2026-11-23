@@ -113,7 +113,7 @@ impl Setup {
                 }
                 return Err(match error {
                     e @ (PawError::Network(_) | PawError::HostKeyMismatch { .. } | PawError::KeyRejected) => {
-                        let error = flow.connection_error(&remote, e);
+                        let error = flow.connection_error(&remote, e, None);
                         drop(flow);
                         self.record(error)
                     }
@@ -129,13 +129,14 @@ impl Setup {
             !task.cancelled()
         };
         let cloned = crate::sync::clone_with_progress(&connection, &remote, &repo, Some(&mut progress));
+        let said = connection.remote_said();
         drop(connection);
         if !task.begin_commit() {
             let _ = self.flow().abandon_download();
             return Err(cancelled());
         }
         let cloned: Result<Cloned, PawError> = cloned;
-        self.flow().finish_download(&remote, cloned).map_err(|e| self.record(e))?;
+        self.flow().finish_download(&remote, cloned, said).map_err(|e| self.record(e))?;
         Ok(Some(KeyOutcome::SignedIn))
     }
 }
@@ -280,6 +281,15 @@ impl Setup {
     /// that says so. Empty otherwise. Nothing was checked out.
     pub fn refused_remote(&self) -> Vec<RefusedPath> {
         self.flow().refused_remote()
+    }
+
+    /// After a host check or a download that failed: what it found out
+    /// about the remote, to pick the screen ("No store at that address" for
+    /// `RepositoryNotFound`, which comes as `SetupError::Failed`). `None`
+    /// if the last step went through, or failed for the key's or the
+    /// store's sake.
+    pub fn last_remote_message(&self) -> Option<crate::setup::outcome::RemoteMessage> {
+        self.flow().last_remote_message()
     }
 
     /// Once setup is done: whether new entries can be saved with no
