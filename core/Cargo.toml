@@ -37,6 +37,10 @@ openpgp-card-rpgp = "0.9.1"
 pgp = "0.21.1"
 psl = "2"
 rand = "0.8"
+# GitHub sign-in (src/github): JSON from GitHub's API. Already in the tree
+# through uniffi.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 # No RSA, no compression, and ring rather than aws-lc: ring builds with the
 # C compiler alone, aws-lc also wants cmake on some targets.
 russh = { version = "0.65.4", default-features = false, features = ["ring"] }
@@ -48,6 +52,11 @@ unicode-normalization = "0.1"
 # Full Unicode case folding, for names that are one name on an iPhone.
 unicase = "2.9"
 uniffi = { version = "0.32.2", features = ["cli"] }
+# GitHub sign-in (src/github): a small blocking HTTP/1.1 client over rustls
+# with ring (already here through russh) and the Mozilla roots compiled in
+# (webpki-roots). No OpenSSL, no aws-lc, no platform verifier, no gzip, no
+# new C. Only github.com and api.github.com are ever contacted with it.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 zeroize = "1"
 

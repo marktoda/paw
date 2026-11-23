@@ -82,6 +82,7 @@ pub fn card_touch_timeout_check(
 
 mod copies;
 mod entry;
+pub mod github;
 pub mod sync;
 mod key;
 pub mod write;

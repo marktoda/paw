@@ -10,3 +10,17 @@ fn the_device_build_keeps_its_limits() {
     let refused = paw_core::sync::RefusedPath { path: "up".into(), reason: "it is a symbolic link".into() };
     assert_eq!(refused.clone(), refused);
 }
+
+#[test]
+fn the_device_build_talks_to_github_only_as_paws_app() {
+    let endpoints = paw_core::github::Endpoints::github();
+    assert_eq!(endpoints.web(), "https://github.com");
+    assert_eq!(endpoints.api(), "https://api.github.com");
+    assert_eq!(endpoints.client_id(), "Iv23liyBePbnvQPCcGRz");
+    assert_eq!(paw_core::github::CLIENT_ID, "Iv23liyBePbnvQPCcGRz");
+    assert_eq!(endpoints.install_url(), "https://github.com/apps/paw-password-store/installations/new");
+    // Without the `sim` feature there is no other constructor: this is the
+    // only way to make `Endpoints` (checked by compiling this file with
+    // `--no-default-features`, where `Endpoints::simulated` does not exist).
+    assert_eq!(endpoints, paw_core::github::Endpoints::github());
+}
