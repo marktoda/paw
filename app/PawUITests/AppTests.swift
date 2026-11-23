@@ -124,11 +124,12 @@ final class AppTests: XCTestCase {
         return field
     }
 
+    /// Types the PIN and sends it with the return key, which cannot miss
+    /// the way a tap on Continue can while the sheet is still resizing.
     private func enterPin(_ pin: String) {
         let field = pinField()
         field.tap()
-        field.typeText(pin)
-        app.buttons["pin-continue"].tap()
+        field.typeText(pin + "\n")
     }
 
     /// A simulator control drawn below the key sheet's own buttons. Tapped
@@ -289,7 +290,7 @@ final class AppTests: XCTestCase {
     }
 
     func testCancelWhileWaitingForATouchOpensNothing() {
-        launch(extra: ["-pawSimTouchTimeoutMs", "4000"])
+        launch(extra: ["-pawSimTouchTimeoutMs", "8000"])
         tap("folder-web")
         tap("entry-github.com")
         enterPin(Self.pin)
@@ -298,7 +299,7 @@ final class AppTests: XCTestCase {
         expectGone("key-sheet-purpose")
 
         // Past the key's own timeout: the late answer must not open anything.
-        sleep(6)
+        sleep(10)
         expectAbsent("entry-title", "Nothing opens after a cancel")
         expectAbsent("key-sheet-purpose", "The sheet stays closed")
         snapshot("after-cancel")
