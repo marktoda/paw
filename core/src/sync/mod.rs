@@ -28,6 +28,9 @@ pub use integrate::{
     IntegrateReport, Integration, RecipientsChange, Replaced, accept_replaced_remote, integrate,
 };
 pub use transport::{Connection, DOWNLOAD_LIMIT, HostKeyPin, PresentedHostKey, Remote, scan_host_key};
+pub(crate) use transport::made_no_connection;
+#[cfg(feature = "sim")]
+pub(crate) use transport::redirect;
 
 use crate::PawError;
 use crate::path::{unsafe_path, unsafe_path_err};

@@ -42,6 +42,87 @@ const TRANSPORT_URL: &str = "paw-ssh://connection";
 pub const DOWNLOAD_LIMIT: u64 = 256 << 20;
 /// How much of the remote's stderr is kept for error messages.
 const STDERR_LIMIT: usize = 2048;
+/// The start of a [`PawError::Network`] detail when no connection was made
+/// at all: the TCP connection failed (refused, no route, no such host), or
+/// the host did not complete the SSH handshake in time. A network that
+/// blocks a port looks like this; a host that answered and then refused
+/// something does not.
+pub(crate) const NO_CONNECTION: &str = "could not connect";
+
+/// Whether a [`PawError::Network`] detail says no connection was made at
+/// all (see [`NO_CONNECTION`]).
+pub(crate) fn made_no_connection(detail: &str) -> bool {
+    detail.starts_with(NO_CONNECTION)
+}
+
+/// Why dialling a host failed.
+enum Dial<E> {
+    /// No TCP connection, or no SSH handshake in time.
+    NoConnection(String),
+    /// The SSH side failed (the handler's error).
+    Ssh(E),
+}
+
+/// Opens a TCP connection to `host:port` and runs the SSH handshake on it,
+/// within [`CONNECT_TIMEOUT`].
+async fn dial<H: client::Handler + Send + 'static>(
+    config: Arc<client::Config>,
+    host: &str,
+    port: u16,
+    handler: H,
+) -> Result<client::Handle<H>, Dial<H::Error>> {
+    let attempt = async {
+        let stream = tokio::net::TcpStream::connect(dial_address(host, port))
+            .await
+            .map_err(|e| Dial::NoConnection(format!("{NO_CONNECTION}: {e}")))?;
+        if config.nodelay {
+            let _ = stream.set_nodelay(true);
+        }
+        client::connect_stream(config, stream, handler).await.map_err(Dial::Ssh)
+    };
+    match tokio::time::timeout(CONNECT_TIMEOUT, attempt).await {
+        Err(_) => Err(Dial::NoConnection(format!("{NO_CONNECTION}: timed out"))),
+        Ok(dialled) => dialled,
+    }
+}
+
+/// Where to open the TCP connection for `host:port`.
+#[cfg(not(feature = "sim"))]
+fn dial_address(host: &str, port: u16) -> (String, u16) {
+    (host.to_owned(), port)
+}
+
+/// Where to open the TCP connection for `host:port`: there, unless a test
+/// sent that host and port elsewhere ([`redirect`]).
+#[cfg(feature = "sim")]
+fn dial_address(host: &str, port: u16) -> (String, u16) {
+    let redirects = REDIRECTS.lock().unwrap_or_else(|p| p.into_inner());
+    redirects
+        .iter()
+        .find(|((h, p), _)| h.eq_ignore_ascii_case(host) && *p == port)
+        .map(|(_, to)| to.clone())
+        .unwrap_or_else(|| (host.to_owned(), port))
+}
+
+/// Process-wide: which `host:port` connects where instead. Simulation only.
+#[cfg(feature = "sim")]
+type Redirects = Vec<((String, u16), (String, u16))>;
+#[cfg(feature = "sim")]
+static REDIRECTS: Mutex<Redirects> = Mutex::new(Vec::new());
+
+/// Simulation only: connections to `host:port` go to `to` instead (or, with
+/// `None`, where they say again), for the whole process. Host keys are
+/// still checked against what `host:port` is pinned to, so this tests what
+/// paw does when a well-known host is unreachable or impersonated, without
+/// the network. Not in device builds.
+#[cfg(feature = "sim")]
+pub(crate) fn redirect(host: &str, port: u16, to: Option<(String, u16)>) {
+    let mut redirects = REDIRECTS.lock().unwrap_or_else(|p| p.into_inner());
+    redirects.retain(|((h, p), _)| !(h.eq_ignore_ascii_case(host) && *p == port));
+    if let Some(to) = to {
+        redirects.push(((host.to_owned(), port), to));
+    }
+}
 
 /// The host keys a remote may present, fixed when the remote was added: one
 /// key for a host confirmed on first use, or a host's published set (see
@@ -272,15 +353,13 @@ async fn handshake(remote: &Remote) -> Result<client::Handle<PinnedHost>, PawErr
 
     let refused = Arc::new(Mutex::new(None));
     let handler = PinnedHost { pin, refused: refused.clone() };
-    let address = (remote.host.as_str(), remote.port);
-    let connecting = client::connect(Arc::new(config), address, handler);
-    match tokio::time::timeout(CONNECT_TIMEOUT, connecting).await {
-        Err(_) => Err(PawError::Network("timed out".into())),
-        Ok(Err(e)) => Err(match refused.lock().unwrap().take() {
+    match dial(Arc::new(config), &remote.host, remote.port, handler).await {
+        Err(Dial::NoConnection(detail)) => Err(PawError::Network(detail)),
+        Err(Dial::Ssh(e)) => Err(match refused.lock().unwrap().take() {
             Some(presented) => PawError::HostKeyMismatch { presented },
             None => PawError::Network(e.to_string()),
         }),
-        Ok(Ok(session)) => Ok(session),
+        Ok(session) => Ok(session),
     }
 }
 
@@ -295,15 +374,12 @@ pub fn scan_host_key(host: &str, port: u16) -> Result<PresentedHostKey, PawError
         inactivity_timeout: Some(INACTIVITY_TIMEOUT),
         ..Default::default()
     };
-    let outcome = runtime.block_on(async {
-        let connecting = client::connect(Arc::new(config), (host, port), handler);
-        tokio::time::timeout(CONNECT_TIMEOUT, connecting).await
-    });
+    let outcome = runtime.block_on(dial(Arc::new(config), host, port, handler));
     let error = match outcome {
-        Err(_) => PawError::Network("timed out".into()),
+        Err(Dial::NoConnection(detail)) => PawError::Network(detail),
         // The handler refuses every key, so the handshake cannot succeed.
-        Ok(Ok(_)) => PawError::Network("the host did not ask to be checked".into()),
-        Ok(Err(e)) => PawError::Network(e.to_string()),
+        Ok(_) => PawError::Network("the host did not ask to be checked".into()),
+        Err(Dial::Ssh(e)) => PawError::Network(e.to_string()),
     };
     match presented.lock().unwrap().take() {
         Some(key) => Ok(PresentedHostKey(key)),

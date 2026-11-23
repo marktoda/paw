@@ -135,6 +135,27 @@ fn failed(error: impl std::fmt::Display) -> SetupError {
     SetupError::Failed { message: error.to_string() }
 }
 
+/// Another way in to a host whose usual port a network may block: from
+/// (host, port) to (host, port), with the same bundled keys. GitHub's page
+/// "Using SSH over the HTTPS port"
+/// (<https://docs.github.com/en/authentication/troubleshooting-ssh/using-ssh-over-the-https-port>).
+const PORT_FALLBACKS: [(&str, u16, &str, u16); 1] = [("github.com", 22, "ssh.github.com", 443)];
+
+/// Offered when a host could not be reached on its usual port: "Port 22
+/// seems blocked. Try GitHub's port 443?"
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PortFallback {
+    /// The host and port that could not be reached, e.g. github.com, 22.
+    pub from_host: String,
+    pub from_port: u16,
+    /// Where to try instead, e.g. ssh.github.com, 443.
+    pub host: String,
+    pub port: u16,
+    /// The store's address on that endpoint, as it would be saved:
+    /// `ssh://git@ssh.github.com:443/you/store.git`.
+    pub address: String,
+}
+
 /// Whether new entries can be saved once setup is done. Reading works
 /// either way; saving needs a public key on this device for every
 /// recipient `.gpg-id` names.
@@ -304,6 +325,9 @@ pub struct SetupFlow {
     refused: Vec<RefusedPath>,
     /// What the last host check or download found out about the remote.
     remote_message: Option<RemoteMessage>,
+    /// The last failure made no connection at all (see
+    /// [`Self::port_fallback`]).
+    no_connection: bool,
 }
 
 fn remove_dir(path: &Path) -> Result<(), SetupError> {
@@ -349,6 +373,7 @@ impl SetupFlow {
             unconfirmed: None,
             refused: Vec::new(),
             remote_message: None,
+            no_connection: false,
         };
         if let Some(problem) = flow.saved.problem.filter(|_| flow.saved.step == Step::Address) {
             flow.note_remote(problem, None);
@@ -532,6 +557,7 @@ impl SetupFlow {
                 let key = scanned.map_err(|e| match e {
                     PawError::Network(detail) => {
                         self.note_remote(RemoteReason::Unreachable, None);
+                        self.no_connection = sync::made_no_connection(&detail);
                         SetupError::HostUnreachable { host: host.clone(), detail }
                     }
                     other => failed(other),
@@ -592,6 +618,7 @@ impl SetupFlow {
     /// it says about the remote for [`Self::last_remote_message`]. `said`
     /// is what the host printed, if anything.
     pub(crate) fn connection_error(&mut self, remote: &sync::Remote, error: PawError, said: Option<String>) -> SetupError {
+        let no_connection = matches!(&error, PawError::Network(detail) if sync::made_no_connection(detail));
         let (reason, error) = match error {
             PawError::Network(detail) => {
                 (RemoteReason::Unreachable, SetupError::HostUnreachable { host: remote.host.clone(), detail })
@@ -622,6 +649,7 @@ impl SetupFlow {
             other => (RemoteReason::Other, failed(other)),
         };
         self.note_remote(reason, said);
+        self.no_connection = no_connection;
         error
     }
 
@@ -631,6 +659,51 @@ impl SetupFlow {
             Err(_) => (String::new(), String::new()),
         };
         self.remote_message = Some(RemoteMessage { reason, host, repository, said });
+        self.no_connection = false;
+    }
+
+    /// After a host check or download that could not connect at all (the
+    /// TCP connection was refused or timed out, as on a network that blocks
+    /// port 22): another way in to the same host, if it has one. For
+    /// github.com that is `ssh.github.com` on port 443, with the same
+    /// bundled keys. Only offered: [`Self::use_port_fallback`] switches to
+    /// it. `None` after any other outcome, including a changed host key or
+    /// a refused key.
+    pub fn port_fallback(&self) -> Option<PortFallback> {
+        let reached_nothing = self.no_connection
+            && self.remote_message.as_ref().is_some_and(|m| m.reason == RemoteReason::Unreachable);
+        if !reached_nothing || !matches!(self.saved.step, Step::CheckHost | Step::NeedPin) {
+            return None;
+        }
+        let address = self.address().ok()?;
+        let (_, _, host, port) = PORT_FALLBACKS
+            .iter()
+            .find(|(h, p, _, _)| address.connect_host().eq_ignore_ascii_case(h) && address.port == *p)?;
+        let to = StoreAddress {
+            user: address.user.clone(),
+            host: (*host).to_owned(),
+            port: *port,
+            path: format!("/{}", address.path.trim_start_matches('/')),
+        };
+        Some(PortFallback { from_host: address.connect_host().to_owned(), from_port: address.port, host: (*host).to_owned(), port: *port, address: to.display() })
+    }
+
+    /// Switches the store's address to [`Self::port_fallback`]'s, keeping
+    /// the repository, and goes back to the host check. Refused when none
+    /// is offered.
+    pub fn use_port_fallback(&mut self) -> Result<SetupState, SetupError> {
+        self.expect(&[Step::CheckHost, Step::NeedPin], "use another port")?;
+        let Some(fallback) = self.port_fallback() else {
+            return Err(SetupError::WrongStep { message: "no other way to reach the host is offered now".into() });
+        };
+        self.saved.notice = Some(format!(
+            "Port {} of {} could not be reached, so paw will use {} on port {} instead.",
+            fallback.from_port, fallback.from_host, fallback.host, fallback.port
+        ));
+        self.saved.address = Some(fallback.address);
+        self.remote_message = None;
+        self.no_connection = false;
+        self.go(Step::CheckHost)
     }
 
     /// What the last host check or download found out about the remote,

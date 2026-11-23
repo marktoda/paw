@@ -291,6 +291,22 @@ impl Setup {
         self.flow().forget_host_key()
     }
 
+    /// After a host check or download that made no connection at all to
+    /// github.com on port 22 (refused or timed out, not a changed host key
+    /// or a refused key): GitHub's port-443 endpoint, to offer as "Port 22
+    /// seems blocked. Try GitHub's port 443?". Never used unless the person
+    /// says so with `use_port_fallback`. `None` otherwise.
+    pub fn port_fallback(&self) -> Option<crate::setup::PortFallback> {
+        self.flow().port_fallback()
+    }
+
+    /// Switches the address to the `port_fallback` endpoint and goes back
+    /// to the host check (`CheckHost`, with a notice saying why); call
+    /// `check_host` next. Its keys ship with paw, so nothing is confirmed.
+    pub fn use_port_fallback(&self) -> Result<SetupState, SetupError> {
+        self.flow().use_port_fallback()
+    }
+
     /// After a host check or a download that failed: what it found out
     /// about the remote, to pick the screen ("No store at that address" for
     /// `RepositoryNotFound`, which comes as `SetupError::Failed`). `None`

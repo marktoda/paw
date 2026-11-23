@@ -245,6 +245,15 @@ async fn bind(port: u16) -> Result<tokio::net::TcpListener, PawError> {
     }
 }
 
+/// Connections paw makes to `host:port` go to this machine's `port` `to`
+/// instead, or, with `None`, where they say again: for testing what paw
+/// does when a well-known host (github.com) is unreachable or presents
+/// another key, without the network. Host keys are still checked against
+/// what `host:port` is pinned to. Process-wide; Rust only.
+pub fn redirect_connections(host: &str, port: u16, to: Option<u16>) {
+    crate::sync::redirect(host, port, to.map(|to| ("127.0.0.1".to_owned(), to)));
+}
+
 fn fixture_options(key: &SimulatedKey) -> SimRemoteOptions {
     SimRemoteOptions {
         authorised: vec![SshPublicKey::ed25519(&key.authentication_public_key()).authorized_key()],
