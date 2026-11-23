@@ -131,15 +131,11 @@ final class AppTests: XCTestCase {
         app.buttons["pin-continue"].tap()
     }
 
-    /// A simulator control drawn below the key sheet's own buttons.
-    private func tapSimulated(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {
-        let button = app.buttons[identifier]
-        XCTAssertTrue(button.waitForExistence(timeout: 10), "\"\(identifier)\" should be on the sheet",
-                      file: file, line: line)
-        if !button.isHittable {
-            app.swipeUp()
-        }
-        button.tap()
+    /// A simulator control drawn below the key sheet's own buttons. Tapped
+    /// at once: a touch must land before the simulated key's timeout, and
+    /// XCUITest scrolls the sheet to it if needed.
+    private func tapSimulated(_ identifier: String) {
+        app.buttons[identifier].tap()
     }
 
     private func touchTheKey() {
@@ -293,7 +289,7 @@ final class AppTests: XCTestCase {
     }
 
     func testCancelWhileWaitingForATouchOpensNothing() {
-        launch(extra: ["-pawSimTouchTimeoutMs", "3000"])
+        launch(extra: ["-pawSimTouchTimeoutMs", "4000"])
         tap("folder-web")
         tap("entry-github.com")
         enterPin(Self.pin)
@@ -302,7 +298,7 @@ final class AppTests: XCTestCase {
         expectGone("key-sheet-purpose")
 
         // Past the key's own timeout: the late answer must not open anything.
-        sleep(5)
+        sleep(6)
         expectAbsent("entry-title", "Nothing opens after a cancel")
         expectAbsent("key-sheet-purpose", "The sheet stays closed")
         snapshot("after-cancel")
@@ -523,13 +519,14 @@ final class AppTests: XCTestCase {
     }
 
     func testATouchTimeoutCanBeTriedAgainWithoutThePin() {
-        launch(extra: ["-pawSimTouchTimeoutMs", "3000"])
+        // Long enough to photograph the second touch stage before it ends too.
+        launch(extra: ["-pawSimTouchTimeoutMs", "8000"])
         tap("folder-web")
         tap("entry-github.com")
         enterPin(Self.pin)
         expect("touch-prompt")
 
-        expectLabel("key-sheet-headline", contains: "Your key wasn't touched in time", timeout: 15)
+        expectLabel("key-sheet-headline", contains: "Your key wasn't touched in time", timeout: 20)
         expectLabel("key-sheet-body", contains: "Nothing was opened.")
         expectAbsent("entry-title", "Nothing opens without a touch")
         snapshot("touch-timeout")
