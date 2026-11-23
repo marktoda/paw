@@ -183,7 +183,7 @@ struct RecipientsReviewScreen: View {
                         lineRow("No list accepted", detail: "This folder had no list of keys of its own.")
                     }
                     ForEach(found.acceptedLines, id: \.self) { line in
-                        lineRow(RecipientLine.tail(line), detail: Self.grouped(line))
+                        lineRow(Self.name(line, in: found), detail: Self.grouped(line))
                     }
                 } header: {
                     PawSectionHeader("Before (\(found.acceptedGpgId ?? "none"))")
@@ -191,7 +191,10 @@ struct RecipientsReviewScreen: View {
                 .accessibilityIdentifier("recipients-before")
                 Section {
                     ForEach(found.lines, id: \.line) { line in
-                        lineRow(line.statusWords, detail: Self.grouped(line.line))
+                        lineRow(
+                            Self.name(line.line, in: found),
+                            detail: Self.isYourKey(line) ? Self.grouped(line.line)
+                                : "\(line.statusWords) \u{00B7} \(Self.grouped(line.line))")
                     }
                 } header: {
                     PawSectionHeader("Now (\(found.gpgId))")
@@ -244,6 +247,18 @@ struct RecipientsReviewScreen: View {
         .padding(.vertical, PawMetrics.Spacing.s)
         .accessibilityElement(children: .combine)
         .pawListRow()
+    }
+
+    /// The same name for a key in both lists: "Your key" for the plugged-in
+    /// key's line wherever it appears, otherwise "Key 9A1C 03F2".
+    private static func name(_ line: String, in found: FolderRecipients) -> String {
+        let yours = found.lines.contains { $0.line == line && isYourKey($0) }
+        return yours ? "Your key" : "Key \(RecipientLine.tail(line))"
+    }
+
+    private static func isYourKey(_ line: RecipientLine) -> Bool {
+        if case .ready(_, .card, _) = line.status { return true }
+        return false
     }
 
     /// A fingerprint in groups of four, as people read them out.

@@ -2,12 +2,33 @@ import Foundation
 
 /// What the key sheet says about a `KeyError`: what happened, then what to
 /// do next. Every case is worded here and nowhere else (design.md 2.3 and
-/// 2.11). `entry` is the name of the entry being opened.
+/// 2.11). `entry` is the name of the entry being opened; `purpose` says
+/// what the key was for, so "nothing was opened" fits a download too.
 struct KeyErrorWords: Equatable {
+    /// What the key was being used for.
+    enum Purpose {
+        case open, download, send, check
+
+        /// "Nothing was opened.", by what did not happen.
+        var nothingHappened: String {
+            switch self {
+            case .open: "Nothing was opened."
+            case .download: "Nothing was downloaded."
+            case .send: "Nothing was sent."
+            case .check: "Nothing was checked."
+            }
+        }
+    }
+
     let problem: String
     let nextStep: String
 
-    init(_ error: KeyError, entry: String) {
+    init(problem: String, nextStep: String) {
+        self.problem = problem
+        self.nextStep = nextStep
+    }
+
+    init(_ error: KeyError, entry: String, purpose: Purpose = .open) {
         switch error {
         case .WrongPin(let triesLeft):
             problem = "Wrong PIN"
@@ -30,7 +51,7 @@ struct KeyErrorWords: Equatable {
             nextStep = "It was forgotten before your key was used. Try again and enter it."
         case .TouchTimeout:
             problem = "Your key wasn't touched in time"
-            nextStep = "Nothing was opened. Try again, and touch the gold part of your key while it blinks."
+            nextStep = "\(purpose.nothingHappened) Try again, and touch the gold part of your key while it blinks."
         case .KeyRemoved:
             problem = "Your key was unplugged"
             nextStep = "Plug it back in, then try again. paw will ask for your PIN again."
@@ -57,7 +78,7 @@ struct KeyErrorWords: Equatable {
             nextStep = "Unplug it, plug it back in, then try again. The key said: \(detail)."
         case .Cancelled:
             problem = "Cancelled"
-            nextStep = "Nothing was opened."
+            nextStep = purpose.nothingHappened
         }
     }
 }

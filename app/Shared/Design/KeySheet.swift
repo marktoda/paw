@@ -42,6 +42,11 @@ struct KeySheetContent: View {
     /// A control that stands in for the hardware in the simulator, drawn
     /// below everything else and styled so it cannot pass for the app's own.
     var simulatorAction: SimulatorAction? = nil
+    /// More such controls, below the first (e.g. "time out the touch").
+    var moreSimulatorActions: [SimulatorAction] = []
+    /// A way on that is not built yet, shown on the failed stage as a
+    /// dimmed row, e.g. "Replace key (coming)".
+    var comingSoon: String? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showPin = false
@@ -50,7 +55,7 @@ struct KeySheetContent: View {
     @FocusState private var focus: PinFocus?
 
     private enum PinFocus {
-        case secure, plain
+        case secure
     }
 
     var body: some View {
@@ -71,14 +76,13 @@ struct KeySheetContent: View {
         .onChange(of: stage, initial: true) {
             stageChanged()
         }
-        .onChange(of: showPin) {
-            if focus != nil {
-                focus = showPin ? .plain : .secure
-            }
-        }
         .sensoryFeedback(trigger: stage) { _, new in
             Self.haptic(for: new)
         }
+    }
+
+    private var simulatorActions: [SimulatorAction] {
+        (simulatorAction.map { [$0] } ?? []) + moreSimulatorActions
     }
 
     // MARK: Parts
@@ -111,8 +115,8 @@ struct KeySheetContent: View {
                 Spacer(minLength: 0)
             }
             buttons
-            if let simulatorAction {
-                SimulatorActionButton(action: simulatorAction)
+            ForEach(simulatorActions, id: \.identifier) { action in
+                SimulatorActionButton(action: action)
             }
         }
     }
@@ -186,30 +190,36 @@ struct KeySheetContent: View {
         }
     }
 
+    /// One secure field whatever Show says: a plain text field would let a
+    /// third-party keyboard in (paw also refuses them app-wide). With Show
+    /// on, the dots are drawn clear and the PIN is drawn over them.
     private var pinField: some View {
         HStack(spacing: PawMetrics.Spacing.s) {
-            Group {
-                if showPin {
-                    TextField("Key PIN", text: $pin)
-                        .focused($focus, equals: .plain)
-                } else {
-                    SecureField("Key PIN", text: $pin)
-                        .focused($focus, equals: .secure)
+            SecureField("Key PIN", text: $pin)
+                .focused($focus, equals: .secure)
+                .font(PawFont.password)
+                .foregroundStyle(showPin ? Color.clear : PawColor.label)
+                .overlay(alignment: .leading) {
+                    if showPin {
+                        Text(pin)
+                            .font(PawFont.password)
+                            .foregroundStyle(PawColor.label)
+                            .lineLimit(1)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
                 }
-            }
-            .font(PawFont.password)
-            .foregroundStyle(PawColor.label)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .keyboardType(.asciiCapable)
-            .submitLabel(.continue)
-            .onSubmit {
-                // The button waits for 6 characters; the return key sends what
-                // was typed, and the core refuses a short PIN without using a try.
-                if !pin.isEmpty { onContinue() }
-            }
-            .accessibilityLabel("Key PIN")
-            .accessibilityIdentifier("pin-field")
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .keyboardType(.asciiCapable)
+                .submitLabel(.continue)
+                .onSubmit {
+                    // The button waits for 6 characters; the return key sends what
+                    // was typed, and the core refuses a short PIN without using a try.
+                    if !pin.isEmpty { onContinue() }
+                }
+                .accessibilityLabel("Key PIN")
+                .accessibilityIdentifier("pin-field")
 
             Button(showPin ? "Hide" : "Show") {
                 showPin.toggle()
@@ -245,6 +255,12 @@ struct KeySheetContent: View {
                 Button("Try again", action: onRetry)
                     .buttonStyle(.pawPrimary)
                     .accessibilityIdentifier("key-sheet-retry")
+                if let comingSoon {
+                    Button(comingSoon) {}
+                        .buttonStyle(.pawSecondary)
+                        .disabled(true)
+                        .accessibilityIdentifier("key-sheet-coming-soon")
+                }
                 cancelButton("Cancel")
             case .done:
                 EmptyView()
@@ -282,8 +298,10 @@ struct KeySheetContent: View {
         case .plugIn:
             return "USB-C, on the bottom of your iPhone."
         case .pin(_, let forgotten):
-            let usual = "The PIN for the key, not your iPhone passcode. Asked once while the key stays plugged in."
-            return forgotten ? "paw forgot your PIN after 15 minutes away. " + usual : usual
+            return forgotten
+                ? "paw forgot your PIN after 15 minutes away. Enter the key's PIN, not your iPhone passcode."
+                : "The PIN for the key, not your iPhone passcode. Asked once while the key stays plugged in."
+
         case .wrongPin:
             return "Enter the PIN for the key, not your iPhone passcode."
         case .pinAgain(_, _, let nextStep):
@@ -371,7 +389,7 @@ struct KeySheetContent: View {
         if isPinStage {
             // With one try left the PIN is shown, so a slip is seen before it counts.
             if triesLeft == 1 { showPin = true }
-            focus = showPin ? .plain : .secure
+            focus = .secure
         } else {
             focus = nil
         }
@@ -391,7 +409,7 @@ struct SimulatorAction {
 
 /// Dashed, small and labelled "Simulator", below the sheet's own buttons,
 /// so a screenshot never shows it as part of the design.
-private struct SimulatorActionButton: View {
+struct SimulatorActionButton: View {
     let action: SimulatorAction
 
     var body: some View {
