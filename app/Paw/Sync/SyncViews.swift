@@ -409,6 +409,7 @@ private struct SyncStatusSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                attention
                 Section {
                     LabeledContent {
                         TimelineView(.periodic(from: .now, by: 30)) { context in
@@ -448,7 +449,6 @@ private struct SyncStatusSheet: View {
                         .accessibilityIdentifier("sync-not-sent")
                     }
                 }
-                attention
                 actions
                 #if targetEnvironment(simulator)
                 SyncSimulatorSection(syncing: syncing)

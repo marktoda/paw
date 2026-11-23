@@ -102,13 +102,15 @@ struct HeldBackScreen: View {
             detailRow(
                 "Encrypted for",
                 item.encryptedFor.isEmpty ? "Nobody paw can name" : item.encryptedFor.joined(separator: "\n"),
+                prose: item.encryptedFor.isEmpty,
                 identifier: "held-back-encrypted-for-\(entry.name)")
             detailRow(
                 item.gpgId.isEmpty ? "Should be for" : "Should be for (\(item.gpgId))",
                 item.recipients.isEmpty
                     ? "paw can't read who this folder is for."
-                    : item.recipients.map(RecipientsReviewScreen.grouped).joined(separator: "\n")
-                        + (item.accepted ? "" : "\nNot accepted on this iPhone yet."),
+                    : item.recipients.map(RecipientsReviewScreen.grouped).joined(separator: "\n"),
+                prose: item.recipients.isEmpty,
+                note: item.accepted ? nil : "Not accepted on this iPhone yet.",
                 identifier: "held-back-should-be-for-\(entry.name)")
             if !item.accepted {
                 actionButton("Review who can open \(place)", identifier: "held-back-review-\(entry.name)") {
@@ -164,15 +166,21 @@ struct HeldBackScreen: View {
         }
     }
 
-    private func detailRow(_ title: String, _ value: String, identifier: String) -> some View {
+    private func detailRow(_ title: String, _ value: String, prose: Bool = false, note: String? = nil,
+                           identifier: String) -> some View {
         VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
             Text(title)
                 .font(PawFont.footnote)
                 .foregroundStyle(PawColor.labelSecondary)
             Text(value)
-                .font(PawFont.footnote.monospaced())
+                .font(prose ? PawFont.footnote : PawFont.footnote.monospaced())
                 .foregroundStyle(PawColor.label)
                 .textSelection(.enabled)
+            if let note {
+                Text(note)
+                    .font(PawFont.footnote)
+                    .foregroundStyle(PawColor.warning)
+            }
         }
         .fixedSize(horizontal: false, vertical: true)
         .padding(.vertical, PawMetrics.Spacing.s)

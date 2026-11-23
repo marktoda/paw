@@ -160,6 +160,7 @@ final class SyncTests: XCTestCase {
             let field = expect("pin-field", file: file, line: line)
             field.tap()
             field.typeText(Self.pin + "\n")
+            expectGone("pin-field", file: file, line: line)
         }
         touchIfAsked(file: file, line: line)
     }
@@ -192,7 +193,7 @@ final class SyncTests: XCTestCase {
     /// Home's pill, then the sync sheet.
     private func openSyncSheet() {
         tap("sync-pill")
-        expect("sync-check")
+        expect("sync-sheet-done")
     }
 
     // MARK: Sending
@@ -306,7 +307,7 @@ final class SyncTests: XCTestCase {
         expectLabel("error-row", contains: "Your change is still waiting on this iPhone.")
         snapshot("push-refused")
         tap("sync-sheet-done")
-        expectGone("sync-check")
+        expectGone("sync-sheet-done")
         expectLabel("unpushed-count", contains: "1 change")
         XCTAssertEqual(remote.components(separatedBy: " · ").first, before.components(separatedBy: " · ").first,
                        "The tip should not have moved")
@@ -480,7 +481,7 @@ final class SyncTests: XCTestCase {
         tap("sim-remote-rewrite")
         expectLabel("sim-remote-status", contains: "Replaced the history.")
         tap("sync-sheet-done")
-        expectGone("sync-check")
+        expectGone("sync-sheet-done")
         openSyncSheet()
         tap("sync-send")
         passKeySheet(purpose: "Send 1 change", pin: true)
