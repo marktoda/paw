@@ -142,11 +142,20 @@ class PawUITestCase: XCTestCase {
     @discardableResult
     func scrollTo(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
         let found = element(identifier)
-        _ = found.waitForExistence(timeout: Self.patience)
+        // A list builds its rows lazily: one far down doesn't exist until
+        // scrolled to. Give it a moment to appear, then go looking.
+        _ = found.waitForExistence(timeout: 5)
         var swipes = 0
         while !(found.exists && found.isHittable && !underKeyboard(found)) && swipes < 8 {
-            app.swipeUp()
+            if found.exists && found.frame.maxY < app.frame.height * 0.2 {
+                app.swipeDown()
+            } else {
+                app.swipeUp()
+            }
             swipes += 1
+        }
+        if !found.exists {
+            _ = found.waitForExistence(timeout: Self.patience)
         }
         XCTAssertTrue(found.exists, "\"\(identifier)\" should be on screen", file: file, line: line)
         if swipes > 0 {
@@ -189,10 +198,14 @@ class PawUITestCase: XCTestCase {
     /// paw to the background and back. With `-pawSimAwayMs` the simulated
     /// clock moves on while it is away.
     func backgroundAndReturn() {
-        XCUIDevice.shared.press(.home)
-        let deadline = Date().addingTimeInterval(Self.patience)
-        while app.state == .runningForeground && Date() < deadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        // The Home button press is now and then lost on a busy simulator:
+        // press again until paw has left the foreground.
+        for _ in 0..<3 where app.state == .runningForeground {
+            XCUIDevice.shared.press(.home)
+            let deadline = Date().addingTimeInterval(10)
+            while app.state == .runningForeground && Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            }
         }
         XCTAssertNotEqual(app.state, .runningForeground, "paw should have gone to the background")
         app.activate()

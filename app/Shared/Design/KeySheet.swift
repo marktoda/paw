@@ -199,17 +199,6 @@ struct KeySheetContent: View {
                 .focused($focus, equals: .secure)
                 .font(PawFont.password)
                 .foregroundStyle(showPin ? Color.clear : PawColor.label)
-                .overlay(alignment: .leading) {
-                    if showPin {
-                        Text(pin)
-                            .font(PawFont.password)
-                            .foregroundStyle(PawColor.label)
-                            .lineLimit(1)
-                            .allowsHitTesting(false)
-                            .accessibilityLabel(pin)
-                            .accessibilityIdentifier("pin-shown")
-                    }
-                }
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .keyboardType(.asciiCapable)
@@ -221,6 +210,19 @@ struct KeySheetContent: View {
                 }
                 .accessibilityLabel("Key PIN")
                 .accessibilityIdentifier("pin-field")
+                // After the field's own accessibility, so the shown PIN is
+                // its own element.
+                .overlay(alignment: .leading) {
+                    if showPin {
+                        Text(pin)
+                            .font(PawFont.password)
+                            .foregroundStyle(PawColor.label)
+                            .lineLimit(1)
+                            .allowsHitTesting(false)
+                            .accessibilityLabel(pin)
+                            .accessibilityIdentifier("pin-shown")
+                    }
+                }
 
             Button(showPin ? "Hide" : "Show") {
                 showPin.toggle()
