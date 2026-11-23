@@ -35,7 +35,7 @@ final class SetupTests: PawUITestCase {
     /// Types the simulated host's address and trusts its key.
     private func toDownload(shots: Bool = false) {
         tap("simulated-address")
-        expectText("address-reading", contains: "paw will connect to 127.0.0.1 as git")
+        expectText("address-reading", contains: "Connects to 127.0.0.1 as git")
         if shots { snapshot("address") }
         tap("address-connect")
         expect("setup-confirm-host")
@@ -183,20 +183,20 @@ final class SetupTests: PawUITestCase {
         field.tap()
         field.typeText(long)
         expectValue("repo-address", long)
-        expectText("address-reading", contains: "paw will connect to a-long-host-name.internal.example.com as git on port 2222.")
+        expectText("address-reading", contains: "Connects to a-long-host-name.internal.example.com as git on port 2222.")
         XCTAssertGreaterThan(field.frame.height, oneLine * 1.5, "The long address should take more than one line")
         snapshot("address-long")
         // GitHub's short form, read as its SSH address, with a host whose
         // keys come with paw.
         clearAddress()
         field.typeText("you/password-store")
-        expectText("address-reading", contains: "paw will connect to github.com as git.")
-        expectText("address-reading", contains: "paw already knows github.com's fingerprint.")
+        expectText("address-reading", contains: "Connects to github.com as git.")
+        expectText("address-reading", contains: "Its fingerprint is built in.")
         expectText("address-reading-notice", contains: "git@github.com:you/password-store.git")
         snapshot("address-short-form")
         // The simulated host: its own port, a fingerprint to confirm.
         tap("simulated-address")
-        expectText("address-reading", contains: "paw will connect to 127.0.0.1 as git on port")
+        expectText("address-reading", contains: "Connects to 127.0.0.1 as git on port")
         expectAbsent("address-reading-notice", "The simulated host's address is used as typed")
         snapshot("address-reading")
     }
@@ -343,7 +343,7 @@ final class SetupTests: PawUITestCase {
         enterPin(Self.pin)
         timeOutTheTouch()
         expectText("key-sheet-headline", contains: "Your key wasn't touched in time")
-        expectText("key-sheet-body", contains: "Nothing was downloaded.")
+        expectText("key-sheet-body", contains: "touch the gold part while it blinks")
         snapshot("download-touch-timed-out")
         tap("key-sheet-retry")
         expect("touch-prompt")

@@ -354,12 +354,12 @@ final class SetupModel {
         return try? readStoreAddress(text: typed)
     }
 
-    /// "paw will connect to github.com as git."
+    /// "Connects to github.com as git."
     static func readingLine(_ reading: AddressReading) -> String {
         let port = reading.port == 22 ? "" : " on port \(reading.port)"
-        var line = "paw will connect to \(reading.host) as \(reading.user)\(port)."
+        var line = "Connects to \(reading.host) as \(reading.user)\(port)."
         if reading.hostKeyBundled {
-            line += " paw already knows \(reading.host)'s fingerprint."
+            line += " Its fingerprint is built in."
         }
         return line
     }
@@ -443,7 +443,7 @@ final class SetupModel {
             state = setup.state()
             problem = SetupProblem(
                 problem: "paw doesn't support this key's PIN setting yet",
-                nextStep: "The key has KDF turned on in a way paw can't follow. No PIN try was used.",
+                nextStep: "It has KDF turned on. No PIN try was used.",
                 details: refusal.detail.map { [$0] } ?? [])
         case .failure(let error as KeyError):
             state = setup.state()
@@ -871,8 +871,8 @@ final class SetupModel {
                 show(error, during: purpose == .download ? .downloading : .checkingKey)
             } else {
                 problem = SetupProblem(
-                    problem: "Your store holds something paw won't put on this iPhone",
-                    nextStep: "Nothing was checked out. Rename or remove these on a computer, push, then try again.",
+                    problem: "Your store has names paw can't download",
+                    nextStep: "Rename or remove them on a computer, then try again.",
                     details: refused.map { "\($0.path): \($0.reason)" },
                     action: .retry, actionTitle: "Try again")
             }
@@ -935,8 +935,8 @@ final class SetupModel {
             let host = remote.host.isEmpty ? "The server" : remote.host
             return SetupProblem(
                 problem: "No store at that address",
-                nextStep: "\(host) says \(repository) doesn't exist, or this key can't see it. Check the address, "
-                    + "and that your account can see the repository.",
+                nextStep: "\(host) says \(repository) doesn't exist, or this key can't see it. Check the address "
+                    + "and your account's access.",
                 details: remote.said.map { ["\(host) said: \($0)"] } ?? [],
                 action: .retry, actionTitle: "Try again")
         case .emptyRepository:
@@ -955,8 +955,7 @@ final class SetupModel {
         let warning = "This can mean someone is intercepting the connection. Nothing was sent."
         let advice: String
         if bundled {
-            advice = "\(host)'s keys come with paw and can't be forgotten, so this connection isn't reaching the "
-                + "real \(host). Try another network."
+            advice = "\(host)'s real keys are built into paw, so this isn't \(host). Try another network."
         } else {
             advice = "If the server's admin confirms the change, tap I expected this change."
         }
@@ -979,8 +978,8 @@ final class SetupModel {
         case .HostUnreachable(let host, let detail):
             if downloading {
                 return SetupProblem(
-                    problem: "The download stopped before it finished",
-                    nextStep: "Nothing was kept. Check your connection, then try again.",
+                    problem: "The download was interrupted",
+                    nextStep: "Nothing was kept. Check your connection and try again.",
                     details: [detail], action: .retry, actionTitle: "Try again")
             }
             return SetupProblem(
@@ -1000,31 +999,32 @@ final class SetupModel {
                 action: .retry, actionTitle: "Try again")
         case .PinBlocked:
             return SetupProblem(
-                problem: "The PIN is locked",
-                nextStep: "Three wrong PINs lock the key. Unlock it on a computer with your admin PIN.")
+                problem: "Your key is locked",
+                nextStep: "Unlock it on a computer with its reset code or admin PIN.")
         case .TouchTimedOut:
             return SetupProblem(
                 problem: "Your key wasn't touched in time",
-                nextStep: "Try again, and touch the gold part of your key while it blinks.",
+                nextStep: "Try again and touch the gold part while it blinks.",
                 action: .retry, actionTitle: "Try again")
         case .EmptyRepository:
             return SetupProblem(
                 problem: "That store is empty",
-                nextStep: "Add a password to it on a computer and push it, then try again.",
+                nextStep: "Add a password to it on a computer, then try again.",
                 action: .retry, actionTitle: "Try again")
         case .NotAPassStore:
             return SetupProblem(
-                problem: "That repository isn't a pass store",
-                nextStep: "It has no .gpg-id file at the top. Check the address.")
+                problem: "That isn't a pass store",
+                nextStep: "Nothing there says which key it is encrypted for. Check the address.",
+                details: ["No .gpg-id file at the top of the repository"])
         case .KeyCannotOpenStore:
             return SetupProblem(
                 problem: "This key can't open this store",
-                nextStep: "None of its passwords are encrypted for this key. Plug in the key the store is encrypted for, then try again.",
+                nextStep: "Its passwords are encrypted for another key. Plug that key in and try again.",
                 action: .retry, actionTitle: "Try again")
         case .CannotOpenEntry(let entry, let detail):
             return SetupProblem(
-                problem: "paw downloaded your store but couldn't open \(entry)",
-                nextStep: "Try again. If it keeps failing, the entry may be damaged.",
+                problem: "Your key couldn't open \(entry)",
+                nextStep: "The store is downloaded. Try again; if it keeps failing, that file may be damaged.",
                 details: [detail], action: .retry, actionTitle: "Try again")
         case .UnusableKey(let message):
             return SetupProblem(
@@ -1039,8 +1039,7 @@ final class SetupModel {
             if downloading {
                 return SetupProblem(
                     problem: "The download didn't finish",
-                    nextStep: "Nothing was kept. Try again. If it keeps failing, check the address and that "
-                        + "your account can see the repository.",
+                    nextStep: "Nothing was kept. Try again, or check the address and your account's access.",
                     details: [message], action: .retry, actionTitle: "Try again")
             }
             return SetupProblem(
@@ -1050,7 +1049,7 @@ final class SetupModel {
             return SetupProblem(problem: "Check the address", nextStep: message)
         case .KeyNotAccepted(let host, _):
             return SetupProblem(
-                problem: "\(host) doesn't know this key yet", nextStep: "Add your key's SSH key to your account.")
+                problem: "\(host) doesn't know this key yet", nextStep: "Add its SSH key to your account there.")
         }
     }
 

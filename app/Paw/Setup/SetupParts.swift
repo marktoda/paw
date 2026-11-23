@@ -9,6 +9,8 @@ struct SetupPage<Content: View, Buttons: View>: View {
     var message: String? = nil
     var titleFont = PawFont.title
     let identifier: String
+    /// The simulator's stand-ins for this screen, under its buttons.
+    var simulatorActions: [SimulatorAction] = []
     @ViewBuilder var content: Content
     @ViewBuilder var buttons: Buttons
 
@@ -43,7 +45,7 @@ struct SetupPage<Content: View, Buttons: View>: View {
             }
             .frame(maxWidth: PawMetrics.setupTextWidth, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, PawMetrics.Spacing.xl)
+            .padding(.horizontal, PawMetrics.screenMargin)
             .padding(.top, PawMetrics.Spacing.s)
             .padding(.bottom, PawMetrics.Spacing.xl)
         }
@@ -52,9 +54,10 @@ struct SetupPage<Content: View, Buttons: View>: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: PawMetrics.Spacing.s) {
                 buttons
+                SimulatorStrip(actions: simulatorActions)
             }
             .frame(maxWidth: PawMetrics.setupTextWidth)
-            .padding(.horizontal, PawMetrics.Spacing.xl)
+            .padding(.horizontal, PawMetrics.screenMargin)
             .padding(.top, PawMetrics.Spacing.s)
             .padding(.bottom, PawMetrics.Spacing.l)
             .frame(maxWidth: .infinity)
@@ -83,6 +86,21 @@ struct SetupCard<Content: View>: View {
         .background(PawColor.surface, in: RoundedRectangle(cornerRadius: PawMetrics.cardRadius, style: .continuous))
     }
 }
+
+#if targetEnvironment(simulator)
+/// A stand-in for something outside paw (the key, the git host), on a
+/// screen that takes it in its content. `SetupPage(simulatorActions:)`
+/// puts them under the buttons instead.
+struct SetupSimulatorButton: View {
+    let title: String
+    let identifier: String
+    let perform: () -> Void
+
+    var body: some View {
+        SimulatorStrip(actions: [SimulatorAction(title: title, identifier: identifier, perform: perform)])
+    }
+}
+#endif
 
 /// A primary button whose tap asks for the key: the gold disc leads it
 /// (design.md 2.1, rule 1).
@@ -207,41 +225,12 @@ struct GroupedFingerprint: View {
     }
 }
 
-#if targetEnvironment(simulator)
-/// A stand-in for something outside paw (the key, the git host), dashed and
-/// labelled "Simulator" so a screenshot never shows it as part of the design.
-struct SetupSimulatorButton: View {
-    let title: String
-    let identifier: String
-    let perform: () -> Void
-
-    var body: some View {
-        Button(action: perform) {
-            HStack(spacing: PawMetrics.Spacing.xs) {
-                Image(systemName: "hammer")
-                    .font(PawFont.caption.weight(.semibold))
-                Text("Simulator: \(title)")
-                    .font(PawFont.footnote.weight(.semibold))
-            }
-            .foregroundStyle(PawColor.labelSecondary)
-            .padding(.horizontal, PawMetrics.Spacing.m)
-            .frame(minHeight: PawMetrics.tapMin)
-            .overlay(
-                Capsule().strokeBorder(PawColor.labelTertiary, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(title)
-        .accessibilityIdentifier(identifier)
-    }
-}
-#endif
-
 extension KeyTouch {
     /// How a slot's touch policy reads on "Your key".
     var phrase: String {
         switch self {
-        case .eachUse: "needs a touch every time"
-        case .cached: "one touch covers about 15 seconds"
+        case .eachUse: "touch every time"
+        case .cached: "one touch lasts about 15 seconds"
         case .off: "no touch needed"
         case .unknown: "may need a touch"
         }
