@@ -49,7 +49,8 @@ final class EnclaveTests: XCTestCase {
     func testStorageAndClocks() {
         record("faceid-state", text("enclave-faceid-state"))
         record("passcode-state", text("enclave-passcode-state"))
-        record("access-group", text("enclave-access-group"))
+        let accessGroup = text("enclave-access-group")
+        record("access-group", accessGroup)
 
         let run = element("enclave-run-storage")
         XCTAssertTrue(run.waitForExistence(timeout: 10))
@@ -65,9 +66,23 @@ final class EnclaveTests: XCTestCase {
             XCTAssertTrue(value.contains(": pass") || value.contains(": fail"), "\(row) has an outcome: \(value)")
         }
 
-        // Required: the keychain items and the clocks.
-        for row in ["enclave-index-length", "enclave-index-same", "enclave-reset",
-                    "enclave-index-after-reset", "enclave-monotonic", "enclave-wall", "enclave-boot-id"] {
+        // The keychain items. CI builds the simulator app unsigned, and an
+        // app with no entitlements gets no keychain there at all
+        // (errSecMissingEntitlement, -34018); then every keychain step
+        // must say exactly that rather than pass or hang.
+        let keychainMissing = accessGroup.contains("OSStatus -34018")
+        for row in ["enclave-index-length", "enclave-index-same", "enclave-reset", "enclave-index-after-reset"] {
+            let value = text(row)
+            record(row, value)
+            if keychainMissing {
+                XCTAssertTrue(value.contains(": fail: OSStatus -34018"), "\(row): \(value)")
+            } else {
+                XCTAssertTrue(value.contains(": pass"), "\(row): \(value)")
+            }
+        }
+
+        // The clocks: always required.
+        for row in ["enclave-monotonic", "enclave-wall", "enclave-boot-id"] {
             let value = text(row)
             record(row, value)
             XCTAssertTrue(value.contains(": pass"), "\(row): \(value)")

@@ -83,15 +83,19 @@ enum BootSession {
             guard error == EEXIST else { continue }
             // Another process may have created it a moment ago and not
             // written the file yet.
+            var why = ""
             for _ in 0..<20 {
-                if let id = readFile() { return (id, "semaphore \(name)") }
+                switch readFile() {
+                case .success(let id): return (id, "semaphore \(name)")
+                case .failure(let reason): why = reason.text
+                }
                 usleep(5_000)
             }
             // Created this boot but the file is gone (e.g. reinstalled since
             // boot): make one, without replacing one that just appeared.
             _ = write("boot-" + UUID().uuidString, replacing: false)
-            if let id = readFile() { return (id, "semaphore \(name), id remade") }
-            return ("unreadable-" + UUID().uuidString, "semaphore \(name), id file unreadable")
+            if case .success(let id) = readFile() { return (id, "semaphore \(name), id remade") }
+            return ("unreadable-" + UUID().uuidString, "semaphore \(name), id file unreadable: \(why)")
         }
         var boot = timeval()
         var size = MemoryLayout<timeval>.size
@@ -107,11 +111,24 @@ enum BootSession {
         return base?.appendingPathComponent("boot-id", isDirectory: false)
     }
 
-    private static func readFile() -> String? {
-        guard let url = fileURL, let data = try? Data(contentsOf: url),
-              let text = String(data: data, encoding: .utf8), text.hasPrefix("boot-"),
-              UUID(uuidString: String(text.dropFirst("boot-".count))) != nil else { return nil }
-        return text
+    struct Unreadable: Error {
+        let text: String
+    }
+
+    private static func readFile() -> Result<String, Unreadable> {
+        guard let url = fileURL else { return .failure(Unreadable(text: "no container")) }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            let code = (error as NSError).code
+            return .failure(Unreadable(text: "read error \((error as NSError).domain) \(code)"))
+        }
+        guard let text = String(data: data, encoding: .utf8), text.hasPrefix("boot-"),
+              UUID(uuidString: String(text.dropFirst("boot-".count))) != nil else {
+            return .failure(Unreadable(text: "\(data.count) bytes, not an id"))
+        }
+        return .success(text)
     }
 
     private static func write(_ id: String, replacing: Bool) -> Bool {

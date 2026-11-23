@@ -193,11 +193,10 @@ struct EnclaveCheckView: View {
         let wall = clock.wallMs()
         add("wall", wall > 1_700_000_000_000 ? "Wall clock: pass" : "Wall clock: fail (\(wall))")
 
-        let boot = BootSession.read()
-        let again = clock.bootId()
-        add("boot-id", boot.id == again && !boot.id.isEmpty
-            ? "Boot id read twice: pass (same; \(boot.source))"
-            : "Boot id read twice: fail (changed; \(boot.source))")
+        let reads = (0..<3).map { _ in BootSession.read() }
+        let sources = reads.map(\.source).joined(separator: " | ")
+        let stable = Set(reads.map(\.id)).count == 1 && clock.bootId() == reads[0].id
+        add("boot-id", "Boot id read four times: \(stable ? "pass (same)" : "fail (changed)"); \(sources)")
         add("done", "Storage checks: done")
         return rows
     }
