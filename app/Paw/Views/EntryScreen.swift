@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// An opened entry. Values come from the Rust side one at a time, when
 /// they are shown or copied; secrets start hidden and hide again after 30
@@ -40,9 +41,12 @@ struct EntryScreen: View {
                 VStack(alignment: .leading, spacing: PawMetrics.Spacing.l) {
                     header
                     if let copy = model.liveCopy(entry.path) {
-                        // Lock now ends every copy, not just this one, and says so in its toast.
-                        FaceIDWindowBar(text: "Opens with Face ID until \(clockTime(ms: copy.untilMs))") {
-                            model.lockNow()
+                        // This entry's copy only; Lock now in Settings ends them all.
+                        FaceIDWindowBar(
+                            text: "Opens with Face ID until \(clockTime(ms: copy.untilMs))",
+                            lockTitle: "Lock this password"
+                        ) {
+                            model.lockEntry(session)
                         }
                     }
                 }
@@ -66,6 +70,25 @@ struct EntryScreen: View {
                     .listRowBackground(Color.clear)
                 }
             }
+            #if DEBUG && targetEnvironment(simulator)
+            if model.simulator != nil {
+                // Stand-ins for the iPhone locking and time passing while
+                // this entry is on screen. Dashed, so no screenshot shows
+                // them as part of the design.
+                Section {
+                    SimulatorActionButton(action: SimulatorAction(
+                        title: "lock the iPhone", identifier: "sim-entry-device-lock") {
+                        NotificationCenter.default.post(
+                            name: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil)
+                    })
+                    SimulatorActionButton(action: SimulatorAction(
+                        title: "move the clock 9 hours on", identifier: "sim-entry-advance-9h") {
+                        model.advanceSimulatedClock(hours: 9)
+                    })
+                }
+                .listRowBackground(Color.clear)
+            }
+            #endif
             Section {
                 if let notes, !notes.isEmpty {
                     Text(notes)
@@ -96,6 +119,8 @@ struct EntryScreen: View {
         .onChange(of: ObjectIdentifier(session.entry)) { load() }
         .entryEditing(model, session: session)
         .onChange(of: scenePhase) {
+            // Inactive or background: revealed values mask again and Large
+            // Type closes, so the app switcher and the return show neither.
             if scenePhase != .active {
                 hideAll()
             }

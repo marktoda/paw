@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// The one key sheet, following `model.keyRequest`. Tall while the keyboard
 /// is up for the PIN, 480pt otherwise.
@@ -20,7 +21,9 @@ struct KeySheetHost: View {
             onContinue: { model.continueWithPin() },
             onCancel: { model.cancelKeyTask() },
             onRetry: { model.retry() },
-            simulatorAction: simulatorAction)
+            simulatorAction: simulatorAction,
+            moreSimulatorActions: moreSimulatorActions,
+            comingSoon: model.keyRequest?.differentKey == true ? "Replace key (coming)" : nil)
             .presentationDetents([.height(PawMetrics.keySheetHeight), .large], selection: $detent)
             .presentationDragIndicator(.visible)
             .onChange(of: stage, initial: true) {
@@ -46,6 +49,18 @@ struct KeySheetHost: View {
         }
         #else
         return nil
+        #endif
+    }
+
+    /// In the simulator, the key's touch timeout running out now.
+    private var moreSimulatorActions: [SimulatorAction] {
+        #if targetEnvironment(simulator)
+        guard stage == .touch else { return [] }
+        return [SimulatorAction(title: "time out the touch", identifier: "simulated-touch-timeout") {
+            KeyConnection.simulateTouchTimeout()
+        }]
+        #else
+        return []
         #endif
     }
 
@@ -81,25 +96,12 @@ struct SettingsSheet: View {
                         .font(PawFont.footnote)
                         .foregroundStyle(PawColor.labelSecondary)
                 }
-                #if targetEnvironment(simulator)
+                #if DEBUG && targetEnvironment(simulator)
                 if model.simulator != nil {
-                    Section {
-                        Button("Move the clock 1 hour on") { model.advanceSimulatedClock(hours: 1) }
-                            .foregroundStyle(PawColor.label)
-                            .accessibilityIdentifier("sim-advance-1h")
-                        Button("Move the clock 9 hours on") { model.advanceSimulatedClock(hours: 9) }
-                            .foregroundStyle(PawColor.label)
-                            .accessibilityIdentifier("sim-advance-9h")
-                        // A touch that comes after the sheet was closed.
-                        Button("Touch the simulated key") { KeyConnection.simulateTouch() }
-                            .foregroundStyle(PawColor.label)
-                            .accessibilityIdentifier("sim-touch-key")
-                    } header: {
-                        PawSectionHeader("Simulator")
-                    }
+                    SimulatorSettingsSection(model: model)
                 }
                 #endif
-                StoreSettingsSections()
+                StoreSettingsSections(model: model)
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Settings")
@@ -115,3 +117,62 @@ struct SettingsSheet: View {
         .privacyCover()
     }
 }
+
+#if DEBUG && targetEnvironment(simulator)
+/// Settings' controls for the simulated hardware, and readbacks for the UI
+/// tests. Debug simulator builds only.
+private struct SimulatorSettingsSection: View {
+    let model: AppModel
+    @Environment(\.storeControls) private var controls
+    @State private var pasteboard: String?
+
+    var body: some View {
+        Section {
+            Button("Move the clock 1 hour on") { model.advanceSimulatedClock(hours: 1) }
+                .foregroundStyle(PawColor.label)
+                .accessibilityIdentifier("sim-advance-1h")
+            Button("Move the clock 9 hours on") { model.advanceSimulatedClock(hours: 9) }
+                .foregroundStyle(PawColor.label)
+                .accessibilityIdentifier("sim-advance-9h")
+            // A touch that comes after the sheet was closed.
+            Button("Touch the simulated key") { KeyConnection.simulateTouch() }
+                .foregroundStyle(PawColor.label)
+                .accessibilityIdentifier("sim-touch-key")
+            Button("Let the next open finish after Cancel") { model.simulatesLateCancelNext = true }
+                .foregroundStyle(PawColor.label)
+                .accessibilityIdentifier("sim-late-cancel-next")
+            // Ends a touch wait the sheet let go of, as the key's timeout would.
+            Button("Time out the key's touch") { KeyConnection.simulateTouchTimeout() }
+                .foregroundStyle(PawColor.label)
+                .accessibilityIdentifier("sim-time-out-touch")
+            // What the system says just before the iPhone locks.
+            Button("Lock the iPhone") {
+                NotificationCenter.default.post(
+                    name: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil)
+            }
+            .foregroundStyle(PawColor.label)
+            .accessibilityIdentifier("sim-device-lock")
+            // Read inside paw, so the system asks no paste permission.
+            Button("Read the pasteboard") { pasteboard = UIPasteboard.general.string ?? "" }
+                .foregroundStyle(PawColor.label)
+                .accessibilityIdentifier("sim-read-pasteboard")
+            if let pasteboard {
+                Text(pasteboard.isEmpty ? "Empty" : "Holds text")
+                    .font(PawFont.footnote)
+                    .foregroundStyle(PawColor.labelSecondary)
+                    .accessibilityValue(pasteboard)
+                    .accessibilityIdentifier("sim-pasteboard-value")
+            }
+            if let protection = controls?.fileProtection() {
+                Text(protection)
+                    .font(PawFont.footnote)
+                    .foregroundStyle(PawColor.labelSecondary)
+                    .accessibilityValue(protection)
+                    .accessibilityIdentifier("sim-file-protection")
+            }
+        } header: {
+            PawSectionHeader("Simulator")
+        }
+    }
+}
+#endif

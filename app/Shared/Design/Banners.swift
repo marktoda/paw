@@ -85,22 +85,33 @@ struct UnpushedBanner: View {
 struct FaceIDWindowBar: View {
     /// e.g. "Opens with Face ID until 6:40 PM"
     let text: String
+    /// What the button does, e.g. "Lock this password".
+    var lockTitle = "Lock now"
     var onLock: () -> Void = {}
 
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var locks = 0
 
     var body: some View {
-        HStack(spacing: PawMetrics.Spacing.s) {
-            Image(systemName: PawSymbol.faceID)
-                .font(PawFont.subheadline)
-                .foregroundStyle(PawColor.label)
-                .accessibilityHidden(true)
-            Text(text)
-                .font(PawFont.subheadline)
-                .foregroundStyle(PawColor.label)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityIdentifier("face-id-window-text")
-            Button("Lock now") {
+        // At accessibility sizes the button goes under the text, so the
+        // deadline is never cut short.
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: PawMetrics.Spacing.xs))
+            : AnyLayout(HStackLayout(spacing: PawMetrics.Spacing.s))
+        layout {
+            HStack(alignment: .firstTextBaseline, spacing: PawMetrics.Spacing.s) {
+                Image(systemName: PawSymbol.faceID)
+                    .font(PawFont.subheadline)
+                    .foregroundStyle(PawColor.label)
+                    .accessibilityHidden(true)
+                Text(text)
+                    .font(PawFont.subheadline)
+                    .foregroundStyle(PawColor.label)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("face-id-window-text")
+            }
+            Button(lockTitle) {
                 locks += 1
                 onLock()
             }
@@ -110,6 +121,7 @@ struct FaceIDWindowBar: View {
             .frame(minHeight: PawMetrics.tapMin)
             .accessibilityIdentifier("lock-now")
         }
+        .padding(.vertical, typeSize.isAccessibilitySize ? PawMetrics.Spacing.s : 0)
         .padding(.horizontal, PawMetrics.Spacing.l)
         .frame(minHeight: PawMetrics.tapMin)
         .background(

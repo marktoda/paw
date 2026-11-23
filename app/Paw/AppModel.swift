@@ -27,6 +27,8 @@ struct OpenSession: Identifiable {
     let ref: EntryRef
     let entry: OpenedEntry
     let view: EntryView
+    /// It had a Face ID copy when it opened: it closes when the copy ends.
+    var hadCopy = false
 }
 
 /// The key sheet while it is up. `nil` in `AppModel.keyRequest` means no
@@ -37,6 +39,9 @@ struct KeyRequest: Identifiable {
     let entry: EntryRef
     var taskID: UUID
     var stage: KeySheetStage
+    /// The key plugged in is not the store's: the sheet shows "Replace key"
+    /// as a way on that is not built yet.
+    var differentKey = false
 }
 
 /// A problem shown inline at the top of the list it happened in.
@@ -78,6 +83,8 @@ final class AppModel {
 
     /// How long an entry opened with the key stays available to Face ID.
     static let faceIdWindowSecs: UInt32 = 8 * 60 * 60
+    /// An open entry survives this long with paw in the background.
+    static let openEntryBackgroundLimitMs: Int64 = 2 * 60 * 1000
 
     /// Replaced after each save, delete or undo (`storeChanged`).
     private(set) var store: PassStore
@@ -89,6 +96,9 @@ final class AppModel {
     private let connect: Connect
     /// Debug-only controls for the simulated hardware, `nil` on a device.
     let simulator: SimulatorControls?
+    /// The copies' clock: Face ID deadlines, the PIN's 15 minutes and an
+    /// open entry's 2 minutes in the background are all measured on it.
+    let clock: Clock
 
     var path: [Route] = []
     private(set) var home: FolderListing
@@ -106,6 +116,23 @@ final class AppModel {
     /// cleared at once on Continue; cleared too whenever the sheet moves on.
     var pinEntry = ""
     private(set) var sessions: [UUID: OpenSession] = [:]
+    /// Entries closed while on screen (2 minutes away, the iPhone locked,
+    /// the Face ID time ended), by the id their route still carries.
+    var closedEntries: [UUID: ClosedEntry] = [:]
+    /// Why the key could not be read the last time paw tried, shown on the
+    /// sheet's Plug in stage with Try again. `nil` once a read works.
+    var attachProblem: KeyErrorWords?
+    /// A smart card reader is there (on a device: the system lists one; in
+    /// the simulator: the simulated key is plugged in).
+    var readerPresent = false
+    /// Core tasks not yet ended, for the UI tests' "task ended" signal.
+    private(set) var pendingKeyTasks = 0
+    #if DEBUG && targetEnvironment(simulator)
+    /// The next open finishes as if Cancel had been tapped just as the card
+    /// answered (past the point where the core can stop it), so the UI
+    /// tests can reach `settle`'s late-finish path deterministically.
+    var simulatesLateCancelNext = false
+    #endif
     var notice: Notice?
     /// A problem with the Face ID copies themselves, shown on Home.
     private(set) var copiesProblem: String?
@@ -117,16 +144,26 @@ final class AppModel {
     /// Every core task whose end has not been seen yet: the one the sheet
     /// follows, and any it let go of (Cancel, Lock now) that may still
     /// finish. Each finishes exactly once here.
-    @ObservationIgnored private var tasks: [UUID: KeyTask] = [:]
+    @ObservationIgnored private var tasks: [UUID: KeyTask] = [:] {
+        didSet { pendingKeyTasks = tasks.count }
+    }
+    /// For each task: the entry it opens and `lockGeneration` when it
+    /// started, so a late finish removes only its own copy unless Lock now
+    /// came since.
+    @ObservationIgnored private var taskOrigins: [UUID: (entry: String, generation: Int)] = [:]
     /// Bumped by Lock now. A Face ID open that started before the latest
     /// bump finished into a locked app: it must leave nothing behind.
     @ObservationIgnored private var lockGeneration = 0
     @ObservationIgnored private var pendingRoute: Route?
     @ObservationIgnored private var plugInCount = 0
+    /// Monotonic milliseconds on `clock` when paw went to the background.
+    @ObservationIgnored var backgroundedAtMs: Int64?
+    @ObservationIgnored var deviceLockWatch: NSObjectProtocol?
     #if !targetEnvironment(simulator)
     @ObservationIgnored private var slotWatch: NSKeyValueObservation?
+    @ObservationIgnored var slotStateWatch: NSKeyValueObservation?
     #endif
-    private let cardQueue = DispatchQueue(label: "paw-card", qos: .userInitiated)
+    let cardQueue = DispatchQueue(label: "paw-card", qos: .userInitiated)
     private let faceIdQueue = DispatchQueue(label: "paw-bio", qos: .userInitiated)
 
     /// `clock` is the one the copies use: the PIN's 15 minutes in the
@@ -139,12 +176,16 @@ final class AppModel {
         self.copies = copies
         self.connect = connect
         self.simulator = simulator
+        self.clock = clock
         self.keyPort = keyPort ?? KeyPort(clock: clock)
         home = store.home()
         entryCount = Int(store.entryCount())
+        Clipboard.useClock(clock)
         sweepCopies()
+        watchDeviceLock()
         #if targetEnvironment(simulator)
-        if simulator?.startsUnplugged != true {
+        readerPresent = simulator?.startsUnplugged != true
+        if readerPresent {
             plugIn(reusingSession: true)
         }
         #else
@@ -190,6 +231,7 @@ final class AppModel {
             liveCopies = []
             copiesProblem = describe(error)
         }
+        closeEntriesWhoseCopyEnded()
     }
 
     private func sweepCopies() {
@@ -207,12 +249,16 @@ final class AppModel {
     /// session, and a task waiting at Plug in goes on by itself. Then asks
     /// the core which entries this key can open.
     func plugIn() {
-        plugIn(reusingSession: false)
+        // A session that is still connected is kept: every retry (Try
+        // again, the foreground, a task starting) runs this, and reading
+        // the key again would end the session a task is using.
+        plugIn(reusingSession: true)
     }
 
     /// `reusingSession`: a key session already open (setup's) is kept,
-    /// with the PIN it holds, instead of reading the key again.
-    private func plugIn(reusingSession: Bool) {
+    /// with the PIN it holds, instead of reading the key again. A read that
+    /// fails is said on the sheet's Plug in stage, with Try again.
+    func plugIn(reusingSession: Bool) {
         plugInCount += 1
         let attempt = plugInCount
         let connect = connect
@@ -221,22 +267,69 @@ final class AppModel {
         let paths = allEntryPaths()
         cardQueue.async {
             var access: [String: Access] = [:]
-            let held = reusingSession ? port.session() : nil
-            if let session = held ?? (try? port.pluggedIn(connection: connect())),
-               let fingerprint = session.info().decryptionFingerprint {
+            let result: Result<KeySession, Error> = Result {
+                if reusingSession, let held = port.session() { return held }
+                return try port.pluggedIn(connection: connect())
+            }
+            if case .success(let session) = result, let fingerprint = session.info().decryptionFingerprint {
                 for path in paths {
                     access[path] = store.access(entry: path, cardFingerprint: fingerprint)
                 }
             }
             // A key that cannot be read leaves any task at Plug in, which
             // is still true: no key paw can use is plugged in.
-            let found = Handoff(value: access)
+            var failure: Error?
+            if case .failure(let error) = result { failure = error }
+            let found = Handoff(value: (access, failure))
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
-                    guard let self, attempt == self.plugInCount, !found.value.isEmpty else { return }
-                    self.accessByPath = found.value
+                    guard let self, attempt == self.plugInCount else { return }
+                    self.attachFinished(access: found.value.0, failure: found.value.1)
                 }
             }
+        }
+    }
+
+    /// A read of the key ended: on success, which entries it can open; on
+    /// failure, why, for the sheet's Plug in stage.
+    private func attachFinished(access: [String: Access], failure: Error?) {
+        if let failure {
+            attachProblem = Self.attachWords(failure)
+        } else {
+            attachProblem = nil
+            if !access.isEmpty {
+                accessByPath = access
+            }
+        }
+        refreshSheet()
+    }
+
+    /// "paw couldn't read your key", then why and what to do.
+    private static func attachWords(_ error: Error) -> KeyErrorWords {
+        let why: String
+        switch error as? KeyError {
+        case .KeyRemoved?:
+            why = "It stopped answering while paw read it."
+        case .Reader(let detail)?:
+            why = "The key said: \(detail)."
+        case let error?:
+            why = KeyErrorWords(error, entry: "this password").problem + "."
+        case nil:
+            if case .Failed(let message)? = error as? ConnectionError {
+                why = message
+            } else {
+                why = describe(error)
+            }
+        }
+        return KeyErrorWords(
+            problem: "paw couldn't read your key",
+            nextStep: "\(why) Try again. If it keeps failing, unplug the key and plug it back in.")
+    }
+
+    /// Shows the sheet's task again, e.g. after a read of the key failed.
+    private func refreshSheet() {
+        if let request = keyRequest {
+            taskChanged(request.taskID)
         }
     }
 
@@ -244,13 +337,16 @@ final class AppModel {
     /// task using it fails with "Your key was unplugged".
     func unplugged() {
         plugInCount += 1
+        attachProblem = nil
         keyPort.unplugged()
+        refreshSheet()
     }
 
     #if targetEnvironment(simulator)
     /// The debug control on the Plug in stage.
     func simulatedPlugIn() {
         simulator?.plugIn()
+        readerPresent = true
         plugIn()
     }
     #else
@@ -259,7 +355,12 @@ final class AppModel {
     /// reader appearing plugs in, the list emptying unplugs. A key pulled
     /// out mid-command is also caught by the core as a reader failure.
     private func watchReaders() {
-        guard let manager = TKSmartCardSlotManager.default else { return }
+        guard let manager = TKSmartCardSlotManager.default else {
+            attachProblem = KeyErrorWords(
+                problem: "This iPhone can't talk to USB keys",
+                nextStep: "paw needs an iPhone with USB-C and smart card support. Nothing was sent to a key.")
+            return
+        }
         // Called on whatever thread the system changes the list on.
         slotWatch = manager.observe(\.slotNames, options: [.initial, .new]) { [weak self] manager, _ in
             let present = !manager.slotNames.isEmpty
@@ -272,10 +373,15 @@ final class AppModel {
     }
 
     private func readersChanged(present: Bool) {
+        readerPresent = present
         if !present {
+            slotStateWatch = nil
             unplugged()
-        } else if keyPort.session() == nil {
-            plugIn()
+        } else {
+            watchSlotState()
+            if keyPort.session() == nil {
+                plugIn()
+            }
         }
     }
     #endif
@@ -319,6 +425,11 @@ final class AppModel {
         let taskID = startTask(entry)
         keyRequest = KeyRequest(entry: entry, taskID: taskID, stage: .busy)
         taskChanged(taskID)
+        // A reader is there but its key was never read (or the read
+        // failed): try again now rather than wait for a replug.
+        if readerPresent, keyPort.session() == nil {
+            plugIn()
+        }
     }
 
     /// Starts a core task that opens `entry` and keeps its Face ID copy.
@@ -330,6 +441,7 @@ final class AppModel {
                 self?.taskChanged(id)
             }
         }
+        taskOrigins[id] = (entry.path, lockGeneration)
         tasks[id] = keyPort.openEntry(
             store: store, entry: entry.path, copies: copies, ttlSecs: Self.faceIdWindowSecs, listener: listener)
         return id
@@ -351,6 +463,15 @@ final class AppModel {
     /// first stage still needed (Touch if the PIN is still held).
     func retry() {
         guard var request = keyRequest else { return }
+        // The key could not be read: read it again; the task waiting at
+        // Plug in goes on by itself once it is.
+        if case .plugIn? = tasks[request.taskID]?.state() {
+            attachProblem = nil
+            request.stage = .plugIn
+            keyRequest = request
+            plugIn()
+            return
+        }
         letGo(request.taskID)
         request.taskID = startTask(request.entry)
         request.stage = .busy
@@ -385,12 +506,25 @@ final class AppModel {
             settle(id, state)
             return
         }
+        #if DEBUG && targetEnvironment(simulator)
+        if simulatesLateCancelNext, case .done = state {
+            simulatesLateCancelNext = false
+            keyRequest = nil
+            settle(id, state)
+            return
+        }
+        #endif
         if state.isFinal {
             tasks[id] = nil
+            taskOrigins[id] = nil
         }
         switch state {
         case .plugIn:
-            request.stage = .plugIn
+            if let attachProblem {
+                request.stage = .failed(problem: attachProblem.problem, nextStep: attachProblem.nextStep)
+            } else {
+                request.stage = .plugIn
+            }
         case .pin(let triesLeft, let forgotten, let lastError):
             let tries = Int(triesLeft ?? 3)
             switch lastError {
@@ -413,15 +547,28 @@ final class AppModel {
         case .done(let outcome):
             finished(outcome, request: &request)
         case .failed(.NotForThisKey):
-            keyRequest = nil
-            showAnotherKey(request.entry)
-            return
+            if let mismatch = task.keyMismatch() {
+                // Not this entry's problem: the key is not the store's.
+                request.stage = .failed(
+                    problem: "This is a different key from the one this store was set up with",
+                    nextStep: Self.mismatchWords(mismatch))
+                request.differentKey = true
+            } else {
+                keyRequest = nil
+                showAnotherKey(request.entry)
+                return
+            }
         case .failed(.PinBlocked):
             request.stage = .locked
         case .failed(.Cancelled), .cancelled:
             keyRequest = nil
             return
         case .failed(let error):
+            if case .KeyRemoved = error, readerPresent {
+                // A transport error ended the session but the reader is
+                // still there: read the key again, so Try again finds it.
+                plugIn()
+            }
             let words = KeyErrorWords(error, entry: request.entry.name)
             request.stage = .failed(problem: words.problem, nextStep: words.nextStep)
         }
@@ -445,7 +592,8 @@ final class AppModel {
         }
         noteOpened(request.entry.path)
         refreshCopies()
-        let session = OpenSession(ref: request.entry, entry: opened, view: opened.view())
+        let session = OpenSession(
+            ref: request.entry, entry: opened, view: opened.view(), hadCopy: faceIdUntil(outcome) != nil)
         sessions[session.id] = session
         pendingRoute = .entry(session.id)
         request.stage = .done
@@ -478,26 +626,45 @@ final class AppModel {
     /// A task the sheet no longer follows. Cancel stops it before any copy
     /// is kept, except in the last milliseconds of an open, after the card
     /// has answered (`core/src/key/task.rs`). Such a task still finishes
-    /// with the entry open and its copy kept: close the entry, and end the
-    /// copies, because the core cannot remove one entry's copy (core
-    /// request). Lock now relies on this too.
+    /// with the entry open and its copy kept: close the entry and remove
+    /// that one copy. If Lock now came since the task started, end every
+    /// copy again instead, which also deletes the seal key the late copy
+    /// may have made.
     private func settle(_ id: UUID, _ state: KeyTaskState) {
         guard state.isFinal else { return }
         tasks[id] = nil
+        let origin = taskOrigins.removeValue(forKey: id)
         guard case .done(.opened(let entry, let faceIdUntilMs)) = state else { return }
         entry.close()
-        if faceIdUntilMs != nil {
-            endCopiesLeftByLateOpen()
-        }
-    }
-
-    private func endCopiesLeftByLateOpen() {
+        guard faceIdUntilMs != nil, let origin, let copies else { return }
         do {
-            try copies?.lockNow()
+            if origin.generation < lockGeneration {
+                try copies.lockNow()
+            } else {
+                try copies.forgetEntry(entry: origin.entry)
+            }
         } catch {
             copiesProblem = describe(error)
         }
         refreshCopies()
+    }
+
+    private func faceIdUntil(_ outcome: KeyOutcome) -> Int64? {
+        if case .opened(_, let until) = outcome { return until }
+        return nil
+    }
+
+    /// "This key: serial 12 345 678, ends 77B0 9F3A. ..."
+    private static func mismatchWords(_ mismatch: KeyMismatch) -> String {
+        func describeKey(_ key: KeyIdentity) -> String {
+            var words = "serial \(spokenSerial(key.ident))"
+            if let fingerprint = key.decryptionFingerprint {
+                words += ", ending \(fingerprintEnding(fingerprint))"
+            }
+            return words
+        }
+        return "This key: \(describeKey(mismatch.presented)). The store's key: \(describeKey(mismatch.enrolled)). "
+            + "Plug in the store's key, then try again. No PIN was sent."
     }
 
     /// Opens from the entry's Face ID copy, with no key sheet. Falls back
@@ -527,7 +694,8 @@ final class AppModel {
         switch result {
         case .success(.opened(let opened)):
             noteOpened(entry.path)
-            let session = OpenSession(ref: entry, entry: opened, view: opened.view())
+            let session = OpenSession(
+                ref: entry, entry: opened, view: opened.view(), hadCopy: liveCopy(entry.path) != nil)
             sessions[session.id] = session
             path.append(.entry(session.id))
         case .success(.needsKey):
@@ -576,8 +744,23 @@ final class AppModel {
     /// A save changed an open entry: the screen shows `entry`, the saved
     /// text, under the same id, and the text it showed is wiped.
     func replaceSession(_ id: UUID, ref: EntryRef, entry: OpenedEntry) {
+        let hadCopy = sessions[id]?.hadCopy ?? false
         sessions[id]?.entry.close()
-        sessions[id] = OpenSession(id: id, ref: ref, entry: entry, view: entry.view())
+        sessions[id] = OpenSession(id: id, ref: ref, entry: entry, view: entry.view(), hadCopy: hadCopy)
+    }
+
+    /// Closes an open entry on screen: its text is wiped, and its route
+    /// shows why, with one tap to open it again.
+    func closeSession(_ id: UUID, because reason: ClosedEntry.Reason) {
+        guard let session = sessions.removeValue(forKey: id) else { return }
+        session.entry.close()
+        closedEntries[id] = ClosedEntry(ref: session.ref, reason: reason)
+    }
+
+    func closeAllSessions(because reason: ClosedEntry.Reason) {
+        for id in Array(sessions.keys) {
+            closeSession(id, because: reason)
+        }
     }
 
     /// The store on disk changed (a save, a delete, an undo): lists and
@@ -604,6 +787,9 @@ final class AppModel {
             session.entry.close()
             sessions[id] = nil
         }
+        for id in Array(closedEntries.keys) where !shown.contains(id) {
+            closedEntries[id] = nil
+        }
     }
 
     // MARK: Lock now and the app's life
@@ -611,10 +797,11 @@ final class AppModel {
     /// The panic control: ends every Face ID copy, forgets the PIN, closes
     /// open entries and clears a password paw put on the clipboard.
     ///
-    /// The core guarantees the rest: `forgetPin` stops a PIN check already
-    /// under way from holding the PIN again, and a cancelled task keeps no
-    /// copy. A task past the point where cancel works ends the copies again
-    /// when it finishes (`settle`).
+    /// The core guarantees the rest: `forgetPin` drops the PIN at once and
+    /// de-verifies the card on its own thread (no card traffic here), stops
+    /// a PIN check already under way from holding the PIN again, and a
+    /// cancelled task keeps no copy. A task past the point where cancel
+    /// works ends the copies again when it finishes (`settle`).
     func lockNow() {
         let ended = liveCopies.count
         if let request = keyRequest {
@@ -638,16 +825,28 @@ final class AppModel {
     }
 
     /// The core forgets the PIN after 15 minutes in the background, on the
-    /// clock given to the key port.
+    /// clock given to the key port. An open entry closes after 2 minutes
+    /// away, on the same clock (design 2.5). Coming back also reads a key
+    /// whose earlier read failed.
     func scenePhaseChanged(_ phase: ScenePhase) {
         switch phase {
         case .background:
+            backgroundedAtMs = clock.monotonicMs()
             keyPort.session()?.noteBackgrounded()
             simulator?.timePassesInBackground()
         case .active:
+            if let away = backgroundedAtMs {
+                backgroundedAtMs = nil
+                if clock.monotonicMs() - away >= Self.openEntryBackgroundLimitMs {
+                    closeAllSessions(because: .away)
+                }
+            }
             keyPort.session()?.noteForegrounded()
             Clipboard.clearIfExpired()
             sweepCopies()
+            if readerPresent, keyPort.session() == nil {
+                plugIn()
+            }
         default:
             break
         }
@@ -656,6 +855,7 @@ final class AppModel {
     /// The simulated clock moved: copies may have ended.
     func advanceSimulatedClock(hours: UInt64) {
         simulator?.advanceClock(hours * 3_600_000)
+        Clipboard.clearIfExpired()
         refreshCopies()
     }
 }

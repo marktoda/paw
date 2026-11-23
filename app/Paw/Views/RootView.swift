@@ -23,11 +23,7 @@ struct RootView: View {
                     case .folder(let path):
                         FolderScreen(model: model, path: path)
                     case .entry(let id):
-                        if let session = model.session(id) {
-                            EntryScreen(model: model, session: session)
-                        } else {
-                            ClosedEntryScreen()
-                        }
+                        EntryRoute(model: model, id: id)
                     case .anotherKey(let path):
                         AnotherKeyScreen(model: model, entry: EntryRef(path: path))
                     case .unpushed:
@@ -57,18 +53,93 @@ struct RootView: View {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
                 model.refreshCopies()
+                Clipboard.clearIfExpired()
             }
         }
         .privacyCover()
+        #if DEBUG && targetEnvironment(simulator)
+        .background(alignment: .topLeading) {
+            // For the UI tests: how many key tasks have not ended, so a
+            // test can wait for "0" instead of sleeping before it checks
+            // that a cancelled open left nothing.
+            Text(verbatim: "\(model.pendingKeyTasks)")
+                .font(.caption2)
+                .frame(width: 1, height: 1)
+                .opacity(0.02)
+                .accessibilityLabel("Key tasks running")
+                .accessibilityValue("\(model.pendingKeyTasks)")
+                .accessibilityIdentifier("sim-key-tasks")
+        }
+        #endif
     }
 }
 
-/// What an entry route shows once its entry has been closed (Lock now).
-private struct ClosedEntryScreen: View {
+/// An entry route: the open entry, or why it closed. Its own view, so it
+/// follows the model when the entry closes while on screen.
+private struct EntryRoute: View {
+    let model: AppModel
+    let id: UUID
+
     var body: some View {
-        EmptyState(
-            symbol: PawSymbol.entry, title: "Closed",
-            message: "This password was closed. Open it again from the list.")
+        if let session = model.session(id) {
+            EntryScreen(model: model, session: session)
+        } else {
+            ClosedEntryScreen(model: model, id: id, closed: model.closedEntry(id))
+        }
+    }
+}
+
+/// What an entry route shows once its entry has been closed: why, and one
+/// tap to open it again (with Face ID if its copy is still live, else with
+/// the key, which the button's disc says).
+private struct ClosedEntryScreen: View {
+    let model: AppModel
+    let id: UUID
+    let closed: ClosedEntry?
+
+    var body: some View {
+        if let closed {
+            VStack(spacing: PawMetrics.Spacing.l) {
+                EmptyState(symbol: PawSymbol.entry, title: title(closed), message: message(closed))
+                    .accessibilityIdentifier("entry-closed")
+                Button {
+                    model.reopen(id)
+                } label: {
+                    if model.liveCopy(closed.ref.path) != nil {
+                        Text("Open with Face ID")
+                    } else {
+                        KeyButtonLabel(title: "Open with your key")
+                    }
+                }
+                .buttonStyle(.pawPrimary)
+                .padding(.horizontal, PawMetrics.Spacing.xl)
+                .accessibilityIdentifier("entry-reopen")
+            }
+            .frame(maxHeight: .infinity)
+            .background(PawColor.bg.ignoresSafeArea())
+            .navigationTitle(closed.ref.name)
+            .navigationBarTitleDisplayMode(.inline)
+        } else {
+            EmptyState(
+                symbol: PawSymbol.entry, title: "Closed",
+                message: "This password was closed. Open it again from the list.")
+        }
+    }
+
+    private func title(_ closed: ClosedEntry) -> String {
+        switch closed.reason {
+        case .away: "Closed while you were away"
+        case .deviceLocked: "Closed when your iPhone locked"
+        case .copyEnded: "Its Face ID time ended"
+        }
+    }
+
+    private func message(_ closed: ClosedEntry) -> String {
+        switch closed.reason {
+        case .away: "paw closes an open password after 2 minutes in the background."
+        case .deviceLocked: "paw closes open passwords when your iPhone locks."
+        case .copyEnded: "\(closed.ref.name) needs your key again."
+        }
     }
 }
 
