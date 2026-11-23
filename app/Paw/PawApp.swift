@@ -26,6 +26,8 @@ private struct LaunchRoot: View {
         #if targetEnvironment(simulator)
         if FixtureLaunch.isRequested {
             FixtureRoot()
+        } else if UserDefaults.standard.bool(forKey: "pawSimHostProbe") {
+            SimHostProbeView()
         } else {
             SelfTestView(host: "app")
         }
