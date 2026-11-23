@@ -18,6 +18,7 @@ use paw_core::sync::{
     self, Author, ChangeKind, Connection, HostKeyPin, IntegrateReport, Integration, KeptBoth,
     RecipientsChange, SyncError,
 };
+use paw_core::write::{GitIdentity, WriteStore};
 use support::{GitServer, git};
 
 const PIN: &str = "123456";
@@ -27,6 +28,8 @@ struct World {
     server: GitServer,
     phone: tempfile::TempDir,
     desktop: tempfile::TempDir,
+    /// The phone's state directory, for paw's write API.
+    state: tempfile::TempDir,
 }
 
 /// A card that signs without a touch, so the tests need not touch it.
@@ -48,7 +51,10 @@ fn world() -> World {
     let card = card();
     let server = GitServer::start(&[card_ssh_public_key(card.clone()).unwrap().authorized_key()]);
     let desktop = server.desktop();
-    let w = World { card, server, phone: tempfile::tempdir().unwrap(), desktop };
+    let state = tempfile::tempdir().unwrap();
+    let iphone = GitIdentity { name: "iPhone".into(), email: "iphone@example.com".into() };
+    paw_core::write::set_git_identity(state.path(), Some(&iphone)).unwrap();
+    let w = World { card, server, phone: tempfile::tempdir().unwrap(), desktop, state };
     desktop_write(&w, "web/example.com.gpg", "v1 from the desktop");
     desktop_write(&w, "web/other.gpg", "other");
     desktop_write(&w, ".gpg-id", "AAAA1111\n");
@@ -66,8 +72,17 @@ fn phone_write(w: &World, path: &str, contents: &str) -> String {
     sync::commit(phone(w), path, contents.as_bytes(), &message, &author()).unwrap()
 }
 
-/// paw's delete and rename, as the git command line makes them: the same
-/// shape of commit.
+/// paw's delete, through its write API.
+fn phone_delete(w: &World, entry: &str) {
+    WriteStore::new(w.state.path(), phone(w)).delete(entry).unwrap();
+}
+
+/// paw's rename, through its write API: the same encrypted file, renamed.
+fn phone_rename(w: &World, from: &str, to: &str) {
+    WriteStore::new(w.state.path(), phone(w)).rename(from, to, None).unwrap();
+}
+
+/// A commit made with the git command line, as another tool would.
 fn phone_git(w: &World, args: &[&str], message: &str) {
     git(phone(w), args);
     git(phone(w), &["-c", "user.name=iPhone", "-c", "user.email=iphone@example.com", "commit", "--quiet", "-m", message]);
@@ -243,7 +258,7 @@ fn a_local_edit_is_replayed() {
 #[test]
 fn a_local_delete_is_replayed() {
     let w = world();
-    phone_git(&w, &["rm", "--quiet", "web/other.gpg"], "Remove web/other from store.");
+    phone_delete(&w, "web/other");
     desktop_write(&w, "web/theirs.gpg", "theirs");
 
     let report = integrated(&w);
@@ -257,7 +272,7 @@ fn a_local_delete_is_replayed() {
 #[test]
 fn a_local_rename_is_replayed() {
     let w = world();
-    phone_git(&w, &["mv", "web/other.gpg", "web/renamed.gpg"], "Rename web/other to web/renamed.");
+    phone_rename(&w, "web/other", "web/renamed");
     desktop_write(&w, "web/theirs.gpg", "theirs");
 
     let report = integrated(&w);
@@ -324,7 +339,7 @@ fn a_later_local_edit_follows_the_kept_copy() {
 #[test]
 fn a_local_delete_of_an_entry_edited_on_the_remote_is_dropped() {
     let w = world();
-    phone_git(&w, &["rm", "--quiet", "web/other.gpg"], "Remove web/other from store.");
+    phone_delete(&w, "web/other");
     desktop_write(&w, "web/other.gpg", "edited on the desktop");
 
     let report = integrated(&w);
@@ -352,7 +367,7 @@ fn a_local_edit_of_an_entry_deleted_on_the_remote_is_kept() {
 #[test]
 fn an_entry_deleted_on_both_sides_is_not_reported() {
     let w = world();
-    phone_git(&w, &["rm", "--quiet", "web/other.gpg"], "Remove web/other from store.");
+    phone_delete(&w, "web/other");
     let tip = desktop_rm(&w, "web/other.gpg");
 
     let report = integrated(&w);
@@ -639,8 +654,8 @@ fn queued(w: &World) -> Vec<(ChangeKind, String, Option<String>)> {
 fn four_changes(w: &World) {
     phone_write(w, "web/new.gpg", "new");
     phone_write(w, "web/example.com.gpg", "v2 from the phone");
-    phone_git(w, &["rm", "--quiet", "web/other.gpg"], "Remove web/other from store.");
-    phone_git(w, &["mv", "web/new.gpg", "web/newer.gpg"], "Rename web/new to web/newer.");
+    phone_delete(w, "web/other");
+    phone_rename(w, "web/new", "web/newer");
 }
 
 #[test]

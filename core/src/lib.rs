@@ -20,6 +20,8 @@ pub mod store;
 pub mod sync;
 pub mod setup;
 pub mod key;
+pub mod generate;
+pub mod write;
 
 uniffi::setup_scaffolding!();
 

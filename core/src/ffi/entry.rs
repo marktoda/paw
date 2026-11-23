@@ -46,6 +46,11 @@ impl OpenedEntry {
         // written: nothing here edits it.
         self.doc.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+
+    /// A copy of the text, for starting an edit. `None` once closed.
+    pub(crate) fn duplicate_doc(&self) -> Option<EntryDoc> {
+        self.doc().as_ref().map(EntryDoc::duplicate)
+    }
 }
 
 #[uniffi::export]

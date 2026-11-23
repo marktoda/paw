@@ -84,6 +84,7 @@ mod copies;
 mod entry;
 pub mod sync;
 mod key;
+pub mod write;
 
 pub use copies::{FaceIdOpen, KeyOpen};
 pub use entry::{EntryView, FieldView, OpenedEntry};

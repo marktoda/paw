@@ -295,3 +295,127 @@ impl EntryDoc {
         Ok(())
     }
 }
+
+/// Editing helpers for the add and edit screens. Each changes only the
+/// lines it is about; every other line keeps its bytes and its place.
+impl EntryDoc {
+    /// An empty document, for a new entry.
+    pub fn empty() -> Self {
+        Self { lines: Vec::new() }
+    }
+
+    /// A second document with the same bytes. Both wipe their memory when
+    /// dropped.
+    pub fn duplicate(&self) -> Self {
+        let mut bytes = self.to_bytes();
+        // Valid UTF-8 already, so this cannot fail; an empty document if it
+        // somehow did.
+        Self::parse(std::mem::take(&mut *bytes)).unwrap_or_else(|_| Self::empty())
+    }
+
+    /// Removes line `index`. The line before keeps its ending.
+    fn remove_line(&mut self, index: usize) {
+        if index < self.lines.len() {
+            self.lines.remove(index);
+        }
+    }
+
+    /// Sets the field found by `find` (the first of a group of keys) to
+    /// `value`; adds `key: value` if there is none, and removes the line if
+    /// `value` is empty.
+    fn set_preferred(&mut self, keys: &[&str], key: &str, value: &str) -> Result<(), PawError> {
+        no_line_break("a field", value)?;
+        let existing = self.first_of(keys).map(|field| (field.line, field.key.to_owned()));
+        match existing {
+            Some((line, _)) if value.trim().is_empty() => {
+                self.remove_line(line);
+                Ok(())
+            }
+            Some((_, written)) => self.set_field(&written, value),
+            None if value.trim().is_empty() => Ok(()),
+            None => self.set_field(key, value),
+        }
+    }
+
+    /// Sets the user name: the line [`Self::username`] reads, else a new
+    /// `login:` line. An empty value removes the line.
+    pub fn set_username(&mut self, value: &str) -> Result<(), PawError> {
+        self.set_preferred(&USERNAME_KEYS, "login", value)
+    }
+
+    /// Sets the web address: the line [`Self::url`] reads, else a new
+    /// `url:` line. An empty value removes the line.
+    pub fn set_url(&mut self, value: &str) -> Result<(), PawError> {
+        self.set_preferred(&URL_KEYS, "url", value)
+    }
+
+    /// Removes the first field called `key`, in any letter case. Returns
+    /// whether there was one.
+    pub fn remove_field(&mut self, key: &str) -> bool {
+        let found = self.all_fields().find(|field| same_key(field.key, key)).map(|f| f.line);
+        if let Some(line) = found {
+            self.remove_line(line);
+        }
+        found.is_some()
+    }
+
+    /// Replaces the notes (see [`Self::notes`]) with `notes`. Nothing
+    /// changes if they are the same. Otherwise the note lines between the
+    /// first and the last non-blank one are removed and the new lines put
+    /// where the first one was (at the end if there were none); fields,
+    /// one-time-code lines and blank lines outside that block stay.
+    ///
+    /// A note line that looks like `key: value` reads back as a field: that
+    /// is the pass convention, not something paw can change.
+    pub fn set_notes(&mut self, notes: &str) -> Result<(), PawError> {
+        let wanted: Vec<&str> = notes.split('\n').map(|line| line.trim_end_matches('\r')).collect();
+        let blank = |line: &&str| line.trim().is_empty();
+        let start = wanted.iter().position(|line| !blank(line)).unwrap_or(wanted.len());
+        let end = wanted.iter().rposition(|line| !blank(line)).map_or(start, |last| last + 1);
+        let wanted = &wanted[start..end];
+        if wanted.iter().any(|line| line.contains('\r')) {
+            return Err(PawError::InvalidField("notes cannot contain a lone carriage return".into()));
+        }
+        let current = self.notes();
+        if current.split('\n').filter(|_| !current.is_empty()).eq(wanted.iter().copied()) {
+            return Ok(());
+        }
+
+        let is_note = |line: &Line| matches!(kind(&line.text), Kind::Note);
+        let is_text = |line: &Line| is_note(line) && !line.text.trim().is_empty();
+        let first = self.lines.iter().enumerate().skip(1).find(|(_, l)| is_text(l)).map(|(i, _)| i);
+        let last = self.lines.iter().enumerate().skip(1).rev().find(|(_, l)| is_text(l)).map(|(i, _)| i);
+        let at = match (first, last) {
+            (Some(first), Some(last)) => {
+                let mut index = last;
+                loop {
+                    if is_note(&self.lines[index]) {
+                        self.lines.remove(index);
+                    }
+                    if index == first {
+                        break;
+                    }
+                    index -= 1;
+                }
+                first
+            }
+            _ => self.lines.len(),
+        };
+
+        let ending = self.usual_ending();
+        if at == self.lines.len() {
+            match self.lines.last_mut() {
+                None if !wanted.is_empty() => {
+                    self.lines.push(Line { text: Zeroizing::new(String::new()), ending })
+                }
+                Some(last) if last.ending == Ending::None && !wanted.is_empty() => last.ending = ending,
+                _ => {}
+            }
+        }
+        let at = at.min(self.lines.len()).max(usize::from(!self.lines.is_empty()));
+        for (offset, line) in wanted.iter().enumerate() {
+            self.lines.insert(at + offset, Line { text: Zeroizing::new((*line).to_owned()), ending });
+        }
+        Ok(())
+    }
+}

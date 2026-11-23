@@ -1,0 +1,174 @@
+//! Adding, editing, deleting, renaming and moving entries.
+//!
+//! Every change is one local commit of one entry, worded the way `pass`
+//! words it, made through [`crate::sync`]'s safe commit path. None of it
+//! needs the key, the PIN or the network: encrypting needs only public
+//! keys, pinned on this device ([`keyring`]). The commits are exactly what
+//! the "not yet pushed" queue lists and what integrate replays.
+//!
+//! Plaintext stays in memory that is wiped when dropped ([`EntryDoc`],
+//! `Zeroizing`), is never written anywhere unencrypted, and never appears in
+//! an error or a `Debug` output. What `pgp` copies internally while
+//! encrypting is outside paw's reach and is not wiped.
+//!
+//! [`EntryDoc`]: crate::entry::EntryDoc
+
+pub mod cert;
+pub mod draft;
+pub mod keyring;
+pub mod ops;
+
+use std::path::Path;
+
+use pgp::packet::PublicKey;
+use rand::rngs::OsRng;
+
+use crate::PawError;
+use crate::sync::Author;
+pub use draft::{DraftField, DraftProblem, EntryDraft};
+pub use keyring::{FolderRecipients, KeySource, Keyring, LineStatus, RecipientLine};
+pub use ops::{Saved, WriteStore};
+
+/// Why a change was not made. In every case nothing in the store changed.
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum WriteError {
+    /// The form has problems; each says what to fix.
+    #[error("{}", .problems.iter().map(|p| p.message.as_str()).collect::<Vec<_>>().join(" "))]
+    Invalid { problems: Vec<DraftProblem> },
+    /// Some recipients `.gpg-id` names have no public key on this device
+    /// (or theirs expired). Saving would encrypt to fewer keys than
+    /// `.gpg-id` says, so paw does not.
+    #[error("paw doesn't have the key for {} (listed in {gpg_id})", .missing.join(", "))]
+    MissingRecipients { gpg_id: String, missing: Vec<String> },
+    /// The `.gpg-id` changed since paw last encrypted for it; the person
+    /// has to accept the new list first.
+    #[error("who can open these passwords changed ({gpg_id}); review it before saving here")]
+    RecipientsChanged { gpg_id: String },
+    /// Moving to a folder with other recipients re-encrypts the entry,
+    /// which needs it open.
+    #[error("open {entry} with your key to move it to a folder with different keys")]
+    NeedsOpenEntry { entry: String },
+    #[error("there is no entry called {entry}")]
+    NoSuchEntry { entry: String },
+    #[error("there's already an entry called {entry}")]
+    AlreadyExists { entry: String },
+    /// The entry changed (a sync) after it was opened for editing. Saving
+    /// would lose that change.
+    #[error("{entry} changed since you opened it; open it again to edit it")]
+    ChangedSinceOpened { entry: String },
+    /// A certificate could not be read or used.
+    #[error("{message}")]
+    Certificate { message: String },
+    /// The certificate has no key that may encrypt now.
+    #[error("the key {fingerprint} can't be used to encrypt: {reason}")]
+    NoEncryptionKey { fingerprint: String, reason: String },
+    /// A binding names a key that is not pinned.
+    #[error("there is no saved key {fingerprint}")]
+    NotPinned { fingerprint: String },
+    /// A password policy that cannot be used.
+    #[error("{message}")]
+    Policy { message: String },
+    #[error("{message}")]
+    Failed { message: String },
+}
+
+impl From<PawError> for WriteError {
+    fn from(error: PawError) -> Self {
+        Self::Failed { message: error.to_string() }
+    }
+}
+
+impl From<crate::generate::PolicyError> for WriteError {
+    fn from(error: crate::generate::PolicyError) -> Self {
+        Self::Policy { message: error.to_string() }
+    }
+}
+
+/// The author of commits made when no identity is set: neutral, and the
+/// `.invalid` domain can never be anyone's address.
+pub const DEFAULT_AUTHOR_NAME: &str = "paw";
+pub const DEFAULT_AUTHOR_EMAIL: &str = "paw@paw.invalid";
+
+const IDENTITY_FILE: &str = "git-identity";
+
+/// The name and e-mail address paw's commits carry.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct GitIdentity {
+    pub name: String,
+    pub email: String,
+}
+
+/// The identity set for the store whose state directory is `state_dir`, or
+/// paw's neutral default. The person's global git configuration is never
+/// read.
+pub fn git_identity(state_dir: &Path) -> GitIdentity {
+    let text = std::fs::read_to_string(state_dir.join(IDENTITY_FILE)).unwrap_or_default();
+    let value = |name: &str| {
+        text.lines()
+            .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    match (value("name"), value("email")) {
+        (Some(name), Some(email)) => GitIdentity { name, email },
+        _ => GitIdentity { name: DEFAULT_AUTHOR_NAME.into(), email: DEFAULT_AUTHOR_EMAIL.into() },
+    }
+}
+
+/// Sets the identity for later commits; `None` goes back to the default.
+pub fn set_git_identity(state_dir: &Path, identity: Option<&GitIdentity>) -> Result<(), WriteError> {
+    let path = state_dir.join(IDENTITY_FILE);
+    let Some(identity) = identity else {
+        return match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                Err(WriteError::Failed { message: format!("could not reset the git identity: {e}") })
+            }
+            _ => Ok(()),
+        };
+    };
+    let bad = |s: &str| s.trim().is_empty() || s.contains(['\n', '\r', '\0', '<', '>']);
+    if bad(&identity.name) || bad(&identity.email) {
+        return Err(WriteError::Failed {
+            message: "a git name and e-mail address must be one line each, without < or >".into(),
+        });
+    }
+    std::fs::create_dir_all(state_dir)
+        .and_then(|()| {
+            std::fs::write(&path, format!("name={}\nemail={}\n", identity.name.trim(), identity.email.trim()))
+        })
+        .map_err(|e| WriteError::Failed { message: format!("could not save the git identity: {e}") })
+}
+
+pub(crate) fn author(state_dir: &Path) -> Author {
+    let identity = git_identity(state_dir);
+    Author { name: identity.name, email: identity.email }
+}
+
+/// Encrypts an entry to every key in `keys`, as `pass` does with
+/// `gpg -e -r ... -r ...`: SEIPD v1 with AES-256, one recipient packet per
+/// key, no compression (as [`crate::encrypt_to_keys`]). The plaintext is
+/// streamed from the caller's buffer rather than copied into a new one.
+pub(crate) fn encrypt(keys: &[PublicKey], plaintext: &[u8]) -> Result<Vec<u8>, WriteError> {
+    use pgp::composed::MessageBuilder;
+    use pgp::crypto::sym::SymmetricKeyAlgorithm;
+
+    if keys.is_empty() {
+        return Err(WriteError::Failed { message: "there is no key to encrypt to".into() });
+    }
+    let failed = |e: pgp::errors::Error| WriteError::Failed { message: format!("could not encrypt: {e}") };
+    let mut rng = OsRng;
+    let mut builder = MessageBuilder::from_reader("", plaintext).seipd_v1(&mut rng, SymmetricKeyAlgorithm::AES256);
+    for key in keys {
+        builder.encrypt_to_key(&mut rng, key).map_err(failed)?;
+    }
+    builder.to_vec(rng).map_err(failed)
+}
+
+/// Seconds since 1970, as recipients' expiry is measured.
+pub(crate) fn now_secs() -> u32 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| u32::try_from(d.as_secs()).unwrap_or(u32::MAX))
+        .unwrap_or(0)
+}

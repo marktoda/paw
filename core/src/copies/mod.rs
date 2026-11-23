@@ -358,3 +358,33 @@ pub fn content_id(ciphertext: &[u8]) -> Vec<u8> {
     use sha2::{Digest, Sha256};
     Sha256::digest(ciphertext).to_vec()
 }
+
+impl CopyCache {
+    /// After paw saved `entry` (possibly under a new name, `to`): if `from`
+    /// had a live copy, seals `text` (the saved plaintext) as the copy of
+    /// `to` for what was left of the old one, and removes the old one. An
+    /// edit never lengthens a copy: it still ends when the key touch that
+    /// made it says. Returns when the copy ends, or `None` if there was
+    /// none. Never prompts.
+    pub fn reseal(
+        &self,
+        from: &str,
+        to: &str,
+        text: &[u8],
+        content_id: &[u8],
+    ) -> Result<Option<i64>, PawError> {
+        let keys = self.keys()?;
+        let Some(found) = self.find(&keys, from)? else { return Ok(None) };
+        let left = found.until_ms.saturating_sub(self.now().wall_ms);
+        dir::remove(&found.path).map_err(io_err)?;
+        if left <= 0 {
+            return Ok(None);
+        }
+        self.put(to, text, content_id, Duration::from_millis(left as u64))
+    }
+
+    /// Removes any copy of `entry`, e.g. after it was deleted or renamed.
+    pub fn forget(&self, entry: &str) -> Result<(), PawError> {
+        self.put(entry, &[], &[], Duration::ZERO).map(|_| ())
+    }
+}
