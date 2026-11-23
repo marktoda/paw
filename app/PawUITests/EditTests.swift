@@ -123,7 +123,7 @@ final class EditTests: XCTestCase {
     /// Save is dimmed and does nothing: the sheet stays and nothing is saved.
     private func expectSaveBlocked(file: StaticString = #filePath, line: UInt = #line) {
         app.buttons["form-save"].firstMatch.tap()
-        XCTAssertTrue(element("form-name").exists, "Save should not close the form", file: file, line: line)
+        XCTAssertTrue(element("form-cancel").exists, "Save should not close the form", file: file, line: line)
         XCTAssertFalse(element("sim-last-app-toast").exists, "Nothing should have been saved", file: file, line: line)
     }
 

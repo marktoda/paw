@@ -185,6 +185,27 @@ final class SetupTests: XCTestCase {
         expectText("entry-title", contains: "github.com", timeout: 20)
     }
 
+    func testAfterSetupANewEntrySavesWithoutTheKeyAndWaitsToBeSent() {
+        launch()
+        setUpFully()
+        tap("folder-web")
+        tap("add-button")
+        let name = element("form-name")
+        XCTAssertTrue(name.waitForExistence(timeout: 20))
+        name.tap()
+        name.typeText("after-setup.example")
+        let password = element("form-password")
+        password.tap()
+        password.typeText("Typed-pass-42")
+        tap("form-save")
+        expectGone("form-save", timeout: 20)
+        expectAbsent("key-sheet-purpose", "Saving should never ask for the key")
+        expect("entry-after-setup.example", timeout: 20)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        expectText("unpushed-banner", contains: "1 change not sent", timeout: 20)
+        snapshot("home-after-save")
+    }
+
     func testSetupScreensInDark() {
         launch(appearance: "dark")
         setUpFully(shots: true)

@@ -112,6 +112,11 @@ final class StoreRootModel {
             let model = AppModel(
                 store: store, copies: copies, clock: clock, connect: connect, simulator: simulator,
                 keyPort: keyPort)
+            // Setup pinned the key and accepted the recipients: saving
+            // works from here with no further step.
+            model.edits = StoreEdits(
+                writer: StoreWriter.open(stateDir: location.stateDir.path), sync: sync,
+                repoDir: location.repoDir.path, sendingNote: nil)
             let controls = StoreControls(
                 address: sync?.address() ?? "",
                 hostFingerprints: (try? sync?.hostFingerprints()) ?? [],
