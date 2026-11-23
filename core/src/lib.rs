@@ -19,6 +19,7 @@ pub mod ssh;
 pub mod store;
 pub mod sync;
 pub mod setup;
+pub mod key;
 
 uniffi::setup_scaffolding!();
 
