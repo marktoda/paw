@@ -64,7 +64,7 @@ jobs:
       fail-fast: false
       matrix:
         family: [iPhone]
-        part: ${{ fromJSON(inputs.only && '["rest"]' || '["app","setup","edit","sync","rest"]') }}
+        part: ${{ fromJSON(inputs.only && '["rest"]' || '["app","setup","edit","rest"]') }}
     steps:
       - uses: actions/checkout@v4
       - name: Start the simulator booting
@@ -82,8 +82,8 @@ jobs:
           scripts/make-xcframework.sh
       - name: Run the UI tests
         env:
-          PAW_ONLY: ${{ inputs.only || (matrix.part == 'app' && 'AppTests') || (matrix.part == 'setup' && 'SetupTests') || (matrix.part == 'edit' && 'EditTests') || (matrix.part == 'sync' && 'SyncTests') || '' }}
-          PAW_SKIP: ${{ (!inputs.only && matrix.part == 'rest') && 'AppTests SetupTests EditTests SyncTests' || '' }}
+          PAW_ONLY: ${{ inputs.only || (matrix.part == 'app' && 'AppTests') || (matrix.part == 'setup' && 'SetupTests') || (matrix.part == 'edit' && 'EditTests') || '' }}
+          PAW_SKIP: ${{ (!inputs.only && matrix.part == 'rest') && 'AppTests SetupTests EditTests' || '' }}
         run: scripts/ci-test.sh ${{ matrix.family }}
       - uses: actions/upload-artifact@v4
         if: always()
