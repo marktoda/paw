@@ -120,7 +120,7 @@ System fonts only, through Dynamic Type styles. No bundled font: SF is already r
 - **Sizes:** icon chip 30 (52 in the entry header) with a 16pt glyph; disc 14 / 36 / 92 with rims 1.5 / 2 / 3; rows at least 48 (one line), 56 (two lines), 64 (label over value); controls 50; touch targets at least 44. Wrap fixed sizes in `@ScaledMetric`.
 - **Sheets:** the key prompt uses `.presentationDetents([.height(480), .large])`, moving to large while the keyboard is up. On iPad it is a centred form sheet about 420pt wide.
 - **Elevation:** no shadows on content. Depth comes from the system.
-- **Liquid Glass** is for the navigation layer only: the bottom search field and Add button, toolbar buttons, and sheets as the system draws them. No glass on rows, cards, banners or the disc; no tinted glass; no custom bar or sheet backgrounds.
+- **Liquid Glass** is for the navigation layer only: the bottom search field and Add button, toolbar buttons, and sheets as the system draws them. No glass on rows, cards, banners or the disc; no tinted glass; no custom bar backgrounds. Sheets that open part-way up (the key sheet, the sync sheet, large type) take an opaque `bg` ground, because glass at a small detent lets the list behind show through the sheet's words.
 
 ## 5. Iconography
 
@@ -173,33 +173,73 @@ Each is drawn in every state in the artifact.
 | Password field | Label `.footnote` over value; eye and copy at 44; min 64 | `label`, `passwordDigit`, `passwordSymbol` | Hidden (always 16 dots); shown; large type | "Password, hidden". Large type: "Capital O, 9 of 12" |
 | Copy confirmation | Capsule, check, one sentence; 2 s | `panel`, `onPanel` | Secret (says when it clears); not secret | Announcement, not focusable |
 | Bottom search and Add | Search capsule and round Add, 50 high, system glass: `DefaultToolbarItem(kind: .search, placement: .bottomBar)`, `ToolbarSpacer`, button | system | Resting; searching (Add becomes close) | "Search passwords", "Add a password" |
-| Sync pill | 30pt capsule, 14pt glyph, `.footnote` | `fill`, `success`, `warningFill` | Synced; syncing; not pushed; offline; failed | "Sync status: 1 change not pushed" |
-| Unpushed banner | Card radius 20, leading mark, title, one line; not dismissable | `surface`, `warningFill` | Waiting for key (36pt disc); offline; refused | Title and line as one element |
+| Sync pill | 30pt capsule, 14pt glyph, `.footnote` | `fill`, `success`, `warningFill` | Up to date; checking or sending; last checked (changes wait: the banner counts them); offline; failed | "Sync status: Checked 2 min ago" |
+| Unpushed banner | Card radius 20, leading mark, title, one line, chevron; not dismissable; the only place Home counts unsent changes | `surface`, `warningFill` | Waiting for key (36pt disc); offline; refused | Title and line as one element |
 | Face ID window bar | 44pt bar, `faceid`, closing time, "Lock now" | `fill`, `label` | Open; absent when closed | "Opens with Face ID until 6:40 PM. Lock now, button" |
 | Empty state | `ContentUnavailableView`: 52pt slate chip, `.title2` rounded, one or two sentences, up to two buttons | `labelSecondary`, `action` | No passwords; no matches | Title, sentence, buttons |
 | Error row | 22pt glyph, `.body` problem, `.footnote` next step, one action | `danger`, `warning`, fills | Error; warning; banner | "Error: Couldn't reach your git remote…" |
+| Buttons | Capsule, 50 high, `.headline` | `action`/`onAction`; `fill`/`label`; `dangerFill`/`danger` | Primary (one per screen); secondary; destructive (a step that loses something, always followed by an inline confirm, never a left-aligned red list row on its own) | Title; "Needs your key." when it carries the disc |
 | Setup step | "Step 2 of 5", `.title` rounded, two sentences, illustration, "Not protected" card, one button | `surface`, `action` | Per step | Counter read with the heading |
 
 ## 8. Voice
 
-- Sentence case everywhere. No exclamation marks, no emoji.
-- Say "you" and "your key". Name the problem, then the next step.
-- Use exact numbers and times.
-- Say "password", "folder", "key", "git remote". Avoid "vault", "credential", "authenticate", "decrypt".
-- Say what still works, and what is not protected, in the same plain words as the benefits.
+Short, plain and specific. A screen should read in one glance; most lost a third to half their words in the 2026-11-23 pass.
 
-| Before | After |
-|---|---|
-| Authentication Required | Touch your key |
-| Invalid PIN (0x6982) | Wrong PIN. 2 tries left before the key locks. |
-| Card blocked | Your key is locked. Unlock it with the key's reset code or Admin PIN. |
-| No device detected | Plug in your key |
-| Unlocked | Opens with Face ID until 6:40 PM |
-| Copied! | Password copied. Clears in 45 seconds. |
-| fatal: unable to access remote | Couldn't reach your git remote. Passwords on this iPhone still work. |
-| 1 unpushed commit | 1 change is only on this iPhone |
-| Your vault is secured with zero-knowledge encryption | Entry names and folder names are not encrypted. Anyone who can read your git repository can see them. |
-| .gpg-id modified | A new key can now open your passwords |
+**Rules**
+
+1. **Say it once.** If the title says it, the subtitle doesn't. If the button has the gold disc, no footer says "needs your key".
+2. **Lead with what the person does or needs to know.** "Check your connection." comes before what is safe.
+3. **The title carries the message.** A second line only adds what the title can't. An empty second line is fine.
+4. **Buttons are verbs that name the result**: "Send 1 change", "Download", "Use the new store, keep my 1 change". Never "OK", "Continue" when something more exact fits.
+5. **Errors: what happened, then the one next step, in about 15 words.** The headline has no full stop; the next step is a sentence.
+6. **No narration.** Don't say what paw did, checked or didn't do ("paw read it without your PIN", "Nothing was sent, and no PIN was used") unless it changes what the person does next. "No PIN try was used" stays: it tells them a retry is free.
+7. **Keep the security statements that change behaviour, once each**: "The key's PIN, not your iPhone passcode." on the PIN stage only; "2 tries left before the key locks."; "Anyone with this iPhone, your key and its PIN could read everything." Cut reassurance.
+8. **Numbers and names over generalities**: "29 passwords in 5 folders", "github.com refused your changes", "Checked 2 min ago".
+9. **Sentence case. No exclamation marks, no emoji, no "simply", "just" or "please".**
+10. **Nouns**: key, PIN, password (an entry), folder, store, Face ID. Say "send" and "check for changes". Never push, pull, fetch, commit, remote, repository or `.gpg-id` in running text; the git address appears only on the setup address screen and in Settings and the sync sheet, labelled "Address" or "Store". Raw text from git goes under "Details".
+11. **Avoid** "vault", "credential", "authenticate", "decrypt".
+12. **Say what still works and what is not protected** in the same plain words as the benefits.
+
+**Before and after** (strings from the app, 2026-11-23)
+
+| Where | Before | After |
+|---|---|---|
+| Key sheet, PIN | The PIN for the key, not your iPhone passcode. Asked once while the key stays plugged in. | The key's PIN, not your iPhone passcode. |
+| Key sheet, PIN again | paw forgot your PIN after 15 minutes away. Enter the key's PIN, not your iPhone passcode. | Asked again after 15 minutes away. |
+| Key sheet, plug in | USB-C, on the bottom of your iPhone. | (no second line) |
+| Key sheet, touch | Touch the gold part of your key. It's blinking. | The gold part, while it blinks. |
+| Key sheet, note | Afterwards it opens with Face ID for 8 hours. | Then it opens with Face ID for 8 hours. |
+| Key error | Nothing was sent to your key, so no try was used. Check the PIN and enter it again. | Enter it again; no try was used. |
+| Key error | Nothing was opened. Try again, and touch the gold part of your key while it blinks. | Try again and touch the gold part while it blinks. |
+| Key error | The PIN is locked. Three wrong PINs lock the key. Unlock it on a computer with your admin PIN. | Your key is locked. Unlock it on a computer with its reset code or admin PIN. |
+| Setup, plug in | Into the USB-C port on the bottom of your iPhone. paw reads it without your PIN. | No PIN yet. Setup continues once it's in. |
+| Setup, your key | paw read it without your PIN. It has the two keys paw needs. | It has both keys paw needs. |
+| Setup, address | paw will connect to github.com as git. paw already knows github.com's fingerprint. | Connects to github.com as git. Its fingerprint is built in. |
+| Setup, key not accepted | Add your key's SSH key to your account on github.com, then check again. Nothing was sent, and no PIN was used. | Add this SSH key to your account on github.com, then check again. |
+| Setup, download | github.com knows your key. paw signs in with it and downloads a copy of your store to this iPhone. | github.com accepts your key. |
+| Setup, check | paw will open one password to be sure. It won't show it or keep it. | One password is opened as a test. It isn't shown or kept. |
+| Setup, done | It works. Your key opened web/github.com. paw didn't show or keep it. | Your store is ready. Your key opened web/github.com. |
+| Setup error | That repository isn't a pass store. It has no .gpg-id file at the top. | That isn't a pass store. Nothing there says which key it is encrypted for. |
+| Home, unsent | Pill "1 change not sent" above a card "1 change not sent. Saved on this iPhone. See what changed." | Pill "Checked 2 min ago"; one card "1 change not sent. Saved on this iPhone." |
+| Entry, footer | Needs your key each time. A copied password clears from the clipboard after 45 seconds. | Needs your key each time. (The copy confirmation says when it clears.) |
+| Closed entry | Closed after 2 minutes away. Passwords close after 2 minutes away. | Closed after 2 minutes away |
+| Search, nothing found | Search looks at names only, never inside entries. | Search reads names, not what's inside. |
+| Another key | Open it on a computer that has that key. paw checked this from the file alone, without asking your key for anything. | Open it on a computer that has that key. |
+| Edit form | Saving needs no key and no connection. It stays on this iPhone until you send it. | Saving needs no key. It stays on this iPhone until you send it. |
+| Edit form | paw can't save in work: it is also encrypted for a key paw doesn't have. paw won't save it for fewer keys. Adding a missing key comes later; pick another folder for now. | Can't save in work. It's also encrypted for a key paw doesn't have. Pick another folder. |
+| Not sent yet | To github.com. Sending needs your key: its PIN if paw doesn't have it, and a touch. | To github.com. Needs your key. |
+| Sync sheet | Both need your key: its PIN if paw doesn't have it, and a touch. Checking brings in changes made elsewhere without sending yours. | (removed: both buttons carry the gold disc) |
+| Sync sheet | Git remote | Store |
+| Sync error | github.com can't be reached. You may be offline. Your change is still waiting on this iPhone. Try again once you're connected. | Can't reach github.com. Check your connection. Your change is saved on this iPhone. |
+| Sync error | Your git remote refused the changes. A rule on the server may not allow them; the details say why. | github.com refused your changes. Your change is saved on this iPhone. Details say why. |
+| Sync error | Your git remote contains something paw won't check out. It has to be fixed from another computer. | Your store has names paw can't download. Rename them on a computer. |
+| Store replaced | This happens when someone force-pushes or makes the repository again. If you didn't expect it, ask whoever looks after the store before you go on. | Not expected? Ask whoever looks after the store first. |
+| Store replaced | Use the git remote's store and discard my changes / Your 1 unpushed change will be lost. | Use the new store, discard my 1 change / This can't be undone. |
+| Two versions kept | example.com was changed here and on another device. Both versions were kept: (one name) is the other device's, (the other) is this iPhone's. Open both to compare, then delete the one you don't need. | example.com changed here and on another device. Both versions were kept. Delete the one you don't need. (Each row says whose it is.) |
+| Settings | Ends every Face ID copy and forgets your PIN. Every password then needs your key. | Every password needs your key and its PIN again. |
+| Settings, remove | This deletes the downloaded store, its Face ID copies and this iPhone's record of your key. Your store on the server is not touched. | Deletes the store, its Face ID copies and your key's record from this iPhone. The store on the server is not touched. |
+
+Kept from the first version: "Touch your key", "Wrong PIN" with "2 tries left before the key locks.", "Plug in your key", "Opens with Face ID until 6:40 PM", "Password copied. Clears in 45 seconds."
 
 One change from the mock-ups: "the gold part of your key" instead of "the gold disc on your YubiKey", because some YubiKey models have gold edges, not a disc.
 
@@ -344,6 +384,7 @@ enum PawMetrics {
 - **Touch stage.** The hero is the 92pt disc with its halo inside a thin outline of a key, following design.md 2.3 ("the gold disc glyph alone is never used as the touch prompt"). The halo reaches 1.74 times the disc, not the mock-up's 1.91, so the stage fits the 480pt detent. The 15-second ring is not built.
 - **PIN stages** use the 36pt disc so the field and both buttons stay above the keyboard.
 - **Bottom search.** The system search field's VoiceOver label is the prompt ("Search 332 passwords"), not "Search passwords". While searching, the system replaces Add with its own close button.
-- **Sheets are translucent.** At the 480pt detent the system's glass sheet shows a blur of the screen behind it, so light and dark bands from the list underneath show through the key sheet and the large-type view. No custom sheet background was added, per section 4.
+- **Sheets were translucent, and are now opaque.** At the 480pt detent the system's glass sheet showed a blur of the screen behind it, so bands from the list underneath showed through the key sheet and the large-type view. Since 2026-11-23 those sheets set `presentationBackground(bg)` (`pawSheetBackground()`); see section 4.
+- **Simulator controls** are one small dashed strip under a screen's buttons, or one closed "Simulator" row at the foot of a list (Settings, the sync sheet). They keep their identifiers.
 - **The PIN field is blank in screenshots** while it is a secure field: iOS hides secure text from screen capture. The dots show on a device.
 - **Copy confirmation** is hidden from VoiceOver focus and posted as an announcement, as specified, so UI tests can only see it in screenshots.
