@@ -48,7 +48,6 @@ struct AutoFillRootView: View {
                 message: "Open paw and set up your store. Then try again here.",
                 primary: EmptyState.Action(title: "Close", identifier: "autofill-close") { model.cancel() })
                 .background(PawColor.bg.ignoresSafeArea())
-                .accessibilityIdentifier("autofill-no-store")
         case .problem(let problem, let nextStep):
             VStack(spacing: PawMetrics.Spacing.l) {
                 ErrorRow(kind: .error, problem: problem, nextStep: nextStep, isBanner: true)

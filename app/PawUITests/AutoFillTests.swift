@@ -130,7 +130,8 @@ final class AutoFillTests: PawUITestCase {
 
     func testNoStoreSaysToSetUp() {
         launchProvider(["-pawHostProvider", "https://github.com", "-pawHostProviderStore", "none"])
-        expect("autofill-no-store")
+        expect("autofill-close")
+        XCTAssertTrue(app.staticTexts["Set up paw first"].exists, "It should say to set up paw")
         snapshot("light-no-store")
         tap("autofill-close")
         expectResult("ended userCanceled")
@@ -203,7 +204,7 @@ final class AutoFillTests: PawUITestCase {
     func testSettingsShowsAutoFill() {
         launchFixture()
         openSettings()
-        expect("settings-autofill")
+        scrollTo("settings-autofill")
         snapshot("settings")
     }
 }

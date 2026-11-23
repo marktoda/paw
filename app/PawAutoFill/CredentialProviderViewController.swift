@@ -41,12 +41,6 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         show(.entry(path: path))
     }
 
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        // Dismissed by a swipe or by iOS: stop any key task, drop the PIN.
-        model?.shutDown()
-    }
-
     private static func path(of request: ASCredentialRequest) -> String? {
         guard let identity = request.credentialIdentity as? ASPasswordCredentialIdentity,
               let path = identity.recordIdentifier, !path.isEmpty else { return nil }
