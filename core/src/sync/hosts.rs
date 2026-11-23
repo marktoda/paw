@@ -1,25 +1,35 @@
 //! Which host keys paw trusts.
 //!
-//! github.com's keys ship with paw. Any other host is trusted on first use,
-//! and only after the person has seen its fingerprint and confirmed it; the
-//! confirmed key is then pinned in a known-hosts file next to the store. A
-//! host that later presents a different key is refused, whatever the
-//! reason: the only way past it is to forget the pinned key on purpose.
+//! The keys of a few large git hosts ship with paw ([`BUNDLED`]). Any other
+//! host is trusted on first use, and only after the person has seen its
+//! fingerprint and confirmed it; the confirmed key is then pinned in a
+//! known-hosts file next to the store. A host that later presents a
+//! different key is refused, whatever the reason: the only way past it is to
+//! forget the pinned key on purpose, and a bundled host's keys cannot be
+//! forgotten at all.
+//!
+//! Every bundled key was checked on 2026-11-23 against the host's own
+//! documentation, fetched over HTTPS; each list names its page. The SHA256
+//! fingerprint beside each key is the one that page publishes, and a test
+//! checks that each key has it. Hosts not here because their documentation
+//! publishes fingerprints but not the keys themselves: codeberg.org
+//! (<https://docs.codeberg.org/security/ssh-fingerprint/>) and git.sr.ht.
+//! They are confirmed on first use like any other host.
 
 use std::path::{Path, PathBuf};
 
 use super::transport::HostKeyPin;
 use crate::PawError;
 
-/// github.com's SSH host keys, ed25519 first.
+/// github.com's SSH host keys, ed25519 first, with their fingerprints.
 ///
-/// Taken on 2026-11-22 from GitHub's documentation page "GitHub's SSH key
-/// fingerprints"
-/// (<https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints>)
-/// and cross-checked against the `ssh_keys` and `ssh_key_fingerprints` of
-/// <https://api.github.com/meta> fetched the same day. Both gave these keys
-/// and these fingerprints. The RSA key is pinned for completeness, but this
-/// build has no RSA, so it is never offered (see `HostKeyPin::algorithms`).
+/// From GitHub's documentation page "GitHub's SSH key fingerprints"
+/// (<https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints>),
+/// checked on 2026-11-22 and again on 2026-11-23 against the `ssh_keys` and
+/// `ssh_key_fingerprints` of <https://api.github.com/meta>. All gave these
+/// keys and these fingerprints. The RSA key is pinned for completeness, but
+/// this build has no RSA, so it is never offered (see
+/// `HostKeyPin::algorithms`).
 pub const GITHUB_HOST_KEYS: [(&str, &str); 3] = [
     (
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
@@ -35,13 +45,81 @@ pub const GITHUB_HOST_KEYS: [(&str, &str); 3] = [
     ),
 ];
 
-/// The keys that ship with paw for `host`, if any.
+/// gitlab.com's SSH host keys, ed25519 first, with their fingerprints.
+///
+/// The keys are the "SSH `known_hosts` entries" and the fingerprints the
+/// "SSH host keys fingerprints" of GitLab's documentation page "GitLab.com
+/// settings" (<https://docs.gitlab.com/user/gitlab_com/>), fetched on
+/// 2026-11-23.
+pub const GITLAB_HOST_KEYS: [(&str, &str); 3] = [
+    (
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAfuCHKVTjquxvt6CM6tdG4SLp1Btn/nOeHHE5UOzRdf",
+        "SHA256:eUXGGm1YGsMAS7vkcx6JOJdOGHPem5gQp4taiCfCLB8",
+    ),
+    (
+        "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBFSMqzJeV9rUzU4kWitGjeR4PWSa29SPqJ1fVkhtj3Hw9xjLVXVYrU9QlYWrOLXBpQ6KWjbjTDTdDkoohFzgbEY=",
+        "SHA256:HbW3g8zUjNSksFbqTiUWPWg2Bq1x8xdGUrliXFzSnUw",
+    ),
+    (
+        "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCsj2bNKTBSpIYDEGk9KxsGh3mySTRgMtXL583qmBpzeQ+jqCMRgBqB98u3z++J1sKlXHWfM9dyhSevkMwSbhoR8XIq/U0tCNyokEi/ueaBMCvbcTHhO7FcwzY92WK4Yt0aGROY5qX2UKSeOvuP4D6TPqKF1onrSzH9bx9XUf2lEdWT/ia1NEKjunUqu1xOB/StKDHMoX4/OKyIzuS0q/T1zOATthvasJFoPrAjkohTyaDUz2LN5JoH839hViyEG82yB+MjcFV5MU3N1l1QL3cVUCh93xSaua1N85qivl+siMkPGbO5xR/En4iEY6K2XPASUEMaieWVNTRCtJ4S8H+9",
+        "SHA256:ROQFvPThGrW4RuWLoL9tq9I9zJ42fK4XywyRtbOz/EQ",
+    ),
+];
+
+/// bitbucket.org's SSH host keys, ed25519 first, with their fingerprints.
+///
+/// The fingerprints are the "public SSH host key fingerprints" of
+/// Atlassian's documentation page "Configure SSH and two-step verification"
+/// (<https://support.atlassian.com/bitbucket-cloud/docs/configure-ssh-and-two-step-verification/>),
+/// and the keys are what that page says to fetch for a known-hosts file,
+/// <https://bitbucket.org/site/ssh>; both fetched on 2026-11-23, and each key
+/// has the fingerprint the page gives for it.
+pub const BITBUCKET_HOST_KEYS: [(&str, &str); 3] = [
+    (
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIazEu89wgQZ4bqs3d63QSMzYVa0MuJ2e2gKTKqu+UUO",
+        "SHA256:ybgmFkzwOSotHTHLJgHO0QN8L0xErw6vd0VhFA9m3SM",
+    ),
+    (
+        "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBPIQmuzMBuKdWeF4+a2sjSSpBK0iqitSQ+5BM9KhpexuGt20JpTVM7u5BDZngncgrqDMbWdxMWWOGtZ9UgbqgZE=",
+        "SHA256:FC73VB6C4OQLSCrjEayhMp9UMxS97caD/Yyi2bhW/J0",
+    ),
+    (
+        "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDQeJzhupRu0u0cdegZIa8e86EG2qOCsIsD1Xw0xSeiPDlCr7kq97NLmMbpKTX6Esc30NuoqEEHCuc7yWtwp8dI76EEEB1VqY9QJq6vk+aySyboD5QF61I/1WeTwu+deCbgKMGbUijeXhtfbxSxm6JwGrXrhBdofTsbKRUsrN1WoNgUa8uqN1Vx6WAJw1JHPhglEGGHea6QICwJOAr/6mrui/oB7pkaWKHj3z7d1IC4KWLtY47elvjbaTlkN04Kc/5LFEirorGYVbt15kAUlqGM65pk6ZBxtaO3+30LVlORZkxOh+LKL/BvbZ/iRNhItLqNyieoQj/uh/7Iv4uyH/cV/0b4WDSd3DptigWq84lJubb9t/DnZlrJazxyDCulTmKdOR7vs9gMTo+uoIrPSb8ScTtvw65+odKAlBj59dhnVp9zd7QUojOpXlL62Aw56U4oO+FALuevvMjiWeavKhJqlR7i5n9srYcrNV7ttmDw7kf/97P5zauIhxcjX+xHv4M=",
+        "SHA256:46OSHA1Rmj8E8ERTC6xkNcmGOw9oFxYr0WF6zWW8l1E",
+    ),
+];
+
+/// A host's bundled keys: each public key line with the SHA256 fingerprint
+/// its documentation gives for it.
+pub type HostKeys = &'static [(&'static str, &'static str)];
+
+/// The host and port each set of keys is bundled for.
+///
+/// `ssh.github.com:443` is GitHub's SSH endpoint on the HTTPS port, for
+/// networks that block port 22. GitHub's page "Using SSH over the HTTPS
+/// port"
+/// (<https://docs.github.com/en/authentication/troubleshooting-ssh/using-ssh-over-the-https-port>,
+/// fetched 2026-11-23) shows it presenting the ed25519 fingerprint above and
+/// says to accept it if it matches one of GitHub's published fingerprints:
+/// it has the same keys.
+pub const BUNDLED: [(&str, u16, HostKeys); 4] = [
+    ("github.com", 22, &GITHUB_HOST_KEYS),
+    ("ssh.github.com", 443, &GITHUB_HOST_KEYS),
+    ("gitlab.com", 22, &GITLAB_HOST_KEYS),
+    ("bitbucket.org", 22, &BITBUCKET_HOST_KEYS),
+];
+
+/// The keys that ship with paw for `host` on `port`, if any.
 pub fn bundled(host: &str, port: u16) -> Option<HostKeyPin> {
-    if !host.eq_ignore_ascii_case("github.com") || port != 22 {
-        return None;
-    }
-    let lines: Vec<&str> = GITHUB_HOST_KEYS.iter().map(|(line, _)| *line).collect();
+    let (_, _, keys) = BUNDLED.iter().find(|(h, p, _)| host.eq_ignore_ascii_case(h) && port == *p)?;
+    let lines: Vec<&str> = keys.iter().map(|(line, _)| *line).collect();
     HostKeyPin::parse_all(&lines).ok()
+}
+
+/// Whether paw ships keys for `host` on `port`: such a host is never
+/// confirmed by the person, and its keys cannot be forgotten.
+pub fn is_bundled(host: &str, port: u16) -> bool {
+    BUNDLED.iter().any(|(h, p, _)| host.eq_ignore_ascii_case(h) && port == *p)
 }
 
 /// Host keys confirmed by the person, one host per line:

@@ -627,7 +627,30 @@ fn githubs_bundled_keys_match_their_published_fingerprints() {
     let github = hosts::bundled("github.com", 22).unwrap();
     assert_eq!(github.fingerprints(), GITHUB_HOST_KEYS.map(|(_, fp)| fp.to_owned()));
     assert!(hosts::bundled("github.com", 2222).is_none());
-    assert!(hosts::bundled("gitlab.com", 22).is_none());
+    assert!(hosts::bundled("codeberg.org", 22).is_none());
+}
+
+#[test]
+fn every_bundled_key_parses_and_has_the_fingerprint_written_beside_it() {
+    for (host, port, keys) in hosts::BUNDLED {
+        assert!(!keys.is_empty(), "{host}");
+        for (line, fingerprint) in keys {
+            let pin = HostKeyPin::parse(line).unwrap_or_else(|e| panic!("{host}: {line}: {e}"));
+            assert_eq!(pin.fingerprint(), *fingerprint, "{host}:{port}");
+        }
+        let pin = hosts::bundled(host, port).unwrap();
+        assert_eq!(pin.fingerprints(), keys.iter().map(|(_, fp)| fp.to_string()).collect::<Vec<_>>());
+        // Each host offers ed25519 first and has a key this build can use.
+        assert_eq!(pin.algorithms()[0].to_string(), "ssh-ed25519", "{host}");
+        assert!(hosts::is_bundled(&host.to_uppercase(), port));
+    }
+    // GitHub's port-443 endpoint has GitHub's keys, and only on 443.
+    assert_eq!(
+        hosts::bundled("ssh.github.com", 443).unwrap().fingerprints(),
+        hosts::bundled("github.com", 22).unwrap().fingerprints()
+    );
+    assert!(hosts::bundled("ssh.github.com", 22).is_none());
+    assert!(hosts::bundled("github.com", 443).is_none());
 }
 
 #[test]
