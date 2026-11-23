@@ -33,8 +33,8 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 | Exact touch policy per slot | core | done |
 | Keep the simulated key and fixture out of device builds (cargo feature, device-library scan in CI) | foundations | next, after `screens` merges |
 | App Group container and shared keychain group for app and extension, checked in the simulator | foundations | next, after `screens` merges |
-| Key session in the core: one object per plugged-in key, PIN held for the session and forgotten after 15 minutes in the background, cancel, structured errors | key-session | in progress (`key-session`) |
-| Key task state machine (plug in, PIN, touch, working, done) driving the real key sheet | key-session, then screens | core in progress (`key-session`); Swift half after it and `screens` merge |
+| Key session in the core: one object per plugged-in key, PIN held for the session and forgotten after 15 minutes in the background, cancel, structured errors | key-session | done |
+| Key task state machine (plug in, PIN, touch, working, done) driving the real key sheet | key-session, then screens | core done; Swift half after `screens` merges |
 | Touch-timeout status word from the real key | device | blocked on the owner running one check |
 
 ### M2 Read a store
@@ -69,7 +69,7 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 
 | Item | Track | Status |
 |---|---|---|
-| Entry draft, password generator, encrypt to the recipient list, pass-style commit messages, delete, rename, move | core | in progress (`write-path`) |
+| Entry draft, password generator, encrypt to the recipient list, pass-style commit messages, delete, rename, move | core | done |
 | Unpushed queue, undo, discard; push with fetch and replay on one login | sync | done |
 | Add, edit, delete, rename screens | screens | later |
 | A real push, read back by desktop `pass` | device | later |
