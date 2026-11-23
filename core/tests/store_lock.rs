@@ -638,8 +638,9 @@ fn child_process_helper() {
             std::fs::write(top.join("child-holds"), b"").unwrap();
             std::thread::sleep(Duration::from_secs(120));
         }
-        // Refreshes with the token from several threads at once, when told
-        // to, as the extension and the app might.
+        // Uses the sign-in (a GitHub API call, which refreshes an expired
+        // token) from several threads at once, when told to. Never
+        // fetches: only the app fetches.
         "refresh" => {
             let endpoints = Endpoints::simulated(
                 &std::env::var("PAW_LOCK_TEST_URL").unwrap(),
@@ -659,13 +660,25 @@ fn child_process_helper() {
                 let threads: Vec<_> = (0..3)
                     .map(|_| {
                         let account = account.clone();
-                        std::thread::spawn(move || account.refresh_with_token().map(drop).map_err(|e| e.to_string()))
+                        std::thread::spawn(move || account.repositories().map(drop).map_err(|e| e.to_string()))
                     })
                     .collect();
                 let results: Vec<_> = threads.into_iter().map(|t| t.join().unwrap()).collect();
                 let failed: Vec<_> = results.into_iter().filter_map(Result::err).collect();
                 std::fs::write(top.join(format!("done-{round}")), failed.join("\n")).unwrap();
             }
+        }
+        // Saves entries one after another while the parent writes too.
+        "save" => {
+            wait_for(&top.join("go-save"));
+            let writer = WriteStore::open(&state);
+            let mut failed = Vec::new();
+            for n in 0..20 {
+                if let Err(e) = save_in(&writer, &format!("child-{n}")) {
+                    failed.push(format!("child-{n}: {e}"));
+                }
+            }
+            std::fs::write(top.join("done-save"), failed.join("\n")).unwrap();
         }
         other => panic!("unknown child role {other}"),
     }
@@ -703,7 +716,7 @@ fn another_process_holding_the_lock_is_waited_for_and_its_death_frees_it() {
     let started = Instant::now();
     let refused = store.exclusive_within(Duration::from_millis(300)).unwrap_err();
     assert!(started.elapsed() >= Duration::from_millis(300));
-    assert!(refused.to_string().contains("busy"), "{refused}");
+    assert!(paw_core::ffi::is_store_busy(refused.to_string()), "{refused}");
     assert!(store.shared_within(Duration::from_millis(100)).is_err(), "a reader waits for a writer in another process");
 
     // The holder is killed mid-write: the kernel drops its lock, and what
@@ -719,8 +732,11 @@ fn another_process_holding_the_lock_is_waited_for_and_its_death_frees_it() {
     w.assert_consistent();
 }
 
+/// The app refreshes the store while another process uses the sign-in, both
+/// with an expired token: no lock is held across the refresh request, the
+/// refresh token is spent once, and neither loses the sign-in.
 #[test]
-fn two_processes_refreshing_at_once_spend_the_refresh_token_once() {
+fn two_processes_refreshing_the_sign_in_at_once_spend_the_refresh_token_once() {
     let w = world();
     let rounds = 10;
     let mut other = child(
@@ -838,4 +854,243 @@ fn every_mutating_entry_point_returns_even_when_its_thread_holds_the_lock() {
     w.save("afterwards").unwrap();
     w.send().unwrap();
     w.assert_consistent();
+}
+
+#[test]
+fn two_processes_saving_and_integrating_at_once_lose_no_entry() {
+    let w = world();
+    let mut other = child("save", w.dir.path(), &[]);
+    std::fs::write(w.dir.path().join("go-save"), b"").unwrap();
+    for n in 0..20 {
+        save_in(&w.writer(), &format!("parent-{n}")).unwrap();
+        if n % 5 == 0 {
+            w.remote.commit_file(format!("remote/x{n}.gpg"), b"x".to_vec(), format!("Desktop {n}.")).unwrap();
+            w.account.refresh_with_token().unwrap();
+        }
+    }
+    let done = w.dir.path().join("done-save");
+    wait_for(&done);
+    assert!(other.wait().unwrap().success());
+    let failed = std::fs::read_to_string(&done).unwrap();
+    assert!(failed.is_empty(), "the other process's saves failed: {failed}");
+    w.account.refresh_with_token().unwrap();
+    for n in 0..20 {
+        assert!(w.local_has(&format!("lock/parent-{n}")), "parent-{n} lost");
+        assert!(w.local_has(&format!("lock/child-{n}")), "child-{n} lost");
+    }
+    assert_eq!(queue::unpushed(&w.repo()).unwrap().len(), 40);
+    w.assert_consistent();
+    w.send().unwrap();
+    assert!(w.remote_has("lock/child-19") && w.remote_has("lock/parent-19"));
+}
+
+// --- a push and the queue ------------------------------------------------------------------
+
+/// A connection to the world's SSH host with its key.
+fn connect(w: &World) -> sync::Connection {
+    let signer = CardSigner::new(w.key.clone(), PIN, || {}).unwrap();
+    sync::Connection::open(&w.remote.remote().unwrap(), &signer).unwrap()
+}
+
+fn origin(w: &World) -> String {
+    let repo = git2::Repository::open(w.repo()).unwrap();
+    repo.refname_to_id("refs/remotes/origin/main").unwrap().to_string()
+}
+
+fn markers(w: &World) -> Vec<String> {
+    let repo = git2::Repository::open(w.repo()).unwrap();
+    let mut names = repo.references_glob("refs/paw/pushing/*").unwrap();
+    names.names().map(|n| n.unwrap().to_owned()).collect()
+}
+
+#[test]
+fn taking_back_a_change_that_is_being_sent_is_refused() {
+    let w = Arc::new(world());
+    let saved = w.save("on-the-wire").unwrap();
+    let (tell, told) = mpsc::channel();
+    {
+        let (w, id) = (w.clone(), saved.commits[0].clone());
+        // While the push is on the network (the host is receiving it).
+        w.remote.clone().before_next_push(move || {
+            let _ = tell.send(queue::discard(&w.repo(), &id).map_err(|e| e.to_string()));
+        });
+    }
+    let report = w.send().unwrap();
+    assert_eq!(report.pushed, 1);
+    let refused = told.recv_timeout(Duration::from_secs(10)).unwrap().unwrap_err();
+    assert!(refused.contains("being sent right now"), "{refused}");
+    assert!(w.local_has("lock/on-the-wire") && w.remote_has("lock/on-the-wire"));
+    assert!(markers(&w).is_empty());
+    w.assert_consistent();
+}
+
+#[test]
+fn a_push_record_left_by_a_crash_does_not_block_taking_a_change_back() {
+    let w = world();
+    let saved = w.save("after-crash").unwrap();
+    // A send was killed on the network: its record is left, its lock gone.
+    let repo = git2::Repository::open(w.repo()).unwrap();
+    let id = git2::Oid::from_str(&saved.commits[0]).unwrap();
+    repo.reference("refs/paw/pushing/main", id, true, "a send that died").unwrap();
+    queue::discard(&w.repo(), &saved.commits[0]).unwrap();
+    assert!(!w.local_has("lock/after-crash"));
+    assert!(markers(&w).is_empty(), "the stale record was removed");
+
+    // One left behind is also cleared by the next fetch.
+    repo.reference("refs/paw/pushing/main", repo.head().unwrap().target().unwrap(), true, "again").unwrap();
+    w.account.refresh_with_token().unwrap();
+    assert!(markers(&w).is_empty());
+    w.assert_consistent();
+}
+
+#[test]
+fn a_push_that_landed_is_success_even_if_recording_it_has_to_wait_too_long() {
+    let w = Arc::new(world());
+    w.save("landed").unwrap();
+    // Another holder takes the store while the push is on the network and
+    // keeps it past the (lowered) wait to record.
+    let (held, holding) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    {
+        let state = w.state().to_path_buf();
+        w.remote.clone().before_next_push(move || {
+            std::thread::spawn(move || {
+                let _held = StoreLock::for_state_dir(&state).exclusive().unwrap();
+                held.send(()).unwrap();
+                let _ = released.recv_timeout(Duration::from_secs(30));
+            });
+            holding.recv_timeout(Duration::from_secs(10)).unwrap();
+        });
+    }
+    let connection = connect(&w);
+    let before = origin(&w);
+    let pushed = paw_core::lock::with_record_wait(Duration::from_millis(300), || sync::push(&connection, &w.repo()));
+    pushed.unwrap();
+    assert!(w.remote_has("lock/landed"));
+    assert_eq!(origin(&w), before, "not recorded: the lock was not to be had");
+    release.send(()).unwrap();
+
+    // The next fetch heals it.
+    w.account.refresh_with_token().unwrap();
+    assert_eq!(origin(&w), w.remote.tip().unwrap());
+    assert!(queue::unpushed(&w.repo()).unwrap().is_empty());
+    assert!(markers(&w).is_empty());
+    w.assert_consistent();
+}
+
+#[test]
+fn a_refused_push_reports_the_refusal_not_busy_while_the_store_is_held() {
+    let w = Arc::new(world());
+    w.save("refused").unwrap();
+    w.remote.set_refuse_pushes(true);
+    let (held, holding) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    {
+        let state = w.state().to_path_buf();
+        w.remote.clone().before_next_push(move || {
+            std::thread::spawn(move || {
+                let _held = StoreLock::for_state_dir(&state).exclusive().unwrap();
+                held.send(()).unwrap();
+                let _ = released.recv_timeout(Duration::from_secs(30));
+            });
+            holding.recv_timeout(Duration::from_secs(10)).unwrap();
+        });
+    }
+    let connection = connect(&w);
+    let error = sync::push(&connection, &w.repo()).unwrap_err().to_string();
+    release.send(()).unwrap();
+    assert!(!paw_core::ffi::is_store_busy(error.clone()), "{error}");
+    assert!(!w.remote_has("lock/refused"));
+    assert_eq!(queue::unpushed(&w.repo()).unwrap().len(), 1, "still waiting");
+}
+
+#[test]
+fn busy_is_recognisable_through_every_error_type() {
+    let busy = paw_core::lock::busy();
+    assert!(busy.to_string().starts_with(paw_core::lock::STORE_BUSY_PREFIX));
+    for message in [
+        busy.to_string(),
+        WriteError::from(paw_core::lock::busy()).to_string(),
+        sync::SyncError::from(paw_core::lock::busy()).to_string(),
+    ] {
+        assert!(paw_core::ffi::is_store_busy(message.clone()), "{message}");
+    }
+    assert!(!paw_core::ffi::is_store_busy("could not reach the git host: timed out".into()));
+    assert!(!paw_core::ffi::is_store_busy("paw tried to change the store while reading it".into()));
+}
+
+#[test]
+fn a_shallow_lock_belongs_to_the_fetch_lock() {
+    let w = world();
+    let shallow = w.repo().join(".git/shallow.lock");
+    std::fs::write(&shallow, b"").unwrap();
+    // The store lock leaves it: a fetch may be writing it right now.
+    w.save("with-shallow-lock").unwrap();
+    assert!(shallow.exists());
+    // The next fetch, holding the fetch lock, removes a stale one.
+    w.remote.commit_file("remote/s.gpg".into(), b"x".to_vec(), "S.".into()).unwrap();
+    w.account.refresh_with_token().unwrap();
+    assert!(!shallow.exists());
+    assert!(w.local_has("remote/s"));
+}
+
+/// What the other process does in a refresh race: spends the kept refresh
+/// token at GitHub itself, returning the new pair as GitHub sent it.
+fn spend_elsewhere(w: &World, refresh: &str) -> serde_json::Value {
+    use std::io::{Read, Write};
+    let url = w.github.url();
+    let address = url.trim_start_matches("http://");
+    let body = format!("client_id={}&grant_type=refresh_token&refresh_token={refresh}", w.github.client_id());
+    let mut stream = std::net::TcpStream::connect(address).unwrap();
+    write!(
+        stream,
+        "POST /login/oauth/access_token HTTP/1.1\r\nHost: {address}\r\nAccept: application/json\r\n\
+         Content-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    let mut answer = String::new();
+    stream.read_to_string(&mut answer).unwrap();
+    let json = answer.split_once("\r\n\r\n").unwrap().1;
+    serde_json::from_str(json).unwrap()
+}
+
+/// The vault item's fields.
+fn kept(w: &World) -> BTreeMap<String, String> {
+    let text = std::fs::read_to_string(w.dir.path().join("vault").join(paw_core::github::session::SESSION_ITEM)).unwrap();
+    text.lines().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.to_owned(), v.to_owned())).collect()
+}
+
+#[test]
+fn a_refresh_refused_because_another_process_spent_the_token_uses_that_processs_pair() {
+    let w = Arc::new(world());
+    w.expire_token();
+    let spent = kept(&w)["refresh"].clone();
+    // The other process wins the race at GitHub, and keeps its new pair a
+    // moment later.
+    let pair = spend_elsewhere(&w, &spent);
+    let keeping = {
+        let w = w.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            let now = read_wall(&w.wall);
+            let text = format!(
+                "paw-github-session 1\naccess={}\naccess_expires={}\nrefresh={}\n",
+                pair["access_token"].as_str().unwrap(),
+                now + 8 * 3600,
+                pair["refresh_token"].as_str().unwrap(),
+            );
+            FileVault(w.dir.path().join("vault"))
+                .store(paw_core::github::session::SESSION_ITEM.into(), text.into_bytes())
+                .unwrap();
+        })
+    };
+    // This process sends the same, spent token: refused, then it finds the
+    // other's pair and goes on with it, still signed in.
+    let issued = w.tokens();
+    w.account.refresh_with_token().unwrap();
+    keeping.join().unwrap();
+    assert!(w.account.signed_in().unwrap());
+    assert_eq!(w.tokens(), issued, "no second rotation");
+    assert_ne!(kept(&w)["refresh"], spent);
 }

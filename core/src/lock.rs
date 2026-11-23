@@ -18,8 +18,16 @@
 //!   and no C. The kernel drops it when its holder dies, so a killed
 //!   extension never leaves the store locked.
 //!
-//! Every wait is bounded ([`DEFAULT_WAIT`]); past it the operation fails
-//! with [`busy`] and changes nothing.
+//! Every wait is bounded ([`DEFAULT_WAIT`] to change, [`SHARED_WAIT`] to
+//! read); past it the operation fails with [`busy`], whose message starts
+//! with [`STORE_BUSY_PREFIX`] ([`is_store_busy`]), and changes nothing.
+//!
+//! **The only file lock is the store lock**, and every holder keeps it for
+//! local file work only: never across a transfer, a wait for the key or a
+//! callback into the app. A process suspended while holding a file lock in
+//! the App Group container is killed by iOS (`0xdead10cc`), so nothing
+//! slow may be under it. The fetch and push locks are in-process only:
+//! only the app fetches and sends (the extension must never do either).
 //!
 //! **Which lock.** A store set up by paw has its repository at
 //! `<state>/repo`, so its lock is the state directory's. A repository
@@ -38,8 +46,9 @@
 //! lock held, so a `*.lock` file that git left in `.git` (`index.lock`,
 //! `refs/.../main.lock`) when a holder was killed can only be dead: taking
 //! the exclusive lock removes them ([`remove_stale_git_locks`]). Fetches
-//! write objects and their private refs without the store lock, under the
-//! store's fetch lock ([`StoreLock::fetching`]), which cleans its own.
+//! write objects, their private refs and `shallow.lock` without the store
+//! lock, under the store's fetch lock ([`StoreLock::fetching`]), which
+//! cleans those itself.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -51,17 +60,16 @@ use std::time::{Duration, Instant};
 
 use crate::PawError;
 
-/// The store lock's file, in the state directory.
+/// The store lock's file, in the state directory: paw's only file lock.
 pub const STORE_LOCK_FILE: &str = "store.lock";
-/// The fetch lock's file, beside it.
-pub const FETCH_LOCK_FILE: &str = "fetch.lock";
-/// The push lock's file, beside it.
-pub const PUSH_LOCK_FILE: &str = "push.lock";
-/// The GitHub sign-in refresh lock's file, beside it.
-pub const SESSION_LOCK_FILE: &str = "github-session.lock";
-/// The longest an operation waits for the store lock. Every holder keeps it
+/// The longest a change waits for the store lock. Every holder keeps it
 /// for local file work only, so this is far longer than any real wait.
-pub const DEFAULT_WAIT: Duration = Duration::from_secs(10);
+pub const DEFAULT_WAIT: Duration = Duration::from_secs(15);
+/// The longest a read waits: reads are cheap to wait for, and a failed
+/// listing is worse than a slow one.
+pub const SHARED_WAIT: Duration = Duration::from_secs(30);
+/// The longest recording a push that has landed waits for the lock.
+pub const RECORD_WAIT: Duration = Duration::from_secs(120);
 /// The longest a fetch waits for another fetch of the same store to finish.
 pub const FETCH_WAIT: Duration = Duration::from_secs(60);
 /// The repository-name that marks `<state>/repo`.
@@ -69,12 +77,43 @@ const REPO_DIR: &str = "repo";
 /// Where a repository outside a state directory keeps its lock files.
 const GIT_LOCK_DIR: &str = "paw";
 
+/// How the message of [`busy`] starts, whichever error type carries it.
+/// Stable: the app recognises it ([`is_store_busy`]).
+pub const STORE_BUSY_PREFIX: &str = "the password store is busy";
+
 /// The error a lock that could not be had in time becomes. Nothing was
 /// changed.
 pub fn busy() -> PawError {
-    PawError::Store(
-        "the password store is busy: another part of paw (or the AutoFill extension) is using it; try again".into(),
-    )
+    PawError::Store(format!(
+        "{STORE_BUSY_PREFIX}: another part of paw (or the AutoFill extension) is using it; try again"
+    ))
+}
+
+/// Whether an error's message (any of paw's error types) says the store
+/// was busy: nothing was changed and trying again will work. Not a broken
+/// store.
+pub fn is_store_busy(message: &str) -> bool {
+    message.contains(STORE_BUSY_PREFIX)
+}
+
+thread_local! {
+    /// [`RECORD_WAIT`], unless a test lowered it for this thread.
+    static RECORD_WAIT_HERE: std::cell::Cell<Duration> = const { std::cell::Cell::new(RECORD_WAIT) };
+}
+
+/// How long this thread waits to record a push that landed.
+pub(crate) fn record_wait() -> Duration {
+    RECORD_WAIT_HERE.with(std::cell::Cell::get)
+}
+
+/// Runs `work` with this thread's wait to record a push lowered to `wait`
+/// (tests).
+#[doc(hidden)]
+pub fn with_record_wait<T>(wait: Duration, work: impl FnOnce() -> T) -> T {
+    let before = RECORD_WAIT_HERE.with(|w| w.replace(wait));
+    let result = work();
+    RECORD_WAIT_HERE.with(|w| w.set(before));
+    result
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -138,12 +177,13 @@ impl StoreLock {
         &self.repo
     }
 
-    fn lock(&self, kind: &str, file: &str) -> Lock {
-        Lock { key: self.root.join(format!("#{kind}")), file: self.files.as_ref().map(|dir| dir.join(file)) }
+    fn store(&self) -> Lock {
+        Lock { key: self.root.join("#store"), file: self.files.as_ref().map(|dir| dir.join(STORE_LOCK_FILE)) }
     }
 
-    fn store(&self) -> Lock {
-        self.lock("store", STORE_LOCK_FILE)
+    /// A lock between this process's threads only.
+    fn in_process(&self, kind: &str) -> Lock {
+        Lock { key: self.root.join(format!("#{kind}")), file: None }
     }
 
     /// Takes the store for changing it, waiting at most [`DEFAULT_WAIT`].
@@ -160,10 +200,10 @@ impl StoreLock {
         Ok(Exclusive { held, store: self.clone() })
     }
 
-    /// Takes the store for reading it, waiting at most [`DEFAULT_WAIT`].
+    /// Takes the store for reading it, waiting at most [`SHARED_WAIT`].
     /// Readers share; none overlaps a writer.
     pub fn shared(&self) -> Result<Shared, PawError> {
-        self.shared_within(DEFAULT_WAIT)
+        self.shared_within(SHARED_WAIT)
     }
 
     /// [`Self::shared`], waiting at most `wait`.
@@ -172,38 +212,33 @@ impl StoreLock {
     }
 
     /// Takes the store's fetch lock: one fetch at a time writes objects and
-    /// its private refs. Never taken while the store lock is held by this
-    /// thread (the order is fetch lock, then store lock).
+    /// its private refs. In this process only (no file: it is held across
+    /// the transfer); only the app fetches. Never taken while the store
+    /// lock is held by this thread (the order is fetch lock, then store
+    /// lock).
     pub(crate) fn fetching(&self, wait: Duration) -> Result<Fetching, PawError> {
         if holds(&self.store().key).is_some() {
             return Err(PawError::Store("paw asked for the fetch lock while holding the store".into()));
         }
-        Ok(Fetching { _held: acquire(&self.lock("fetch", FETCH_LOCK_FILE), Mode::Exclusive, wait)? })
+        Ok(Fetching { _held: acquire(&self.in_process("fetch"), Mode::Exclusive, wait)? })
     }
 
     /// Takes the store's push lock, held by a send from before it reads the
     /// tip it will push until it has recorded the result: one send at a
     /// time, and [`Self::push_in_flight`] can tell a push is under way.
-    /// Like the fetch lock, never taken while this thread holds the store.
+    /// Like the fetch lock, in this process only (only the app sends) and
+    /// never taken while this thread holds the store.
     pub(crate) fn pushing(&self, wait: Duration) -> Result<Pushing, PawError> {
         if holds(&self.store().key).is_some() {
             return Err(PawError::Store("paw asked for the push lock while holding the store".into()));
         }
-        Ok(Pushing { _held: acquire(&self.lock("push", PUSH_LOCK_FILE), Mode::Exclusive, wait)? })
+        Ok(Pushing { _held: acquire(&self.in_process("push"), Mode::Exclusive, wait)? })
     }
 
-    /// Whether another thread or process holds the push lock now: a push is
-    /// on the network. Only tries; never waits.
+    /// Whether another thread holds the push lock now: a push is on the
+    /// network. Only tries; never waits.
     pub(crate) fn push_in_flight(&self) -> bool {
-        acquire(&self.lock("push", PUSH_LOCK_FILE), Mode::Exclusive, Duration::ZERO).is_err()
-    }
-
-    /// The lock that serialises refreshing the GitHub sign-in, so one
-    /// refresh token is never spent twice, by two threads or by the app
-    /// and its extension.
-    pub(crate) fn session(state_dir: &Path) -> SessionLock {
-        let store = Self::for_state_dir(state_dir);
-        SessionLock(store.lock("session", SESSION_LOCK_FILE))
+        acquire(&self.in_process("push"), Mode::Exclusive, Duration::ZERO).is_err()
     }
 }
 
@@ -240,19 +275,6 @@ pub(crate) struct Fetching {
 
 /// A store's push lock, held.
 pub(crate) struct Pushing {
-    _held: Held,
-}
-
-/// The GitHub sign-in refresh lock.
-pub(crate) struct SessionLock(Lock);
-
-impl SessionLock {
-    pub(crate) fn hold(&self, wait: Duration) -> Result<SessionHeld, PawError> {
-        Ok(SessionHeld { _held: acquire(&self.0, Mode::Exclusive, wait)? })
-    }
-}
-
-pub(crate) struct SessionHeld {
     _held: Held,
 }
 
@@ -445,8 +467,9 @@ impl Drop for Held {
 /// `config.lock`, `packed-refs.lock`, ...) and under `refs/` and `logs/`.
 /// Called with the exclusive store lock held, which every writer of those
 /// files in paw holds, so none of them is being written now. The private
-/// refs of a fetch (`refs/paw/fetch/`), which are written under the fetch
-/// lock instead, and paw's own lock files (`.git/paw/`) are left alone.
+/// refs of a fetch (`refs/paw/fetch/`) and `shallow.lock`, which are
+/// written under the fetch lock instead, and paw's own lock files
+/// (`.git/paw/`) are left alone.
 /// Returns what was removed.
 pub fn remove_stale_git_locks(repo: &Path) -> Vec<PathBuf> {
     let git = repo.join(".git");
@@ -456,7 +479,10 @@ pub fn remove_stale_git_locks(repo: &Path) -> Vec<PathBuf> {
     };
     for child in top.flatten() {
         let path = child.path();
-        if child.file_type().is_ok_and(|t| t.is_file()) && is_lock(&path) && std::fs::remove_file(&path).is_ok() {
+        // `shallow.lock` is a fetch's, written under the fetch lock alone.
+        let fetchs = child.file_name() == SHALLOW_LOCK;
+        if child.file_type().is_ok_and(|t| t.is_file()) && is_lock(&path) && !fetchs && std::fs::remove_file(&path).is_ok()
+        {
             removed.push(path);
         }
     }
@@ -466,6 +492,9 @@ pub fn remove_stale_git_locks(repo: &Path) -> Vec<PathBuf> {
     }
     removed
 }
+
+/// What libgit2 writes while a fetch updates `.git/shallow`.
+const SHALLOW_LOCK: &str = "shallow.lock";
 
 fn is_lock(path: &Path) -> bool {
     path.extension().is_some_and(|e| e == "lock")
@@ -491,10 +520,11 @@ fn remove_locks_under(dir: &Path, skip: &[PathBuf], depth: usize, removed: &mut 
 }
 
 /// Removes what a killed fetch left: its private refs' lock files and the
-/// lock files of a pack index it was writing. Called with the fetch lock
-/// held.
+/// lock files of a pack index it was writing, and `shallow.lock`. Called
+/// with the fetch lock held.
 pub(crate) fn remove_stale_fetch_locks(repo: &Path) {
     let git = repo.join(".git");
+    let _ = std::fs::remove_file(git.join(SHALLOW_LOCK));
     let mut removed = Vec::new();
     for dir in [git.join("refs/paw/fetch"), git.join("logs/refs/paw/fetch")] {
         remove_locks_under(&dir, &[], 0, &mut removed);

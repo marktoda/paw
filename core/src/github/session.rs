@@ -17,13 +17,19 @@
 //! person signs in again. No order of writes avoids that window, because
 //! GitHub has already rotated; one write keeps it to one keychain call.
 //!
-//! Refreshes are serialised in the process (one lock) and, through a file
-//! lock in the state directory ([`crate::lock::SESSION_LOCK_FILE`]),
-//! between the app and its extension, which share the vault. Each re-reads
-//! the vault after taking them, so two callers never spend one refresh
-//! token twice. The file lock is held across the one refresh request
-//! (bounded by its timeout), never across a fetch, and is separate from the
-//! store lock, so a refresh never holds up a save or a read.
+//! Refreshes are serialised in the process (one lock), and each re-reads
+//! the vault after taking it, so two callers in one process never spend one
+//! refresh token twice.
+//!
+//! **Between processes** (the app and its extension share the vault) no
+//! lock is held: a file lock held across the refresh request would get a
+//! process suspended mid-request killed by iOS. If both send the same
+//! refresh token, GitHub honours one and refuses the other with
+//! `bad_refresh_token`. The refused one then re-reads the vault for up to
+//! [`OTHER_PROCESS_GRACE`]: once the winner has kept its new pair, that
+//! pair is used. Only if the vault still holds the spent token afterwards
+//! is the sign-in over. So the token is still spent once, and the race
+//! costs one refused request, not the sign-in.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -33,7 +39,6 @@ use zeroize::Zeroizing;
 
 use super::http::Http;
 use super::{GitHubError, Secret};
-use crate::lock::SessionLock;
 
 /// The vault item that holds the sign-in.
 pub const SESSION_ITEM: &str = "github-session";
@@ -201,27 +206,48 @@ pub fn system_wall_clock() -> WallClock {
 /// One refresh at a time in this process.
 static REFRESHING: Mutex<()> = Mutex::new(());
 
-/// The longest a refresh waits for another process's refresh: longer than
-/// one refresh request may take.
-const SESSION_WAIT: Duration = Duration::from_secs(45);
+/// How long a refresh GitHub refused as spent waits for another process
+/// that spent the same token to keep its new pair. That process is past
+/// its request (GitHub answered it first) and keeps the pair at once.
+pub const OTHER_PROCESS_GRACE: Duration = Duration::from_secs(1);
 
 /// The sign-in kept in a vault, and the one way to get a usable access
 /// token from it.
 pub(crate) struct TokenKeeper {
     vault: Arc<dyn TokenVault>,
     wall: WallClock,
-    /// Serialises refreshes with other processes sharing the vault.
-    lock: Option<SessionLock>,
 }
 
 impl TokenKeeper {
     pub(crate) fn new(vault: Arc<dyn TokenVault>, wall: WallClock) -> Self {
-        Self { vault, wall, lock: None }
+        Self { vault, wall }
     }
 
-    pub(crate) fn with_lock(mut self, lock: SessionLock) -> Self {
-        self.lock = Some(lock);
-        self
+    /// Forgets the sign-in, after any refresh in this process has kept its
+    /// pair (so a refresh finishing later cannot bring it back). Returns
+    /// what was kept.
+    pub(crate) fn take(&self) -> Result<Option<Tokens>, GitHubError> {
+        let _one_at_a_time = REFRESHING.lock().unwrap_or_else(|p| p.into_inner());
+        let tokens = self.load()?;
+        self.forget()?;
+        Ok(tokens)
+    }
+
+    /// After GitHub refused `spent` as already used: the pair another
+    /// process kept meanwhile, if one appears within
+    /// [`OTHER_PROCESS_GRACE`]; else the sign-in is over and forgotten.
+    fn after_spent(&self, spent: &Secret) -> Result<Secret, GitHubError> {
+        let deadline = std::time::Instant::now() + OTHER_PROCESS_GRACE;
+        loop {
+            match self.load()? {
+                None => return Err(GitHubError::SignedOut),
+                Some(kept) if kept.refresh.as_ref() != Some(spent) => return Ok(kept.access),
+                Some(_) if std::time::Instant::now() >= deadline => break,
+                Some(_) => std::thread::sleep(Duration::from_millis(50)),
+            }
+        }
+        self.forget()?;
+        Err(GitHubError::SignedOut)
     }
 
     pub(crate) fn now(&self) -> u64 {
@@ -259,11 +285,6 @@ impl TokenKeeper {
     /// sign-in: it is forgotten here ([`GitHubError::SignedOut`]).
     pub(crate) fn access_token(&self, http: &Http, refused: Option<&Secret>) -> Result<Secret, GitHubError> {
         let _one_at_a_time = REFRESHING.lock().unwrap_or_else(|p| p.into_inner());
-        // Then the other process; the vault is read only after both.
-        let _one_process_at_a_time = match &self.lock {
-            Some(lock) => Some(lock.hold(SESSION_WAIT).map_err(|e| GitHubError::Failed { message: e.to_string() })?),
-            None => None,
-        };
         let Some(tokens) = self.load()? else {
             return Err(GitHubError::NotSignedIn);
         };
@@ -294,19 +315,15 @@ impl TokenKeeper {
                 ("refresh_token", refresh.expose()),
             ],
         )?;
-        drop(refresh);
         if answer.status >= 500 || answer.status == 429 {
             return Err(GitHubError::Network { message: format!("GitHub answered {}", answer.status) });
         }
         let parsed = parse_token_answer(&answer.body)?;
         match parsed.error.as_deref() {
             None if answer.status < 400 => {}
-            // Spent, expired or revoked (the person removed paw at GitHub):
-            // the sign-in is over.
-            Some("bad_refresh_token") => {
-                self.forget()?;
-                return Err(GitHubError::SignedOut);
-            }
+            // Spent (perhaps by the other process, just now), expired or
+            // revoked (the person removed paw at GitHub).
+            Some("bad_refresh_token") => return self.after_spent(&refresh),
             // Anything else is not the sign-in's fault (a setting of the
             // app, a rate limit): keep it, and say so.
             other => {
@@ -314,6 +331,7 @@ impl TokenKeeper {
                 return Err(GitHubError::Refused { message: format!("GitHub would not refresh the sign-in ({code}, {})", answer.status) });
             }
         }
+        drop(refresh);
         let Some(new) = Tokens::from_answer(parsed, self.now()) else {
             return Err(GitHubError::Refused { message: "GitHub's refreshed sign-in was not usable".into() });
         };

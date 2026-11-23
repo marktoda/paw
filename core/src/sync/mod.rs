@@ -256,6 +256,17 @@ pub(crate) fn publish_fetched(held: &Exclusive, repo: &Repository, fetching: Fet
         }
     }
     drop(fetching);
+    // A record of a push that is no longer on the network (its process
+    // died, or it could not be cleared in time) goes too.
+    if let Some(dir) = repo.workdir()
+        && !StoreLock::for_repo(dir).push_in_flight()
+    {
+        for name in pushing_refs(repo)? {
+            if let Ok(mut marker) = repo.find_reference(&name) {
+                let _ = marker.delete();
+            }
+        }
+    }
     Ok(())
 }
 
@@ -291,7 +302,8 @@ pub(crate) fn fetch_connected(
         .and_then(|name| name.as_str().map(str::to_owned).ok());
     let mut options = FetchOptions::new();
     options.download_tags(AutotagOption::None);
-    // FETCH_HEAD is not used, and is one more file two fetches would write.
+    // FETCH_HEAD is not used: nothing is written into it (libgit2 still
+    // truncates it at each fetch, which takes no lock file).
     options.update_fetchhead(false);
     if let Some(progress) = progress {
         let mut callbacks = RemoteCallbacks::new();
@@ -586,6 +598,20 @@ pub fn push(connection: &Connection, dir: &Path) -> Result<(), PawError> {
     push_tip(connection, &store, &repo, &branch, tip, held, &pushing)
 }
 
+/// Every push record (`refs/paw/pushing/*`).
+fn pushing_refs(repo: &Repository) -> Result<Vec<String>, PawError> {
+    let mut names = Vec::new();
+    for reference in repo.references().map_err(git_err)? {
+        let reference = reference.map_err(git_err)?;
+        if let Ok(name) = reference.name()
+            && name.starts_with("refs/paw/pushing/")
+        {
+            names.push(name.to_owned());
+        }
+    }
+    Ok(names)
+}
+
 /// The ref naming the commit a push of `short` has on the network.
 fn pushing_ref(short: &str) -> String {
     format!("refs/paw/pushing/{short}")
@@ -669,14 +695,35 @@ pub(crate) fn push_tip(
         (Ok(()), Some(why)) => Err(PawError::Git(format!("the host refused the push: {why}"))),
         (Ok(()), None) => Ok(()),
     };
-    let held = store.exclusive()?;
-    if outcome.is_ok() {
-        record_push(&held, repo, short, tip)?;
+    let clear_marker = || {
+        if let Ok(mut marker) = repo.find_reference(&pushing_ref(short)) {
+            let _ = marker.delete();
+        }
+    };
+    match outcome {
+        // Not sent: the transfer's own error is what the caller needs (a
+        // `NotFastForward` makes a send fetch and try again), never "busy".
+        // The marker goes if the lock comes quickly; if not, the next
+        // discard finds no push in flight and removes it.
+        Err(error) => {
+            if let Ok(_held) = store.exclusive_within(Duration::from_secs(2)) {
+                clear_marker();
+            }
+            Err(error)
+        }
+        // Sent: it is on the remote whatever happens here, so recording it
+        // waits much longer. If it still cannot, it is not an error: the
+        // next fetch brings `origin/<branch>` to the remote's tip and the
+        // next integrate moves last-seen, and the marker is removed as
+        // stale once no push is in flight.
+        Ok(()) => {
+            if let Ok(held) = store.exclusive_within(crate::lock::record_wait()) {
+                let _ = record_push(&held, repo, short, tip);
+                clear_marker();
+            }
+            Ok(())
+        }
     }
-    if let Ok(mut marker) = repo.find_reference(&pushing_ref(short)) {
-        let _ = marker.delete();
-    }
-    outcome
 }
 
 /// After a push of `tip`: the remote's branch is there now. Moves

@@ -172,7 +172,7 @@ fn assert_refusal_names(message: &str, path: &str, what: &str) {
 
 /// What is in the state directory, apart from paw's lock files.
 fn beside(state: &Path) -> Vec<String> {
-    let locks = [paw_core::lock::STORE_LOCK_FILE, paw_core::lock::FETCH_LOCK_FILE];
+    let locks = [paw_core::lock::STORE_LOCK_FILE];
     let mut names: Vec<String> = std::fs::read_dir(state)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())

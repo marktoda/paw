@@ -54,7 +54,7 @@ impl GitHubAccount {
     ) -> Self {
         Self {
             endpoints,
-            keeper: Arc::new(TokenKeeper::new(vault, wall).with_lock(crate::lock::StoreLock::session(state_dir))),
+            keeper: Arc::new(TokenKeeper::new(vault, wall)),
             state_dir: state_dir.to_path_buf(),
             clock,
             listed: Mutex::new(Vec::new()),
@@ -139,8 +139,8 @@ impl GitHubAccount {
     /// tokens are forgotten even if that request fails. The chosen
     /// repository is kept.
     pub fn sign_out(&self, revoke: bool) -> Result<SignOutReport, GitHubError> {
-        let tokens = self.keeper.load()?;
-        self.keeper.forget()?;
+        // After any refresh in this process, so none brings the pair back.
+        let tokens = self.keeper.take()?;
         let manage_url = if self.endpoints.is_simulated() {
             format!("{}/settings/apps/authorizations", self.endpoints.web())
         } else {
