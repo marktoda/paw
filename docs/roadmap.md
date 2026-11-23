@@ -31,10 +31,10 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 |---|---|---|
 | Raw card checks on the test screen | core + app | done |
 | Exact touch policy per slot | core | done |
-| Keep the simulated key and fixture out of device builds (cargo feature, device-library scan in CI) | foundations | next, after `screens` merges |
-| App Group container and shared keychain group for app and extension, checked in the simulator | foundations | next, after `screens` merges |
+| Keep the simulated key and fixture out of device builds (cargo feature, device-library scan in CI) | foundations | next |
+| App Group container and shared keychain group for app and extension, checked in the simulator | foundations | next |
 | Key session in the core: one object per plugged-in key, PIN held for the session and forgotten after 15 minutes in the background, cancel, structured errors | key-session | done |
-| Key task state machine (plug in, PIN, touch, working, done) driving the real key sheet | key-session, then screens | core done; Swift half after `screens` merges |
+| Key task state machine (plug in, PIN, touch, working, done) driving the real key sheet | key-session, then screens | core done; Swift half next |
 | Touch-timeout status word from the real key | device | blocked on the owner running one check |
 
 ### M2 Read a store
@@ -42,7 +42,7 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 | Item | Track | Status |
 |---|---|---|
 | Store model in the core | core | done |
-| Home, folder, search and opened entry screens on the fixture store; copy with expiry, reveal, large type, app-switcher cover | screens | in progress (`screens`) |
+| Home, folder, search and opened entry screens on the fixture store; copy with expiry, reveal, large type, app-switcher cover | screens | done |
 | Open real entries on the device (store imported by hand, before clone exists) | device | later; clone may arrive first |
 
 ### M3 Face ID copies
@@ -62,7 +62,7 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 | Integrate after fetch: fast-forward, replay local commits on top, keep both when one entry changed on both sides | sync | done |
 | Setup flow as a core state machine: read key, address, check the host accepts the key before the PIN, clone, test decrypt | sync | done |
 | GitHub host keys shipped in the app; first-connection confirm for other hosts | sync | done (core) |
-| Setup screens | screens | next, after `screens` merges |
+| Setup screens | screens | next |
 | First real clone of the owner's store from GitHub with the YubiKey | device | blocked on setup screens |
 
 ### M5 Write and push
