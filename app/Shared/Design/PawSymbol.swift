@@ -15,6 +15,8 @@ enum PawSymbol {
     static let synced = "checkmark.circle.fill"
     static let syncing = "arrow.trianglehead.2.clockwise.rotate.90"
     static let notPushed = "arrow.up.circle"
+    static let checked = "clock"
+    static let note = "info.circle.fill"
     static let offline = "wifi.slash"
     static let warning = "exclamationmark.triangle.fill"
     static let error = "exclamationmark.circle.fill"
@@ -39,6 +41,8 @@ enum PawSymbol {
         ("Synced", synced),
         ("Syncing", syncing),
         ("Not yet pushed", notPushed),
+        ("Last checked", checked),
+        ("Note", note),
         ("Offline", offline),
         ("Warning", warning),
         ("Error", error),

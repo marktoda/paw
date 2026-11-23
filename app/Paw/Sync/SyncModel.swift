@@ -37,7 +37,9 @@ enum SyncPillState: Equatable {
     case needsKey
     /// Never checked from this iPhone; the GitHub sign-in can check.
     case notChecked
-    case notSent(Int)
+    /// Changes wait here. The card under the pill counts them, so the
+    /// pill says only when paw last checked.
+    case notSent(checked: Date?)
     case offline(checked: Date?)
     case failed(String)
     /// Stopped until the person looks: replaced history, a refused remote
@@ -50,7 +52,7 @@ enum SyncPillState: Equatable {
         case .upToDate: .synced
         case .needsKey: .needsKey
         case .notChecked: .syncing
-        case .notSent: .notPushed
+        case .notSent: .checked
         case .offline: .offline
         case .failed, .paused: .failed
         }
@@ -62,7 +64,8 @@ enum SyncPillState: Equatable {
         case .upToDate(let checked): "Up to date \u{00B7} checked \(syncAgo(checked, now: now))"
         case .needsKey: "Updates need your key"
         case .notChecked: "Not checked yet"
-        case .notSent(let count): count == 1 ? "1 change not sent" : "\(count) changes not sent"
+        case .notSent(let checked?): "Checked \(syncAgo(checked, now: now))"
+        case .notSent(nil): "Not checked yet"
         case .offline(let checked?): "Offline \u{00B7} last checked \(syncAgo(checked, now: now))"
         case .offline(nil): "Offline"
         case .failed(let text), .paused(let text): text
@@ -149,6 +152,12 @@ struct SyncSummary: Identifiable, Equatable {
         added.count + changed.count + removed.count
     }
 
+    /// Something in it asks for a decision: two versions of one password,
+    /// a delete that didn't happen, a changed list of keys.
+    var needsALook: Bool {
+        !(keptBoth.isEmpty && keptLocal.isEmpty && droppedDeletes.isEmpty && recipientsChanged.isEmpty)
+    }
+
     var isEmpty: Bool {
         entryCount == 0 && keptBoth.isEmpty && keptLocal.isEmpty && droppedDeletes.isEmpty
             && recipientsChanged.isEmpty
@@ -158,7 +167,7 @@ struct SyncSummary: Identifiable, Equatable {
         let count = entryCount
         if count > 0 {
             if origin == .replaced {
-                return count == 1 ? "1 password now matches your git remote" : "\(count) passwords now match your git remote"
+                return count == 1 ? "1 password updated from the new store" : "\(count) passwords updated from the new store"
             }
             return count == 1 ? "1 password changed on your other devices" : "\(count) passwords changed on your other devices"
         }
@@ -276,7 +285,7 @@ final class SyncModel {
             return failure.kind == .offline ? .offline(checked: lastChecked) : .failed(failure.pill)
         }
         if unpushed > 0 {
-            return .notSent(unpushed)
+            return .notSent(checked: lastChecked)
         }
         if let lastChecked {
             return .upToDate(checked: lastChecked)
@@ -549,7 +558,7 @@ final class SyncModel {
             failure = SyncFailure(error, during: kind, unpushed: unpushed, host: host)
         } else {
             failure = SyncFailure(
-                kind: .other, during: kind, problem: "paw couldn't sync.", nextStep: SyncFailure.waiting(unpushed),
+                kind: .other, during: kind, problem: "Couldn't sync", nextStep: SyncFailure.waiting(unpushed),
                 details: [describe(error)], pill: "Sync failed")
         }
         recomputeLocal()
@@ -750,7 +759,7 @@ final class SyncModel {
             integrated(report, origin: .replaced)
             if let app {
                 app.path.removeAll { $0 == .sync(.replaced) }
-                app.toast = keepChanges ? "Using the new history. Your changes are kept." : "Using the new history."
+                app.toast = keepChanges ? "Using the new store. Your changes are kept." : "Using the new store."
             }
         case .failure(let error):
             acceptProblem = (error as? SyncError).map { describeEditError($0) } ?? describe(error)

@@ -4,6 +4,8 @@ import SwiftUI
 struct SyncPill: View {
     enum Status {
         case synced, syncing, notPushed, offline, failed
+        /// When paw last checked, with nothing to say about the result.
+        case checked
         /// The next tap asks for the key: the gold disc, not a glyph.
         case needsKey
     }
@@ -39,6 +41,7 @@ struct SyncPill: View {
         case .synced: PawSymbol.synced
         case .syncing: PawSymbol.syncing
         case .notPushed: PawSymbol.notPushed
+        case .checked: PawSymbol.checked
         case .offline: PawSymbol.offline
         case .failed: PawSymbol.warning
         case .needsKey: PawSymbol.synced
@@ -50,7 +53,7 @@ struct SyncPill: View {
         case .synced: PawColor.success
         case .failed: PawColor.warning
         // Not pushed and offline are not errors, so they take no colour.
-        case .syncing, .notPushed, .offline, .needsKey: PawColor.label
+        case .syncing, .notPushed, .checked, .offline, .needsKey: PawColor.label
         }
     }
 }

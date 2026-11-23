@@ -36,21 +36,26 @@ struct SyncFailure: Equatable {
     /// A few words for the pill.
     let pill: String
 
-    /// "Your 2 changes are still waiting on this iPhone." or, with nothing
-    /// queued, "Nothing on this iPhone was changed."
+    /// "Your 2 changes are saved on this iPhone." Nothing when none wait:
+    /// there is then nothing to reassure about.
     static func waiting(_ unpushed: Int) -> String {
         switch unpushed {
-        case 0: "Nothing on this iPhone was changed."
-        case 1: "Your change is still waiting on this iPhone."
-        default: "Your \(unpushed) changes are still waiting on this iPhone."
+        case 0: ""
+        case 1: "Your change is saved on this iPhone."
+        default: "Your \(unpushed) changes are saved on this iPhone."
         }
+    }
+
+    /// Sentences in a row, leaving out the empty ones.
+    static func sentences(_ parts: String...) -> String {
+        parts.filter { !$0.isEmpty }.joined(separator: " ")
     }
 
     static func cancelled(during kind: SyncKind, unpushed: Int) -> SyncFailure {
         SyncFailure(
             kind: .cancelled, during: kind,
             problem: kind == .send ? "Sending was cancelled." : "Checking was cancelled.",
-            nextStep: waiting(unpushed), pill: "")
+            nextStep: "", pill: "")
     }
 
 }
@@ -64,53 +69,53 @@ extension SyncFailure {
         switch error {
         case .Network(let message):
             self.kind = .offline
-            problem = "\(host) can't be reached."
-            nextStep = "You may be offline. \(waiting) Try again once you're connected."
+            problem = "Can't reach \(host)"
+            nextStep = Self.sentences("Check your connection.", waiting)
             details = [message]
             pill = "Offline"
         case .HostKeyChanged(let host, let expected, let presented):
             self.kind = .hostKeyChanged
-            problem = "The identity of \(host) changed."
-            nextStep = "paw stopped syncing to be safe, and sent nothing. If the server's admin confirms the "
-                + "change, go to Settings \u{203A} Store \u{203A} Forget server key."
+            problem = "\(host)'s identity changed"
+            nextStep = "Sync is stopped and nothing was sent. If the server's admin confirms the change, "
+                + "remove the store in Settings and set it up again."
             details = ["Expected \(expected.joined(separator: " or "))", "It presented \(presented)"]
-            pill = "Sync stopped \u{00B7} server identity changed"
+            pill = "Sync stopped \u{00B7} Review"
         case .KeyRejected:
             self.kind = .keyNotAccepted
-            problem = "\(host) didn't accept this key."
-            nextStep = "\(waiting) Check that the key's SSH key is added to your account there, then try again."
+            problem = "\(host) didn't accept this key"
+            nextStep = Self.sentences("Check its SSH key is on your account there.", waiting)
             pill = "\(notDone) \u{00B7} key not accepted"
         case .RemoteKeptMoving:
             self.kind = .remoteKeptMoving
-            problem = "Your git remote kept changing while paw was sending."
-            nextStep = "Nothing was lost. \(waiting) Try again in a moment."
+            problem = "The store kept changing while paw was sending"
+            nextStep = Self.sentences("Try again in a moment.", waiting)
             pill = "\(notDone) \u{00B7} try again"
         case .NotPawHistory(let commit, let reason):
             self.kind = .other
-            problem = "This copy of the store has a change paw didn't make."
-            nextStep = "paw won't guess what to do with it, so nothing was changed or sent."
+            problem = "This iPhone's store has a change paw didn't make"
+            nextStep = "Nothing was changed or sent."
             details = ["\(commit): \(reason)"]
             pill = "Sync stopped"
         case .UncommittedChanges(let paths):
             self.kind = .other
-            problem = "The store on this iPhone has changes paw didn't make."
+            problem = "This iPhone's store has changes paw didn't make"
             nextStep = "Nothing was overwritten or sent."
             details = paths
             pill = "Sync stopped"
         case .WrongPin(let triesLeft):
             self.kind = .other
-            problem = "Wrong PIN."
-            nextStep = triesLeft == 1 ? "1 try left before the key locks." : "\(triesLeft) tries left. \(waiting)"
+            problem = "Wrong PIN"
+            nextStep = triesLeft == 1 ? "1 try left before the key locks." : "\(triesLeft) tries left."
             pill = notDone
         case .PinBlocked:
             self.kind = .other
-            problem = "The PIN is locked."
-            nextStep = "Unlock it on a computer with your admin PIN. \(waiting)"
+            problem = "Your key is locked"
+            nextStep = "Unlock it on a computer with its reset code or admin PIN."
             pill = notDone
         case .Sign(let message):
             self.kind = .other
-            problem = "Your key didn't sign the login."
-            nextStep = "\(waiting) Try again, and touch the gold part of your key while it blinks."
+            problem = "Your key didn't sign in"
+            nextStep = "Try again and touch the gold part while it blinks."
             details = [message]
             pill = notDone
         case .Failed(let message):
@@ -118,24 +123,24 @@ extension SyncFailure {
             details = [message]
             if lowered.hasPrefix("the remote contains something paw will not check out") {
                 self.kind = .refusedRemote
-                problem = "Your git remote contains something paw won't check out."
-                nextStep = "\(waiting) It has to be fixed from another computer."
+                problem = "Your store has names paw can't download"
+                nextStep = Self.sentences("Rename them on a computer.", waiting)
                 details = []
                 pill = "Sync paused \u{00B7} Review"
             } else if lowered.contains("refused the push") {
                 self.kind = .pushRefused
-                problem = "Your git remote refused the changes."
-                nextStep = "\(waiting) A rule on the server may not allow them; the details say why."
+                problem = "\(host) refused your changes"
+                nextStep = Self.sentences(waiting, "Details say why.")
                 pill = "Not sent \u{00B7} refused"
             } else if lowered.contains("repository not found") || lowered.contains("not found") {
                 self.kind = .repositoryGone
-                problem = "\(host) says the store isn't there."
-                nextStep = "It may have been renamed, deleted or made private. \(waiting)"
+                problem = "\(host) can't find your store"
+                nextStep = Self.sentences("It may have been renamed, deleted or made private.", waiting)
                 pill = "\(notDone) \u{00B7} store not found"
             } else {
                 self.kind = .other
-                problem = kind == .send ? "paw couldn't send your changes." : "paw couldn't check for changes."
-                nextStep = "\(waiting) Try again; if it keeps happening, the details say why."
+                problem = kind == .send ? "Couldn't send your changes" : "Couldn't check for changes"
+                nextStep = Self.sentences("Try again.", waiting)
                 pill = notDone
             }
         }
@@ -145,7 +150,7 @@ extension SyncFailure {
     var actionTitle: String? {
         switch kind {
         case .hostKeyChanged: "Open Settings"
-        case .refusedRemote: "See what"
+        case .refusedRemote: "Show names"
         case .cancelled: nil
         default: "Try again"
         }
@@ -157,22 +162,15 @@ extension SyncFailure {
     }
 }
 
-/// How the key sheet words a key failure during a sync. The words are the
-/// shared ones (`KeyErrorWords`), with what is safe said for a sync.
+/// How the key sheet words a key failure during a sync: the shared words
+/// (`KeyErrorWords`), and that the waiting changes are still here.
 func syncKeyWords(_ error: KeyError, during kind: SyncKind, unpushed: Int) -> KeyErrorWords {
     let words = KeyErrorWords(error, entry: "your store", purpose: kind == .send ? .send : .check)
-    let safe = kind == .send ? "Nothing was sent. \(SyncFailure.waiting(unpushed))" : "Nothing was changed."
     switch error {
-    case .TouchTimeout:
+    case .TouchTimeout, .KeyRemoved:
         return KeyErrorWords(
             problem: words.problem,
-            nextStep: "\(safe) Try again, and touch the gold part of your key while it blinks.")
-    case .KeyRemoved:
-        return KeyErrorWords(problem: words.problem, nextStep: "Plug it back in, then try again. \(safe)")
-    case .Reader(let detail):
-        return KeyErrorWords(
-            problem: words.problem,
-            nextStep: "Unplug it, plug it back in, then try again. \(safe) The key said: \(detail).")
+            nextStep: SyncFailure.sentences(words.nextStep, kind == .send ? SyncFailure.waiting(unpushed) : ""))
     default:
         return words
     }

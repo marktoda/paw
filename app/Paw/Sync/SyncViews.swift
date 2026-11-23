@@ -63,9 +63,11 @@ struct SyncSummarySection: View {
         if let syncing = model.edits?.syncing, let summary = syncing.summary {
             Section {
                 HStack(alignment: .firstTextBaseline, spacing: PawMetrics.Spacing.m) {
-                    Image(systemName: PawSymbol.synced)
+                    // A tick only when everything simply arrived. Two
+                    // versions kept is something to look at, not a success.
+                    Image(systemName: summary.needsALook ? PawSymbol.note : PawSymbol.synced)
                         .font(PawFont.body)
-                        .foregroundStyle(PawColor.success)
+                        .foregroundStyle(summary.needsALook ? PawColor.labelSecondary : PawColor.success)
                         .accessibilityHidden(true)
                     Text(summary.title)
                         .font(PawFont.headline)
@@ -105,8 +107,8 @@ struct SyncSummarySection: View {
                 }
                 ForEach(summary.droppedDeletes, id: \.self) { path in
                     plainRow(
-                        "\(EntryRef(path: path).name) was changed on another device, so it wasn't deleted.",
-                        detail: "Delete it again if you still want it gone.",
+                        "\(EntryRef(path: path).name) changed on another device, so it wasn't deleted.",
+                        detail: "Delete it again if you still want to.",
                         identifier: "sync-dropped-delete-\(EntryRef(path: path).name)")
                 }
                 ForEach(summary.recipientsChanged, id: \.self) { folder in
@@ -150,9 +152,8 @@ struct SyncSummarySection: View {
     private func keptBoth(_ pair: KeptBoth) -> some View {
         let entry = EntryRef(path: pair.entry)
         let copy = EntryRef(path: pair.copy)
-        Text("\(entry.name) was changed here and on another device. Both versions were kept: "
-            + "\u{201C}\(entry.name)\u{201D} is the other device's, \u{201C}\(copy.name)\u{201D} is this iPhone's. "
-            + "Open both to compare, then delete the one you don't need.")
+        Text("\(entry.name) changed here and on another device. Both versions were kept. "
+            + "Delete the one you don't need.")
             .font(PawFont.subheadline)
             .foregroundStyle(PawColor.label)
             .fixedSize(horizontal: false, vertical: true)
@@ -170,9 +171,9 @@ struct SyncSummarySection: View {
     private func recipientsRow(_ folder: String) -> some View {
         let place = folder.isEmpty ? "your store" : folder
         return ErrorRow(
-            kind: .warning, problem: "Who can open \(place) changed.",
-            nextStep: "paw won't save there until you've looked at the new list.",
-            actionTitle: "Review who can open \(place)"
+            kind: .warning, problem: "Who can open \(place) changed",
+            nextStep: "Review the new list before saving there.",
+            actionTitle: "Review"
         ) {
             model.path.append(.sync(.review(folder: folder)))
         }
@@ -201,7 +202,9 @@ struct SyncSummarySection: View {
     private func endedCopiesSentence(_ paths: [String]) -> String {
         let names = paths.map { EntryRef(path: $0).name }
         let list = names.count == 1 ? names[0] : names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
-        return "The Face ID copy of \(list) ended because it changed. Open it with your key to see the new version."
+        return names.count == 1
+            ? "\(list) changed, so it needs your key again."
+            : "\(list) changed, so they need your key again."
     }
 }
 
@@ -217,9 +220,9 @@ struct SyncSendSection: View {
                     ErrorRow(
                         kind: .warning,
                         problem: syncing.heldBack.count == 1
-                            ? "1 change can't be sent as it is."
-                            : "\(syncing.heldBack.count) changes can't be sent as they are.",
-                        nextStep: "Who can open their folder changed after they were saved.",
+                            ? "1 change can't be sent yet"
+                            : "\(syncing.heldBack.count) changes can't be sent yet",
+                        nextStep: "Who can open the folder changed after you saved.",
                         actionTitle: "Review"
                     ) {
                         model.path.append(.sync(.heldBack))
@@ -250,7 +253,7 @@ struct SyncSendSection: View {
                     .listRowBackground(Color.clear)
                 }
             } footer: {
-                Text("To \(syncing.host). Sending needs your key: its PIN if paw doesn't have it, and a touch.")
+                Text("To \(syncing.host). Needs your key.")
                     .font(PawFont.footnote)
                     .foregroundStyle(PawColor.labelSecondary)
                     .accessibilityIdentifier("unpushed-send-footer")
@@ -351,6 +354,7 @@ private struct SyncSheetHost: View {
         }
         .presentationDetents([.height(PawMetrics.keySheetHeight), .large], selection: $detent)
         .presentationDragIndicator(.visible)
+        .pawSheetBackground()
         .onChange(of: needsKeyboard, initial: true) {
             detent = needsKeyboard ? .large : .height(PawMetrics.keySheetHeight)
         }
@@ -370,9 +374,8 @@ private struct SyncSheetHost: View {
     private var touchNote: String? {
         guard let policy = model.keyPort.session()?.info().authenticationTouch else { return nil }
         switch syncing.sync.touchExpectation(policy: policy) {
-        case .notNeeded: return nil
-        case .needed: return "One touch of your key signs paw in to \(syncing.host)."
-        case .mayBeNeeded: return "Touch your key if it blinks: that signs paw in to \(syncing.host)."
+        case .notNeeded, .needed: return nil
+        case .mayBeNeeded: return "If it isn't blinking, no touch is needed."
         }
     }
 
@@ -414,7 +417,7 @@ private struct SyncStatusSheet: View {
                     LabeledContent {
                         TimelineView(.periodic(from: .now, by: 30)) { context in
                             Text(syncing.lastChecked.map { syncAgo($0, now: context.date).capitalizedFirst }
-                                 ?? "Not yet from this iPhone")
+                                 ?? "Never")
                                 .foregroundStyle(PawColor.labelSecondary)
                         }
                     } label: {
@@ -424,7 +427,7 @@ private struct SyncStatusSheet: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("sync-last-checked")
                     VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
-                        Text("Git remote")
+                        Text("Store")
                             .foregroundStyle(PawColor.label)
                         Text(syncing.address)
                             .font(PawFont.footnote.monospaced())
@@ -449,13 +452,15 @@ private struct SyncStatusSheet: View {
                         .accessibilityIdentifier("sync-not-sent")
                     }
                 }
-                actions
                 #if targetEnvironment(simulator)
                 SyncSimulatorSection(syncing: syncing)
                 #endif
             }
             .listStyle(.insetGrouped)
             .environment(\.defaultMinListRowHeight, PawMetrics.tapMin)
+            // Under the list, not in it: the two actions stay on screen at
+            // the sheet's first height however much is said above them.
+            .safeAreaInset(edge: .bottom, spacing: 0) { actions }
             .navigationTitle("Sync")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -473,7 +478,7 @@ private struct SyncStatusSheet: View {
         if let failure = syncing.failure, failure.kind != .refusedRemote {
             Section {
                 if failure.kind == .cancelled {
-                    Text("\(failure.problem) \(failure.nextStep)")
+                    Text(failure.problem)
                         .font(PawFont.subheadline)
                         .foregroundStyle(PawColor.labelSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -509,9 +514,8 @@ private struct SyncStatusSheet: View {
         if syncing.replaced != nil {
             Section {
                 ErrorRow(
-                    kind: .warning, problem: "The store on your git remote was replaced.",
-                    nextStep: "Its history no longer matches this iPhone's. Nothing here has been changed, "
-                        + "and nothing syncs until you choose what to do.",
+                    kind: .warning, problem: "The store on \(syncing.host) was replaced",
+                    nextStep: "Sync is paused until you choose what to do.",
                     actionTitle: "Review"
                 ) {
                     syncing.go(to: .sync(.replaced))
@@ -523,9 +527,9 @@ private struct SyncStatusSheet: View {
         if !syncing.refused.isEmpty {
             Section {
                 ErrorRow(
-                    kind: .warning, problem: "Your git remote contains something paw won't check out.",
-                    nextStep: "\(SyncFailure.waiting(unpushed)) It has to be fixed from another computer.",
-                    actionTitle: "See what"
+                    kind: .warning, problem: "Your store has names paw can't download",
+                    nextStep: SyncFailure.sentences("Rename them on a computer.", SyncFailure.waiting(unpushed)),
+                    actionTitle: "Show names"
                 ) {
                     syncing.go(to: .sync(.refusedRemote))
                 }
@@ -538,8 +542,8 @@ private struct SyncStatusSheet: View {
                 ErrorRow(
                     kind: .warning,
                     problem: syncing.heldBack.count == 1
-                        ? "1 change wasn't sent." : "\(syncing.heldBack.count) changes weren't sent.",
-                    nextStep: "Who can open their folder changed after they were saved, so paw won't send them as they are.",
+                        ? "1 change wasn't sent" : "\(syncing.heldBack.count) changes weren't sent",
+                    nextStep: "Who can open the folder changed after you saved.",
                     actionTitle: "Review"
                 ) {
                     syncing.go(to: .sync(.heldBack))
@@ -558,9 +562,10 @@ private struct SyncStatusSheet: View {
         }
     }
 
-    @ViewBuilder private var actions: some View {
+    /// Send and Check, each with the gold disc: that says they need the key.
+    private var actions: some View {
         let canSend = syncing.canSend(unpushed: unpushed)
-        Section {
+        return VStack(spacing: PawMetrics.Spacing.s) {
             if canSend, let edits = model.edits {
                 Button {
                     syncing.start(.send, app: model)
@@ -569,8 +574,6 @@ private struct SyncStatusSheet: View {
                 }
                 .buttonStyle(.pawPrimary)
                 .accessibilityIdentifier("sync-send")
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
             }
             Button {
                 syncing.check(app: model)
@@ -584,18 +587,11 @@ private struct SyncStatusSheet: View {
             .buttonStyle(PawButtonStyle(kind: canSend ? .secondary : .primary))
             .disabled(syncing.running != nil)
             .accessibilityIdentifier("sync-check")
-            .listRowInsets(EdgeInsets(top: PawMetrics.Spacing.s, leading: 0, bottom: 0, trailing: 0))
-            .listRowBackground(Color.clear)
-        } footer: {
-            Text(syncing.checksWithSignIn
-                 ? (canSend ? "Sending needs your key. Checking uses your GitHub sign-in." : "Checking uses your GitHub sign-in.")
-                 : canSend
-                 ? "Both need your key: its PIN if paw doesn't have it, and a touch. Checking brings in changes made elsewhere without sending yours."
-                 : "Checking needs your key: its PIN if paw doesn't have it, and a touch.")
-                .font(PawFont.footnote)
-                .foregroundStyle(PawColor.labelSecondary)
-                .padding(.top, PawMetrics.Spacing.s)
         }
+        .padding(.horizontal, PawMetrics.screenMargin)
+        .padding(.top, PawMetrics.Spacing.m)
+        .padding(.bottom, PawMetrics.Spacing.s)
+        .background(PawColor.bg)
     }
 }
 
@@ -604,9 +600,18 @@ private struct SyncStatusSheet: View {
 /// a screenshot never shows them as part of the design.
 private struct SyncSimulatorSection: View {
     let syncing: SyncModel
+    @State private var shown = false
 
     var body: some View {
         Section {
+            SimulatorDisclosureRow(shown: $shown)
+            if shown {
+                controls
+            }
+        }
+    }
+
+    @ViewBuilder private var controls: some View {
             ForEach(SimRemoteChange.allCases) { change in
                 Button(change.title) { syncing.applySimChange(change) }
                     .foregroundStyle(PawColor.label)
@@ -627,11 +632,6 @@ private struct SyncSimulatorSection: View {
                 .font(PawFont.footnote.monospaced())
                 .foregroundStyle(PawColor.labelSecondary)
                 .accessibilityIdentifier("sim-remote-status")
-        } header: {
-            Label("Simulator", systemImage: "hammer")
-                .font(PawFont.footnote.weight(.semibold))
-                .foregroundStyle(PawColor.labelSecondary)
-        }
     }
 }
 #endif

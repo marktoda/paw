@@ -23,7 +23,7 @@ struct SyncRouteScreen: View {
         } else {
             EmptyState(
                 symbol: PawSymbol.synced, title: "Nothing to sync",
-                message: "This store has no git remote paw can reach.")
+                message: "This store has no address to sync with.")
         }
     }
 }
@@ -69,9 +69,8 @@ struct HeldBackScreen: View {
             Section {
                 SyncIntro(
                     headline: "These changes weren't sent",
-                    text: "Who can open their folder changed after you saved them, so they are encrypted for the "
-                        + "old list of keys. paw won't send them like that: the old list could open them, and the "
-                        + "new one couldn't. Review the new list, then open each one and save it again, or discard it.")
+                    text: "Who can open the folder changed after you saved, so these are encrypted for the old "
+                        + "list of keys. Review the new list, then open each one and save it again.")
             }
             if syncing.heldBack.isEmpty {
                 Section {
@@ -101,13 +100,13 @@ struct HeldBackScreen: View {
         return Section {
             detailRow(
                 "Encrypted for",
-                item.encryptedFor.isEmpty ? "Nobody paw can name" : item.encryptedFor.joined(separator: "\n"),
+                item.encryptedFor.isEmpty ? "Keys paw can't name" : item.encryptedFor.joined(separator: "\n"),
                 prose: item.encryptedFor.isEmpty,
                 identifier: "held-back-encrypted-for-\(entry.name)")
             detailRow(
-                item.gpgId.isEmpty ? "Should be for" : "Should be for (\(item.gpgId))",
+                "Should be for",
                 item.recipients.isEmpty
-                    ? "paw can't read who this folder is for."
+                    ? "Can't read this folder's list of keys."
                     : item.recipients.map(RecipientsReviewScreen.grouped).joined(separator: "\n"),
                 prose: item.recipients.isEmpty,
                 note: item.accepted ? nil : "Not accepted on this iPhone yet.",
@@ -132,7 +131,7 @@ struct HeldBackScreen: View {
             if confirming == item.id {
                 InlineConfirmRow(
                     question: "Discard this change to \(entry.name)?",
-                    detail: "It is taken back on this iPhone and never sent. Later changes are kept.",
+                    detail: "It's undone on this iPhone and never sent.",
                     confirmTitle: "Discard", cancelTitle: "Keep",
                     identifier: "held-back-discard-\(entry.name)",
                     onConfirm: {
@@ -159,7 +158,7 @@ struct HeldBackScreen: View {
                 .accessibilityIdentifier("held-back-\(entry.name)")
         } footer: {
             if !item.accepted {
-                Text("Once you've accepted the new list, open it with your key and save it again: saving encrypts it for everyone on the list. Then discard this older change.")
+                Text("After you accept the list, open it and save it again. Then discard this older change.")
                     .font(PawFont.footnote)
                     .foregroundStyle(PawColor.labelSecondary)
             }
@@ -216,16 +215,16 @@ struct RefusedRemoteScreen: View {
         List {
             Section {
                 SyncIntro(
-                    headline: "Your git remote contains something paw won't check out",
-                    text: "Nothing on this iPhone was changed. \(SyncFailure.waiting(unpushed)) "
-                        + "Fix these from another computer: rename or remove them, then push. "
-                        + "Until then paw neither checks for changes nor sends.")
+                    headline: "Your store has names paw can't download",
+                    text: SyncFailure.sentences(
+                        "Rename or remove them on a computer. Sync is paused until then.",
+                        SyncFailure.waiting(unpushed)))
             }
             if syncing.refused.isEmpty {
                 Section {
                     EmptyState(
                         symbol: PawSymbol.synced, title: "Nothing refused",
-                        message: "What paw last fetched can be checked out. Check for changes to sync again.")
+                        message: "Check for changes to sync again.")
                         .listRowBackground(Color.clear)
                 }
             } else {
@@ -260,15 +259,11 @@ struct RefusedRemoteScreen: View {
                 .accessibilityIdentifier("refused-check-again")
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Color.clear)
-            } footer: {
-                Text("Once it's fixed on the git remote, checking again brings in the fix. It needs your key.")
-                    .font(PawFont.footnote)
-                    .foregroundStyle(PawColor.labelSecondary)
             }
         }
         .listStyle(.insetGrouped)
         .environment(\.defaultMinListRowHeight, PawMetrics.tapMin)
-        .navigationTitle("Can't check out")
+        .navigationTitle("Can't download")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
@@ -294,10 +289,9 @@ struct ReplacedScreen: View {
         List {
             Section {
                 SyncIntro(
-                    headline: "The store on your git remote was replaced",
-                    text: "Its history no longer matches this iPhone's. Nothing here has been changed. "
-                        + "This happens when someone force-pushes or makes the repository again. "
-                        + "If you didn't expect it, ask whoever looks after the store before you go on.",
+                    headline: "The store on \(syncing.host) was replaced",
+                    text: "Its history no longer matches this iPhone's. "
+                        + "Not expected? Ask whoever looks after the store first.",
                     identifier: "replaced-intro")
             }
             if unpushed > 0 {
@@ -319,7 +313,7 @@ struct ReplacedScreen: View {
                     PawSectionHeader("Your \(changes) not sent yet")
                         .accessibilityIdentifier("replaced-unpushed")
                 } footer: {
-                    Text("Keeping them adds them on top of the new history, as if you had made them after it. "
+                    Text("Kept changes are added to the new store. "
                         + "If the same password changed there too, both versions are kept.")
                         .font(PawFont.footnote)
                         .foregroundStyle(PawColor.labelSecondary)
@@ -327,7 +321,7 @@ struct ReplacedScreen: View {
             }
             if let problem = syncing.acceptProblem {
                 Section {
-                    ErrorRow(kind: .error, problem: "Nothing was changed.", nextStep: problem)
+                    ErrorRow(kind: .error, problem: "Nothing was changed", nextStep: problem)
                         .pawListRow()
                 }
             }
@@ -336,7 +330,7 @@ struct ReplacedScreen: View {
                     confirmingDiscard = false
                     syncing.acceptReplaced(keepChanges: true, app: model)
                 } label: {
-                    Text(unpushed > 0 ? "Use the git remote's store and keep my \(changes)" : "Use the git remote's store")
+                    Text(unpushed > 0 ? "Use the new store, keep my \(changes)" : "Use the new store")
                 }
                 .buttonStyle(.pawPrimary)
                 .disabled(syncing.accepting)
@@ -349,9 +343,8 @@ struct ReplacedScreen: View {
                     if confirmingDiscard {
                         InlineConfirmRow(
                             question: "Discard \(changes)?",
-                            detail: "Your \(unpushed == 1 ? "unpushed change" : "\(unpushed) unpushed changes") will be lost. "
-                                + "This can't be undone.",
-                            confirmTitle: "Discard and use it", cancelTitle: "Keep them",
+                            detail: "This can't be undone.",
+                            confirmTitle: "Discard", cancelTitle: unpushed == 1 ? "Keep it" : "Keep them",
                             identifier: "replaced-discard",
                             onConfirm: {
                                 confirmingDiscard = false
@@ -363,14 +356,13 @@ struct ReplacedScreen: View {
                         Button {
                             confirmingDiscard = true
                         } label: {
-                            Text("Use the git remote's store and discard my changes")
-                                .font(PawFont.body.weight(.semibold))
-                                .foregroundStyle(PawColor.danger)
-                                .frame(maxWidth: .infinity, minHeight: PawMetrics.tapMin, alignment: .leading)
+                            Text("Use the new store, discard my \(changes)")
                         }
+                        .buttonStyle(.pawDestructive)
                         .disabled(syncing.accepting)
                         .accessibilityIdentifier("replaced-discard-button")
-                        .pawListRow()
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
                     }
                 }
             }
@@ -383,14 +375,14 @@ struct ReplacedScreen: View {
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Color.clear)
             } footer: {
-                Text("Until you choose, nothing is sent or brought in, and the pill on Home says sync is paused.")
+                Text("Sync stays paused until you choose.")
                     .font(PawFont.footnote)
                     .foregroundStyle(PawColor.labelSecondary)
             }
         }
         .listStyle(.insetGrouped)
         .environment(\.defaultMinListRowHeight, PawMetrics.tapMin)
-        .navigationTitle("History replaced")
+        .navigationTitle("Store replaced")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
