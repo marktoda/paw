@@ -192,8 +192,12 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
                 continue;
             }
         };
+        // `confirmed` is one fact about the whole store, not this folder:
+        // setup has not recorded who can open it, so there is nothing to
+        // compare against, and the write path refuses every save until it
+        // has. Anything already found unreadable stays held.
         if !recipients.confirmed {
-            return Ok(Vec::new());
+            return Ok(held);
         }
         let accepted = !recipients.changed;
         let exact = accepted
