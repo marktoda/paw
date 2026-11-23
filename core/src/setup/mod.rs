@@ -753,6 +753,16 @@ impl SetupFlow {
                 message: "this is not the key read at the start of setup; plug that one in".into(),
             });
         }
+        // The key about to be trusted for every future save must be the very
+        // key whose fingerprint the card reported, not merely one handed in
+        // alongside it.
+        if !crate::write::cert::fingerprint_of(card_key)
+            .eq_ignore_ascii_case(&summary.decryption_fingerprint)
+        {
+            return Err(SetupError::UnusableKey {
+                message: "the key read from the card does not match its fingerprint".into(),
+            });
+        }
         let repo = self.repo_dir();
         let mut keyring = Keyring::open(&self.dir).map_err(write_failed)?;
         let fingerprint = keyring.pin_card_key(card_key).map_err(write_failed)?;
