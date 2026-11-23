@@ -310,7 +310,39 @@ private struct StoreProblemView: View {
 
     @State private var confirming = false
 
+    /// Another part of paw held the store for too long. Nothing is broken, so
+    /// this never offers to delete anything: it waits and tries again.
+    private var busy: Bool { isStoreBusy(message: detail) }
+
     var body: some View {
+        if busy {
+            VStack(spacing: PawMetrics.Spacing.l) {
+                ProgressView()
+                Text("The store is busy. Trying again\u{2026}")
+                    .font(PawFont.subheadline)
+                    .foregroundStyle(PawColor.labelSecondary)
+                Button("Try again", action: retry)
+                    .buttonStyle(.pawSecondary)
+                    .accessibilityIdentifier("store-retry")
+            }
+            .padding(PawMetrics.Spacing.l)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(PawColor.bg.ignoresSafeArea())
+            .accessibilityIdentifier("store-busy")
+            .task {
+                // Leaving this screen cancels the task, which ends the loop.
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    if Task.isCancelled { break }
+                    retry()
+                }
+            }
+        } else {
+            problemBody
+        }
+    }
+
+    private var problemBody: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PawMetrics.Spacing.l) {
                 ErrorRow(
