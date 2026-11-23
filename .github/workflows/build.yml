@@ -40,10 +40,22 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
+      # Most changes do not touch the core. Its iOS libraries and bindings are
+      # kept by the hash of what they are built from, and reused when it has
+      # not changed.
+      - uses: actions/cache@v4
+        id: built
+        with:
+          path: |
+            app/build/core
+            app/Generated
+          key: core-ios-${{ hashFiles('core/**', 'scripts/build-core.sh', 'scripts/make-xcframework.sh') }}
       - uses: Swatinem/rust-cache@v2
+        if: steps.built.outputs.cache-hit != 'true'
         with:
           workspaces: core
       - name: Build the core for iOS
+        if: steps.built.outputs.cache-hit != 'true'
         run: scripts/build-core.sh
       - uses: actions/upload-artifact@v4
         with:
@@ -54,7 +66,8 @@ jobs:
           retention-days: 3
 
   ui:
-    needs: [core, core-ios]
+    # The Rust tests run alongside; a failure there still fails the run.
+    needs: [core-ios]
     runs-on: macos-26
     # A full run is split across machines so it takes as long as the slowest
     # part, not the sum. The last part runs every class the others do not
@@ -95,7 +108,8 @@ jobs:
   # An unsigned build for real devices. It is signed on the developer's own
   # machine (scripts/install.sh), so the signing key never leaves it.
   device:
-    needs: [core, core-ios]
+    # The Rust tests run alongside; a failure there still fails the run.
+    needs: [core-ios]
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
