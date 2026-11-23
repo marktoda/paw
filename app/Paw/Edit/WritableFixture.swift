@@ -22,7 +22,7 @@ enum WritableFixture {
         let repoDir: String
         let writer: StoreWriter
         let sync: StoreSync?
-        /// Serves the store while the app runs.
+        /// Serves the store while the app runs; `SimRemoteHandle` keeps it.
         let host: SimRemote
     }
 
@@ -41,6 +41,9 @@ enum WritableFixture {
         let key = SimulatedKey(pin: pin, touchRequired: false, touchTimeoutMs: 1_000)
         let connection = key.asConnection()
         let host = try SimRemote.start(key: key)
+        // Owned by the handle alone, which the sync screens' debug controls
+        // drive (`Sync/SimRemoteControls.swift`).
+        SimRemoteHandle.shared.register(host, key: key)
         let setup = try Setup.open(stateDir: stateDir.path)
         var state = try setup.readKey(connection: connection)
         state = try setup.setAddress(address: host.address())
@@ -74,9 +77,7 @@ enum WritableFixture {
         switch prepared {
         case .success(let prepared):
             model.edits = StoreEdits(
-                writer: prepared.writer, sync: prepared.sync, repoDir: prepared.repoDir,
-                sendingNote: "Sending comes when this phone is connected to a store.",
-                keepAlive: prepared.host)
+                writer: prepared.writer, sync: prepared.sync, repoDir: prepared.repoDir, sendingNote: nil)
         case .failure(let error):
             model.notice = Notice(
                 problem: "Adding passwords isn't available in this test store.", nextStep: describe(error))

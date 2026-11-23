@@ -48,16 +48,20 @@ struct HomeScreen: View {
     private var home: some View {
         List {
             Section {
-                Text("Passwords")
-                    .font(PawFont.homeTitle)
-                    .foregroundStyle(PawColor.label)
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier("home-title")
-                    .padding(.horizontal, PawMetrics.Spacing.xs)
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
+                VStack(alignment: .leading, spacing: PawMetrics.Spacing.s) {
+                    Text("Passwords")
+                        .font(PawFont.homeTitle)
+                        .foregroundStyle(PawColor.label)
+                        .accessibilityAddTraits(.isHeader)
+                        .accessibilityIdentifier("home-title")
+                    HomeSyncPill(model: model)
+                }
+                .padding(.horizontal, PawMetrics.Spacing.xs)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
             }
             UnpushedSection(model: model)
+            SyncSummarySection(model: model)
             NoticeSection(model: model)
             if let problem = model.copiesProblem {
                 Section {

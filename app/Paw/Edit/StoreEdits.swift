@@ -38,8 +38,11 @@ final class StoreEdits {
     let sync: StoreSync?
     /// Where the store is checked out, to read it again after a change.
     let repoDir: String
-    /// The unpushed list's footer while sending is not built; `nil` omits it.
+    /// No longer shown: sending is built (`Sync/`). Kept so the callers
+    /// that pass it need no change yet.
     let sendingNote: String?
+    /// Sending and checking for changes; `nil` without the sync object.
+    let syncing: SyncModel?
     /// Kept alive with the store, e.g. the simulated git host.
     @ObservationIgnored private let keepAlive: AnyObject?
 
@@ -59,6 +62,7 @@ final class StoreEdits {
         self.repoDir = repoDir
         self.sendingNote = sendingNote
         self.keepAlive = keepAlive
+        syncing = sync.map { SyncModel(sync: $0, repoDir: repoDir) }
         refreshQueue()
     }
 

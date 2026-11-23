@@ -424,7 +424,7 @@ final class EditTests: XCTestCase {
         expectLabel("unpushed-count", contains: "2 changes")
         expectLabel("unpushed-added-first.example", contains: "Added first.example")
         expectLabel("unpushed-added-second.example", contains: "Added second.example")
-        expectLabel("unpushed-sending-note", contains: "Sending comes when this phone is connected to a store.")
+        expectLabel("unpushed-send-footer", contains: "Sending needs your key")
         snapshot("unpushed-list")
     }
 

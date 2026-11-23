@@ -14,6 +14,9 @@ enum Route: Hashable {
     case anotherKey(String)
     /// Changes saved on this iPhone and not sent yet.
     case unpushed
+    /// A screen about sync: held-back changes, a refused remote, replaced
+    /// history (`Sync/SyncScreens.swift`).
+    case sync(SyncRoute)
 }
 
 /// An entry that is open on screen. The plaintext stays in Rust, behind

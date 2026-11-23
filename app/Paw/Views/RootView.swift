@@ -32,11 +32,14 @@ struct RootView: View {
                         AnotherKeyScreen(model: model, entry: EntryRef(path: path))
                     case .unpushed:
                         UnpushedScreen(model: model)
+                    case .sync(let route):
+                        SyncRouteScreen(model: model, route: route)
                     }
                 }
         }
         .copyToast($model.toast)
         .pawEditing(model)
+        .pawSync(model)
         .sheet(item: keySheet, onDismiss: { model.keySheetDismissed() }) { _ in
             KeySheetHost(model: model)
         }

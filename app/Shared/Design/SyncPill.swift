@@ -4,6 +4,8 @@ import SwiftUI
 struct SyncPill: View {
     enum Status {
         case synced, syncing, notPushed, offline, failed
+        /// The next tap asks for the key: the gold disc, not a glyph.
+        case needsKey
     }
 
     let status: Status
@@ -12,9 +14,13 @@ struct SyncPill: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: symbol)
-                .font(PawFont.footnote.weight(.medium))
-                .foregroundStyle(glyphColor)
+            if status == .needsKey {
+                KeyDisc(size: .marker)
+            } else {
+                Image(systemName: symbol)
+                    .font(PawFont.footnote.weight(.medium))
+                    .foregroundStyle(glyphColor)
+            }
             Text(text)
                 .font(PawFont.footnote)
                 .foregroundStyle(PawColor.label)
@@ -24,7 +30,7 @@ struct SyncPill: View {
         .frame(minHeight: PawMetrics.pill)
         .background(status == .failed ? PawColor.warningFill : PawColor.fill, in: Capsule())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Sync status: \(text)")
+        .accessibilityLabel(status == .needsKey ? "Sync status: \(text). Needs your key." : "Sync status: \(text)")
         .accessibilityIdentifier("sync-pill")
     }
 
@@ -35,6 +41,7 @@ struct SyncPill: View {
         case .notPushed: PawSymbol.notPushed
         case .offline: PawSymbol.offline
         case .failed: PawSymbol.warning
+        case .needsKey: PawSymbol.synced
         }
     }
 
@@ -43,7 +50,7 @@ struct SyncPill: View {
         case .synced: PawColor.success
         case .failed: PawColor.warning
         // Not pushed and offline are not errors, so they take no colour.
-        case .syncing, .notPushed, .offline: PawColor.label
+        case .syncing, .notPushed, .offline, .needsKey: PawColor.label
         }
     }
 }

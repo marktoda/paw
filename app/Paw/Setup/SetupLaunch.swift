@@ -29,7 +29,12 @@ enum SetupLaunch {
 final class SimulatedHostHolder: @unchecked Sendable {
     static let shared = SimulatedHostHolder()
 
-    let host: SimRemote?
+    /// Owned by `SimRemoteHandle`, so the sync screens' debug controls can
+    /// replace it (a rewritten history is served on the same port).
+    var host: SimRemote? {
+        SimRemoteHandle.shared.host
+    }
+
     /// Why it did not start, if it did not.
     let problem: String?
 
@@ -41,31 +46,30 @@ final class SimulatedHostHolder: @unchecked Sendable {
             case "dropMidClone": host.setDropMidClone(drop: true)
             default: break
             }
-            self.host = host
+            SimRemoteHandle.shared.register(host, key: SimulatedKeyHolder.shared.key)
             problem = nil
         } catch {
-            host = nil
             problem = describe(error)
         }
     }
 
-    /// Setup's hooks into the host and the key.
+    /// Setup's hooks into the host and the key. They look the host up each
+    /// time rather than keep it.
     func setupSimulator() -> SetupSimulator {
-        let host = host
         let key = SimulatedKeyHolder.shared
         return SetupSimulator(
             address: host?.address() ?? "",
             hostConfirmed: {
                 if SetupLaunch.remoteMode == "changedHostKey" {
-                    host?.setChangedHostKey(changed: true)
+                    SimRemoteHandle.shared.host?.setChangedHostKey(changed: true)
                 }
             },
             downloadFailed: {
                 if SetupLaunch.remoteMode == "dropMidClone" {
-                    host?.setDropMidClone(drop: false)
+                    SimRemoteHandle.shared.host?.setDropMidClone(drop: false)
                 }
             },
-            acceptKey: { host?.setRefuseKey(refuse: false) },
+            acceptKey: { SimRemoteHandle.shared.host?.setRefuseKey(refuse: false) },
             plugIn: { key.key.plugIn() },
             startsUnplugged: key.startsUnplugged)
     }

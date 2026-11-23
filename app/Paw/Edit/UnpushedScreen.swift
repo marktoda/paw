@@ -47,6 +47,7 @@ struct UnpushedScreen: View {
                         .listRowBackground(Color.clear)
                 }
             } else {
+                SyncSendSection(model: model)
                 Section {
                     Button("Undo the last change") {
                         confirming = nil
@@ -78,13 +79,6 @@ struct UnpushedScreen: View {
                 } header: {
                     PawSectionHeader(items.count == 1 ? "1 change, newest first" : "\(items.count) changes, newest first")
                         .accessibilityIdentifier("unpushed-count")
-                } footer: {
-                    if let note = edits?.sendingNote {
-                        Text(note)
-                            .font(PawFont.footnote)
-                            .foregroundStyle(PawColor.labelSecondary)
-                            .accessibilityIdentifier("unpushed-sending-note")
-                    }
                 }
                 Section {
                     if confirming == "all" {
