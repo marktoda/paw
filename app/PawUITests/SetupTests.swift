@@ -57,6 +57,15 @@ final class SetupTests: XCTestCase {
         return found
     }
 
+    private func expectGone(_ identifier: String, timeout: TimeInterval = 10,
+                            file: StaticString = #filePath, line: UInt = #line) {
+        let gone = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: element(identifier))
+        if XCTWaiter().wait(for: [gone], timeout: timeout) != .completed {
+            XCTFail("\"\(identifier)\" should have gone", file: file, line: line)
+        }
+    }
+
     private func expectAbsent(_ identifier: String, _ why: String,
                               file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertFalse(element(identifier).exists, why, file: file, line: line)
@@ -293,6 +302,7 @@ final class SetupTests: XCTestCase {
         enterPin(Self.pin)
         expect("touch-prompt", timeout: 20)
         tap("key-sheet-cancel")
+        expectGone("key-sheet-cancel")
         expect("download-start", timeout: 10)
         expectAbsent("home-title", "A cancelled download is not a store")
         expectAbsent("setup-check", "A cancelled download is not a store")
@@ -309,7 +319,7 @@ final class SetupTests: XCTestCase {
         launch()
         setUpFully()
         tap("settings-button")
-        expect("settings-address")
+        expect("settings-lock-now")
         let remove = element("settings-remove-store")
         var swipes = 0
         while !(remove.exists && remove.isHittable) && swipes < 6 {

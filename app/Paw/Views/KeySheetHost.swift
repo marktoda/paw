@@ -81,7 +81,6 @@ struct SettingsSheet: View {
                         .font(PawFont.footnote)
                         .foregroundStyle(PawColor.labelSecondary)
                 }
-                StoreSettingsSections()
                 #if targetEnvironment(simulator)
                 if model.simulator != nil {
                     Section {
@@ -100,6 +99,7 @@ struct SettingsSheet: View {
                     }
                 }
                 #endif
+                StoreSettingsSections()
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Settings")
