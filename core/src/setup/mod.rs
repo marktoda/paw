@@ -44,7 +44,7 @@ use crate::key::enrolment::save_enrolment;
 use crate::recipients::Access;
 use crate::ssh::{CardSigner, SshPublicKey, card_ssh_public_key};
 use crate::store::PassStore;
-use crate::sync::hosts::{KnownHosts, pin_for};
+use crate::sync::hosts::{KnownHosts, is_bundled, pin_for};
 use crate::sync::{self, Cloned, Connection, PresentedHostKey, RefusedPath};
 use crate::write::{Keyring, LineStatus, WriteError};
 use crate::{ApduTransport, CardInfo, KeyTouch, PawError, card_info};
@@ -560,6 +560,26 @@ impl SetupFlow {
         self.ask_host()
     }
 
+    /// "I expected this change": forgets the key pinned for the store's
+    /// host, so the next [`Self::check_host`] shows the key it presents now
+    /// for confirmation, as on first use. For the changed-host-key screen,
+    /// after it has shown both fingerprints; setup stays where it is.
+    ///
+    /// A host whose keys ship with paw (github.com and the others in
+    /// [`crate::sync::hosts::BUNDLED`]) cannot be forgotten: a different
+    /// key from one of them is always refused.
+    pub fn forget_host_key(&mut self) -> Result<SetupState, SetupError> {
+        self.expect(&[Step::CheckHost, Step::NeedPin], "forget the host's key")?;
+        let address = self.address()?;
+        let host = address.connect_host();
+        if is_bundled(host, address.port) {
+            return Err(failed(bundled_refusal(host)));
+        }
+        self.known_hosts().forget(host, address.port).map_err(failed)?;
+        self.remote_message = None;
+        self.go(Step::CheckHost)
+    }
+
     fn remote(&self) -> Result<sync::Remote, SetupError> {
         let address = self.address()?;
         let pin = pin_for(&self.known_hosts(), address.connect_host(), address.port)
@@ -950,6 +970,13 @@ fn ssh_key(key: &KeySummary) -> Result<SshPublicKey, SetupError> {
         return Err(SetupError::UnusableKey { message: "not an ed25519 key".into() });
     }
     Ok(key)
+}
+
+/// Why a bundled host's key is not forgotten.
+pub(crate) fn bundled_refusal(host: &str) -> String {
+    format!(
+        "{host}'s keys come with paw and can't be forgotten. A different key means this connection isn't reaching the real {host}: try another network"
+    )
 }
 
 /// The store address saved by a finished download, for sync.

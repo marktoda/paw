@@ -418,3 +418,55 @@ fn an_empty_repository_sends_the_task_path_back_to_the_address_with_the_reason()
     let relaunched = Setup::open(w.dir.path().to_string_lossy().into_owned()).unwrap();
     assert_eq!(relaunched.last_remote_message().unwrap().reason, RemoteReason::EmptyRepository);
 }
+
+#[test]
+fn an_expected_host_key_change_is_forgotten_and_confirmed_again_without_leaving_setup() {
+    let w = world();
+    to_need_pin(&w);
+    let old = w.server.sim.host_key_fingerprint();
+    w.server.sim.set_changed_host_key(true);
+    let new = w.server.sim.host_key_fingerprint();
+    let Err(SetupError::HostKeyChanged { expected, presented, .. }) = w.setup.check_host() else { panic!() };
+    assert_eq!((expected, presented.clone()), (vec![old], new.clone()));
+
+    assert!(matches!(w.setup.forget_host_key().unwrap(), SetupState::CheckHost { .. }));
+
+    let SetupState::ConfirmHost { fingerprint, .. } = w.setup.check_host().unwrap() else { panic!() };
+    assert_eq!(fingerprint, new);
+    assert!(matches!(w.setup.confirm_host(fingerprint).unwrap(), SetupState::NeedPin { .. }));
+    assert!(matches!(download(&w, &Driver::helpful(PIN, &w.sim)), KeyTaskState::Done { .. }));
+}
+
+#[test]
+fn a_bundled_hosts_key_cannot_be_forgotten() {
+    for address in ["git@github.com:you/store.git", "ssh://git@ssh.github.com:443/you/store.git", "git@gitlab.com:you/store.git"] {
+        let w = world();
+        let session = w.port.session().unwrap();
+        w.setup.read_key_from_session(session).unwrap();
+        w.setup.set_address(address.into()).unwrap();
+        let known = paw_core::setup::known_hosts(w.dir.path());
+        let host = if address.contains("ssh.github") { "ssh.github.com" } else { address.split(['@', ':']).nth(1).unwrap() };
+        let port = if address.contains(":443") { 443 } else { 22 };
+        // Even a key someone managed to save for it beside the bundled ones.
+        known.add(host, port, &support::some_other_host_key()).unwrap();
+
+        let error = w.setup.forget_host_key().unwrap_err();
+
+        assert!(matches!(&error, SetupError::Failed { message } if message.contains("can't be forgotten")), "{error:?}");
+        assert!(known.lookup(host, port).unwrap().is_some());
+        // The bundled keys are what counts for it, whatever was saved.
+        let pinned = paw_core::sync::hosts::pin_for(&known, host, port).unwrap().unwrap();
+        assert_eq!(pinned.fingerprints(), paw_core::sync::hosts::bundled(host, port).unwrap().fingerprints());
+    }
+}
+
+#[test]
+fn settings_cannot_forget_a_bundled_hosts_key_either() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("remote"), "git@github.com:you/store.git\n").unwrap();
+    let sync = StoreSync::open(dir.path().to_string_lossy().into_owned()).unwrap();
+
+    let error = sync.forget_host_key().unwrap_err();
+
+    assert!(matches!(&error, paw_core::sync::SyncError::Failed { message } if message.contains("can't be forgotten")), "{error:?}");
+}

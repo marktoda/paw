@@ -283,6 +283,14 @@ impl Setup {
         self.flow().refused_remote()
     }
 
+    /// "I expected this change", on the changed-host-key screen: forgets
+    /// the host's pinned key without leaving setup; `check_host` then shows
+    /// the key it presents now for confirmation. Refused (`Failed`) for a
+    /// host whose keys ship with paw, such as github.com.
+    pub fn forget_host_key(&self) -> Result<SetupState, SetupError> {
+        self.flow().forget_host_key()
+    }
+
     /// After a host check or a download that failed: what it found out
     /// about the remote, to pick the screen ("No store at that address" for
     /// `RepositoryNotFound`, which comes as `SetupError::Failed`). `None`
@@ -416,10 +424,15 @@ impl StoreSync {
     }
 
     /// Settings › Store › Forget server key. The next setup or sync of a
-    /// host that is not bundled asks to confirm its key again.
+    /// host that is not bundled asks to confirm its key again. A bundled
+    /// host's keys (github.com's, ...) cannot be forgotten: `Failed`.
     pub fn forget_host_key(&self) -> Result<(), SyncError> {
+        let host = self.address.connect_host();
+        if crate::sync::hosts::is_bundled(host, self.address.port) {
+            return Err(SyncError::Failed { message: crate::setup::bundled_refusal(host) });
+        }
         let known = crate::setup::known_hosts(&self.state_dir);
-        Ok(known.forget(self.address.connect_host(), self.address.port)?)
+        Ok(known.forget(host, self.address.port)?)
     }
 
     /// Whether the next login will wait for a touch, given the slot's policy.
