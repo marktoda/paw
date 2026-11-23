@@ -17,7 +17,17 @@
 //! - `setup` — the saved step (this module);
 //! - `known_hosts` — host keys the person confirmed ([`crate::sync::hosts`]);
 //! - `remote` — the store's address, once a clone succeeded;
+//! - `enrolled-key` — the key's identity, once the test decrypt succeeded
+//!   ([`crate::key::enrolment`]);
+//! - `recipients` — the pinned keys and accepted `.gpg-id` files
+//!   ([`crate::write::keyring`]), written by the same step;
 //! - `repo/` — the store itself.
+//!
+//! The steps that need the key exist twice: with a card connection and the
+//! PIN passed per call (`download`, `test_decrypt`), and as key tasks on
+//! the key session, which share the PIN typed once (see `ffi::sync`). Both
+//! go through the same `begin_*` and `finish_*` steps here, so they save
+//! the same state and leave the same files.
 
 pub mod address;
 pub mod touch;
@@ -28,12 +38,15 @@ use std::time::Instant;
 
 use zeroize::Zeroizing;
 
+use crate::key::KeyIdentity;
+use crate::key::enrolment::save_enrolment;
 use crate::recipients::Access;
 use crate::ssh::{CardSigner, SshPublicKey, card_ssh_public_key};
 use crate::store::PassStore;
 use crate::sync::hosts::{KnownHosts, pin_for};
 use crate::sync::{self, Cloned, Connection, PresentedHostKey};
-use crate::{ApduTransport, KeyTouch, PawError, card_info};
+use crate::write::{Keyring, LineStatus, WriteError};
+use crate::{ApduTransport, CardInfo, KeyTouch, PawError, card_info};
 use address::StoreAddress;
 use touch::{TouchClock, TouchExpectation};
 
@@ -76,7 +89,7 @@ pub enum SetupState {
 
 /// Why a setup step did not complete. Each is something the person can act
 /// on, so each has its own case.
-#[derive(Debug, thiserror::Error, uniffi::Error)]
+#[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
 pub enum SetupError {
     #[error("{message}")]
     BadAddress { message: String },
@@ -118,6 +131,27 @@ pub enum SetupError {
 
 fn failed(error: impl std::fmt::Display) -> SetupError {
     SetupError::Failed { message: error.to_string() }
+}
+
+/// Whether new entries can be saved once setup is done. Reading works
+/// either way; saving needs a public key on this device for every
+/// recipient `.gpg-id` names.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SetupWriteReadiness {
+    /// Entries can be saved at the top of the store with no further step.
+    pub can_save: bool,
+    /// Lines of the top-level `.gpg-id` paw has no key for (or cannot tell
+    /// which pinned key they mean). Add those keys, or bind the lines, to
+    /// save. Empty when `can_save`.
+    pub missing_recipients: Vec<String>,
+    /// Other `.gpg-id` files (e.g. `archive/.gpg-id`) whose folders cannot
+    /// be saved in yet, for the same reason.
+    pub folders_needing_keys: Vec<String>,
+}
+
+/// A wrong step or a damaged store, as setup words it.
+fn write_failed(error: WriteError) -> SetupError {
+    failed(format!("could not record the store's keys: {error}"))
 }
 
 /// What setup tells the app while a step runs.
@@ -413,6 +447,20 @@ impl SetupFlow {
         self.expect(&[Step::ReadKey, Step::Address], "read the key")?;
         let info = card_info(card.clone()).map_err(failed)?;
         let ssh = card_ssh_public_key(card).map_err(|e| SetupError::UnusableKey { message: e.to_string() })?;
+        self.use_key(info, &ssh)
+    }
+
+    /// The key as its session read it when it was plugged in: no card
+    /// exchange at all.
+    pub fn read_key_from(&mut self, info: &CardInfo, ssh: Option<&SshPublicKey>) -> Result<SetupState, SetupError> {
+        self.expect(&[Step::ReadKey, Step::Address], "read the key")?;
+        let ssh = ssh.ok_or_else(|| SetupError::UnusableKey {
+            message: "it has no authentication key, so it cannot log in to a git host".into(),
+        })?;
+        self.use_key(info.clone(), ssh)
+    }
+
+    fn use_key(&mut self, info: CardInfo, ssh: &SshPublicKey) -> Result<SetupState, SetupError> {
         let Some(decryption_fingerprint) = info.decryption_fingerprint else {
             return Err(SetupError::UnusableKey { message: "it has no decryption key".into() });
         };
@@ -485,7 +533,7 @@ impl SetupFlow {
         Ok(address.remote(pin))
     }
 
-    fn connection_error(&self, remote: &sync::Remote, error: PawError) -> SetupError {
+    pub(crate) fn connection_error(&self, remote: &sync::Remote, error: PawError) -> SetupError {
         match error {
             PawError::Network(detail) => SetupError::HostUnreachable { host: remote.host.clone(), detail },
             PawError::HostKeyMismatch { presented } => SetupError::HostKeyChanged {
@@ -520,11 +568,7 @@ impl SetupFlow {
         pin: &str,
         events: Arc<dyn SetupEvents>,
     ) -> Result<SetupState, SetupError> {
-        self.expect(&[Step::NeedPin], "download")?;
-        let remote = self.remote()?;
-        let repo = self.repo_dir();
-        remove_dir(&repo)?;
-        self.go(Step::Cloning)?;
+        let (remote, repo) = self.begin_download()?;
 
         let connection = {
             let clock = self.authentication;
@@ -564,10 +608,49 @@ impl SetupFlow {
         };
         let cloned = sync::clone_with_progress(&connection, &remote, &repo, Some(&mut progress));
         drop(connection);
-        let outcome = match cloned {
+        match cloned {
             // Left as a kill would leave it: `open` cleans up.
-            Err(_) if cancelled => return Err(SetupError::Cancelled),
-            Err(e) => Err(self.connection_error(&remote, e)),
+            Err(_) if cancelled => Err(SetupError::Cancelled),
+            other => self.finish_download(&remote, other),
+        }
+    }
+
+    /// The start of a download: the remote to clone and where to, with any
+    /// earlier attempt removed. Setup is at "cloning" until
+    /// [`Self::finish_download`] or [`Self::abandon_download`].
+    pub(crate) fn begin_download(&mut self) -> Result<(sync::Remote, PathBuf), SetupError> {
+        self.expect(&[Step::NeedPin], "download")?;
+        let remote = self.remote()?;
+        let repo = self.repo_dir();
+        remove_dir(&repo)?;
+        self.go(Step::Cloning)?;
+        Ok((remote, repo))
+    }
+
+    /// The download stopped (cancelled, or the login failed): back to the
+    /// PIN step, with nothing left of it.
+    pub(crate) fn abandon_download(&mut self) -> Result<(), SetupError> {
+        if self.saved.step == Step::Cloning {
+            self.restart_download()?;
+        }
+        Ok(())
+    }
+
+    /// The login signed: a cached touch holds for a while from now.
+    pub(crate) fn note_login(&mut self) {
+        self.authentication.used_at(Instant::now());
+    }
+
+    /// The end of a download: checks what arrived is a pass store and moves
+    /// on to the test decrypt, or starts the download over.
+    pub(crate) fn finish_download(
+        &mut self,
+        remote: &sync::Remote,
+        cloned: Result<Cloned, PawError>,
+    ) -> Result<SetupState, SetupError> {
+        let repo = self.repo_dir();
+        let outcome = match cloned {
+            Err(e) => Err(self.connection_error(remote, e)),
             Ok(Cloned::Empty) => Err(SetupError::EmptyRepository),
             Ok(Cloned::Store) => {
                 let gpg_id = std::fs::symlink_metadata(repo.join(".gpg-id"));
@@ -589,12 +672,44 @@ impl SetupFlow {
 
     /// Opens one entry the key can open, to prove it works. The plaintext is
     /// wiped at once. `pin` is dropped when this returns.
+    ///
+    /// Then, as after the session's key check: the card's key is pinned and
+    /// bound to its `.gpg-id` line, every `.gpg-id` is accepted, and the
+    /// key is recorded as the store's enrolled key.
     pub fn test_decrypt(
         &mut self,
         card: Arc<dyn ApduTransport>,
         pin: &str,
         events: Arc<dyn SetupEvents>,
     ) -> Result<SetupState, SetupError> {
+        let entry = self.pick_test_entry()?;
+        let store = PassStore::open(self.repo_dir().to_string_lossy().into_owned()).map_err(failed)?;
+        let ciphertext = store.read_entry(&entry).map_err(failed)?;
+
+        let clock = self.decryption;
+        let asked = std::sync::atomic::AtomicBool::new(false);
+        let touch = || {
+            asked.store(true, std::sync::atomic::Ordering::SeqCst);
+            let expectation = clock.expectation();
+            if expectation != TouchExpectation::NotNeeded {
+                events.touch_needed(expectation);
+            }
+        };
+        match crate::decrypt_entry(card.clone(), pin, &ciphertext, &touch) {
+            Ok(plaintext) => drop(Zeroizing::new(plaintext)),
+            Err(PawError::NotForThisKey { .. }) => return Err(SetupError::KeyCannotOpenStore),
+            Err(e @ (PawError::WrongPin { .. } | PawError::PinBlocked)) => return Err(key_error(e, false)),
+            Err(e) if asked.load(std::sync::atomic::Ordering::SeqCst) => return Err(key_error(e, true)),
+            Err(e) => return Err(SetupError::CannotOpenEntry { entry, detail: e.to_string() }),
+        }
+        let info = card_info(card.clone()).map_err(failed)?;
+        let key = crate::card_decryption_key(card).map_err(failed)?;
+        self.finish_test_decrypt(entry, &key, &KeyIdentity::of(&info))
+    }
+
+    /// The entry the test decrypt opens: the first the key surely opens,
+    /// else the first it might (hidden recipients).
+    pub(crate) fn pick_test_entry(&self) -> Result<String, SetupError> {
         self.expect(&[Step::TestDecrypt], "test the key")?;
         let fingerprint = self.key()?.decryption_fingerprint.clone();
         let store = PassStore::open(self.repo_dir().to_string_lossy().into_owned()).map_err(failed)?;
@@ -611,30 +726,86 @@ impl SetupFlow {
                 _ => {}
             }
         }
-        let Some(entry) = sure.or(maybe) else {
-            return Err(SetupError::KeyCannotOpenStore);
-        };
-        let ciphertext = store.read_entry(&entry).map_err(failed)?;
+        sure.or(maybe).ok_or(SetupError::KeyCannotOpenStore)
+    }
 
-        let clock = self.decryption;
-        let asked = std::sync::atomic::AtomicBool::new(false);
-        let touch = || {
-            asked.store(true, std::sync::atomic::Ordering::SeqCst);
-            let expectation = clock.expectation();
-            if expectation != TouchExpectation::NotNeeded {
-                events.touch_needed(expectation);
-            }
-        };
-        match crate::decrypt_entry(card, pin, &ciphertext, &touch) {
-            Ok(plaintext) => drop(Zeroizing::new(plaintext)),
-            Err(PawError::NotForThisKey { .. }) => return Err(SetupError::KeyCannotOpenStore),
-            Err(e @ (PawError::WrongPin { .. } | PawError::PinBlocked)) => return Err(key_error(e, false)),
-            Err(e) if asked.load(std::sync::atomic::Ordering::SeqCst) => return Err(key_error(e, true)),
-            Err(e) => return Err(SetupError::CannotOpenEntry { entry, detail: e.to_string() }),
+    /// The key opened `entry`: completes what saving needs and records the
+    /// key, then setup is done.
+    ///
+    /// - The card's decryption key (`card_key`) is pinned, and bound to the
+    ///   top-level `.gpg-id` line it answers for if no pinned key satisfies
+    ///   that line yet. If paw cannot tell which line is the card's, nothing
+    ///   is bound and [`Self::write_readiness`] says what is missing.
+    /// - Every `.gpg-id` is accepted as it is now.
+    /// - The key's identity is recorded, so the PIN goes to no other card.
+    pub(crate) fn finish_test_decrypt(
+        &mut self,
+        entry: String,
+        card_key: &pgp::packet::PublicKey,
+        identity: &KeyIdentity,
+    ) -> Result<SetupState, SetupError> {
+        self.expect(&[Step::TestDecrypt], "finish the key check")?;
+        let summary = self.key()?;
+        if identity.decryption_fingerprint.as_deref().map(str::to_ascii_uppercase)
+            != Some(summary.decryption_fingerprint.to_ascii_uppercase())
+        {
+            return Err(SetupError::UnusableKey {
+                message: "this is not the key read at the start of setup; plug that one in".into(),
+            });
         }
+        let repo = self.repo_dir();
+        let mut keyring = Keyring::open(&self.dir).map_err(write_failed)?;
+        let fingerprint = keyring.pin_card_key(card_key).map_err(write_failed)?;
+        match keyring.bind_card_after_test_decrypt(&repo, &fingerprint, crate::write::now_secs()) {
+            // Several unknown lines: the person picks the card's later.
+            Ok(_) | Err(WriteError::MissingRecipients { .. }) => {}
+            Err(e) => return Err(write_failed(e)),
+        }
+        keyring.accept_all_recipients_at_setup(&repo).map_err(write_failed)?;
+        save_enrolment(&self.dir, identity).map_err(failed)?;
         self.decryption.used_at(Instant::now());
         self.saved.opened = Some(entry);
         self.go(Step::Done)
+    }
+
+    /// Whether new entries can be saved, once setup is done. Reads the
+    /// pinned keys and the store; changes nothing.
+    pub fn write_readiness(&self) -> Result<SetupWriteReadiness, SetupError> {
+        self.expect(&[Step::Done], "say whether entries can be saved")?;
+        let repo = self.repo_dir();
+        let keyring = Keyring::open(&self.dir).map_err(write_failed)?;
+        let now = crate::write::now_secs();
+        let top = keyring.folder_recipients(&repo, "", now).map_err(write_failed)?;
+        let missing_recipients = if top.writable() {
+            Vec::new()
+        } else {
+            top.lines
+                .iter()
+                .filter(|line| !matches!(line.status, LineStatus::Ready { .. }))
+                .map(|line| line.line.clone())
+                .collect()
+        };
+        let mut folders_needing_keys = Vec::new();
+        for gpg_id in crate::write::keyring::gpg_id_paths(&repo).map_err(write_failed)? {
+            let folder = gpg_id.strip_suffix(".gpg-id").unwrap_or_default().trim_end_matches('/');
+            if folder.is_empty() {
+                continue;
+            }
+            let recipients = keyring.folder_recipients(&repo, folder, now).map_err(write_failed)?;
+            if !recipients.writable() {
+                folders_needing_keys.push(gpg_id);
+            }
+        }
+        Ok(SetupWriteReadiness { can_save: top.writable(), missing_recipients, folders_needing_keys })
+    }
+
+    /// The key setup read at the start, as an identity to hold a session to.
+    pub(crate) fn expected_key(&self) -> Option<KeyIdentity> {
+        self.saved.key.as_ref().map(|key| KeyIdentity {
+            ident: key.ident.clone(),
+            decryption_fingerprint: Some(key.decryption_fingerprint.clone()),
+            authentication_fingerprint: None,
+        })
     }
 }
 

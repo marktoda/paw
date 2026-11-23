@@ -265,6 +265,12 @@ fn all_gpg_ids(root: &Path) -> Result<Vec<(String, Vec<u8>)>, WriteError> {
     Ok(found)
 }
 
+/// The paths of every `.gpg-id` committed in the store at `root`, outside
+/// hidden folders, e.g. `.gpg-id` and `archive/.gpg-id`.
+pub(crate) fn gpg_id_paths(root: &Path) -> Result<Vec<String>, WriteError> {
+    Ok(all_gpg_ids(root)?.into_iter().map(|(path, _)| path).collect())
+}
+
 /// The pinned keys, bindings and `.gpg-id` pins of one store.
 pub struct Keyring {
     file: PathBuf,
@@ -637,7 +643,9 @@ impl Keyring {
     /// After setup's test decrypt: binds the one line of the top-level
     /// `.gpg-id` that no pinned key satisfies to the card's key
     /// `card_fingerprint` (already pinned). Returns the lines bound: none if
-    /// every line was already satisfied. If several lines are unsatisfied,
+    /// every line was already satisfied, or if a line already means the
+    /// card's key (the open ones are then other recipients, whose keys
+    /// have to be imported). If several lines are unsatisfied,
     /// paw cannot tell which is the card's, and the person has to choose
     /// ([`Self::bind`]); that is [`WriteError::MissingRecipients`].
     pub fn bind_card_after_test_decrypt(
@@ -651,6 +659,17 @@ impl Keyring {
             return Err(WriteError::NotPinned { fingerprint: card_fingerprint });
         }
         let recipients = self.folder_recipients(root, "", now)?;
+        // A line already means the card's key (it names it, or was bound
+        // before): every line still open is someone else's, and binding one
+        // of them to the card would encrypt to fewer keys than `.gpg-id`
+        // names.
+        let card_has_a_line = recipients
+            .lines
+            .iter()
+            .any(|line| matches!(&line.status, LineStatus::Ready { fingerprint, .. } if *fingerprint == card_fingerprint));
+        if card_has_a_line {
+            return Ok(Vec::new());
+        }
         let open: Vec<String> = recipients
             .lines
             .iter()

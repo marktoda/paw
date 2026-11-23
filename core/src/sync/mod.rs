@@ -35,7 +35,7 @@ use crate::path::{unsafe_path, unsafe_path_err};
 
 /// Why a sync, an integrate or a change to the queue did not happen. In
 /// every case nothing in the store was changed.
-#[derive(Debug, thiserror::Error, uniffi::Error)]
+#[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
 pub enum SyncError {
     /// The local branch has commits paw did not make (another tool used
     /// this copy). paw does not guess what to do with them.

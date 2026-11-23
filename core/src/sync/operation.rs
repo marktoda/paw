@@ -106,9 +106,25 @@ fn fetch_and_integrate(
     }
 }
 
-fn run(remote: &Remote, signer: &dyn SshSigner, dir: &Path, send: bool) -> Result<SyncReport, SyncError> {
+/// What a sync that was asked to stop returns. Nothing is left half done:
+/// it stops only between whole steps (after the login, after a fetch and
+/// its integrate, before a push).
+fn stopped() -> SyncError {
+    SyncError::Failed { message: "stopped".into() }
+}
+
+fn run(
+    remote: &Remote,
+    signer: &dyn SshSigner,
+    dir: &Path,
+    send: bool,
+    stop: &dyn Fn() -> bool,
+) -> Result<SyncReport, SyncError> {
     let counting = Counting { inner: signer, count: AtomicU32::new(0) };
     let connection = connect(remote, &counting)?;
+    if stop() {
+        return Err(stopped());
+    }
     let mut report = SyncReport {
         state: SyncState::UpToDate,
         integration: IntegrateReport::default(),
@@ -126,6 +142,9 @@ fn run(remote: &Remote, signer: &dyn SshSigner, dir: &Path, send: bool) -> Resul
         return Ok(finish(report, SyncState::RemoteReplaced { replaced }));
     }
     let mut waiting = unpushed(dir)?;
+    if send && waiting > 0 && stop() {
+        return Err(stopped());
+    }
     if !send || waiting == 0 {
         let state = if waiting == 0 { SyncState::UpToDate } else { SyncState::Waiting { unpushed: waiting } };
         return Ok(finish(report, state));
@@ -134,6 +153,9 @@ fn run(remote: &Remote, signer: &dyn SshSigner, dir: &Path, send: bool) -> Resul
     match push(&connection, dir) {
         Ok(()) => {}
         Err(PawError::NotFastForward) => {
+            if stop() {
+                return Err(stopped());
+            }
             report.retried = true;
             if let Err(replaced) = fetch_and_integrate(&connection, dir, &mut report.integration)? {
                 return Ok(finish(report, SyncState::RemoteReplaced { replaced }));
@@ -155,10 +177,22 @@ fn run(remote: &Remote, signer: &dyn SshSigner, dir: &Path, send: bool) -> Resul
 /// Fetches, integrates and pushes on one login. Retries once, on the same
 /// connection, if the remote moved before the push.
 pub fn send(remote: &Remote, signer: &dyn SshSigner, dir: &Path) -> Result<SyncReport, SyncError> {
-    run(remote, signer, dir, true)
+    run(remote, signer, dir, true, &|| false)
 }
 
 /// Fetches and integrates on one login; pushes nothing.
 pub fn refresh(remote: &Remote, signer: &dyn SshSigner, dir: &Path) -> Result<SyncReport, SyncError> {
-    run(remote, signer, dir, false)
+    run(remote, signer, dir, false, &|| false)
+}
+
+/// [`send`] (or [`refresh`] if `push` is false) that stops between steps
+/// once `stop` says so.
+pub(crate) fn run_until(
+    remote: &Remote,
+    signer: &dyn SshSigner,
+    dir: &Path,
+    push: bool,
+    stop: &dyn Fn() -> bool,
+) -> Result<SyncReport, SyncError> {
+    run(remote, signer, dir, push, stop)
 }
