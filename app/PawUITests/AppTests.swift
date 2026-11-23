@@ -546,9 +546,17 @@ final class AppTests: XCTestCase {
         expectValue("password-value", Self.githubPassword)
 
         // Notification Center over paw: paw is inactive and the cover is up.
-        let top = app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.001))
-        let middle = app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.6))
-        top.press(forDuration: 0.1, thenDragTo: middle)
+        // The pull from the top edge does not always register in the
+        // simulator, so it is tried a few times.
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let cover = element("privacy-cover")
+        for attempt in 0..<4 where !cover.exists {
+            let x = attempt.isMultiple(of: 2) ? 0.3 : 0.5
+            let top = springboard.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.0))
+            let middle = springboard.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.7))
+            top.press(forDuration: 0.3, thenDragTo: middle)
+            _ = cover.waitForExistence(timeout: 4)
+        }
         expect("privacy-cover")
         snapshot("cover")
 
