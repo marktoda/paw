@@ -50,13 +50,7 @@ enum Then {
 /// naming the key that is expected; the task's `key_mismatch` has both
 /// identities.
 pub(crate) fn mismatch_error(mismatch: &KeyMismatch) -> KeyError {
-    KeyError::NotForThisKey {
-        recipients: vec![format!(
-            "a different key from the one this store was set up with: it was set up with {}, this is {}",
-            mismatch.enrolled.describe(),
-            mismatch.presented.describe()
-        )],
-    }
+    KeyError::NotForThisKey { recipients: vec![super::enrolment::mismatch_message(mismatch)] }
 }
 
 /// The refusal for `session` if it is not `expected`.

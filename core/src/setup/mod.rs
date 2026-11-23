@@ -749,6 +749,8 @@ impl SetupFlow {
         pin: &str,
         events: Arc<dyn SetupEvents>,
     ) -> Result<SetupState, SetupError> {
+        self.expect(&[Step::NeedPin], "download")?;
+        self.check_card(&card)?;
         let (remote, repo) = self.begin_download()?;
 
         let connection = {
@@ -893,6 +895,7 @@ impl SetupFlow {
         events: Arc<dyn SetupEvents>,
     ) -> Result<SetupState, SetupError> {
         let entry = self.pick_test_entry()?;
+        self.check_card(&card)?;
         let store = PassStore::open(self.repo_dir().to_string_lossy().into_owned()).map_err(failed)?;
         let ciphertext = store.read_entry(&entry).map_err(failed)?;
 
@@ -1030,6 +1033,34 @@ impl SetupFlow {
     /// something paw will not check out".
     pub fn refused_remote(&self) -> Vec<RefusedPath> {
         self.refused.clone()
+    }
+
+    /// For the per-call steps that take a card and a PIN: refuses, before
+    /// any VERIFY, a card other than the key read at "Your key", and other
+    /// than the store's enrolled key if one is recorded here (a store set up
+    /// again in the same place).
+    fn check_card(&self, card: &Arc<dyn ApduTransport>) -> Result<(), SetupError> {
+        use crate::key::enrolment::{CardRefusal, check_card, check_card_against};
+        let refused = |refusal: CardRefusal| match refusal {
+            CardRefusal::Mismatch(mismatch) => {
+                SetupError::UnusableKey { message: crate::key::enrolment::mismatch_message(&mismatch) }
+            }
+            CardRefusal::Failed(error) => failed(error),
+        };
+        check_card(&self.dir, card).map_err(refused)?;
+        match self.expected_key() {
+            Some(expected) => check_card_against(&expected, card).map_err(|refusal| match refusal {
+                CardRefusal::Mismatch(mismatch) => SetupError::UnusableKey {
+                    message: format!(
+                        "this is not the key read at the start of setup ({}); this is {}. Plug that one in",
+                        mismatch.enrolled.describe(),
+                        mismatch.presented.describe()
+                    ),
+                },
+                other => refused(other),
+            }),
+            None => Ok(()),
+        }
     }
 
     /// The key setup read at the start, as an identity to hold a session to.

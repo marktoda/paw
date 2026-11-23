@@ -38,7 +38,9 @@ impl PassStore {
     /// and forgets an older one).
     ///
     /// The entry opens even if keeping the copy fails: the person has
-    /// already touched the key. `face_id_until_ms` is then `None`.
+    /// already touched the key. `face_id_until_ms` is then `None`. A card
+    /// other than the store's enrolled key is refused before any VERIFY,
+    /// as in `open_entry`.
     pub fn open_entry_keeping_copy(
         &self,
         connection: Arc<dyn CardConnection>,
@@ -48,9 +50,11 @@ impl PassStore {
         ttl_secs: u32,
     ) -> Result<KeyOpen, PawError> {
         let ciphertext = self.read_entry(&entry)?;
+        let card: Arc<dyn crate::ApduTransport> = Arc::new(Adapter(connection.clone()));
+        self.check_card(&card)?;
         let touch = connection.clone();
         let mut plaintext = zeroize::Zeroizing::new(crate::decrypt_entry(
-            Arc::new(Adapter(connection)),
+            card,
             &pin,
             &ciphertext,
             &move || touch.touch_needed(),

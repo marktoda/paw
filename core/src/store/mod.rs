@@ -29,6 +29,29 @@ pub struct PassStore {
     tree: StoreTree,
 }
 
+impl PassStore {
+    /// The state directory of a store set up by paw: the folder holding
+    /// this checkout, when the checkout is its `repo` folder (as
+    /// `setup::repo_dir` makes it). `None` for a store opened anywhere else,
+    /// such as the fixture store.
+    pub(crate) fn state_dir(&self) -> Option<&std::path::Path> {
+        let name = self.root.file_name()?;
+        if name != std::ffi::OsStr::new("repo") {
+            return None;
+        }
+        self.root.parent()
+    }
+
+    /// For the per-call paths that take a card and a PIN: refuses, before
+    /// any VERIFY, a card other than the store's enrolled key.
+    pub(crate) fn check_card(&self, card: &std::sync::Arc<dyn crate::ApduTransport>) -> Result<(), PawError> {
+        match self.state_dir() {
+            Some(state_dir) => crate::key::enrolment::check_card(state_dir, card).map_err(|r| r.into_paw_error()),
+            None => Ok(()),
+        }
+    }
+}
+
 #[uniffi::export]
 impl PassStore {
     /// Reads the names in the store checked out at `dir`.

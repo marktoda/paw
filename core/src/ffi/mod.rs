@@ -98,6 +98,10 @@ impl PassStore {
     /// [`PawError::NotForThisKey`] before the PIN is sent or a touch is
     /// asked for (see [`crate::decrypt_entry`]). Call `access` first to
     /// know without a card exchange.
+    ///
+    /// For a store paw set up (opened at `<state dir>/repo`), a card other
+    /// than the store's enrolled key is refused the same way, naming both
+    /// keys, before any VERIFY.
     pub fn open_entry(
         &self,
         connection: Arc<dyn CardConnection>,
@@ -105,9 +109,11 @@ impl PassStore {
         entry: String,
     ) -> Result<Arc<OpenedEntry>, PawError> {
         let ciphertext = self.read_entry(&entry)?;
+        let card: Arc<dyn ApduTransport> = Arc::new(Adapter(connection.clone()));
+        self.check_card(&card)?;
         let touch = connection.clone();
         let plaintext = crate::decrypt_entry(
-            Arc::new(Adapter(connection)),
+            card,
             &pin,
             &ciphertext,
             &move || touch.touch_needed(),

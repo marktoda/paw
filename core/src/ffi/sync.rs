@@ -365,7 +365,14 @@ impl StoreSync {
     ) -> Result<SyncReport, SyncError> {
         let pin = Zeroizing::new(pin);
         let remote = self.remote()?;
-        let transport = Arc::new(Adapter(connection.clone()));
+        let transport: Arc<dyn crate::ApduTransport> = Arc::new(Adapter(connection.clone()));
+        // The PIN goes to the store's enrolled key only.
+        crate::key::enrolment::check_card(&self.state_dir, &transport).map_err(|refusal| match refusal {
+            crate::key::enrolment::CardRefusal::Mismatch(mismatch) => {
+                SyncError::Failed { message: crate::key::enrolment::mismatch_message(&mismatch) }
+            }
+            crate::key::enrolment::CardRefusal::Failed(error) => error.into(),
+        })?;
         let policy = crate::card_info(transport.clone())?.authentication_touch;
         let clock = self.clock(policy);
         let signer = CardSigner::new(transport, &pin, move || {
@@ -459,12 +466,16 @@ impl StoreSync {
         self.clock(policy).expectation()
     }
 
-    /// "Send": fetch, integrate and push on one login.
+    /// "Send": fetch, integrate and push on one login. A card other than
+    /// the store's enrolled key is refused (`Failed`, "a different key from
+    /// the one this store was set up with: ...") before any VERIFY; so is
+    /// every card if the enrolment record is damaged.
     pub fn send(&self, connection: Arc<dyn CardConnection>, pin: String) -> Result<SyncReport, SyncError> {
         self.with_card(connection, pin, operation::send_checked)
     }
 
-    /// Fetch and integrate on one login, pushing nothing.
+    /// Fetch and integrate on one login, pushing nothing. Refuses another
+    /// card as `send` does.
     pub fn refresh(&self, connection: Arc<dyn CardConnection>, pin: String) -> Result<SyncReport, SyncError> {
         self.with_card(connection, pin, |remote, signer, dir, _| operation::refresh(remote, signer, dir))
     }

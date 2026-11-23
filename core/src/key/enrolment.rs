@@ -15,8 +15,9 @@
 //! plugged-in key in place of the old one.
 
 use std::path::Path;
+use std::sync::Arc;
 
-use crate::{CardInfo, PawError};
+use crate::{ApduTransport, CardInfo, PawError};
 
 /// The file in the state directory. Public data only.
 const FILE: &str = "enrolled-key";
@@ -154,6 +155,56 @@ pub fn load_enrolment(state_dir: &Path) -> Result<Option<KeyIdentity>, PawError>
             .ok_or_else(|| PawError::Store("the enrolled key record is damaged".into())),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(io("read", e)),
+    }
+}
+
+/// How a refusal of another card reads, wherever it is reported: "a
+/// different key from the one this store was set up with: ...".
+pub(crate) fn mismatch_message(mismatch: &KeyMismatch) -> String {
+    format!(
+        "a different key from the one this store was set up with: it was set up with {}, this is {}",
+        mismatch.enrolled.describe(),
+        mismatch.presented.describe()
+    )
+}
+
+/// Why the older per-call paths refuse a card.
+#[derive(Debug)]
+pub(crate) enum CardRefusal {
+    /// It is not the key the store was set up with.
+    Mismatch(Box<KeyMismatch>),
+    /// The card or the enrolment record could not be read.
+    Failed(PawError),
+}
+
+/// For the older paths that take a card and a PIN per call (`open_entry`,
+/// `StoreSync.send`, `Setup.download`, ...): refuses, before any VERIFY, a
+/// card that is not the key enrolled in `state_dir`, as the key port does
+/// for tasks. Reads only public data from the card, and only if a key is
+/// enrolled. A damaged record refuses every card.
+pub(crate) fn check_card(state_dir: &Path, card: &Arc<dyn ApduTransport>) -> Result<(), CardRefusal> {
+    let Some(enrolled) = load_enrolment(state_dir).map_err(CardRefusal::Failed)? else {
+        return Ok(());
+    };
+    check_card_against(&enrolled, card)
+}
+
+/// [`check_card`] against a known identity.
+pub(crate) fn check_card_against(expected: &KeyIdentity, card: &Arc<dyn ApduTransport>) -> Result<(), CardRefusal> {
+    let info = crate::card_info(card.clone()).map_err(CardRefusal::Failed)?;
+    match expected.check(&KeyIdentity::of(&info)) {
+        Some(mismatch) => Err(CardRefusal::Mismatch(Box::new(mismatch))),
+        None => Ok(()),
+    }
+}
+
+impl CardRefusal {
+    /// As a `PawError`: the "not for this key" refusal, as the key port's.
+    pub(crate) fn into_paw_error(self) -> PawError {
+        match self {
+            Self::Mismatch(mismatch) => PawError::NotForThisKey { recipients: vec![mismatch_message(&mismatch)] },
+            Self::Failed(error) => error,
+        }
     }
 }
 
