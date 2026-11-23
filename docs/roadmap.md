@@ -51,7 +51,7 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 |---|---|---|
 | Copy cache in the core: per-entry deadline from the key touch, sealed by a device keystore trait, wiped on expiry, clock moved back or reboot ends all copies, "Lock now" | face-id-copies | done |
 | Simulated keystore and clock for Linux and the simulator | face-id-copies | done |
-| Secure Enclave keystore in Swift (current face only, no passcode fallback: owner to confirm) | screens | next; needs the device to verify |
+| Secure Enclave keystore in Swift (current face only, no passcode fallback) | screens | built; needs the device to verify |
 | Early AutoFill skeleton: fill from a copy, shared index, staleness after a pull | autofill | blocked on App Group and copies |
 
 ### M4 Clone, setup, fetch
@@ -116,7 +116,6 @@ Several recipients (the owner's backup key), TOTP, import from other managers, c
 
 ## Open decisions for the owner
 
-1. May the device passcode stand in for Face ID for opened entries? Draft answer: no.
-2. Ink-only buttons, or an indigo accent? Draft answer: ink.
-3. Paw icon or plain gold disc? Draft answer: paw.
-4. Rent cloud Mac hours for visual polish, once real screens exist? Draft answer: try narrowed GitHub runs first.
+1. Ink-only buttons, or an indigo accent? Draft answer: ink.
+2. Paw icon or plain gold disc? Draft answer: paw.
+3. Rent cloud Mac hours for visual polish, once real screens exist? Draft answer: try narrowed GitHub runs first.

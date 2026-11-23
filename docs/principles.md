@@ -101,7 +101,7 @@ Not protected:
 
 Made by the owner on 2026-11-22.
 
-- **Face ID window:** on by default. Whether the device passcode may stand in for Face ID is still open (see below).
+- **Face ID window:** on by default, 8 hours per entry. The device passcode never stands in for Face ID: someone who watched the passcode being typed should not get the opened entries (decided 2026-11-23).
 - **Face ID time is per entry:** each entry stays available for the chosen length from its own key touch, not until one shared end time.
 - **PIN:** asked once while the key stays plugged in, and forgotten after 15 minutes with paw in the background. Locking the phone does not clear it.
 - **Generate button:** the first version has a password generator on the add and edit forms.
@@ -116,8 +116,6 @@ Made by the owner on 2026-11-22.
 
 ## Open questions for the owner
 
-1. May the device passcode stand in for Face ID during the window? The draft answer is no: someone who watched the passcode being typed should not get the opened entries.
-2. How long is the Face ID window by default?
-3. Should paw look keys up on a keyserver to show a name and email for each recipient? A lookup tells the keyserver which keys the person cares about, so the draft answer is: only when the person asks.
-4. Should paw check signed commits or `.gpg-id.sig`?
-5. Which remotes beyond GitHub come first?
+1. Should paw look keys up on a keyserver to show a name and email for each recipient? A lookup tells the keyserver which keys the person cares about, so the draft answer is: only when the person asks.
+2. Should paw check signed commits or `.gpg-id.sig`?
+3. Which remotes beyond GitHub come first?
