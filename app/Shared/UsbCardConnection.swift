@@ -69,6 +69,8 @@ final class UsbCardConnection: CardConnection, @unchecked Sendable {
     }
 
     func transmit(apdu: Data) throws -> Data {
+        // Waits up to 40 seconds: never on the main thread.
+        assert(!Thread.isMainThread, "card traffic on the main thread")
         var response: Data?
         var failure: Error?
         let done = DispatchSemaphore(value: 0)
