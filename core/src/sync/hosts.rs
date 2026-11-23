@@ -137,6 +137,13 @@ impl KnownHosts {
         Self { path: path.to_path_buf() }
     }
 
+    /// The lock of the store whose state directory holds the file: a
+    /// change reads, changes and writes the whole file.
+    fn lock(&self) -> Result<crate::lock::Exclusive, PawError> {
+        let dir = self.path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        crate::lock::StoreLock::for_state_dir(dir).exclusive()
+    }
+
     fn read(&self) -> Result<Vec<(String, u16, String)>, PawError> {
         let text = match std::fs::read_to_string(&self.path) {
             Ok(text) => text,
@@ -186,6 +193,7 @@ impl KnownHosts {
         if key_line.contains(['\n', '\r']) || host.contains([' ', '\n', '\r']) {
             return Err(PawError::Store("not a host key line".into()));
         }
+        let _held = self.lock()?;
         let mut entries = self.read()?;
         if entries.iter().any(|(h, p, _)| h.eq_ignore_ascii_case(host) && *p == port) {
             return Err(PawError::Store(format!("{host} already has a saved key")));
@@ -196,6 +204,7 @@ impl KnownHosts {
 
     /// Forgets the key pinned for `host`: Settings › Store › Forget server key.
     pub fn forget(&self, host: &str, port: u16) -> Result<(), PawError> {
+        let _held = self.lock()?;
         let mut entries = self.read()?;
         entries.retain(|(h, p, _)| !(h.eq_ignore_ascii_case(host) && *p == port));
         self.write(&entries)

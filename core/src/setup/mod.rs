@@ -335,7 +335,7 @@ pub struct SetupFlow {
     no_connection: bool,
 }
 
-fn remove_dir(path: &Path) -> Result<(), SetupError> {
+fn remove_dir(path: &Path, _held: &crate::lock::Exclusive) -> Result<(), SetupError> {
     match std::fs::remove_dir_all(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -419,8 +419,14 @@ impl SetupFlow {
         Ok(self.state())
     }
 
+    /// The store's lock, held: for removing or replacing the repository,
+    /// and for the keyring and enrolment writes.
+    fn exclusive(&self) -> Result<crate::lock::Exclusive, SetupError> {
+        crate::lock::StoreLock::for_state_dir(&self.dir).exclusive().map_err(failed)
+    }
+
     fn restart_download(&mut self) -> Result<(), SetupError> {
-        remove_dir(&self.repo_dir())?;
+        remove_dir(&self.repo_dir(), &self.exclusive()?)?;
         self.saved.opened = None;
         self.go(Step::NeedPin).map(drop)
     }
@@ -811,7 +817,7 @@ impl SetupFlow {
         self.expect(&[Step::NeedPin], "download")?;
         let remote = self.remote()?;
         let repo = self.repo_dir();
-        remove_dir(&repo)?;
+        remove_dir(&repo, &self.exclusive()?)?;
         self.refused.clear();
         self.remote_message = None;
         self.go(Step::Cloning)?;
@@ -870,13 +876,16 @@ impl SetupFlow {
             return Err(e);
         }
         let address = self.saved.address.clone().unwrap_or_default();
-        std::fs::write(self.dir.join(REMOTE_FILE), format!("{address}\n")).map_err(failed)?;
+        {
+            let _held = self.exclusive()?;
+            std::fs::write(self.dir.join(REMOTE_FILE), format!("{address}\n")).map_err(failed)?;
+        }
         self.go(Step::TestDecrypt)
     }
 
     /// The repository is not a store paw can use: back to the address.
     fn wrong_repository(&mut self, reason: RemoteReason) -> Result<SetupState, SetupError> {
-        remove_dir(&self.repo_dir())?;
+        remove_dir(&self.repo_dir(), &self.exclusive()?)?;
         self.saved.opened = None;
         self.note_remote(reason, None);
         self.saved.problem = Some(reason);
@@ -983,6 +992,8 @@ impl SetupFlow {
             });
         }
         let repo = self.repo_dir();
+        // The keyring and the enrolment change as one critical section.
+        let held = self.exclusive()?;
         let mut keyring = Keyring::open(&self.dir).map_err(write_failed)?;
         let fingerprint = keyring.pin_card_key(card_key).map_err(write_failed)?;
         // Only the `.gpg-id` that governs the entry just opened, and only if
@@ -997,6 +1008,7 @@ impl SetupFlow {
         }
         keyring.accept_all_recipients_at_setup(&repo).map_err(write_failed)?;
         save_enrolment(&self.dir, identity).map_err(failed)?;
+        drop(held);
         self.decryption.used_at(Instant::now());
         self.saved.opened = Some(entry);
         self.go(Step::Done)

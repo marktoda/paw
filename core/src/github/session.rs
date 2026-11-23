@@ -17,18 +17,23 @@
 //! person signs in again. No order of writes avoids that window, because
 //! GitHub has already rotated; one write keeps it to one keychain call.
 //!
-//! Refreshes are serialised in the process (one lock), and each re-reads
-//! the vault after taking it, so two callers never spend one refresh token
-//! twice.
+//! Refreshes are serialised in the process (one lock) and, through a file
+//! lock in the state directory ([`crate::lock::SESSION_LOCK_FILE`]),
+//! between the app and its extension, which share the vault. Each re-reads
+//! the vault after taking them, so two callers never spend one refresh
+//! token twice. The file lock is held across the one refresh request
+//! (bounded by its timeout), never across a fetch, and is separate from the
+//! store lock, so a refresh never holds up a save or a read.
 
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use zeroize::Zeroizing;
 
 use super::http::Http;
 use super::{GitHubError, Secret};
+use crate::lock::SessionLock;
 
 /// The vault item that holds the sign-in.
 pub const SESSION_ITEM: &str = "github-session";
@@ -196,16 +201,27 @@ pub fn system_wall_clock() -> WallClock {
 /// One refresh at a time in this process.
 static REFRESHING: Mutex<()> = Mutex::new(());
 
+/// The longest a refresh waits for another process's refresh: longer than
+/// one refresh request may take.
+const SESSION_WAIT: Duration = Duration::from_secs(45);
+
 /// The sign-in kept in a vault, and the one way to get a usable access
 /// token from it.
 pub(crate) struct TokenKeeper {
     vault: Arc<dyn TokenVault>,
     wall: WallClock,
+    /// Serialises refreshes with other processes sharing the vault.
+    lock: Option<SessionLock>,
 }
 
 impl TokenKeeper {
     pub(crate) fn new(vault: Arc<dyn TokenVault>, wall: WallClock) -> Self {
-        Self { vault, wall }
+        Self { vault, wall, lock: None }
+    }
+
+    pub(crate) fn with_lock(mut self, lock: SessionLock) -> Self {
+        self.lock = Some(lock);
+        self
     }
 
     pub(crate) fn now(&self) -> u64 {
@@ -233,15 +249,25 @@ impl TokenKeeper {
     }
 
     /// A usable access token: the kept one, or, if it ends within five
-    /// minutes (or `force`, after GitHub refused it), a refreshed one,
-    /// stored before it is returned. With nothing kept, nothing is sent
+    /// minutes (or it is `refused`, the one GitHub just refused), a
+    /// refreshed one, stored before it is returned. If the kept one is no
+    /// longer the refused one, another caller (thread or process) has
+    /// refreshed meanwhile, and its new token is used: refreshing again
+    /// would spend the refresh token a second time and end that caller's
+    /// fetch. With nothing kept, nothing is sent
     /// ([`GitHubError::NotSignedIn`]). A refresh GitHub refuses ends the
     /// sign-in: it is forgotten here ([`GitHubError::SignedOut`]).
-    pub(crate) fn access_token(&self, http: &Http, force: bool) -> Result<Secret, GitHubError> {
+    pub(crate) fn access_token(&self, http: &Http, refused: Option<&Secret>) -> Result<Secret, GitHubError> {
         let _one_at_a_time = REFRESHING.lock().unwrap_or_else(|p| p.into_inner());
+        // Then the other process; the vault is read only after both.
+        let _one_process_at_a_time = match &self.lock {
+            Some(lock) => Some(lock.hold(SESSION_WAIT).map_err(|e| GitHubError::Failed { message: e.to_string() })?),
+            None => None,
+        };
         let Some(tokens) = self.load()? else {
             return Err(GitHubError::NotSignedIn);
         };
+        let force = refused.is_some_and(|refused| *refused == tokens.access);
         let now = self.now();
         let fresh = tokens.access_expires_at.is_none_or(|at| at > now.saturating_add(REFRESH_MARGIN_SECS));
         if fresh && !force {

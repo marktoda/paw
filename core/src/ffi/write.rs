@@ -261,14 +261,20 @@ impl StoreWriter {
     /// entry, just opened). Saving is refused if the file changes before.
     pub fn edit_draft(&self, opened: Arc<OpenedEntry>, entry: String) -> Result<Arc<EntryDraft>, WriteError> {
         let doc = opened.duplicate_doc().ok_or_else(|| WriteError::Failed { message: "the entry was closed".into() })?;
-        let bytes = crate::store::read::read_entry(self.store.repo(), &entry)?;
+        let bytes = {
+            let _reading = self.store.lock().shared()?;
+            crate::store::read::read_entry(self.store.repo(), &entry)?
+        };
         Ok(EntryDraft::wrap(core::EntryDraft::edit(&entry, doc, Some(content_id(&bytes)))))
     }
 
     /// Everything that would stop `draft` from saving, including a name
     /// that is taken.
     pub fn validate(&self, draft: Arc<EntryDraft>) -> Result<Vec<DraftProblem>, WriteError> {
-        let tree = self.tree()?;
+        let tree = {
+            let _reading = self.store.lock().shared()?;
+            self.tree()?
+        };
         Ok(draft.draft().problems(Some(&tree)))
     }
 
@@ -359,11 +365,15 @@ impl StoreWriter {
     /// Which keys can open entries in `folder`, and whether paw can save
     /// there (`writable`). For the folder picker and the recipients screen.
     pub fn folder_recipients(&self, folder: String) -> Result<FolderRecipients, WriteError> {
+        let _reading = self.store.lock().shared()?;
         self.store.folder_recipients(&folder)
     }
 
     /// Whether paw can save in `folder` now.
     pub fn can_save_in(&self, folder: String) -> bool {
+        let Ok(_reading) = self.store.lock().shared() else {
+            return false;
+        };
         self.store.folder_recipients(&folder).is_ok_and(|r| r.writable())
     }
 
@@ -372,19 +382,25 @@ impl StoreWriter {
     /// saved; after it, any change to who can open a folder has to be
     /// accepted for that folder.
     pub fn accept_all_recipients_at_setup(&self) -> Result<(), WriteError> {
+        // Each keyring change reads, changes and writes the whole file: one
+        // critical section, or two changes at once would lose one.
+        let _held = self.store.exclusive()?;
         self.store.keyring()?.accept_all_recipients_at_setup(self.store.repo())
     }
 
     /// After "Who can open … changed": accepts the folder's current
     /// `.gpg-id`.
     pub fn accept_recipients(&self, folder: String) -> Result<(), WriteError> {
+        let _held = self.store.exclusive()?;
         self.store.keyring()?.accept_recipients(self.store.repo(), &folder)
     }
 
     /// Setup: pins the plugged-in key's decryption key. Needs no PIN.
     /// Returns its fingerprint.
     pub fn pin_card_key(&self, connection: Arc<dyn CardConnection>) -> Result<String, WriteError> {
+        // The card is read first, with no lock held.
         let key = crate::card_decryption_key(Arc::new(Adapter(connection)))?;
+        let _held = self.store.exclusive()?;
         self.store.keyring()?.pin_card_key(&key)
     }
 
@@ -392,22 +408,27 @@ impl StoreWriter {
     /// `.gpg-id` line no pinned key satisfies to the card's key. Returns the
     /// lines bound.
     pub fn bind_card_after_test_decrypt(&self, card_fingerprint: String) -> Result<Vec<String>, WriteError> {
+        let _held = self.store.exclusive()?;
         self.store.keyring()?.bind_card_after_test_decrypt(self.store.repo(), &card_fingerprint, core::now_secs())
     }
 
     /// Records that `line` of a `.gpg-id` means the pinned key `fingerprint`.
     pub fn bind_recipient(&self, line: String, fingerprint: String) -> Result<(), WriteError> {
+        let _held = self.store.exclusive()?;
         self.store.keyring()?.bind(&line, &fingerprint)
     }
 
     /// Reads a public certificate (armored or binary) without keeping it.
     pub fn inspect_certificate(&self, bytes: Vec<u8>) -> Result<Vec<CertificateSummary>, WriteError> {
-        self.summaries(&Self::certificates(&bytes)?)
+        let infos = Self::certificates(&bytes)?;
+        let _reading = self.store.lock().shared()?;
+        self.summaries(&infos)
     }
 
     /// Pins the encryption key of each certificate in `bytes`.
     pub fn import_certificate(&self, bytes: Vec<u8>) -> Result<Vec<CertificateSummary>, WriteError> {
         let infos = Self::certificates(&bytes)?;
+        let _held = self.store.exclusive()?;
         let mut keyring = self.store.keyring()?;
         for info in &infos {
             keyring.pin_certificate(info)?;
@@ -417,6 +438,7 @@ impl StoreWriter {
 
     /// Forgets a pinned key.
     pub fn forget_key(&self, fingerprint: String) -> Result<(), WriteError> {
+        let _held = self.store.exclusive()?;
         self.store.keyring()?.forget(&fingerprint)
     }
 
@@ -428,6 +450,7 @@ impl StoreWriter {
     /// Sets the name and address on later commits; `None` goes back to
     /// "paw".
     pub fn set_git_identity(&self, identity: Option<GitIdentity>) -> Result<(), WriteError> {
+        let _held = self.store.exclusive()?;
         core::set_git_identity(self.store.state_dir(), identity.as_ref())
     }
 }

@@ -33,6 +33,7 @@ use super::http::Http;
 use super::transport::{Failure, HttpsRemote, explain};
 use super::{GitHubError, Secret};
 use crate::PawError;
+use crate::lock::{Exclusive, Fetching, StoreLock};
 use crate::setup::address::StoreAddress;
 use crate::sync::integrate::{IntegrateReport, RecipientsChange, Replaced};
 use crate::sync::operation::{SyncReport, SyncState};
@@ -200,12 +201,16 @@ impl GitHubAccount {
         link: &GitHubLink,
         token: Secret,
         progress: Option<crate::sync::TransferCallback<'_>>,
-    ) -> Result<(), Result<FetchError, ()>> {
+    ) -> Result<Fetching, Result<FetchError, ()>> {
         let repo = crate::sync::guard::open(&self.repo_dir()).map_err(|e| Ok(FetchError::Paw(e)))?;
+        // The transfer runs without the store lock, under the fetch lock,
+        // into private refs; [`Self::publish`] moves them.
+        let fetching =
+            crate::sync::begin_fetch(&self.store_lock(), &repo).map_err(|e| Ok(FetchError::Paw(e)))?;
         let limit = *self.download_limit.lock().unwrap_or_else(|p| p.into_inner());
         let remote = HttpsRemote::new(http.clone(), &link.full_name, token, limit);
         match remote.with_remote(&repo, |r| crate::sync::fetch_connected(r, progress)) {
-            Ok(_) => Ok(()),
+            Ok(_) => Ok(fetching),
             Err((error, failure)) => match explain(error, failure) {
                 Ok(paw) => Err(Ok(FetchError::Paw(paw))),
                 Err(Failure::Unauthorised) => Err(Err(())),
@@ -215,24 +220,40 @@ impl GitHubAccount {
         }
     }
 
-    /// Fetches every branch of the chosen repository over HTTPS into the
-    /// store's `origin/*`. Changes nothing else.
+    fn store_lock(&self) -> StoreLock {
+        StoreLock::for_state_dir(&self.state_dir)
+    }
+
+    /// With the store lock: what [`Self::fetch_with_token`] received
+    /// becomes the store's `origin/*`. Returns the lock, held.
+    fn publish(&self, fetching: Fetching) -> Result<Exclusive, PawError> {
+        let held = self.store_lock().exclusive()?;
+        let repo = crate::sync::guard::open(&self.repo_dir())?;
+        crate::sync::publish_fetched(&held, &repo, fetching)?;
+        Ok(held)
+    }
+
+    /// Fetches every branch of the chosen repository over HTTPS, without
+    /// the store lock, into private refs for [`Self::publish`]. Changes
+    /// nothing else.
     fn fetch_with_token(
         &self,
         http: &Http,
         link: &GitHubLink,
         mut progress: Option<crate::sync::TransferCallback<'_>>,
-    ) -> Result<(), FetchError> {
-        let token = self.keeper.access_token(http, false)?;
+    ) -> Result<Fetching, FetchError> {
+        let token = self.keeper.access_token(http, None)?;
+        let refused = token.clone();
         let first = self.fetch_once(http, link, token, progress.as_mut().map(|p| &mut **p as crate::sync::TransferCallback<'_>));
         match first {
-            Ok(()) => Ok(()),
+            Ok(fetching) => Ok(fetching),
             Err(Ok(error)) => Err(error),
             // Refused with a token paw thought was fine: refresh, try once more.
             Err(Err(())) => {
-                let token = self.keeper.access_token(http, true)?;
+                let token = self.keeper.access_token(http, Some(&refused))?;
+                drop(refused);
                 match self.fetch_once(http, link, token, progress) {
-                    Ok(()) => Ok(()),
+                    Ok(fetching) => Ok(fetching),
                     Err(Ok(error)) => Err(error),
                     Err(Err(())) => Err(FetchError::GitHub(GitHubError::Refused {
                         message: "GitHub did not let paw's sign-in read this repository; is paw still installed on it?".into(),
@@ -260,8 +281,9 @@ impl GitHubAccount {
         }
         let link = self.checked_link().map_err(FetchError::GitHub)?;
         let http = Http::new(&self.endpoints, None);
-        self.fetch_with_token(&http, &link, progress)?;
-        crate::sync::operation::integrate_fetched(&self.repo_dir())
+        let fetching = self.fetch_with_token(&http, &link, progress)?;
+        let held = self.publish(fetching)?;
+        crate::sync::operation::integrate_fetched(&held, &self.repo_dir())
     }
 
     /// The background refresh: see the module comment. Ends by `budget`
@@ -303,22 +325,28 @@ impl GitHubAccount {
         }
         let http = Http::new(&self.endpoints, Some(deadline));
         // Refreshed here if need be, so the fetch below starts with a good one.
-        if let Err(e) = self.keeper.access_token(&http, false) {
+        if let Err(e) = self.keeper.access_token(&http, None) {
             return from_github(e);
         }
         if stopping(RefreshStep::Fetch) {
             return out_of_time();
         }
         let mut in_time = |_: TransferProgress| Instant::now() < deadline;
-        match self.fetch_with_token(&http, &link, Some(&mut in_time)) {
-            Ok(()) => {}
+        let fetching = match self.fetch_with_token(&http, &link, Some(&mut in_time)) {
+            Ok(fetching) => fetching,
             Err(_) if Instant::now() >= deadline => return out_of_time(),
             Err(FetchError::GitHub(e)) => return from_github(e),
             Err(FetchError::Paw(PawError::Network(message))) => {
                 return BackgroundRefreshReport::ended(BackgroundOutcome::Offline { message });
             }
             Err(FetchError::Paw(e)) => return failed(&e),
-        }
+        };
+        // From here to the end, local work only, with the store lock held:
+        // published, checked and integrated as one step.
+        let held = match self.publish(fetching) {
+            Ok(held) => held,
+            Err(e) => return failed(&e),
+        };
 
         if stopping(RefreshStep::Check) {
             return out_of_time();
@@ -348,7 +376,7 @@ impl GitHubAccount {
         if stopping(RefreshStep::Integrate) {
             return out_of_time();
         }
-        let report = match crate::sync::operation::integrate_fetched(&dir) {
+        let report = match crate::sync::operation::integrate_fetched(&held, &dir) {
             Ok(report) => report,
             Err(e) => return failed(&e),
         };

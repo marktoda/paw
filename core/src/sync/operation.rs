@@ -9,10 +9,11 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::history::commits_between;
-use super::integrate::{IntegrateReport, Integration, Replaced, integrate};
+use super::integrate::{IntegrateReport, Integration, Replaced, integrate_locked};
 use super::transport::{Connection, Remote};
-use super::{SyncError, TransferCallback, current_branch, fetch_with_transfer, git_err, push};
+use super::{SyncError, TransferCallback, current_branch, fetch_branches, git_err, push_tip};
 use crate::PawError;
+use crate::lock::{Exclusive, StoreLock};
 use crate::ssh::{SshPublicKey, SshSigner};
 
 /// Where a sync ended.
@@ -76,7 +77,8 @@ pub(crate) fn connect_error(remote: &Remote, error: PawError) -> SyncError {
     }
 }
 
-/// Local commits the remote-tracking branch does not have.
+/// Local commits the remote-tracking branch does not have. Called with
+/// the store's lock held.
 fn unpushed(dir: &Path) -> Result<u32, SyncError> {
     let repo = super::guard::open(dir)?;
     let (branch, short) = current_branch(&repo)?;
@@ -87,22 +89,33 @@ fn unpushed(dir: &Path) -> Result<u32, SyncError> {
     Ok(commits_between(&repo, head, &[remote])?.len() as u32)
 }
 
-/// Fetches and integrates on `connection`. `Err(replaced)` when the remote's
-/// history was replaced.
+/// Fetches on `connection` (no store lock during the transfer), then with
+/// the lock publishes and integrates. `Err(replaced)` when the remote's
+/// history was replaced. Returns the lock, still held.
 fn fetch_and_integrate(
     connection: &Connection,
+    store: &StoreLock,
     dir: &Path,
     report: &mut IntegrateReport,
     progress: Option<TransferCallback<'_>>,
-) -> Result<Result<(), Replaced>, SyncError> {
-    fetch_with_transfer(connection, dir, progress)?;
-    match integrate(dir)? {
+) -> Result<(Result<(), Replaced>, Exclusive), SyncError> {
+    let repo = super::guard::open(dir)?;
+    let (_, held) = fetch_branches(connection, store, &repo, progress)?;
+    match integrate_locked(&held, dir)? {
         Integration::Integrated(this_round) => {
             report.absorb(this_round);
-            Ok(Ok(()))
+            Ok((Ok(()), held))
         }
-        Integration::RemoteReplaced(replaced) => Ok(Err(replaced)),
+        Integration::RemoteReplaced(replaced) => Ok((Err(replaced), held)),
     }
+}
+
+/// The current branch and its tip.
+fn branch_tip(dir: &Path) -> Result<(git2::Repository, String, git2::Oid), SyncError> {
+    let repo = super::guard::open(dir)?;
+    let (branch, _) = current_branch(&repo)?;
+    let tip = repo.refname_to_id(&branch).map_err(git_err)?;
+    Ok((repo, branch, tip))
 }
 
 /// What a sync that was asked to stop returns. Nothing is left half done:
@@ -155,7 +168,16 @@ fn run(
         report
     };
 
-    if let Err(replaced) = fetch_and_integrate(&connection, dir, &mut report.integration, reborrow(&mut progress))? {
+    // What is and is not under the store lock: the login and every
+    // transfer run without it; publishing the fetched refs, integrating,
+    // counting and checking the waiting changes, and recording a push
+    // run with it.
+    let store = StoreLock::for_repo(dir);
+    // One send at a time per store, from before it reads what to push
+    // until the result is recorded; a refresh does not take it.
+    let pushing = if send { Some(store.pushing(crate::lock::FETCH_WAIT)?) } else { None };
+    let (integrated, held) = fetch_and_integrate(&connection, &store, dir, &mut report.integration, reborrow(&mut progress))?;
+    if let Err(replaced) = integrated {
         return Ok(finish(report, SyncState::RemoteReplaced { replaced }));
     }
     let mut waiting = unpushed(dir)?;
@@ -168,23 +190,30 @@ fn run(
         let state = if waiting == 0 { SyncState::UpToDate } else { SyncState::Waiting { unpushed: waiting } };
         return Ok(finish(report, state));
     }
+    let Some(pushing) = &pushing else {
+        return Err(SyncError::Failed { message: "internal: a send without its push lock".into() });
+    };
+    let (repo, branch, tip) = branch_tip(dir)?;
 
-    match push(&connection, dir) {
+    match push_tip(&connection, &store, &repo, &branch, tip, held, pushing) {
         Ok(()) => {}
         Err(PawError::NotFastForward) => {
             if stop() {
                 return Err(stopped());
             }
             report.retried = true;
-            if let Err(replaced) = fetch_and_integrate(&connection, dir, &mut report.integration, reborrow(&mut progress))? {
+            let (integrated, held) =
+                fetch_and_integrate(&connection, &store, dir, &mut report.integration, reborrow(&mut progress))?;
+            if let Err(replaced) = integrated {
                 return Ok(finish(report, SyncState::RemoteReplaced { replaced }));
             }
             waiting = unpushed(dir)?;
             if waiting > 0 && holding_back(dir, state_dir)? {
                 return Ok(finish(report, SyncState::Waiting { unpushed: waiting }));
             }
+            let (repo, branch, tip) = branch_tip(dir)?;
             if waiting > 0 {
-                match push(&connection, dir) {
+                match push_tip(&connection, &store, &repo, &branch, tip, held, pushing) {
                     Err(PawError::NotFastForward) => return Err(SyncError::RemoteKeptMoving),
                     other => other?,
                 }
@@ -239,7 +268,7 @@ pub(crate) fn run_until(
 /// `crate::github`): integrates and reports exactly as [`refresh`] does
 /// after its own fetch, so both paths give the same results for the same
 /// remote (recipients changed, replaced history, refused trees).
-pub(crate) fn integrate_fetched(dir: &Path) -> Result<SyncReport, SyncError> {
+pub(crate) fn integrate_fetched(held: &Exclusive, dir: &Path) -> Result<SyncReport, SyncError> {
     let mut report = SyncReport {
         state: SyncState::UpToDate,
         integration: IntegrateReport::default(),
@@ -247,7 +276,7 @@ pub(crate) fn integrate_fetched(dir: &Path) -> Result<SyncReport, SyncError> {
         retried: false,
         signatures: 0,
     };
-    match integrate(dir)? {
+    match integrate_locked(held, dir)? {
         Integration::Integrated(this_round) => report.integration.absorb(this_round),
         Integration::RemoteReplaced(replaced) => {
             report.state = SyncState::RemoteReplaced { replaced };

@@ -23,6 +23,7 @@ use super::history::{
 use super::guard::check_commit;
 use super::{SyncError, current_branch, git_err};
 use crate::store::gpg_id::parse_gpg_id;
+use crate::lock::{Exclusive, StoreLock};
 
 /// A `.gpg-id` that differs between the remote tip paw saw last and the
 /// one it just fetched. paw always says when recipients change.
@@ -112,6 +113,12 @@ fn tips(repo: &Repository) -> Result<Tips, SyncError> {
 /// [`SyncError::Failed`] naming the paths, and the branch, the working
 /// copy and the unpushed changes stay as they were.
 pub fn integrate(dir: &Path) -> Result<Integration, SyncError> {
+    let held = StoreLock::for_repo(dir).exclusive()?;
+    integrate_locked(&held, dir)
+}
+
+/// [`integrate`], with the store's lock already held.
+pub(crate) fn integrate_locked(held: &Exclusive, dir: &Path) -> Result<Integration, SyncError> {
     let repo = super::guard::open(dir)?;
     let tips = tips(&repo)?;
     let Some(remote) = tips.remote else {
@@ -153,7 +160,7 @@ pub fn integrate(dir: &Path) -> Result<Integration, SyncError> {
         report.note(replay.notes);
         tip
     };
-    move_branch(&repo, &tips.branch, tips.head, new_head, Some((&tips.seen_ref, remote)), "paw: integrate")?;
+    move_branch(held, &repo, &tips.branch, tips.head, new_head, Some((&tips.seen_ref, remote)), "paw: integrate")?;
     Ok(Integration::Integrated(report))
 }
 
@@ -161,6 +168,7 @@ pub fn integrate(dir: &Path) -> Result<Integration, SyncError> {
 /// with this device's unpushed changes replayed onto it (`keep_changes`),
 /// or without them.
 pub fn accept_replaced_remote(dir: &Path, keep_changes: bool) -> Result<IntegrateReport, SyncError> {
+    let held = StoreLock::for_repo(dir).exclusive()?;
     let repo = super::guard::open(dir)?;
     let tips = tips(&repo)?;
     let Some(remote) = tips.remote else {
@@ -180,7 +188,7 @@ pub fn accept_replaced_remote(dir: &Path, keep_changes: bool) -> Result<Integrat
     }
     let tip = replay.tip();
     report.note(replay.notes);
-    move_branch(&repo, &tips.branch, tips.head, tip, Some((&tips.seen_ref, remote)), "paw: take replaced remote")?;
+    move_branch(&held, &repo, &tips.branch, tips.head, tip, Some((&tips.seen_ref, remote)), "paw: take replaced remote")?;
     Ok(report)
 }
 
@@ -190,6 +198,7 @@ pub fn accept_replaced_remote(dir: &Path, keep_changes: bool) -> Result<Integrat
 /// decision). Changes nothing; for the background refresh, which leaves
 /// such a change for the person instead of integrating it.
 pub(crate) fn pending_recipients_changes(dir: &Path) -> Result<Vec<RecipientsChange>, SyncError> {
+    let _reading = StoreLock::for_repo(dir).shared()?;
     let repo = super::guard::open(dir)?;
     let tips = tips(&repo)?;
     let Some(remote) = tips.remote else {

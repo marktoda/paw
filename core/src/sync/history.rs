@@ -424,6 +424,7 @@ pub(crate) fn ensure_clean(repo: &Repository) -> Result<(), SyncError> {
 /// that happens, or the branch, the index file and the working copy are put
 /// back exactly as they were. The working copy must be clean.
 pub(crate) fn move_branch(
+    held: &crate::lock::Exclusive,
     repo: &Repository,
     branch: &str,
     from: Oid,
@@ -431,6 +432,7 @@ pub(crate) fn move_branch(
     seen: Option<(&str, Oid)>,
     why: &str,
 ) -> Result<(), SyncError> {
+    debug_assert!(repo.workdir().is_none_or(|dir| held.covers(dir)), "move_branch without its store's lock");
     if from != to {
         // Nothing reaches the working copy that has not been checked.
         guard::check_commit(repo, to)?;

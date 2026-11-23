@@ -34,6 +34,13 @@ impl PassStore {
     /// this checkout, when the checkout is its `repo` folder (as
     /// `setup::repo_dir` makes it). `None` for a store opened anywhere else,
     /// such as the fixture store.
+    /// The lock of the store at `root` ([`crate::lock`]). A folder that is
+    /// not a repository has only the in-process one: nothing paw does writes
+    /// it.
+    fn lock(root: &std::path::Path) -> crate::lock::StoreLock {
+        crate::lock::StoreLock::for_repo(root)
+    }
+
     pub(crate) fn state_dir(&self) -> Option<&std::path::Path> {
         let name = self.root.file_name()?;
         if name != std::ffi::OsStr::new("repo") {
@@ -58,7 +65,11 @@ impl PassStore {
     #[uniffi::constructor(name = "new")]
     pub fn open(dir: String) -> Result<Arc<Self>, PawError> {
         let root = PathBuf::from(dir);
-        let tree = StoreTree::scan(&root)?;
+        // With the store lock shared: a checkout is never seen half done.
+        let tree = {
+            let _reading = Self::lock(&root).shared()?;
+            StoreTree::scan(&root)?
+        };
         Ok(Arc::new(Self { root, tree }))
     }
 
@@ -103,6 +114,7 @@ impl PassStore {
 
     /// The keys `.gpg-id` names for entries in `folder`, as written there.
     pub fn recipients(&self, folder: String) -> Result<Vec<String>, PawError> {
+        let _reading = Self::lock(&self.root).shared()?;
         gpg_id::recipients_for(&self.root, &folder)
     }
 
@@ -125,7 +137,11 @@ impl PassStore {
 
 impl PassStore {
     /// The encrypted bytes of `entry`; see [`read::read_entry`].
+    /// The encrypted bytes of `entry`, read with the store lock shared (so
+    /// never a file a checkout is halfway through writing) and released
+    /// before anything slow, such as asking the key to decrypt.
     pub fn read_entry(&self, entry: &str) -> Result<Vec<u8>, PawError> {
+        let _reading = Self::lock(&self.root).shared()?;
         read::read_entry(&self.root, entry)
     }
 

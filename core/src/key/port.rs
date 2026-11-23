@@ -402,7 +402,11 @@ impl KeyPort {
     pub fn replace_enrolled_key(&self, state_dir: String) -> Result<KeyIdentity, PawError> {
         let session = self.session().ok_or_else(|| PawError::Card("no key is plugged in".into()))?;
         let identity = KeyIdentity::of(session.card_info());
-        enrolment::save_enrolment(std::path::Path::new(&state_dir), &identity)?;
+        {
+            let state_dir = std::path::Path::new(&state_dir);
+            let _held = crate::lock::StoreLock::for_state_dir(state_dir).exclusive()?;
+            enrolment::save_enrolment(state_dir, &identity)?;
+        }
         self.set_enrolled_key(Some(identity.clone()));
         Ok(identity)
     }

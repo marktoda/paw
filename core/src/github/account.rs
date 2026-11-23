@@ -54,7 +54,7 @@ impl GitHubAccount {
     ) -> Self {
         Self {
             endpoints,
-            keeper: Arc::new(TokenKeeper::new(vault, wall)),
+            keeper: Arc::new(TokenKeeper::new(vault, wall).with_lock(crate::lock::StoreLock::session(state_dir))),
             state_dir: state_dir.to_path_buf(),
             clock,
             listed: Mutex::new(Vec::new()),
@@ -84,11 +84,10 @@ impl GitHubAccount {
     /// Runs `call` with an access token; if GitHub refuses it (401), once
     /// more with a refreshed one.
     pub(crate) fn with_token<T>(&self, http: &Http, call: impl Fn(&Secret) -> Result<T, GitHubError>) -> Result<T, GitHubError> {
-        let token = self.keeper.access_token(http, false)?;
+        let token = self.keeper.access_token(http, None)?;
         match call(&token) {
             Err(e) if is_unauthorised(&e) => {
-                drop(token);
-                let token = self.keeper.access_token(http, true)?;
+                let token = self.keeper.access_token(http, Some(&token))?;
                 call(&token)
             }
             other => other,
@@ -122,6 +121,9 @@ impl GitHubAccount {
             .find(|r| r.full_name.eq_ignore_ascii_case(full_name))
             .ok_or_else(|| GitHubError::Failed { message: format!("{full_name} is not in the list; list the repositories again") })?;
         let link = GitHubLink { full_name: chosen.full_name.clone(), id: chosen.id, ssh_address: chosen.ssh_address.clone() };
+        let _held = crate::lock::StoreLock::for_state_dir(&self.state_dir)
+            .exclusive()
+            .map_err(|e| GitHubError::Failed { message: e.to_string() })?;
         link.save(&self.state_dir)?;
         Ok(chosen.ssh_address.clone())
     }

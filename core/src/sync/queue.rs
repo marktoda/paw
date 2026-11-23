@@ -12,6 +12,19 @@ use super::history::{
     Change, ChangeKind, PawCommit, Replay, ensure_clean, last_seen_ref, move_branch, paw_commits,
 };
 use super::{SyncError, current_branch, git_err};
+use crate::lock::{Exclusive, StoreLock};
+
+/// [`super::check_not_being_sent`] for the branch `refs/heads/<short>`.
+fn check_not_being_sent(
+    held: &Exclusive,
+    store: &StoreLock,
+    repo: &Repository,
+    branch: &str,
+    removed: Oid,
+) -> Result<(), SyncError> {
+    let short = branch.strip_prefix("refs/heads/").unwrap_or(branch);
+    super::check_not_being_sent(held, store, repo, short, removed)
+}
 
 /// One unpushed change.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -60,6 +73,7 @@ fn item(commit: &PawCommit<'_>) -> QueueItem {
 
 /// The unpushed changes, newest first.
 pub fn unpushed(dir: &Path) -> Result<Vec<QueueItem>, SyncError> {
+    let _reading = StoreLock::for_repo(dir).shared()?;
     let repo = super::guard::open(dir)?;
     let local = local(&repo)?;
     Ok(local.commits.iter().rev().map(item).collect())
@@ -68,42 +82,52 @@ pub fn unpushed(dir: &Path) -> Result<Vec<QueueItem>, SyncError> {
 /// Takes back the unpushed change `id`. Later changes are kept, rebuilt
 /// without it. Returns the queue afterwards.
 pub fn discard(dir: &Path, id: &str) -> Result<Vec<QueueItem>, SyncError> {
+    let held = StoreLock::for_repo(dir).exclusive()?;
+    discard_locked(&held, dir, id)?;
+    unpushed(dir)
+}
+
+fn discard_locked(held: &Exclusive, dir: &Path, id: &str) -> Result<(), SyncError> {
     let repo = super::guard::open(dir)?;
     let local = local(&repo)?;
     let Some(position) = local.commits.iter().position(|c| c.commit.id().to_string() == id) else {
         return Err(SyncError::Failed { message: format!("{id} is not an unpushed change") });
     };
+    check_not_being_sent(held, &StoreLock::for_repo(dir), &repo, &local.branch, local.commits[position].commit.id())?;
     ensure_clean(&repo)?;
     let base = local.commits[position].commit.parent_id(0).map_err(git_err)?;
     let mut replay = Replay::onto(&repo, base)?;
     for later in &local.commits[position + 1..] {
         replay.apply(later)?;
     }
-    move_branch(&repo, &local.branch, local.head, replay.tip(), None, "paw: discard a change")?;
-    drop(local);
-    unpushed(dir)
+    move_branch(held, &repo, &local.branch, local.head, replay.tip(), None, "paw: discard a change")
 }
 
 /// Takes back the most recent unpushed change. Returns the queue afterwards.
 pub fn undo_last(dir: &Path) -> Result<Vec<QueueItem>, SyncError> {
+    // One critical section: the newest change is the one taken back, even
+    // if another save is waiting to add a newer one.
+    let held = StoreLock::for_repo(dir).exclusive()?;
     let newest = unpushed(dir)?.into_iter().next();
-    match newest {
-        Some(item) => discard(dir, &item.id),
-        None => Ok(Vec::new()),
+    if let Some(item) = newest {
+        discard_locked(&held, dir, &item.id)?;
     }
+    unpushed(dir)
 }
 
 /// Takes back every unpushed change: the store goes back to what was last
 /// fetched from the remote.
 pub fn discard_all(dir: &Path) -> Result<(), SyncError> {
+    let held = StoreLock::for_repo(dir).exclusive()?;
     let repo = super::guard::open(dir)?;
     let local = local(&repo)?;
     let Some(oldest) = local.commits.first() else {
         return Ok(());
     };
+    check_not_being_sent(&held, &StoreLock::for_repo(dir), &repo, &local.branch, oldest.commit.id())?;
     ensure_clean(&repo)?;
     let base = oldest.commit.parent_id(0).map_err(git_err)?;
-    move_branch(&repo, &local.branch, local.head, base, None, "paw: discard all changes")
+    move_branch(&held, &repo, &local.branch, local.head, base, None, "paw: discard all changes")
 }
 
 /// A waiting change whose ciphertext is not encrypted for exactly the
@@ -157,6 +181,7 @@ fn encrypted_for_exactly(found: &crate::recipients::EntryRecipients, keys: &[pgp
 /// way, since pushing it would put the old ciphertext in the history.
 pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncError> {
     let failed = |e: crate::write::WriteError| SyncError::Failed { message: e.to_string() };
+    let _reading = StoreLock::for_repo(dir).shared()?;
     let keyring = crate::write::Keyring::open(state_dir).map_err(failed)?;
     let repo = super::guard::open(dir)?;
     let local = local(&repo)?;

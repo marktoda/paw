@@ -561,10 +561,17 @@ fn concurrent_refreshes_spend_the_refresh_token_once() {
     w.set_up();
     w.wall.fetch_add(9 * 3600, Ordering::SeqCst);
     let issued = w.tokens().len();
+    // All four start together, so their fetches and integrates overlap
+    // (the store lock serialises the ref updates; see tests/store_lock.rs
+    // for this race run 200 times).
+    let start = Arc::new(std::sync::Barrier::new(4));
     let threads: Vec<_> = (0..4)
         .map(|_| {
-            let account = w.account.clone();
-            std::thread::spawn(move || account.refresh_with_token())
+            let (account, start) = (w.account.clone(), start.clone());
+            std::thread::spawn(move || {
+                start.wait();
+                account.refresh_with_token()
+            })
         })
         .collect();
     for thread in threads {

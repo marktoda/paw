@@ -25,6 +25,7 @@ use crate::entry::EntryDoc;
 use crate::store::gpg_id::recipients_for;
 use crate::store::read::read_file;
 use crate::store::tree::StoreTree;
+use crate::lock::{Exclusive, StoreLock};
 use crate::sync::{TreeEdit, commit_edits};
 
 /// What a save did.
@@ -80,6 +81,18 @@ impl WriteStore {
         &self.state_dir
     }
 
+    /// The store's lock (see [`crate::lock`]). Every change here takes it
+    /// for its whole check-then-commit, so two saves never interleave and a
+    /// check is never stale by the time its commit is made.
+    pub fn lock(&self) -> StoreLock {
+        StoreLock::for_repo(&self.repo)
+    }
+
+    /// Takes the store's lock for changing it.
+    pub fn exclusive(&self) -> Result<Exclusive, WriteError> {
+        Ok(self.lock().exclusive()?)
+    }
+
     pub fn keyring(&self) -> Result<Keyring, WriteError> {
         Keyring::open(&self.state_dir)
     }
@@ -116,6 +129,8 @@ impl WriteStore {
     /// Returns what was done and the text saved, for refreshing a Face ID
     /// copy. No key, PIN or network is involved.
     pub fn save(&self, draft: &EntryDraft) -> Result<(Saved, EntryDoc), WriteError> {
+        let held = self.exclusive()?;
+        let held = &held;
         let tree = self.tree()?;
         let problems = draft.problems(Some(&tree));
         if !problems.is_empty() {
@@ -139,7 +154,7 @@ impl WriteStore {
             } else {
                 format!("Add given password for {target} to store.")
             };
-            let commit = commit_edits(&self.repo, &[TreeEdit::Write { path: &file(&target), contents: &ciphertext }], &message, &author)?;
+            let commit = commit_edits(held, &self.repo, &[TreeEdit::Write { path: &file(&target), contents: &ciphertext }], &message, &author)?;
             let saved = Saved { entry: target, previous: None, content_id: content_id(&ciphertext), commits: vec![commit] };
             return Ok((saved, doc));
         };
@@ -158,7 +173,7 @@ impl WriteStore {
         let mut commits = Vec::new();
         let mut latest = current;
         if moved {
-            let (commit, ciphertext) = self.move_commit(original, &target, reencrypt.then_some((opened, keys.as_deref().unwrap_or_default())), &author)?;
+            let (commit, ciphertext) = self.move_commit(held, original, &target, reencrypt.then_some((opened, keys.as_deref().unwrap_or_default())), &author)?;
             commits.push(commit);
             if let Some(ciphertext) = ciphertext {
                 latest = ciphertext;
@@ -167,7 +182,7 @@ impl WriteStore {
         if changed && let Some(keys) = &keys {
             let ciphertext = encrypt(keys, &doc.to_bytes())?;
             let message = format!("Edit password for {target} using paw.");
-            commits.push(commit_edits(&self.repo, &[TreeEdit::Write { path: &file(&target), contents: &ciphertext }], &message, &author)?);
+            commits.push(commit_edits(held, &self.repo, &[TreeEdit::Write { path: &file(&target), contents: &ciphertext }], &message, &author)?);
             latest = ciphertext;
         }
         let saved = Saved {
@@ -184,6 +199,7 @@ impl WriteStore {
     /// ciphertext.
     fn move_commit(
         &self,
+        held: &Exclusive,
         from: &str,
         to: &str,
         reencrypt: Option<(&EntryDoc, &[pgp::packet::PublicKey])>,
@@ -193,13 +209,13 @@ impl WriteStore {
         let (from_file, to_file) = (file(from), file(to));
         match reencrypt {
             None => {
-                let commit = commit_edits(&self.repo, &[TreeEdit::Rename { from: &from_file, to: &to_file }], &message, author)?;
+                let commit = commit_edits(held, &self.repo, &[TreeEdit::Rename { from: &from_file, to: &to_file }], &message, author)?;
                 Ok((commit, None))
             }
             Some((doc, keys)) => {
                 let ciphertext = encrypt(keys, &doc.to_bytes())?;
                 let edits = [TreeEdit::Remove { path: &from_file }, TreeEdit::Write { path: &to_file, contents: &ciphertext }];
-                let commit = commit_edits(&self.repo, &edits, &message, author)?;
+                let commit = commit_edits(held, &self.repo, &edits, &message, author)?;
                 Ok((commit, Some(ciphertext)))
             }
         }
@@ -207,9 +223,10 @@ impl WriteStore {
 
     /// Deletes `entry`. Returns the commit. A folder left empty goes too.
     pub fn delete(&self, entry: &str) -> Result<String, WriteError> {
+        let held = self.exclusive()?;
         self.current(entry)?;
         let message = format!("Remove {entry} from store.");
-        Ok(commit_edits(&self.repo, &[TreeEdit::Remove { path: &file(entry) }], &message, &author(&self.state_dir))?)
+        Ok(commit_edits(&held, &self.repo, &[TreeEdit::Remove { path: &file(entry) }], &message, &author(&self.state_dir))?)
     }
 
     /// Renames or moves `from` to `to` (full paths). Within the same
@@ -218,6 +235,7 @@ impl WriteStore {
     /// from `open` (its decrypted text), and without it the move is refused
     /// with [`WriteError::NeedsOpenEntry`]. Returns what was done.
     pub fn rename(&self, from: &str, to: &str, open: Option<&EntryDoc>) -> Result<Saved, WriteError> {
+        let held = self.exclusive()?;
         let current = self.current(from)?;
         check_path(to)?;
         if from == to {
@@ -234,7 +252,7 @@ impl WriteStore {
             (true, Some(_)) => Some(self.keyring()?.resolve(&self.repo, to_folder, now_secs())?),
         };
         let reencrypt = open.zip(keys.as_deref());
-        let (commit, ciphertext) = self.move_commit(from, to, reencrypt, &author(&self.state_dir))?;
+        let (commit, ciphertext) = self.move_commit(&held, from, to, reencrypt, &author(&self.state_dir))?;
         Ok(Saved {
             entry: to.to_owned(),
             previous: Some(from.to_owned()),

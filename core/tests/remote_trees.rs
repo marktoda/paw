@@ -170,6 +170,18 @@ fn assert_refusal_names(message: &str, path: &str, what: &str) {
     assert!(message.contains(path), "{what}: {message} does not name {path}");
 }
 
+/// What is in the state directory, apart from paw's lock files.
+fn beside(state: &Path) -> Vec<String> {
+    let locks = [paw_core::lock::STORE_LOCK_FILE, paw_core::lock::FETCH_LOCK_FILE];
+    let mut names: Vec<String> = std::fs::read_dir(state)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| !locks.contains(&name.as_str()))
+        .collect();
+    names.sort();
+    names
+}
+
 #[test]
 fn a_clone_of_a_hostile_tree_checks_out_nothing() {
     let card = card();
@@ -186,7 +198,7 @@ fn a_clone_of_a_hostile_tree_checks_out_nothing() {
         };
         assert_refusal_names(&message, path, what);
         assert_eq!(files(&dir), BTreeSet::new(), "{what}: something was checked out");
-        assert_eq!(std::fs::read_dir(state.path()).unwrap().count(), 1, "{what}: wrote beside the store");
+        assert_eq!(beside(state.path()), ["repo"], "{what}: wrote beside the store");
     }
 }
 
@@ -220,7 +232,7 @@ fn integrate_after(card: &Arc<SimulatedKey>, what: &str, extra: Vec<(&'static st
     assert_eq!(files(&dir), before, "{what}: the working copy changed");
     assert_eq!(git(&dir, &["status", "--porcelain"]), "", "{what}");
     assert_eq!(queue::unpushed(&dir).unwrap(), queue, "{what}: the queue changed");
-    assert_eq!(std::fs::read_dir(state.path()).unwrap().count(), 1, "{what}: wrote beside the store");
+    assert_eq!(beside(state.path()), ["repo"], "{what}: wrote beside the store");
     // The app can say what was refused, from what was fetched.
     let refused = sync::refused_remote(&dir).unwrap();
     assert!(!refused.is_empty(), "{what}");
