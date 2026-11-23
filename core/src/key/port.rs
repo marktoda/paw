@@ -10,10 +10,12 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
 use super::decrypt::Plan;
+use super::enrolment::{self, KeyIdentity, KeyMismatch};
 use super::session::{Halt, KeySession};
+use super::signer::SessionSigner;
 use super::task::{Body, KeyTask, TaskCore};
 use super::{KeyError, KeyOutcome, KeyPurpose, KeyTaskListener, KeyTaskState, LoginPurpose};
-use crate::ApduTransport;
+use crate::{ApduTransport, PawError};
 use crate::copies::{Clock, CopyCache, content_id};
 use crate::ffi::OpenedEntry;
 use crate::store::PassStore;
@@ -22,6 +24,44 @@ struct State {
     session: Option<Arc<KeySession>>,
     /// Tasks at `PlugIn`.
     waiting: Vec<Weak<TaskCore>>,
+    /// The key the store was set up with. While set, no task sends the PIN
+    /// to another card.
+    enrolled: Option<KeyIdentity>,
+}
+
+/// Work a task does once the key has done its part, before it ends.
+pub(crate) type After = Box<dyn FnOnce(&Arc<KeySession>) -> Result<(), KeyError> + Send>;
+
+/// What a sign-in task does on the network with the signer, in the task's
+/// thread. It reports progress and ends the task.
+pub(crate) type Work = Box<dyn FnOnce(&Arc<TaskCore>, SessionSigner) -> Result<Option<KeyOutcome>, Halt> + Send>;
+
+/// What an open does once the entry has decrypted.
+enum Then {
+    /// Hands the entry over, keeping a Face ID copy if given a cache.
+    Keep(Option<(Arc<CopyCache>, Duration)>),
+    /// Wipes it at once (setup's key check), then runs `after` if given.
+    Check(Option<After>),
+}
+
+/// How a task refuses a card that is not the enrolled one. `KeyError` cannot
+/// gain a variant without breaking Swift's exhaustive switches, so this is
+/// the existing "not for this key" refusal, found before any PIN or touch,
+/// naming the key that is expected; the task's `key_mismatch` has both
+/// identities.
+pub(crate) fn mismatch_error(mismatch: &KeyMismatch) -> KeyError {
+    KeyError::NotForThisKey {
+        recipients: vec![format!(
+            "a different key from the one this store was set up with: it was set up with {}, this is {}",
+            mismatch.enrolled.describe(),
+            mismatch.presented.describe()
+        )],
+    }
+}
+
+/// The refusal for `session` if it is not `expected`.
+fn enrolment_check(expected: Option<&KeyIdentity>, session: &KeySession) -> Option<KeyMismatch> {
+    expected.and_then(|expected| expected.check(&KeyIdentity::of(session.card_info())))
 }
 
 #[derive(uniffi::Object)]
@@ -87,9 +127,13 @@ impl KeyPort {
     /// `check` runs what can be refused before any PIN or touch.
     fn initial(
         session: Option<&KeySession>,
+        expected: Option<&KeyIdentity>,
         check: impl FnOnce(&KeySession) -> Result<(), KeyError>,
     ) -> KeyTaskState {
         let Some(session) = session else { return KeyTaskState::PlugIn };
+        if let Some(mismatch) = enrolment_check(expected, session) {
+            return KeyTaskState::Failed { error: mismatch_error(&mismatch) };
+        }
         if let Err(error) = check(session) {
             return KeyTaskState::Failed { error };
         }
@@ -110,15 +154,21 @@ impl KeyPort {
     /// Starts a task on the connected key's session, or at `PlugIn` if
     /// there is none. A task keeps the session it started with: if that
     /// key goes away, the task fails with `KeyRemoved`.
+    ///
+    /// A card that is not `expected` (the enrolled key, unless a caller
+    /// such as setup knows better) is refused before anything else, so no
+    /// PIN reaches it.
     fn start(
         self: &Arc<Self>,
         purpose: KeyPurpose,
         listener: Arc<dyn KeyTaskListener>,
+        expected: Option<KeyIdentity>,
         check: impl FnOnce(&KeySession) -> Result<(), KeyError>,
-        body: impl FnOnce(&Arc<TaskCore>, &KeySession) -> Result<Option<KeyOutcome>, Halt> + Send + 'static,
+        body: impl FnOnce(&Arc<TaskCore>, &Arc<KeySession>) -> Result<Option<KeyOutcome>, Halt> + Send + 'static,
     ) -> Arc<KeyTask> {
         let session = self.session();
-        let initial = Self::initial(session.as_deref(), check);
+        let mismatch = session.as_deref().and_then(|session| enrolment_check(expected.as_ref(), session));
+        let initial = Self::initial(session.as_deref(), expected.as_ref(), check);
         let port = self.clone();
         let body: Body = Box::new(move |task| {
             let session = match session {
@@ -128,9 +178,61 @@ impl KeyPort {
                 }
                 None => port.wait_for_session(task)?,
             };
+            if let Some(mismatch) = enrolment_check(expected.as_ref(), &session) {
+                task.set_key_mismatch(mismatch.clone());
+                return Err(Halt::Fail(mismatch_error(&mismatch)));
+            }
             body(task, &session)
         });
-        KeyTask::start(purpose, listener, initial, body)
+        KeyTask::start_with_mismatch(purpose, listener, initial, mismatch, body)
+    }
+
+    /// The key tasks must be on: the enrolled one, if any.
+    pub(crate) fn expected(&self) -> Option<KeyIdentity> {
+        self.lock().enrolled.clone()
+    }
+
+    /// A sign-in task that, once the PIN is verified, runs `work` with a
+    /// signer in the task's own thread: setup's download and sync's send
+    /// and refresh. `work` reports progress, checks for cancel between its
+    /// network steps, and returns how the task ends.
+    pub(crate) fn sign_in_then(
+        self: &Arc<Self>,
+        login: LoginPurpose,
+        listener: Arc<dyn KeyTaskListener>,
+        expected: Option<KeyIdentity>,
+        work: Work,
+    ) -> Arc<KeyTask> {
+        self.start(
+            KeyPurpose::SignIn { login },
+            listener,
+            expected,
+            |session| session.ssh_key().map(drop),
+            move |task, session| {
+                session.ssh_key()?;
+                task.unlocked(session, |_| Ok(()))?;
+                if task.cancelled() {
+                    return Err(Halt::Fail(KeyError::Cancelled));
+                }
+                task.set(KeyTaskState::Working { progress: None });
+                let signer = SessionSigner::new(task.clone(), session.clone())?;
+                work(task, signer)
+            },
+        )
+    }
+
+    /// Setup's key check, which then runs `after` (still in the task, past
+    /// the point where cancel can stop it) before the task is done.
+    pub(crate) fn check_key_then(
+        self: &Arc<Self>,
+        store: Arc<PassStore>,
+        entry: String,
+        listener: Arc<dyn KeyTaskListener>,
+        expected: Option<KeyIdentity>,
+        after: After,
+    ) -> Arc<KeyTask> {
+        let purpose = KeyPurpose::CheckKey { entry: entry.clone() };
+        self.open_or_check(purpose, store, entry, Then::Check(Some(after)), listener, expected)
     }
 
     fn open_or_check(
@@ -138,15 +240,16 @@ impl KeyPort {
         purpose: KeyPurpose,
         store: Arc<PassStore>,
         entry: String,
-        copies: Option<(Arc<CopyCache>, Duration)>,
+        then: Then,
         listener: Arc<dyn KeyTaskListener>,
+        expected: Option<KeyIdentity>,
     ) -> Arc<KeyTask> {
         let check_store = store.clone();
         let check_entry = entry.clone();
-        let keep = matches!(purpose, KeyPurpose::OpenEntry { .. });
         self.start(
             purpose,
             listener,
+            expected,
             move |session| read_and_check(&check_store, &check_entry, session).map(drop),
             move |task, session| {
                 let ciphertext = read_and_check(&store, &entry, session)?;
@@ -161,9 +264,19 @@ impl KeyPort {
                 if std::str::from_utf8(&plaintext).is_err() {
                     return Err(Halt::Fail(KeyError::EntryUnreadable { detail: "it is not text".into() }));
                 }
-                if !keep {
-                    return Ok(Some(KeyOutcome::KeyChecked));
-                }
+                let copies = match then {
+                    Then::Keep(copies) => copies,
+                    Then::Check(after) => {
+                        drop(plaintext);
+                        if let Some(after) = after {
+                            if !task.begin_commit() {
+                                return Err(Halt::Fail(KeyError::Cancelled));
+                            }
+                            after(session)?;
+                        }
+                        return Ok(Some(KeyOutcome::KeyChecked));
+                    }
+                };
                 if !task.begin_commit() {
                     return Err(Halt::Fail(KeyError::Cancelled));
                 }
@@ -190,7 +303,7 @@ impl KeyPort {
         Arc::new(Self {
             clock,
             plugged: AtomicU64::new(0),
-            state: Mutex::new(State { session: None, waiting: Vec::new() }),
+            state: Mutex::new(State { session: None, waiting: Vec::new(), enrolled: None }),
         })
     }
 
@@ -223,23 +336,27 @@ impl KeyPort {
     ) -> Arc<KeyTask> {
         let purpose = KeyPurpose::OpenEntry { entry: entry.clone() };
         let copies = copies.map(|copies| (copies, Duration::from_secs(ttl_secs.into())));
-        self.open_or_check(purpose, store, entry, copies, listener)
+        let expected = self.expected();
+        self.open_or_check(purpose, store, entry, Then::Keep(copies), listener, expected)
     }
 
     /// Setup's key check: opens `entry` to prove the key works, and wipes
     /// the text at once. No copy is kept.
     pub fn check_key(self: Arc<Self>, store: Arc<PassStore>, entry: String, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
         let purpose = KeyPurpose::CheckKey { entry: entry.clone() };
-        self.open_or_check(purpose, store, entry, None, listener)
+        let expected = self.expected();
+        self.open_or_check(purpose, store, entry, Then::Check(None), listener, expected)
     }
 
     /// Unlocks the key for a git login. Once the PIN is verified the task
     /// shows `Working`; the Rust caller then takes `login_signer`, opens the
     /// connection, and calls `finish_login`.
     pub fn sign_in(self: Arc<Self>, login: LoginPurpose, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
+        let expected = self.expected();
         self.start(
             KeyPurpose::SignIn { login },
             listener,
+            expected,
             |session| session.ssh_key().map(drop),
             |task, session| {
                 session.ssh_key()?;
@@ -249,5 +366,50 @@ impl KeyPort {
                 Ok(None)
             },
         )
+    }
+
+    /// Sets the key the store was set up with (from `enrolled_key`), or
+    /// none. While set, every task on another card fails before any PIN is
+    /// sent; see `key_mismatch` on the task.
+    pub fn set_enrolled_key(&self, key: Option<KeyIdentity>) {
+        self.lock().enrolled = key;
+    }
+
+    /// Reads the enrolled key of the store in `state_dir` and sets it.
+    /// Returns it, or `None` if setup has not recorded one (then every card
+    /// is accepted, as during setup).
+    pub fn load_enrolled_key(&self, state_dir: String) -> Result<Option<KeyIdentity>, PawError> {
+        let key = enrolment::load_enrolment(std::path::Path::new(&state_dir))?;
+        self.set_enrolled_key(key.clone());
+        Ok(key)
+    }
+
+    pub fn enrolled_key(&self) -> Option<KeyIdentity> {
+        self.expected()
+    }
+
+    /// How the plugged-in key differs from the enrolled one, or `None` if it
+    /// is the enrolled key, no key is enrolled, or no key is plugged in.
+    pub fn key_mismatch(&self) -> Option<KeyMismatch> {
+        let session = self.session()?;
+        enrolment_check(self.expected().as_ref(), &session)
+    }
+
+    /// Whether a key is plugged in and tasks may send it the PIN: it is the
+    /// enrolled key, or none is enrolled.
+    pub fn key_matches_enrolment(&self) -> bool {
+        self.session().is_some() && self.key_mismatch().is_none()
+    }
+
+    /// "Replace my key": records the plugged-in key as the store's key in
+    /// `state_dir`, in place of the old one, and accepts it from now on.
+    /// Needs no PIN. Encrypting new entries for it is a separate step (the
+    /// store's `.gpg-id` and the pinned keys).
+    pub fn replace_enrolled_key(&self, state_dir: String) -> Result<KeyIdentity, PawError> {
+        let session = self.session().ok_or_else(|| PawError::Card("no key is plugged in".into()))?;
+        let identity = KeyIdentity::of(session.card_info());
+        enrolment::save_enrolment(std::path::Path::new(&state_dir), &identity)?;
+        self.set_enrolled_key(Some(identity.clone()));
+        Ok(identity)
     }
 }

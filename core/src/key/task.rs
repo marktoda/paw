@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 
 use zeroize::Zeroizing;
 
+use super::enrolment::KeyMismatch;
 use super::session::{Halt, KeySession, Pin};
 use super::signer::SessionSigner;
 use super::{KeyError, KeyOutcome, KeyPurpose, KeyTaskListener, KeyTaskState, TaskProgress};
@@ -42,6 +43,8 @@ struct Inner {
     session: Option<Arc<KeySession>>,
     /// A sign-in task has the PIN verified and can sign.
     signer_ready: bool,
+    /// The task refused a card that is not the enrolled key.
+    mismatch: Option<KeyMismatch>,
 }
 
 pub(crate) struct TaskCore {
@@ -167,6 +170,11 @@ impl TaskCore {
         session.watch(self);
     }
 
+    /// Records why the card was refused, before the task says it failed.
+    pub(crate) fn set_key_mismatch(&self, mismatch: KeyMismatch) {
+        self.lock().mismatch = Some(mismatch);
+    }
+
     pub(crate) fn mark_signer_ready(&self) {
         self.lock().signer_ready = true;
         self.changed.notify_all();
@@ -258,10 +266,14 @@ pub(crate) type Body = Box<dyn FnOnce(&Arc<TaskCore>) -> Result<Option<KeyOutcom
 impl KeyTask {
     /// Creates a task in `initial` and, unless that is final, starts its
     /// thread on `body`.
-    pub(crate) fn start(
+    ///
+    /// `mismatch` is set when the task starts out refusing a card that is
+    /// not the enrolled key.
+    pub(crate) fn start_with_mismatch(
         purpose: KeyPurpose,
         listener: Arc<dyn KeyTaskListener>,
         initial: KeyTaskState,
+        mismatch: Option<KeyMismatch>,
         body: Body,
     ) -> Arc<Self> {
         let finished = initial.is_final();
@@ -278,6 +290,7 @@ impl KeyTask {
                 committing: false,
                 session: None,
                 signer_ready: false,
+                mismatch,
             }),
             changed: Condvar::new(),
         });
@@ -310,6 +323,11 @@ impl KeyTask {
             }
         }
         task
+    }
+
+    /// A task that has already failed with `error`.
+    pub(crate) fn failed(purpose: KeyPurpose, listener: Arc<dyn KeyTaskListener>, error: KeyError) -> Arc<Self> {
+        Self::start_with_mismatch(purpose, listener, KeyTaskState::Failed { error }, None, Box::new(|_| Ok(None)))
     }
 
     /// Blocks until the task has finished, or `timeout` has passed. For
@@ -395,5 +413,13 @@ impl KeyTask {
     /// Stops the task now, at any stage. See the module comment.
     pub fn cancel(&self) {
         self.core.cancel();
+    }
+
+    /// If the task failed because the plugged-in key is not the one the
+    /// store was set up with: both keys, for "This is a different key from
+    /// the one this store was set up with". The task's error is then
+    /// `NotForThisKey`, and no PIN was sent.
+    pub fn key_mismatch(&self) -> Option<KeyMismatch> {
+        self.core.lock().mismatch.clone()
     }
 }

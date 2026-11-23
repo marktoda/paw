@@ -15,8 +15,10 @@
 //! - [`touch`]: when to show `Touch`.
 //! - [`decrypt`]: an entry, split into what needs the card and what not.
 //! - [`signer`]: an SSH signer that signs through the session.
+//! - [`enrolment`]: the key the store was set up with; no PIN to another.
 
 mod decrypt;
+pub mod enrolment;
 mod port;
 mod session;
 mod signer;
@@ -28,7 +30,11 @@ mod wire;
 use std::sync::Arc;
 use std::time::Duration;
 
+pub use enrolment::{KeyIdentity, KeyMismatch};
 pub use port::KeyPort;
+pub(crate) use port::{After, Work};
+pub(crate) use session::Halt;
+pub(crate) use task::TaskCore;
 pub use session::KeySession;
 pub use signer::SessionSigner;
 pub use task::KeyTask;
