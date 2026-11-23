@@ -35,6 +35,8 @@ enum SyncPillState: Equatable {
     case upToDate(checked: Date)
     /// Never checked from this iPhone: the next check needs the key.
     case needsKey
+    /// Never checked from this iPhone; the GitHub sign-in can check.
+    case notChecked
     case notSent(Int)
     case offline(checked: Date?)
     case failed(String)
@@ -47,6 +49,7 @@ enum SyncPillState: Equatable {
         case .working: .syncing
         case .upToDate: .synced
         case .needsKey: .needsKey
+        case .notChecked: .syncing
         case .notSent: .notPushed
         case .offline: .offline
         case .failed, .paused: .failed
@@ -58,6 +61,7 @@ enum SyncPillState: Equatable {
         case .working(let text): text
         case .upToDate(let checked): "Up to date \u{00B7} checked \(syncAgo(checked, now: now))"
         case .needsKey: "Updates need your key"
+        case .notChecked: "Not checked yet"
         case .notSent(let count): count == 1 ? "1 change not sent" : "\(count) changes not sent"
         case .offline(let checked?): "Offline \u{00B7} last checked \(syncAgo(checked, now: now))"
         case .offline(nil): "Offline"
@@ -219,6 +223,11 @@ final class SyncModel {
     /// last did, for UI tests. Empty on a device.
     private(set) var simSummary = ""
     private(set) var simStatus = ""
+    /// The GitHub sign-in, which checks for changes without the key when
+    /// it is for this store's repository.
+    @ObservationIgnored var gitHub: GitHubAccess?
+    /// Said in the key sheet when a check fell back to the key.
+    private(set) var keyPathNote: String?
 
     @ObservationIgnored private weak var app: AppModel?
     @ObservationIgnored private var tasks: [UUID: KeyTask] = [:]
@@ -272,7 +281,7 @@ final class SyncModel {
         if let lastChecked {
             return .upToDate(checked: lastChecked)
         }
-        return .needsKey
+        return checksWithSignIn ? .notChecked : .needsKey
     }
 
     private func workingText(_ kind: SyncKind, unpushed: Int) -> String {
@@ -289,8 +298,9 @@ final class SyncModel {
     /// the key sheet that updates the store (design.md 2.3).
     func pillTapped(app: AppModel) {
         let unpushed = app.edits?.unpushed.count ?? 0
-        if pillState(unpushed: unpushed) == .needsKey {
-            start(.refresh, app: app)
+        let state = pillState(unpushed: unpushed)
+        if state == .needsKey || state == .notChecked {
+            check(app: app)
         } else {
             showStatus()
         }
@@ -383,7 +393,11 @@ final class SyncModel {
     /// "Try again" on the status page, after a failure.
     func retryFailed(app: AppModel) {
         guard let failure else { return }
-        start(failure.during, app: app)
+        if failure.during == .refresh {
+            check(app: app)
+        } else {
+            start(failure.during, app: app)
+        }
     }
 
     /// Cancel, or the sheet swiped away. A command waiting for a touch
@@ -399,6 +413,7 @@ final class SyncModel {
         }
         sheet = nil
         pinEntry = ""
+        keyPathNote = nil
     }
 
     /// The sheet went away: go where it said to.
@@ -548,9 +563,23 @@ final class SyncModel {
     /// held-back changes): then it turns into the status page that says so.
     private func finished(_ kind: SyncKind, sheetID: UUID) {
         running = nil
+        let needsLook = absorb((try? sync.lastTaskResult()) ?? nil, kind: kind)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard let self, self.sheet?.id == sheetID, case .key(_, _, .done)? = self.sheet?.mode else { return }
+            if needsLook {
+                self.sheet?.mode = .status
+            } else {
+                self.sheet = nil
+            }
+        }
+    }
+
+    /// What a sync that went through brought back, said on the pill, the
+    /// status page and the card on Home. `true` if it needs looking at.
+    private func absorb(_ report: SyncReport?, kind: SyncKind) -> Bool {
         lastChecked = Date()
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.checkedKey(repoDir))
-        let report = (try? sync.lastTaskResult()) ?? nil
         var needsLook = false
         if let report {
             switch report.state {
@@ -574,14 +603,82 @@ final class SyncModel {
         #if targetEnvironment(simulator)
         refreshSimSummary()
         #endif
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(1))
-            guard let self, self.sheet?.id == sheetID, case .key(_, _, .done)? = self.sheet?.mode else { return }
-            if needsLook {
-                self.sheet?.mode = .status
-            } else {
-                self.sheet = nil
+        return needsLook
+    }
+
+    // MARK: Checking with the GitHub sign-in
+
+    /// The GitHub sign-in is for this store's repository: checking needs
+    /// no key.
+    var checksWithSignIn: Bool {
+        gitHub?.covers(address: address) ?? false
+    }
+
+    /// "Check for changes": with the GitHub sign-in when it covers this
+    /// store, else with the key.
+    func check(app: AppModel) {
+        if checksWithSignIn {
+            checkWithSignIn(app: app)
+        } else {
+            start(.refresh, app: app)
+        }
+    }
+
+    /// Fetches over HTTPS with the sign-in and integrates as the key's
+    /// check does, with no key sheet. Sends nothing. If the sign-in has
+    /// ended, the check goes on with the key, and the key sheet says why.
+    private func checkWithSignIn(app: AppModel) {
+        guard running == nil, !accepting, let gitHub else { return }
+        self.app = app
+        failure = nil
+        running = .refresh
+        progress = nil
+        keyPathNote = nil
+        let store = app.store
+        let repoDir = repoDir
+        let core = gitHub.core
+        workQueue.async { [weak self] in
+            let snapshot = StoreSnapshot.take(store: store, repoDir: repoDir)
+            let result = Result { try core.refreshStore() }
+            let stillSignedIn = (try? core.isSignedIn()) ?? false
+            let handoff = SyncHandoff(value: (snapshot, result, stillSignedIn))
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self?.checkedWithSignIn(before: handoff.value.0, handoff.value.1, stillSignedIn: handoff.value.2)
+                }
             }
+        }
+    }
+
+    private func checkedWithSignIn(before: StoreSnapshot, _ result: Result<SyncReport, Error>, stillSignedIn: Bool) {
+        running = nil
+        gitHub?.reload()
+        switch result {
+        case .success(let report):
+            self.before = before
+            if absorb(report, kind: .refresh) {
+                recomputeLocal()
+                if sheet == nil {
+                    sheet = SyncSheet(mode: .status)
+                } else {
+                    sheet?.mode = .status
+                }
+            }
+        case .failure(let error):
+            if !stillSignedIn, let app {
+                start(.refresh, app: app)
+                keyPathNote = "Your GitHub sign-in ended, so this check uses your key."
+                return
+            }
+            let unpushed = app?.edits?.unpushed.count ?? 0
+            if let error = error as? SyncError {
+                failure = SyncFailure(error, during: .refresh, unpushed: unpushed, host: "github.com")
+            } else {
+                failure = SyncFailure(
+                    kind: .other, during: .refresh, problem: "paw couldn't check for changes.",
+                    nextStep: SyncFailure.waiting(unpushed), details: [describe(error)], pill: "Check failed")
+            }
+            recomputeLocal()
         }
     }
 

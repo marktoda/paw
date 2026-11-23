@@ -39,6 +39,9 @@ final class StoreRootModel {
     private(set) var phase: Phase = .failed(detail: "", unpushed: 0)
     let location: StoreLocation
     let keyPort: KeyPort
+    /// The GitHub sign-in, if this build has one (the simulator only with
+    /// `-pawSimGitHub`).
+    let gitHub: GitHubAccess?
     private let clock: Clock
     private let connect: AppModel.Connect = { try KeyConnection.openForSession() }
     #if targetEnvironment(simulator)
@@ -62,11 +65,13 @@ final class StoreRootModel {
         self.location = location
         self.clock = clock
         keyPort = KeyPort(clock: clock)
+        gitHub = GitHubRefresh.access(stateDir: location.stateDir)
         route()
     }
 
     /// Setup if it is not done, else Home.
     func route() {
+        gitHub?.reload()
         do {
             let setup = try Setup.open(stateDir: location.stateDir.path)
             if case .done = setup.state() {
@@ -130,6 +135,7 @@ final class StoreRootModel {
             model.edits = StoreEdits(
                 writer: StoreWriter.open(stateDir: location.stateDir.path), sync: sync,
                 repoDir: location.repoDir.path, sendingNote: nil)
+            model.edits?.syncing?.gitHub = gitHub
             let controls = StoreControls(
                 address: sync?.address() ?? "",
                 hostFingerprints: (try? sync?.hostFingerprints()) ?? [],
@@ -270,6 +276,7 @@ private struct StoreRootContent: View {
                     detail: detail, unpushed: unpushed, retry: { root.route() }, startOver: { root.startOver() })
             }
         }
+        .environment(\.gitHubAccess, root.gitHub)
         #if DEBUG && targetEnvironment(simulator)
         .background(alignment: .topLeading) {
             // For the UI tests: what is left of a store after it was removed.

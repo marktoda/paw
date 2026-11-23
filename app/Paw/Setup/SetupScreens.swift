@@ -396,6 +396,7 @@ private struct AddressScreen: View {
                 .buttonStyle(.pawPrimary)
                 .disabled(model.working != nil || model.addressText.trimmingCharacters(in: .whitespaces).isEmpty)
                 .accessibilityIdentifier("address-connect")
+            GitHubChooseButton(model: model)
         }
     }
 

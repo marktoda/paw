@@ -340,7 +340,7 @@ private struct SyncSheetHost: View {
                     purpose: purpose(keyStage.kind),
                     stage: keyStage.stage,
                     pin: $syncing.pinEntry,
-                    note: touchNote,
+                    note: [syncing.keyPathNote, touchNote].compactMap { $0 }.joined(separator: " ").nilIfEmpty,
                     onContinue: { syncing.continueWithPin() },
                     onCancel: { syncing.cancelSheet() },
                     onRetry: { syncing.retry() },
@@ -483,7 +483,8 @@ private struct SyncStatusSheet: View {
                     ErrorRow(
                         kind: failure.kind == .offline ? .warning : .error,
                         problem: failure.problem, nextStep: failure.nextStep,
-                        actionTitle: failure.actionTitle, actionNeedsKey: failure.actionNeedsKey
+                        actionTitle: failure.actionTitle,
+                        actionNeedsKey: failure.actionNeedsKey && !(failure.during == .refresh && syncing.checksWithSignIn)
                     ) {
                         act(on: failure)
                     }
@@ -572,16 +573,23 @@ private struct SyncStatusSheet: View {
                 .listRowBackground(Color.clear)
             }
             Button {
-                syncing.start(.refresh, app: model)
+                syncing.check(app: model)
             } label: {
-                KeyActionLabel("Check for changes")
+                if syncing.checksWithSignIn {
+                    Text(syncing.running == .refresh ? "Checking for changes\u{2026}" : "Check for changes")
+                } else {
+                    KeyActionLabel("Check for changes")
+                }
             }
             .buttonStyle(PawButtonStyle(kind: canSend ? .secondary : .primary))
+            .disabled(syncing.running != nil)
             .accessibilityIdentifier("sync-check")
             .listRowInsets(EdgeInsets(top: PawMetrics.Spacing.s, leading: 0, bottom: 0, trailing: 0))
             .listRowBackground(Color.clear)
         } footer: {
-            Text(canSend
+            Text(syncing.checksWithSignIn
+                 ? (canSend ? "Sending needs your key. Checking uses your GitHub sign-in." : "Checking uses your GitHub sign-in.")
+                 : canSend
                  ? "Both need your key: its PIN if paw doesn't have it, and a touch. Checking brings in changes made elsewhere without sending yours."
                  : "Checking needs your key: its PIN if paw doesn't have it, and a touch.")
                 .font(PawFont.footnote)
@@ -629,6 +637,11 @@ private struct SyncSimulatorSection: View {
 #endif
 
 extension String {
+    /// `nil` for "".
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
+
     /// "Just now" from "just now".
     var capitalizedFirst: String {
         prefix(1).uppercased() + dropFirst()

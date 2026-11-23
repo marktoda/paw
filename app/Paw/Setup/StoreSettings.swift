@@ -51,6 +51,7 @@ struct StoreSettingsSections: View {
                 PawSectionHeader("Store")
             }
         }
+        GitHubSettingsSection()
         Section {
             Button("Key diagnostics") { showsDiagnostics = true }
                 .foregroundStyle(PawColor.label)
