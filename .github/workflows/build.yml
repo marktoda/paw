@@ -56,10 +56,15 @@ jobs:
   ui:
     needs: [core, core-ios]
     runs-on: macos-26
+    # A full run is split across machines so it takes as long as the slowest
+    # part, not the sum. The last part runs every class the others do not
+    # name, so a new test class is never left out. A run narrowed with `only`
+    # uses one machine.
     strategy:
       fail-fast: false
       matrix:
         family: [iPhone]
+        part: ${{ fromJSON(inputs.only && '["rest"]' || '["app","setup","rest"]') }}
     steps:
       - uses: actions/checkout@v4
       - name: Start the simulator booting
@@ -77,12 +82,13 @@ jobs:
           scripts/make-xcframework.sh
       - name: Run the UI tests
         env:
-          PAW_ONLY: ${{ inputs.only }}
+          PAW_ONLY: ${{ inputs.only || (matrix.part == 'app' && 'AppTests') || (matrix.part == 'setup' && 'SetupTests') || '' }}
+          PAW_SKIP: ${{ (!inputs.only && matrix.part == 'rest') && 'AppTests SetupTests' || '' }}
         run: scripts/ci-test.sh ${{ matrix.family }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: report-${{ matrix.family }}
+          name: report-${{ matrix.family }}${{ inputs.only && '' || format('-{0}', matrix.part) }}
           path: app/build/report
           retention-days: 7
 

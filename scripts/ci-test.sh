@@ -24,6 +24,10 @@ only=()
 for name in ${PAW_ONLY:-}; do
   only+=("-only-testing:PawUITests/$name")
 done
+# PAW_SKIP leaves classes out, for a run split across machines.
+for name in ${PAW_SKIP:-}; do
+  only+=("-skip-testing:PawUITests/$name")
+done
 
 # Where the minutes go, so the loop can be made faster with evidence.
 timing="$report/timing.txt"
