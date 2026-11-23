@@ -79,7 +79,7 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 
 | Item | Status |
 |---|---|
-| GitHub sign-in (GitHub App, read-only on one repository) for background pull and the repository picker. The owner registered the app `paw-password-store` (client id `Iv23liyBePbnvQPCcGRz`, device sign-in enabled) on 2026-11-23 | core done; screens and the keychain token store next |
+| GitHub sign-in (GitHub App, read-only on one repository) for background pull and the repository picker. The owner registered the app `paw-password-store` (client id `Iv23liyBePbnvQPCcGRz`, device sign-in enabled) on 2026-11-23 | built, tested against a simulated GitHub only; the first real sign-in is the owner's, on the phone |
 | Deploy key in the Secure Enclave for other hosts | later |
 | Background refresh, "recipients changed" warning, replaced history | later |
 
