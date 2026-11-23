@@ -269,6 +269,29 @@ fn a_generated_password_is_marked_until_it_is_typed_over() {
     assert!(!draft.generated());
 }
 
+/// The lines of a file, each with its ending. A file with no bytes is one
+/// empty line, not none: an entry whose only line is an empty password
+/// (no newline) is written as an empty file.
+fn lines(text: &str) -> Vec<&str> {
+    if text.is_empty() { vec![""] } else { text.split_inclusive('\n').collect() }
+}
+
+#[test]
+fn emptying_the_only_line_changes_that_line_and_nothing_else() {
+    // Shrunk from the property test below: a one-line entry without a
+    // final newline whose password is cleared.
+    let mut draft = edit("0");
+    draft.set_password("");
+    assert_eq!(saved(&draft), "");
+    assert_eq!(lines(&saved(&draft)), [""]);
+    let mut draft = edit("0\n");
+    draft.set_password("");
+    assert_eq!(saved(&draft), "\n");
+    let mut draft = edit("");
+    draft.set_password("x");
+    assert_eq!(saved(&draft), "x\n");
+}
+
 /// Entry-like text: fields, notes, otp lines, odd endings and spacing.
 fn entry_like() -> impl Strategy<Value = String> {
     let line = prop_oneof![
@@ -337,8 +360,8 @@ proptest! {
             Change::Field(k, v) => draft.set_field(k, v),
         }
         let after = saved(&draft);
-        let before_lines: Vec<&str> = entry.split_inclusive('\n').collect();
-        let after_lines: Vec<&str> = after.split_inclusive('\n').collect();
+        let before_lines = lines(&entry);
+        let after_lines = lines(&after);
 
         if after_lines.len() == before_lines.len() {
             let differing = before_lines.iter().zip(&after_lines).filter(|(a, b)| a != b).count();
@@ -347,8 +370,7 @@ proptest! {
             // An added field: everything before the last original line is
             // untouched, and the new line is last.
             prop_assert!(
-                after_lines.len() == before_lines.len() + 1
-                    || (before_lines.is_empty() && after_lines.len() == 2),
+                after_lines.len() == before_lines.len() + 1,
                 "{:?} -> {:?}", entry, after
             );
             for (a, b) in before_lines.iter().zip(&after_lines).take(before_lines.len().saturating_sub(1)) {

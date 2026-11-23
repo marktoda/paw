@@ -15,7 +15,7 @@ use paw_core::entry::EntryDoc;
 use paw_core::ffi::write::StoreWriter;
 use paw_core::recipients::{Recipient, entry_recipients};
 use paw_core::write::cert::{evaluate, read_certificates};
-use paw_core::write::{EntryDraft, Keyring, WriteError, WriteStore};
+use paw_core::write::{EntryDraft, Keyring, LineStatus, WriteError, WriteStore};
 use support::git;
 
 /// A GnuPG home that exists for one test.
@@ -129,6 +129,7 @@ impl Store {
         std::fs::write(repo.join(".gpg-id"), gpg_id).unwrap();
         git(&repo, &["add", ".gpg-id"]);
         git(&repo, &["commit", "--quiet", "-m", "Set the store's key."]);
+        Keyring::open(&state).unwrap().accept_all_recipients_at_setup(&repo).unwrap();
         Self { _root: root, state, repo }
     }
 
@@ -335,6 +336,52 @@ fn the_newest_valid_encryption_subkey_is_chosen_as_gnupg_chooses_it() {
     store.write().save(&new_entry("", "x", "pw")).unwrap();
     assert_eq!(entry_recipients(&store.file("x")).unwrap().keys, [key_id(middle)]);
     assert_eq!(gpg.decrypt(&store.file("x")).0, "pw\n");
+}
+
+#[test]
+fn a_gpg_id_line_naming_a_revoked_or_expired_subkey_is_not_satisfied() {
+    let gpg = Gpg::new();
+    let primary = key_with_three_encryption_subkeys(&gpg);
+    let fingerprints = gpg.fingerprints(&primary);
+    let (expired, newest) = (fingerprints[1].clone(), fingerprints[3].clone());
+    gpg.run(&["--command-fd", "0", "--status-fd", "2", "--edit-key", &primary], b"key 3\nrevkey\ny\n0\n\ny\nsave\n");
+
+    let store = Store::new(&format!("{newest}\n{}\n", &expired[24..]));
+    store.import(&gpg.export(&primary, true));
+    let keyring = Keyring::open(&store.state).unwrap();
+    assert!(matches!(keyring.line_status(&newest, now()), LineStatus::Refused { reason, .. } if reason.contains("revoked")));
+    assert!(matches!(keyring.line_status(&expired[24..], now()), LineStatus::Refused { reason, .. } if reason.contains("expired")));
+    let error = store.write().save(&new_entry("", "x", "pw")).unwrap_err();
+    assert!(
+        matches!(&error, WriteError::MissingRecipients { missing, .. }
+            if missing.len() == 2 && missing[0].contains("revoked") && missing[1].contains("expired")),
+        "{error:?}"
+    );
+    assert!(!store.repo.join("x.gpg").exists());
+}
+
+#[test]
+fn a_gpg_id_line_naming_a_valid_subkey_paw_does_not_encrypt_to_needs_a_binding() {
+    let gpg = Gpg::new();
+    let primary = key_with_three_encryption_subkeys(&gpg);
+    let fingerprints = gpg.fingerprints(&primary);
+    let (middle, newest) = (fingerprints[2].clone(), fingerprints[3].clone());
+
+    let store = Store::new(&format!("{middle}\n"));
+    store.import(&gpg.export(&primary, true));
+    let error = store.write().save(&new_entry("", "x", "pw")).unwrap_err();
+    assert!(
+        matches!(&error, WriteError::MissingRecipients { missing, .. }
+            if missing.len() == 1 && missing[0].contains("not the key paw encrypts to")),
+        "{error:?}"
+    );
+    // The import preview does not claim the line either.
+    assert!(store.writer().inspect_certificate(gpg.export(&primary, true)).unwrap()[0].satisfies.is_empty());
+
+    // The person decides the line means this certificate's chosen key.
+    store.writer().bind_recipient(middle.clone(), newest.clone()).unwrap();
+    store.write().save(&new_entry("", "x", "pw")).unwrap();
+    assert_eq!(entry_recipients(&store.file("x")).unwrap().keys, [key_id(&newest)]);
 }
 
 #[test]

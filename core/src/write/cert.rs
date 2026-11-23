@@ -56,8 +56,11 @@ pub struct EncryptionChoice {
 pub struct CertificateInfo {
     /// The primary key's fingerprint, upper-case hex.
     pub primary: String,
-    /// The primary key's and every subkey's fingerprint.
+    /// The fingerprints a `.gpg-id` line may name it by: the primary key's
+    /// and the chosen encryption key's.
     pub fingerprints: Vec<String>,
+    /// Every other subkey, with why paw does not encrypt to it.
+    pub others: Vec<(String, String)>,
     /// User IDs with a verified, unrevoked self-signature.
     pub user_ids: Vec<String>,
     /// The e-mail addresses in those user IDs, lower case.
@@ -110,6 +113,8 @@ pub fn read_certificates(bytes: &[u8]) -> Result<Vec<SignedPublicKey>, WriteErro
     }
     Ok(certificates)
 }
+
+const OLDER: &str = "it is not the key paw encrypts to: a newer encryption subkey is";
 
 fn created(sig: &Signature) -> u32 {
     sig.created().map_or(0, |t| t.as_secs())
@@ -229,43 +234,55 @@ pub fn evaluate(cert: &SignedPublicKey, now: u32) -> Result<CertificateInfo, Wri
         return Err(cert_err(format!("the key {primary_fpr} has expired")));
     }
 
-    let mut fingerprints = vec![primary_fpr.clone()];
     let mut best: Option<EncryptionChoice> = None;
     let mut why_none = String::from("it has no key that may encrypt");
+    // Every subkey that is not encrypted to, and why: a `.gpg-id` line
+    // naming one is refused with the reason, never satisfied.
+    let mut others: Vec<(String, String)> = Vec::new();
     for subkey in &cert.public_subkeys {
         let fingerprint = fingerprint_of(&subkey.key);
-        fingerprints.push(fingerprint.clone());
         let verified = |typ: SignatureType| {
             subkey
                 .signatures
                 .iter()
                 .filter(move |sig| sig.typ() == Some(typ) && sig.verify_subkey_binding(primary, &subkey.key).is_ok())
         };
+        let mut skip = |why: &str| others.push((fingerprint.clone(), why.to_owned()));
         if verified(SignatureType::SubkeyRevocation).any(|sig| created(sig) <= now) {
             why_none = format!("its encryption key {fingerprint} has been revoked");
+            skip("it has been revoked");
             continue;
         }
         let Some(binding) = verified(SignatureType::SubkeyBinding)
             .filter(|sig| in_force(sig, now))
             .max_by_key(|sig| created(sig))
         else {
+            skip("the certificate's own signature does not vouch for it");
             continue;
         };
         let flags = binding.key_flags();
         if !(flags.encrypt_comms() || flags.encrypt_storage()) || !can_encrypt(subkey.key.algorithm()) {
+            skip("it is not an encryption key");
             continue;
         }
         let created_at = subkey.key.created_at().as_secs();
         if created_at > now {
+            skip("it was made in the future");
             continue;
         }
         let expires = [key_expiry(created_at, binding), primary_expires].into_iter().flatten().min();
         if expires.is_some_and(|end| end <= now) {
             why_none = format!("its encryption key {fingerprint} has expired");
+            skip("it has expired");
             continue;
         }
         if best.as_ref().is_none_or(|b| created_at > b.created) {
+            if let Some(previous) = best.take() {
+                others.push((previous.fingerprint, OLDER.into()));
+            }
             best = Some(EncryptionChoice { fingerprint, created: created_at, expires, key: as_public_key(&subkey.key)? });
+        } else {
+            skip(OLDER);
         }
     }
     if best.is_none() {
@@ -282,12 +299,21 @@ pub fn evaluate(cert: &SignedPublicKey, now: u32) -> Result<CertificateInfo, Wri
             });
         }
     }
+    // A line may name the certificate only by its primary key or by the key
+    // that is actually encrypted to.
+    let mut fingerprints = vec![primary_fpr.clone()];
+    if let Some(choice) = &best
+        && choice.fingerprint != primary_fpr
+    {
+        fingerprints.push(choice.fingerprint.clone());
+    }
 
     let mut emails: Vec<String> = user_ids.iter().filter_map(|id| email_in(id)).collect();
     emails.dedup();
     Ok(CertificateInfo {
         primary: primary_fpr,
         fingerprints,
+        others,
         user_ids,
         emails,
         encryption: best.ok_or(why_none),

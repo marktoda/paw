@@ -125,7 +125,7 @@ impl WriteStore {
         let target = draft.path();
         let (folder, _) = split(&target);
         let author = author(&self.state_dir);
-        let mut keyring = self.keyring()?;
+        let keyring = self.keyring()?;
         let now = now_secs();
 
         let Some(original) = draft.original_path() else {

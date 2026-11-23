@@ -367,6 +367,14 @@ impl StoreWriter {
         self.store.folder_recipients(&folder).is_ok_and(|r| r.writable())
     }
 
+    /// Setup, once the store is cloned and the person has seen who can open
+    /// it: records every `.gpg-id` as accepted. Until then nothing can be
+    /// saved; after it, any change to who can open a folder has to be
+    /// accepted for that folder.
+    pub fn accept_all_recipients_at_setup(&self) -> Result<(), WriteError> {
+        self.store.keyring()?.accept_all_recipients_at_setup(self.store.repo())
+    }
+
     /// After "Who can open … changed": accepts the folder's current
     /// `.gpg-id`.
     pub fn accept_recipients(&self, folder: String) -> Result<(), WriteError> {

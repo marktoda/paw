@@ -114,6 +114,7 @@ fn world() -> World {
     keyring.pin_card_key(&card_decryption_key(w.card.clone()).unwrap()).unwrap();
     // The fixture's other key, pinned as a key paw may encrypt to.
     keyring.pin_card_key(&other).unwrap();
+    keyring.accept_all_recipients_at_setup(&w.repo()).unwrap();
     w
 }
 

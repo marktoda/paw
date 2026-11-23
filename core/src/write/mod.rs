@@ -40,10 +40,14 @@ pub enum WriteError {
     /// `.gpg-id` says, so paw does not.
     #[error("paw doesn't have the key for {} (listed in {gpg_id})", .missing.join(", "))]
     MissingRecipients { gpg_id: String, missing: Vec<String> },
-    /// The `.gpg-id` changed since paw last encrypted for it; the person
-    /// has to accept the new list first.
+    /// Who can open entries here differs from what was accepted: the
+    /// governing `.gpg-id` is another file (`before_gpg_id`, `None` if none
+    /// governed it) or has other lines. The person has to accept it first.
     #[error("who can open these passwords changed ({gpg_id}); review it before saving here")]
-    RecipientsChanged { gpg_id: String },
+    RecipientsChanged { gpg_id: String, before_gpg_id: Option<String>, before: Vec<String>, after: Vec<String> },
+    /// Setup has not recorded who can open this store yet.
+    #[error("paw hasn't confirmed who can open this store yet")]
+    RecipientsNotConfirmed,
     /// Moving to a folder with other recipients re-encrypts the entry,
     /// which needs it open.
     #[error("open {entry} with your key to move it to a folder with different keys")]

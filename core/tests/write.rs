@@ -118,7 +118,9 @@ fn store_with(gpg_id: &str, files: &[(&str, &[u8])]) -> Store {
     let state = root.path().join("state");
     let repo = state.join("repo");
     git(root.path(), &["clone", "--quiet", bare.to_str().unwrap(), repo.to_str().unwrap()]);
-    Keyring::open(&state).unwrap().pin_card_key(&card_key()).unwrap();
+    let mut keyring = Keyring::open(&state).unwrap();
+    keyring.pin_card_key(&card_key()).unwrap();
+    keyring.accept_all_recipients_at_setup(&repo).unwrap();
     Store { root, state, repo }
 }
 
@@ -332,20 +334,155 @@ fn two_pinned_keys_matching_one_line_are_ambiguous_until_bound() {
 #[test]
 fn a_changed_gpg_id_stops_saving_until_it_is_accepted() {
     let s = store();
+    let fpr = card().fingerprint_hex();
     s.write().save(&new_entry("Work", "a", "pw")).unwrap();
-    // A pull changes who can open the store: same key, a comment added.
-    s.desktop(".gpg-id", format!("# laptop\n{}\n", card().fingerprint_hex()).as_bytes());
+    // A pull changes who can open the store: same key, named by its key ID.
+    s.desktop(".gpg-id", format!("# laptop\n{}\n", &fpr[24..]).as_bytes());
     let head = s.head();
 
-    assert!(matches!(
-        s.write().save(&new_entry("Work", "b", "pw")).unwrap_err(),
-        WriteError::RecipientsChanged { gpg_id } if gpg_id == ".gpg-id"
-    ));
+    let error = s.write().save(&new_entry("Work", "b", "pw")).unwrap_err();
+    assert!(
+        matches!(&error, WriteError::RecipientsChanged { gpg_id, before_gpg_id: Some(was), before, after }
+            if gpg_id == ".gpg-id" && was == ".gpg-id" && *before == [fpr.clone()] && *after == [fpr[24..].to_owned()]),
+        "{error:?}"
+    );
     assert!(s.write().folder_recipients("Work").unwrap().changed);
     assert_eq!(s.head(), head);
 
     s.keyring().accept_recipients(&s.repo, "Work").unwrap();
     s.write().save(&new_entry("Work", "b", "pw")).unwrap();
+}
+
+/// A commit from "the desktop" that removes `path`, as if pulled.
+fn desktop_remove(s: &Store, path: &str) {
+    s.git(&["rm", "--quiet", path]);
+    s.git(&["commit", "--quiet", "-m", &format!("Remove {path} on the desktop.")]);
+}
+
+#[test]
+fn a_gpg_id_a_pull_adds_deeper_stops_saving_in_that_subtree_until_accepted() {
+    let s = store();
+    let fpr = card().fingerprint_hex();
+    // The first save accepts nothing: setup already recorded the store.
+    s.write().save(&new_entry("Work", "a", "pw")).unwrap();
+    s.desktop("Work/.gpg-id", format!("{}\n", &fpr[24..]).as_bytes());
+
+    for folder in ["Work", "Work/Team"] {
+        let error = s.write().save(&new_entry(folder, "b", "pw")).unwrap_err();
+        assert!(
+            matches!(&error, WriteError::RecipientsChanged { gpg_id, before_gpg_id: Some(was), before, after }
+                if gpg_id == "Work/.gpg-id" && was == ".gpg-id" && *before == [fpr.clone()] && *after == [fpr[24..].to_owned()]),
+            "{folder}: {error:?}"
+        );
+        assert!(!s.write().folder_recipients(folder).unwrap().writable());
+    }
+    // Folders the new file does not govern are as they were.
+    s.write().save(&new_entry("Personal", "b", "pw")).unwrap();
+    s.write().save(&new_entry("", "c", "pw")).unwrap();
+
+    s.keyring().accept_recipients(&s.repo, "Work").unwrap();
+    s.write().save(&new_entry("Work", "b", "pw")).unwrap();
+    s.write().save(&new_entry("Work/Team", "b", "pw")).unwrap();
+    assert_eq!(s.decrypt("Work/Team/b"), "pw\n");
+}
+
+#[test]
+fn a_gpg_id_a_pull_removes_stops_saving_in_that_subtree_until_accepted() {
+    let fpr = card().fingerprint_hex();
+    let s = store_with(&format!("{fpr}\n"), &[("Work/.gpg-id", format!("{}\n", &fpr[24..]).as_bytes())]);
+    s.write().save(&new_entry("Work", "a", "pw")).unwrap();
+    desktop_remove(&s, "Work/.gpg-id");
+
+    let error = s.write().save(&new_entry("Work/Team", "b", "pw")).unwrap_err();
+    assert!(
+        matches!(&error, WriteError::RecipientsChanged { gpg_id, before_gpg_id: Some(was), before, after }
+            if gpg_id == ".gpg-id" && was == "Work/.gpg-id" && *before == [fpr[24..].to_owned()] && *after == [fpr.clone()]),
+        "{error:?}"
+    );
+    s.write().save(&new_entry("Personal", "b", "pw")).unwrap();
+
+    s.keyring().accept_recipients(&s.repo, "Work").unwrap();
+    s.write().save(&new_entry("Work/Team", "b", "pw")).unwrap();
+    s.write().save(&new_entry("Work", "c", "pw")).unwrap();
+    // Putting the file back is a change again.
+    s.desktop("Work/.gpg-id", format!("{}\n", &fpr[24..]).as_bytes());
+    assert!(matches!(s.write().save(&new_entry("Work", "d", "pw")).unwrap_err(), WriteError::RecipientsChanged { .. }));
+}
+
+#[test]
+fn nothing_is_saved_before_setup_accepts_who_can_open_the_store() {
+    let s = store();
+    std::fs::remove_file(s.state.join("recipients")).unwrap();
+    s.keyring().pin_card_key(&card_key()).unwrap();
+    let head = s.head();
+    assert!(matches!(s.write().save(&new_entry("Work", "a", "pw")).unwrap_err(), WriteError::RecipientsNotConfirmed));
+    assert!(!s.write().folder_recipients("Work").unwrap().writable());
+    // Saving does not accept anything by itself, and accepting one folder
+    // is not setup.
+    assert!(matches!(s.keyring().accept_recipients(&s.repo, "Work").unwrap_err(), WriteError::RecipientsNotConfirmed));
+    assert_eq!(s.head(), head);
+
+    s.keyring().accept_all_recipients_at_setup(&s.repo).unwrap();
+    s.write().save(&new_entry("Work", "a", "pw")).unwrap();
+}
+
+#[test]
+fn a_subkey_the_primary_key_does_not_vouch_for_satisfies_no_line() {
+    let mut rng = rand::thread_rng();
+    let (mut certificate, primary_fpr) = card_certificate();
+    let mut key = |name: &str| {
+        SecretKeyParamsBuilder::default()
+            .key_type(KeyType::Ed25519Legacy)
+            .can_certify(true)
+            .primary_user_id(format!("{name} <{}@example.com>", name.to_lowercase()))
+            .build()
+            .unwrap()
+            .generate(&mut rng)
+            .unwrap()
+    };
+    let stranger = key("Mallory");
+    let loose = key("Loose").to_public_key();
+    let stranger_public = stranger.to_public_key();
+    let foreign = |key: &PublicKey| {
+        PublicSubkey::from_inner(
+            PubKeyInner::new(key.version(), key.algorithm(), key.created_at(), None, key.public_params().clone()).unwrap(),
+        )
+        .unwrap()
+    };
+    let mut flags = KeyFlags::default();
+    flags.set_encrypt_comms(true);
+    flags.set_encrypt_storage(true);
+    // One subkey bound by someone else's primary key, one with no binding.
+    let forged = foreign(&stranger_public.primary_key);
+    let forged_binding = forged
+        .sign(&mut rng, &stranger.primary_key, &stranger_public.primary_key, &Password::empty(), flags, None)
+        .unwrap();
+    let forged_fpr = hex(forged.fingerprint().as_bytes());
+    certificate.public_subkeys.push(SignedPublicSubKey { key: forged, signatures: vec![forged_binding] });
+    let unbound = foreign(&loose.primary_key);
+    let unbound_fpr = hex(unbound.fingerprint().as_bytes());
+    certificate.public_subkeys.push(SignedPublicSubKey { key: unbound, signatures: Vec::new() });
+
+    let info = paw_core::write::cert::evaluate(&certificate, 2_000_000_000).unwrap();
+    assert_eq!(info.fingerprints, [primary_fpr.clone(), card().fingerprint_hex()]);
+    let s = store_with(&format!("{forged_fpr}\n{}\n", &unbound_fpr[24..]), &[]);
+    std::fs::remove_file(s.state.join("recipients")).unwrap();
+    let mut keyring = s.keyring();
+    keyring.pin_certificate(&info).unwrap();
+    keyring.accept_all_recipients_at_setup(&s.repo).unwrap();
+
+    for line in [forged_fpr.as_str(), &unbound_fpr[24..]] {
+        assert!(
+            matches!(keyring.line_status(line, 0), LineStatus::Refused { reason, .. } if reason.contains("does not vouch")),
+            "{line}"
+        );
+    }
+    let error = s.write().save(&new_entry("", "a", "pw")).unwrap_err();
+    assert!(
+        matches!(&error, WriteError::MissingRecipients { missing, .. }
+            if missing.len() == 2 && missing.iter().all(|m| m.contains("does not vouch"))),
+        "{error:?}"
+    );
 }
 
 #[test]
@@ -590,6 +727,8 @@ fn store_with_shared_folder() -> (Store, String) {
     info.fingerprints = vec![other_fpr.clone()];
     info.emails.clear();
     s.keyring().pin_certificate(&info).unwrap();
+    // The folder arrived after setup: the person has seen and accepted it.
+    s.keyring().accept_recipients(&s.repo, "Shared").unwrap();
     (s, other_fpr)
 }
 
@@ -629,6 +768,10 @@ fn a_move_to_a_folder_missing_a_key_is_refused_even_when_open() {
     let doc = EntryDoc::parse(s.decrypt("Work/github.com").into_bytes()).unwrap();
     let head = s.head();
 
+    // Not yet accepted: that comes first.
+    let error = s.write().rename("Work/github.com", "Shared/github.com", Some(&doc)).unwrap_err();
+    assert!(matches!(error, WriteError::RecipientsChanged { .. }), "{error:?}");
+    s.keyring().accept_recipients(&s.repo, "Shared").unwrap();
     let error = s.write().rename("Work/github.com", "Shared/github.com", Some(&doc)).unwrap_err();
 
     assert!(matches!(error, WriteError::MissingRecipients { missing, .. } if missing == ["backup@example.com"]));

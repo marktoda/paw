@@ -13,11 +13,14 @@
 //!    `.gpg-id` usually names the primary key's fingerprint while the card
 //!    exposes only its encryption subkey, and nothing on the phone can
 //!    prove the two belong together except the person and that decrypt;
-//! 2. otherwise, exactly one pinned key that the line names: a full
-//!    fingerprint of the key, of its certificate's primary key or of any of
-//!    its subkeys; a long key ID of any of those; or an e-mail address in
-//!    one of its verified user IDs (exact, any letter case; GnuPG would
-//!    also accept a part of a user ID, paw does not).
+//! 2. otherwise, exactly one pinned key that the line names: the full
+//!    fingerprint or long key ID of the key itself or of its certificate's
+//!    verified primary key, or an e-mail address in one of its verified
+//!    user IDs (exact, any letter case; GnuPG would also accept a part of a
+//!    user ID, paw does not). Any other subkey of the certificate (older,
+//!    revoked, expired, not for encryption, or not vouched for by the
+//!    primary key) never satisfies a line: the line is refused with the
+//!    reason, and only an explicit binding can make it mean a pinned key.
 //!
 //! Short key IDs and names are never matched by themselves: they need a
 //! binding. Resolving a folder is all or nothing: if any line of its
@@ -25,9 +28,16 @@
 //! refused with every such line named. paw never encrypts to fewer keys
 //! than `.gpg-id` names.
 //!
-//! Each `.gpg-id` file's SHA-256 is pinned the first time paw encrypts for
-//! it. If it later differs (a pull changed who can open the folder),
-//! saving there is refused until the person accepts the new list.
+//! paw always says when recipients change. Setup records every `.gpg-id`
+//! in the store, with its contents ([`Keyring::accept_all_recipients_at_setup`]);
+//! nothing is ever accepted implicitly after that. For each folder the
+//! `.gpg-id` that governs it now is compared with the one that governed it
+//! as accepted: another file (one added deeper, or one removed), or other
+//! contents, refuses saving there with [`WriteError::RecipientsChanged`]
+//! naming the old and new recipients, until the person accepts the folder
+//! ([`Keyring::accept_recipients`]). The record is in the state directory,
+//! which a pull never touches. Before setup has recorded anything, saving
+//! is refused everywhere ([`WriteError::RecipientsNotConfirmed`]).
 //!
 //! The file is small text, written whole by rename. Nothing in it is
 //! secret.
@@ -63,8 +73,11 @@ pub struct PinnedKey {
     pub source: KeySource,
     /// For a certificate: its primary key's fingerprint.
     pub primary: Option<String>,
-    /// Every fingerprint of the certificate (primary and subkeys).
+    /// The certificate's fingerprints a line may name it by: its primary
+    /// key's (and the key's own, which is always allowed).
     pub fingerprints: Vec<String>,
+    /// The certificate's other subkeys, with why paw does not use them.
+    pub refused: Vec<(String, String)>,
     /// E-mail addresses from its verified user IDs.
     pub emails: Vec<String>,
     /// When it stops being usable, seconds since 1970.
@@ -138,6 +151,17 @@ impl PinnedKey {
         }
     }
 
+    /// If `line` names one of the certificate's other subkeys, why that
+    /// subkey is not used.
+    fn refusal(&self, line: &str) -> Option<&str> {
+        let names = |fpr: &str| match spec(line) {
+            Spec::Fingerprint(wanted) => wanted == fpr,
+            Spec::LongId(id) => key_id(fpr) == Some(id.as_str()),
+            _ => false,
+        };
+        self.refused.iter().find(|(fpr, _)| names(fpr)).map(|(_, why)| why.as_str())
+    }
+
     fn expired(&self, now: u32) -> bool {
         self.expires.is_some_and(|end| end <= now)
     }
@@ -155,6 +179,10 @@ pub enum LineStatus {
     Ambiguous { fingerprints: Vec<String> },
     /// The key it resolves to has expired; import a refreshed one.
     Expired { fingerprint: String },
+    /// It names a subkey of the certificate pinned as `fingerprint` that
+    /// paw does not encrypt to, for `reason`. Binding the line to a pinned
+    /// key is the only way to use it.
+    Refused { fingerprint: String, subkey: String, reason: String },
 }
 
 /// One line of a `.gpg-id` and how it is satisfied.
@@ -170,16 +198,71 @@ pub struct FolderRecipients {
     /// The `.gpg-id` that decides them, e.g. `work/.gpg-id`.
     pub gpg_id: String,
     pub lines: Vec<RecipientLine>,
-    /// The `.gpg-id` changed since paw last encrypted for it, and the
-    /// change has not been accepted.
+    /// Setup has recorded the store's recipients.
+    pub confirmed: bool,
+    /// The recipients differ from the ones accepted for this folder: another
+    /// `.gpg-id` governs it now, or its contents changed.
     pub changed: bool,
+    /// The `.gpg-id` that governed the folder as accepted, if any.
+    pub accepted_gpg_id: Option<String>,
+    /// Its key lines as accepted.
+    pub accepted_lines: Vec<String>,
 }
 
 impl FolderRecipients {
     /// Whether paw can save in the folder now.
     pub fn writable(&self) -> bool {
-        !self.changed && self.lines.iter().all(|l| matches!(l.status, LineStatus::Ready { .. }))
+        self.confirmed && !self.changed && self.lines.iter().all(|l| matches!(l.status, LineStatus::Ready { .. }))
     }
+}
+
+/// A `.gpg-id` as the person accepted it.
+#[derive(Clone)]
+struct Accepted {
+    path: String,
+    sha: String,
+    text: String,
+}
+
+/// The `.gpg-id` that governs `folder` among `files` (paths in the store),
+/// the way `pass` finds it: in the folder, else the nearest above.
+fn governing_in<'a, T>(files: &'a [T], path_of: impl Fn(&T) -> &str, folder: &str) -> Option<&'a T> {
+    let mut at = folder;
+    loop {
+        let file = if at.is_empty() { ".gpg-id".to_owned() } else { format!("{at}/.gpg-id") };
+        if let Some(found) = files.iter().find(|f| path_of(f) == file) {
+            return Some(found);
+        }
+        if at.is_empty() {
+            return None;
+        }
+        at = at.rsplit_once('/').map_or("", |(parent, _)| parent);
+    }
+}
+
+/// Every `.gpg-id` committed in the store at `root` (its current branch),
+/// outside hidden folders, as `(path, bytes)`.
+fn all_gpg_ids(root: &Path) -> Result<Vec<(String, Vec<u8>)>, WriteError> {
+    let git = |e: git2::Error| WriteError::Failed { message: format!("could not read the store: {}", e.message()) };
+    let repo = git2::Repository::open(root).map_err(git)?;
+    let tree = repo.head().and_then(|h| h.peel_to_tree()).map_err(git)?;
+    let mut found = Vec::new();
+    tree.walk(git2::TreeWalkMode::PreOrder, |folder, entry| {
+        let name = entry.name().unwrap_or_default();
+        if entry.kind() == Some(git2::ObjectType::Tree) {
+            // Hidden folders (`.git`-like, `.extensions`) are not the store's.
+            return if name.starts_with('.') { git2::TreeWalkResult::Skip } else { git2::TreeWalkResult::Ok };
+        }
+        if name == ".gpg-id"
+            && entry.filemode() == i32::from(git2::FileMode::Blob)
+            && let Ok(blob) = repo.find_blob(entry.id())
+        {
+            found.push((format!("{folder}{name}"), blob.content().to_vec()));
+        }
+        git2::TreeWalkResult::Ok
+    })
+    .map_err(git)?;
+    Ok(found)
 }
 
 /// The pinned keys, bindings and `.gpg-id` pins of one store.
@@ -188,8 +271,8 @@ pub struct Keyring {
     keys: Vec<PinnedKey>,
     /// `(line, fingerprint)`: the line, trimmed, is satisfied by the key.
     bindings: Vec<(String, String)>,
-    /// `(path of a .gpg-id, SHA-256 hex of its bytes)`.
-    gpg_ids: Vec<(String, String)>,
+    /// Every `.gpg-id` as last accepted; `None` before setup recorded them.
+    accepted: Option<Vec<Accepted>>,
 }
 
 fn failed(what: &str, e: impl std::fmt::Display) -> WriteError {
@@ -239,7 +322,7 @@ impl Keyring {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(e) => return Err(failed("read", e)),
         };
-        let mut keyring = Self { file, keys: Vec::new(), bindings: Vec::new(), gpg_ids: Vec::new() };
+        let mut keyring = Self { file, keys: Vec::new(), bindings: Vec::new(), accepted: None };
         for line in text.lines() {
             let parts: Vec<&str> = line.split(' ').collect();
             match parts.as_slice() {
@@ -260,18 +343,30 @@ impl Keyring {
                         source,
                         primary: (*primary != "-").then(|| (*primary).to_owned()),
                         fingerprints: unlist(fprs),
+                        refused: Vec::new(),
                         emails: unlist(emails),
                         expires: expires.parse().ok(),
                         key,
                     });
                 }
+                ["sub", fpr, subkey, reason] => {
+                    let reason = un_b64(reason).ok_or_else(|| failed("read", "a damaged subkey note"))?;
+                    if let Some(key) = keyring.keys.iter_mut().find(|k| k.fingerprint == *fpr) {
+                        key.refused.push(((*subkey).to_owned(), reason));
+                    }
+                }
+                ["accepted"] => {
+                    keyring.accepted.get_or_insert_with(Vec::new);
+                }
                 ["bind", fpr, spec] => {
                     let spec = un_b64(spec).ok_or_else(|| failed("read", "a damaged binding"))?;
                     keyring.bindings.push((spec, (*fpr).to_owned()));
                 }
-                ["gpgid", sha, path] => {
-                    let path = un_b64(path).ok_or_else(|| failed("read", "a damaged .gpg-id pin"))?;
-                    keyring.gpg_ids.push((path, (*sha).to_owned()));
+                ["gpgid", sha, path, text] => {
+                    let damaged = || failed("read", "a damaged .gpg-id record");
+                    let path = un_b64(path).ok_or_else(damaged)?;
+                    let text = un_b64(text).ok_or_else(damaged)?;
+                    keyring.accepted.get_or_insert_with(Vec::new).push(Accepted { path, sha: (*sha).to_owned(), text });
                 }
                 _ => {}
             }
@@ -295,12 +390,18 @@ impl Keyring {
                 list(&key.emails),
                 B64.encode(key_bytes(&key.key)?),
             ));
+            for (subkey, reason) in &key.refused {
+                text.push_str(&format!("sub {} {subkey} {}\n", key.fingerprint, b64(reason)));
+            }
         }
         for (spec, fpr) in &self.bindings {
             text.push_str(&format!("bind {fpr} {}\n", b64(spec)));
         }
-        for (path, sha) in &self.gpg_ids {
-            text.push_str(&format!("gpgid {sha} {}\n", b64(path)));
+        if let Some(accepted) = &self.accepted {
+            text.push_str("accepted\n");
+            for record in accepted {
+                text.push_str(&format!("gpgid {} {} {}\n", record.sha, b64(&record.path), b64(&record.text)));
+            }
         }
         if let Some(dir) = self.file.parent() {
             std::fs::create_dir_all(dir).map_err(|e| failed("save", e))?;
@@ -332,6 +433,7 @@ impl Keyring {
             source: KeySource::Card,
             primary: None,
             fingerprints: Vec::new(),
+            refused: Vec::new(),
             emails: Vec::new(),
             expires: None,
             key: key.clone(),
@@ -349,6 +451,7 @@ impl Keyring {
             source: KeySource::Certificate,
             primary: Some(info.primary.clone()),
             fingerprints: info.fingerprints.clone(),
+            refused: info.others.clone(),
             emails: info.emails.clone(),
             expires: choice.expires,
             key: choice.key.clone(),
@@ -399,7 +502,17 @@ impl Keyring {
                     None => self.keys.iter().filter(|key| key.named_by(trimmed)).collect(),
                 };
                 match named.as_slice() {
-                    [] => return LineStatus::Missing,
+                    [] => {
+                        return self
+                            .keys
+                            .iter()
+                            .find_map(|key| {
+                                let reason = key.refusal(trimmed)?;
+                                let subkey = key.refused.iter().find(|(_, why)| why == reason).map(|(f, _)| f.clone())?;
+                                Some(LineStatus::Refused { fingerprint: key.fingerprint.clone(), subkey, reason: reason.to_owned() })
+                            })
+                            .unwrap_or(LineStatus::Missing);
+                    }
                     [key] => (*key, false),
                     several => {
                         return LineStatus::Ambiguous {
@@ -416,29 +529,45 @@ impl Keyring {
     }
 
     /// How the recipients for entries in `folder` of the store at `root`
-    /// are satisfied. Reads the working copy; changes nothing.
+    /// are satisfied, and whether they are the ones accepted. Reads the
+    /// working copy; changes nothing.
     pub fn folder_recipients(&self, root: &Path, folder: &str, now: u32) -> Result<FolderRecipients, WriteError> {
         let (gpg_id, bytes) = governing_gpg_id(root, folder)?;
         let text = String::from_utf8(bytes.clone())
             .map_err(|_| WriteError::Failed { message: format!("{gpg_id} is not a text file") })?;
-        let changed = self
-            .gpg_ids
-            .iter()
-            .any(|(path, sha)| *path == gpg_id && *sha != sha256_hex(&bytes));
+        let accepted = self.accepted.as_deref().and_then(|all| governing_in(all, |a| a.path.as_str(), folder));
+        let changed = self.accepted.is_some()
+            && accepted.is_none_or(|a| a.path != gpg_id || a.sha != sha256_hex(&bytes));
         let lines = parse_gpg_id(&text)
             .into_iter()
             .map(|line| RecipientLine { status: self.line_status(&line, now), line })
             .collect();
-        Ok(FolderRecipients { gpg_id, lines, changed })
+        Ok(FolderRecipients {
+            gpg_id,
+            lines,
+            confirmed: self.accepted.is_some(),
+            changed,
+            accepted_gpg_id: accepted.map(|a| a.path.clone()),
+            accepted_lines: accepted.map(|a| parse_gpg_id(&a.text)).unwrap_or_default(),
+        })
     }
 
     /// The keys to encrypt to for an entry in `folder`: one per distinct
-    /// key, in `.gpg-id` order. Refused, with every unsatisfied line named,
-    /// unless every line is satisfied. Pins the `.gpg-id` the first time.
-    pub fn resolve(&mut self, root: &Path, folder: &str, now: u32) -> Result<Vec<PublicKey>, WriteError> {
+    /// key, in `.gpg-id` order. Refused unless the recipients are the
+    /// accepted ones and every line is satisfied; every unsatisfied line is
+    /// named. Accepts nothing by itself.
+    pub fn resolve(&self, root: &Path, folder: &str, now: u32) -> Result<Vec<PublicKey>, WriteError> {
         let recipients = self.folder_recipients(root, folder, now)?;
+        if !recipients.confirmed {
+            return Err(WriteError::RecipientsNotConfirmed);
+        }
         if recipients.changed {
-            return Err(WriteError::RecipientsChanged { gpg_id: recipients.gpg_id });
+            return Err(WriteError::RecipientsChanged {
+                gpg_id: recipients.gpg_id,
+                before_gpg_id: recipients.accepted_gpg_id,
+                before: recipients.accepted_lines,
+                after: recipients.lines.into_iter().map(|l| l.line).collect(),
+            });
         }
         let mut missing = Vec::new();
         let mut keys: Vec<PublicKey> = Vec::new();
@@ -456,6 +585,9 @@ impl Keyring {
                 LineStatus::Missing => missing.push(line.clone()),
                 LineStatus::Ambiguous { .. } => missing.push(format!("{line} (more than one key matches)")),
                 LineStatus::Expired { .. } => missing.push(format!("{line} (its key has expired)")),
+                LineStatus::Refused { reason, .. } => {
+                    missing.push(format!("{line} (it names a subkey paw does not encrypt to: {reason})"))
+                }
             }
         }
         if recipients.lines.is_empty() {
@@ -464,25 +596,42 @@ impl Keyring {
         if !missing.is_empty() {
             return Err(WriteError::MissingRecipients { gpg_id: recipients.gpg_id, missing });
         }
-        if !self.gpg_ids.iter().any(|(path, _)| *path == recipients.gpg_id) {
-            self.pin_gpg_id(root, &recipients.gpg_id)?;
-        }
         Ok(keys)
     }
 
-    fn pin_gpg_id(&mut self, root: &Path, gpg_id: &str) -> Result<(), WriteError> {
-        let folder = gpg_id.strip_suffix(".gpg-id").unwrap_or_default().trim_end_matches('/');
-        let (path, bytes) = governing_gpg_id(root, folder)?;
-        self.gpg_ids.retain(|(old, _)| *old != path);
-        self.gpg_ids.push((path, sha256_hex(&bytes)));
+    /// Setup: records every `.gpg-id` in the store as accepted, replacing
+    /// any earlier record. The only acceptance that is not about one folder
+    /// the person reviewed; call it once the store is cloned and shown.
+    pub fn accept_all_recipients_at_setup(&mut self, root: &Path) -> Result<(), WriteError> {
+        let all = all_gpg_ids(root)?
+            .into_iter()
+            .map(|(path, bytes)| Accepted { sha: sha256_hex(&bytes), text: String::from_utf8_lossy(&bytes).into_owned(), path })
+            .collect();
+        self.accepted = Some(all);
         self.save()
     }
 
-    /// Accepts the current `.gpg-id` for `folder` after the person has seen
-    /// that it changed.
+    /// Accepts the recipients `folder` has now, after the person has seen
+    /// what changed: the `.gpg-id` that governs it now is recorded, and any
+    /// accepted one between it and the folder that no longer exists is
+    /// dropped. Other folders' records are left as they are.
     pub fn accept_recipients(&mut self, root: &Path, folder: &str) -> Result<(), WriteError> {
-        let (path, _) = governing_gpg_id(root, folder)?;
-        self.pin_gpg_id(root, &path)
+        let (path, bytes) = governing_gpg_id(root, folder)?;
+        let Some(accepted) = self.accepted.as_mut() else {
+            return Err(WriteError::RecipientsNotConfirmed);
+        };
+        let governing_dir = path.strip_suffix(".gpg-id").unwrap_or_default().trim_end_matches('/').to_owned();
+        // `.gpg-id` files in the folder or above it, below the governing one:
+        // they were removed, or the governing one would be among them.
+        let mut at = folder;
+        while at != governing_dir && !at.is_empty() {
+            let gone = format!("{at}/.gpg-id");
+            accepted.retain(|a| a.path != gone);
+            at = at.rsplit_once('/').map_or("", |(parent, _)| parent);
+        }
+        accepted.retain(|a| a.path != path);
+        accepted.push(Accepted { sha: sha256_hex(&bytes), text: String::from_utf8_lossy(&bytes).into_owned(), path });
+        self.save()
     }
 
     /// After setup's test decrypt: binds the one line of the top-level
@@ -519,9 +668,9 @@ impl Keyring {
     }
 }
 
-/// Whether `line` names the certificate `info` by itself (its fingerprint,
-/// a subkey's, a long key ID or an e-mail address), as it would once
-/// pinned.
+/// Whether `line` names the certificate `info` by itself (its primary or
+/// chosen encryption key's fingerprint or long key ID, or an e-mail
+/// address), as it would once pinned.
 pub fn certificate_named_by(info: &CertificateInfo, line: &str) -> bool {
     let Ok(choice) = &info.encryption else { return false };
     PinnedKey {
@@ -529,6 +678,7 @@ pub fn certificate_named_by(info: &CertificateInfo, line: &str) -> bool {
         source: KeySource::Certificate,
         primary: Some(info.primary.clone()),
         fingerprints: info.fingerprints.clone(),
+        refused: info.others.clone(),
         emails: info.emails.clone(),
         expires: choice.expires,
         key: choice.key.clone(),
