@@ -117,3 +117,26 @@ fn rejects_bytes_that_are_not_an_entry() {
         Err(PawError::NotAnEntry(_))
     ));
 }
+
+#[test]
+fn an_entry_that_expands_without_end_is_refused() {
+    use pgp::composed::MessageBuilder;
+    use pgp::crypto::sym::SymmetricKeyAlgorithm;
+    use pgp::types::CompressionAlgorithm;
+
+    let key = key(false);
+    let public = paw_core::card_decryption_key(key.clone()).unwrap();
+    let mut rng = rand::thread_rng();
+    // 8 MiB of zeros compresses to a few kilobytes.
+    let mut plain = MessageBuilder::from_bytes("", vec![0u8; 8 << 20]);
+    plain.compression(CompressionAlgorithm::ZLIB);
+    let mut builder = plain.seipd_v1(&mut rng, SymmetricKeyAlgorithm::AES256);
+    builder.encrypt_to_key(&mut rng, &public).unwrap();
+    let ciphertext = builder.to_vec(&mut rng).unwrap();
+    assert!(ciphertext.len() < 64 << 10, "the test entry should be small on disk");
+
+    match decrypt_entry(key, PIN, &ciphertext, &|| {}) {
+        Err(PawError::Decrypt(why)) => assert!(why.contains("more text"), "{why}"),
+        other => panic!("expected a refusal, got {:?}", other.map(|text| text.len())),
+    }
+}

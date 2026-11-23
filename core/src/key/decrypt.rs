@@ -10,7 +10,6 @@
 //! The same rules as [`crate::decrypt_entry`], which stays for the one-shot
 //! functions Swift still calls.
 
-use std::io::Read;
 use std::sync::Arc;
 
 use openpgp_card::ocard::KeyType;
@@ -135,9 +134,8 @@ impl<'a> Plan<'a> {
             decrypted = decrypted.decompress().map_err(failed)?;
         }
         let mut plaintext = Zeroizing::new(Vec::new());
-        decrypted
-            .read_to_end(&mut plaintext)
-            .map_err(|e| KeyError::DecryptFailed { detail: e.to_string() })?;
+        crate::read_capped(&mut decrypted, &mut plaintext)
+            .map_err(|detail| KeyError::DecryptFailed { detail })?;
         Ok(plaintext)
     }
 }

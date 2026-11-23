@@ -373,10 +373,27 @@ pub fn decrypt_entry(
     }
 
     let mut plaintext = Vec::new();
-    decrypted
-        .read_to_end(&mut plaintext)
-        .map_err(|e| PawError::Decrypt(e.to_string()))?;
+    read_capped(&mut decrypted, &mut plaintext).map_err(PawError::Decrypt)?;
     Ok(plaintext)
+}
+
+/// The most decrypted text an entry may hold. Entries are a few lines; a
+/// tiny compressed file that expands without end would otherwise exhaust
+/// memory, which the AutoFill extension has very little of.
+pub(crate) const MAX_PLAINTEXT_BYTES: u64 = 1 << 20;
+
+/// Reads decrypted (and possibly decompressed) text into `out`, refusing
+/// anything longer than [`MAX_PLAINTEXT_BYTES`].
+pub(crate) fn read_capped(from: &mut impl Read, out: &mut Vec<u8>) -> Result<(), String> {
+    Read::take(from, MAX_PLAINTEXT_BYTES + 1)
+        .read_to_end(out)
+        .map_err(|e| e.to_string())?;
+    if out.len() as u64 > MAX_PLAINTEXT_BYTES {
+        use zeroize::Zeroize;
+        out.zeroize();
+        return Err("it holds more text than any password entry should".into());
+    }
+    Ok(())
 }
 
 /// The public half of the card's decryption key. Needs no PIN.
