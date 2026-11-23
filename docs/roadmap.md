@@ -52,7 +52,7 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 | Copy cache in the core: per-entry deadline from the key touch, sealed by a device keystore trait, wiped on expiry, clock moved back or reboot ends all copies, "Lock now" | face-id-copies | done |
 | Simulated keystore and clock for Linux and the simulator | face-id-copies | done |
 | Secure Enclave keystore in Swift (current face only, no passcode fallback) | screens | done; the owner opened entries with Face ID on the iPhone, 2026-11-23 |
-| Early AutoFill skeleton: fill from a copy, shared index, staleness after a pull | autofill | blocked on App Group and copies |
+| Early AutoFill skeleton: fill from a copy, shared index, staleness after a pull | autofill | in progress (`autofill`) |
 
 ### M4 Clone, setup, fetch
 
@@ -94,7 +94,7 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 | Item | Status |
 |---|---|
 | Settings, "Who can open these passwords", replace key, diagnostics export, remove store | later |
-| Copy and UX polish passes: shorter, plainer text everywhere; fix the janky spots the owner saw on the phone | next, after hardening and sync land |
+| Copy and UX polish passes: shorter, plainer text everywhere; fix the janky spots the owner saw on the phone | first pass in progress (`polish`) |
 | App icon (paw built from discs) and wordmark rework | later |
 | Licence notices for bundled libraries | later |
 
