@@ -83,6 +83,10 @@ struct SettingsSheet: View {
                         Button("Move the clock 9 hours on") { model.advanceSimulatedClock(hours: 9) }
                             .foregroundStyle(PawColor.label)
                             .accessibilityIdentifier("sim-advance-9h")
+                        // A touch that comes after the sheet was closed.
+                        Button("Touch the simulated key") { KeyConnection.simulateTouch() }
+                            .foregroundStyle(PawColor.label)
+                            .accessibilityIdentifier("sim-touch-key")
                     } header: {
                         PawSectionHeader("Simulator")
                     }

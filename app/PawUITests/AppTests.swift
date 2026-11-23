@@ -294,6 +294,57 @@ final class AppTests: XCTestCase {
         expectLabel("entry-title", contains: "gitlab.com")
     }
 
+    func testATouchAfterCancelOpensAndKeepsNothing() {
+        launch()
+        tap("folder-web")
+        tap("entry-github.com")
+        enterPin(Self.pin)
+        expect("touch-prompt")
+        app.buttons["key-sheet-cancel"].tap()
+        expectGone("key-sheet-purpose")
+
+        // The key is still blinking: touch it now, after the cancel.
+        app.buttons["settings-button"].tap()
+        app.buttons["sim-touch-key"].tap()
+        app.buttons["settings-done"].tap()
+        sleep(3)
+
+        expectAbsent("entry-title", "A late touch opens nothing")
+        goBack()
+        expect("folder-web")
+        expectAbsent("face-id-github.com", "A late touch keeps no Face ID copy")
+        expectAbsent("recent-github.com", "A cancelled open is not a recent one")
+        snapshot("home-after-late-touch")
+    }
+
+    func testLockNowWhileATouchIsPendingLeavesNoCopyAndForgetsThePin() {
+        launch()
+        tap("folder-web")
+        tap("entry-github.com")
+        enterPin(Self.pin)
+        expect("touch-prompt")
+        app.buttons["key-sheet-cancel"].tap()
+        expectGone("key-sheet-purpose")
+        goBack()
+
+        // The key is still waiting for the touch when Lock now runs.
+        app.buttons["settings-button"].tap()
+        app.buttons["settings-lock-now"].tap()
+        app.buttons["settings-button"].tap()
+        app.buttons["sim-touch-key"].tap()
+        app.buttons["settings-done"].tap()
+        sleep(3)
+
+        expectAbsent("entry-title", "A touch after Lock now opens nothing")
+        expectAbsent("face-id-github.com", "A touch after Lock now keeps no Face ID copy")
+        expectAbsent("recent-github.com", "A touch after Lock now is not a recent open")
+
+        tap("folder-web")
+        tap("entry-gitlab.com")
+        expect("pin-field")
+        snapshot("pin-after-late-touch")
+    }
+
     // MARK: Face ID
 
     func testAnEntryOpenedWithTheKeyThenOpensWithFaceId() {

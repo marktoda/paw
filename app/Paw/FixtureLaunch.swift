@@ -43,12 +43,41 @@ enum FixtureLaunch {
         let keystore = SimKeystore()
         keystore.setFaceId(answer: faceId)
         let clock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000))
-        let copies = CopyCache(dir: copiesDir.path, keystore: keystore, clock: clock)
+        let copies = CopyCache(
+            dir: copiesDir.path, keystore: SimKeystoreAdapter(sim: keystore), clock: SimClockAdapter(sim: clock))
         return AppModel(
             store: store, copies: copies,
             connect: { onTouchNeeded in try KeyConnection.open(onTouchNeeded: onTouchNeeded) },
             simulator: SimulatorControls(advanceClock: { clock.advanceMs(ms: $0) }))
     }
+}
+
+/// The core's simulated keystore and clock do not reach Swift as the
+/// `DeviceKeystore` and `Clock` traits they implement in Rust, so these
+/// pass the calls through.
+private final class SimKeystoreAdapter: DeviceKeystore {
+    let sim: SimKeystore
+
+    init(sim: SimKeystore) {
+        self.sim = sim
+    }
+
+    func seal(secret: Data) throws -> Data { try sim.seal(secret: secret) }
+    func unseal(sealed: Data, reason: String) throws -> Data { try sim.unseal(sealed: sealed, reason: reason) }
+    func indexKey() throws -> Data { try sim.indexKey() }
+    func reset() throws { try sim.reset() }
+}
+
+private final class SimClockAdapter: Clock {
+    let sim: SimClock
+
+    init(sim: SimClock) {
+        self.sim = sim
+    }
+
+    func wallMs() -> Int64 { sim.wallMs() }
+    func monotonicMs() -> Int64 { sim.monotonicMs() }
+    func bootId() -> String { sim.bootId() }
 }
 
 /// Builds the fixture model once the first frame is up, and says so

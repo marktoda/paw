@@ -85,6 +85,12 @@ final class AppModel {
 
     @ObservationIgnored private var heldPin: String?
     @ObservationIgnored private var pinForgotten = false
+    /// Bumped by Lock now. A card or Face ID call that started before the
+    /// latest bump finished into a locked app: it must leave nothing behind.
+    @ObservationIgnored private var lockGeneration = 0
+    /// Bumped by Lock now and whenever the held PIN is forgotten. A call
+    /// started before the latest bump may not hold its PIN again.
+    @ObservationIgnored private var pinGeneration = 0
     @ObservationIgnored private var pendingRoute: Route?
     @ObservationIgnored private var backgroundedAt: Date?
     private let cardQueue = DispatchQueue(label: "paw-card", qos: .userInitiated)
@@ -294,45 +300,73 @@ final class AppModel {
         let store = store
         let copies = copies
         let ttl = Self.faceIdWindowSecs
+        let started = Generations(lock: lockGeneration, pin: pinGeneration)
         cardQueue.async {
             let result = Result { () throws -> KeyOpen in
                 let connection = try connect {
-                    Task { @MainActor [weak self] in self?.touchNeeded(taskID, pin: pin) }
+                    Task { @MainActor [weak self] in self?.touchNeeded(taskID, pin: pin, started: started) }
                 }
                 return try store.openEntryKeepingCopy(
                     connection: connection, pin: pin, entry: entry.path, copies: copies, ttlSecs: ttl)
             }
             let handoff = Handoff(value: result)
             Task { @MainActor [weak self] in
-                self?.keyOpenFinished(taskID, entry: entry, pin: pin, result: handoff.value)
+                self?.keyOpenFinished(taskID, entry: entry, pin: pin, started: started, result: handoff.value)
             }
         }
     }
 
-    private func touchNeeded(_ taskID: UUID, pin: String) {
-        // The key only waits for a touch once it has accepted the PIN.
+    /// The PIN may be held again only if nothing forgot it since the call
+    /// started. A plain Cancel does not forget it: the person typed the
+    /// right PIN and the key stayed plugged in, so the next open in this
+    /// run skips the PIN stage. Lock now forgets it, and a call that was
+    /// under way during Lock now never brings it back.
+    private func holdPin(_ pin: String, started: Generations) {
+        guard started.pin == pinGeneration else { return }
         heldPin = pin
         pinForgotten = false
-        guard var task = keyTask, task.id == taskID else { return }
+    }
+
+    private func touchNeeded(_ taskID: UUID, pin: String, started: Generations) {
+        // The key only waits for a touch once it has accepted the PIN.
+        holdPin(pin, started: started)
+        guard started.lock == lockGeneration, var task = keyTask, task.id == taskID else { return }
         task.stage = .touch
         task.touchRequested = true
         keyTask = task
         self.pin = ""
     }
 
-    private func keyOpenFinished(_ taskID: UUID, entry: EntryRef, pin: String, result: Result<KeyOpen, Error>) {
+    private func keyOpenFinished(
+        _ taskID: UUID, entry: EntryRef, pin: String, started: Generations, result: Result<KeyOpen, Error>
+    ) {
+        guard started.lock == lockGeneration else {
+            // Lock now ran while the key was working. The core has already
+            // kept a Face ID copy for this entry: end every copy again, close
+            // the entry, and leave the PIN and the recents alone.
+            if case .success(let opened) = result {
+                opened.entry.close()
+                endCopiesLeftByLateOpen()
+            }
+            return
+        }
         let current = keyTask?.id == taskID ? keyTask : nil
         switch result {
         case .success(let opened):
-            heldPin = pin
-            pinForgotten = false
-            noteOpened(entry.path)
-            refreshCopies()
+            holdPin(pin, started: started)
             guard var task = current else {
-                // Cancelled: nothing opens after a cancel.
+                // Cancelled: nothing opens after a cancel, and nothing is
+                // remembered. The core kept a copy before this answer came;
+                // it has no way to remove one entry's copy, so every copy
+                // ends (core request: per-entry copy removal).
                 opened.entry.close()
+                if opened.faceIdUntilMs != nil {
+                    endCopiesLeftByLateOpen()
+                }
                 return
             }
+            noteOpened(entry.path)
+            refreshCopies()
             let session = OpenSession(ref: entry, entry: opened.entry, view: opened.entry.view())
             sessions[session.id] = session
             pendingRoute = .entry(session.id)
@@ -346,6 +380,15 @@ final class AppModel {
         case .failure(let error):
             handleKeyFailure(error, task: current, pin: pin)
         }
+    }
+
+    private func endCopiesLeftByLateOpen() {
+        do {
+            try copies.lockNow()
+        } catch {
+            copiesProblem = describe(error)
+        }
+        refreshCopies()
     }
 
     private func handleKeyFailure(_ error: Error, task: KeyTask?, pin: String) {
@@ -389,18 +432,24 @@ final class AppModel {
         faceIdOpening = entry.path
         let store = store
         let copies = copies
+        let started = lockGeneration
         faceIdQueue.async {
             let result = Result {
                 try store.openEntryWithFaceId(copies: copies, entry: entry.path, reason: "Open \(entry.name)")
             }
             let handoff = Handoff(value: result)
-            Task { @MainActor [weak self] in self?.faceIdFinished(entry, result: handoff.value) }
+            Task { @MainActor [weak self] in self?.faceIdFinished(entry, started: started, result: handoff.value) }
         }
     }
 
-    private func faceIdFinished(_ entry: EntryRef, result: Result<FaceIdOpen, Error>) {
+    private func faceIdFinished(_ entry: EntryRef, started: Int, result: Result<FaceIdOpen, Error>) {
         faceIdOpening = nil
         refreshCopies()
+        guard started == lockGeneration else {
+            // Locked while Face ID was up: nothing opens.
+            if case .success(.opened(let opened)) = result { opened.close() }
+            return
+        }
         switch result {
         case .success(.opened(let opened)):
             noteOpened(entry.path)
@@ -474,6 +523,8 @@ final class AppModel {
             copiesProblem = describe(error)
         }
         heldPin = nil
+        lockGeneration += 1
+        pinGeneration += 1
         keyTask = nil
         pendingRoute = nil
         path = []
@@ -490,6 +541,7 @@ final class AppModel {
         case .active:
             if let away = backgroundedAt, Date().timeIntervalSince(away) > Self.pinForgetAfter, heldPin != nil {
                 heldPin = nil
+                pinGeneration += 1
                 pinForgotten = true
             }
             backgroundedAt = nil
@@ -505,6 +557,12 @@ final class AppModel {
         simulator?.advanceClock(hours * 3_600_000)
         refreshCopies()
     }
+}
+
+/// The lock and PIN generations a call started in.
+private struct Generations: Sendable {
+    let lock: Int
+    let pin: Int
 }
 
 /// Hooks into the simulated hardware, for the debug controls.
