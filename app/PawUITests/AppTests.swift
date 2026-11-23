@@ -61,7 +61,7 @@ final class AppTests: PawUITestCase {
             field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 11) + "zzqx")
             let empty = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "zzqx")).firstMatch
             XCTAssertTrue(empty.waitForExistence(timeout: 10), "No results should say what was searched for")
-            XCTAssertTrue(empty.label.contains("No entry or folder called"), empty.label)
+            XCTAssertTrue(empty.label.contains("No password or folder called"), empty.label)
             snapshot("no-results-\(appearance)")
 
             field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 4))
@@ -359,7 +359,7 @@ final class AppTests: PawUITestCase {
         tap("entry-gitlab.com")
         expectLabel("key-sheet-purpose", contains: "Open gitlab.com")
         pinField()
-        expectLabel("key-sheet-body", contains: "paw forgot your PIN after 15 minutes away.")
+        expectLabel("key-sheet-body", contains: "Asked again after 15 minutes away.")
         snapshot("pin-forgotten")
 
         enterPin(Self.pin)
@@ -376,7 +376,7 @@ final class AppTests: PawUITestCase {
         timeOutTheTouch()
 
         expectLabel("key-sheet-headline", contains: "Your key wasn't touched in time")
-        expectLabel("key-sheet-body", contains: "Nothing was opened.")
+        expectLabel("key-sheet-body", contains: "touch the gold part while it blinks")
         expectAbsent("entry-title", "Nothing opens without a touch")
         snapshot("touch-timeout")
 

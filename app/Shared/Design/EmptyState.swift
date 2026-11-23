@@ -26,9 +26,12 @@ struct EmptyState: View {
                     .padding(.bottom, PawMetrics.Spacing.xs)
             }
         } description: {
-            Text(message)
-                .font(PawFont.subheadline)
-                .foregroundStyle(PawColor.labelSecondary)
+            // The title often says it all: no second line then.
+            if !message.isEmpty {
+                Text(message)
+                    .font(PawFont.subheadline)
+                    .foregroundStyle(PawColor.labelSecondary)
+            }
         } actions: {
             VStack(spacing: PawMetrics.Spacing.s) {
                 if let primary {

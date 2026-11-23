@@ -30,8 +30,8 @@ struct KeyDiagnosticsView: View {
                     }
                     Section {
                         Text(model.keyPort.keyMatchesEnrolment()
-                             ? "This is the key this store was set up with."
-                             : "This is a different key from the one this store was set up with.")
+                             ? "The key this store was set up with."
+                             : "Not the key this store was set up with.")
                             .font(PawFont.subheadline)
                             .foregroundStyle(PawColor.label)
                             .fixedSize(horizontal: false, vertical: true)

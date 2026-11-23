@@ -83,25 +83,28 @@ struct EntryScreen: View {
                     PawSectionHeader("Notes")
                 }
             } footer: {
-                Text(footer)
-                    .font(PawFont.footnote)
-                    .foregroundStyle(PawColor.labelSecondary)
+                if let footer {
+                    Text(footer)
+                        .font(PawFont.footnote)
+                        .foregroundStyle(PawColor.labelSecondary)
+                }
             }
             #if DEBUG && targetEnvironment(simulator)
             if model.simulator != nil {
                 // Stand-ins for the iPhone locking and time passing while
-                // this entry is on screen. Dashed, so no screenshot shows
-                // them as part of the design.
+                // this entry is on screen: one dashed strip under the rest.
                 Section {
-                    SimulatorActionButton(action: SimulatorAction(
-                        title: "lock the iPhone", identifier: "sim-entry-device-lock") {
-                        NotificationCenter.default.post(
-                            name: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil)
-                    })
-                    SimulatorActionButton(action: SimulatorAction(
-                        title: "move the clock 9 hours on", identifier: "sim-entry-advance-9h") {
-                        model.advanceSimulatedClock(hours: 9)
-                    })
+                    SimulatorStrip(actions: [
+                        SimulatorAction(title: "lock the iPhone", identifier: "sim-entry-device-lock") {
+                            NotificationCenter.default.post(
+                                name: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil)
+                        },
+                        SimulatorAction(title: "9 hours on", identifier: "sim-entry-advance-9h") {
+                            model.advanceSimulatedClock(hours: 9)
+                        },
+                    ])
+                    .frame(maxWidth: .infinity)
+                    .listRowInsets(EdgeInsets())
                 }
                 .listRowBackground(Color.clear)
             }
@@ -218,9 +221,9 @@ struct EntryScreen: View {
         }
     }
 
-    private var footer: String {
-        let clears = "A copied password clears from the clipboard after 45 seconds."
-        return model.liveCopy(entry.path) == nil ? "Needs your key each time. " + clears : clears
+    /// The copy confirmation says when the clipboard clears; said once, there.
+    private var footer: String? {
+        model.liveCopy(entry.path) == nil ? "Needs your key each time." : nil
     }
 
     // MARK: Values
@@ -338,6 +341,7 @@ private struct LargeTypeSheet: View {
             LargeTypeView(password: item.text)
         }
         .presentationDetents([.medium, .large])
+        .pawSheetBackground()
         .privacyCover()
     }
 }

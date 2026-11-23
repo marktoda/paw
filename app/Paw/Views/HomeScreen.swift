@@ -67,7 +67,7 @@ struct HomeScreen: View {
                 Section {
                     ErrorRow(
                         kind: .warning, problem: problem,
-                        nextStep: "Every password can still be opened with your key.")
+                        nextStep: "Passwords still open with your key.")
                         .pawListRow()
                 }
             }
@@ -93,7 +93,7 @@ struct HomeScreen: View {
                             identifier: "recent-\(entry.name)")
                     }
                 } header: {
-                    PawSectionHeader("Recent, needs your key")
+                    PawSectionHeader("Recent")
                 }
             }
             if !model.home.folders.isEmpty {
@@ -120,8 +120,8 @@ struct HomeScreen: View {
             if model.entryCount == 0 {
                 Section {
                     EmptyState(
-                        symbol: PawSymbol.entry, title: "Your store is empty",
-                        message: "Passwords you add on a computer appear here after a sync.")
+                        symbol: PawSymbol.entry, title: "No passwords yet",
+                        message: "Tap + to add one.")
                         .listRowBackground(Color.clear)
                 }
             }
@@ -190,8 +190,8 @@ private struct SearchResults: View {
         if hits.isEmpty {
             EmptyState(
                 symbol: PawSymbol.search,
-                title: "No entry or folder called \u{201C}\(query)\u{201D}",
-                message: "Search looks at names only, never inside entries.")
+                title: "No password or folder called \u{201C}\(query)\u{201D}",
+                message: "Search reads names, not what's inside.")
         } else {
             List {
                 NoticeSection(model: model)
@@ -205,10 +205,6 @@ private struct SearchResults: View {
                 } header: {
                     PawSectionHeader(hits.count == 1 ? "1 match" : "\(hits.count) matches")
                         .accessibilityIdentifier("search-count")
-                } footer: {
-                    Text("Search looks at names and folders, never inside entries.")
-                        .font(PawFont.footnote)
-                        .foregroundStyle(PawColor.labelSecondary)
                 }
             }
             .listStyle(.insetGrouped)

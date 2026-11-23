@@ -13,7 +13,7 @@ struct FolderScreen: View {
             case .failure(let error):
                 List {
                     ErrorRow(
-                        kind: .error, problem: "This folder couldn't be read.",
+                        kind: .error, problem: "Couldn't read this folder",
                         nextStep: describe(error))
                         .pawListRow()
                 }
@@ -51,6 +51,12 @@ struct FolderScreen: View {
                     }
                 } header: {
                     PawSectionHeader(listing.entries.count == 1 ? "1 password" : "\(listing.entries.count) passwords")
+                }
+            }
+            if listing.folders.isEmpty, listing.entries.isEmpty {
+                Section {
+                    EmptyState(symbol: PawSymbol.folder, title: "Nothing here", message: "Tap + to add a password.")
+                        .listRowBackground(Color.clear)
                 }
             }
         }

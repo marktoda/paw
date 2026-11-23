@@ -59,7 +59,7 @@ extension AppModel {
             try copies?.forgetEntry(entry: session.ref.path)
         } catch {
             notice = Notice(
-                problem: "paw couldn't lock \(session.ref.name).",
+                problem: "Couldn't lock \(session.ref.name)",
                 nextStep: "Use Lock now in Settings.")
         }
         closeSession(session.id, because: .copyEnded)
@@ -67,7 +67,7 @@ extension AppModel {
             path.removeLast()
         }
         refreshCopies()
-        toast = "Locked. \(session.ref.name) now needs your key."
+        toast = "Locked. \(session.ref.name) needs your key again."
     }
 
     /// "Open again" on a closed entry: back to the list, then open it as a

@@ -309,7 +309,7 @@ final class AppModel {
         let why: String
         switch error as? KeyError {
         case .KeyRemoved?:
-            why = "It stopped answering while paw read it."
+            why = "It stopped answering."
         case .Reader(let detail)?:
             why = "The key said: \(detail)."
         case let error?:
@@ -323,7 +323,7 @@ final class AppModel {
         }
         return KeyErrorWords(
             problem: "paw couldn't read your key",
-            nextStep: "\(why) Try again. If it keeps failing, unplug the key and plug it back in.")
+            nextStep: "\(why) Try again, or unplug the key and plug it back in.")
     }
 
     /// Shows the sheet's task again, e.g. after a read of the key failed.
@@ -357,8 +357,8 @@ final class AppModel {
     private func watchReaders() {
         guard let manager = TKSmartCardSlotManager.default else {
             attachProblem = KeyErrorWords(
-                problem: "This iPhone can't talk to USB keys",
-                nextStep: "paw needs an iPhone with USB-C and smart card support. Nothing was sent to a key.")
+                problem: "This iPhone can't use USB keys",
+                nextStep: "paw needs an iPhone with USB-C and smart card support.")
             return
         }
         // Called on whatever thread the system changes the list on.
@@ -550,7 +550,7 @@ final class AppModel {
             if let mismatch = task.keyMismatch() {
                 // Not this entry's problem: the key is not the store's.
                 request.stage = .failed(
-                    problem: "This is a different key from the one this store was set up with",
+                    problem: "This isn't the key this store was set up with",
                     nextStep: Self.mismatchWords(mismatch))
                 request.differentKey = true
             } else {
@@ -664,7 +664,7 @@ final class AppModel {
             return words
         }
         return "This key: \(describeKey(mismatch.presented)). The store's key: \(describeKey(mismatch.enrolled)). "
-            + "Plug in the store's key, then try again. No PIN was sent."
+            + "Plug that one in and try again. No PIN try was used."
     }
 
     /// Opens from the entry's Face ID copy, with no key sheet. Falls back
@@ -709,26 +709,26 @@ final class AppModel {
         switch error as? PawError {
         case .FaceIdCancelled:
             return Notice(
-                problem: "Face ID was cancelled, so \(entry.name) didn't open.",
-                nextStep: "Tap it again to use Face ID.", keyEntry: entry)
+                problem: "Face ID was cancelled",
+                nextStep: "Tap \(entry.name) to try again.", keyEntry: entry)
         case .FaceIdNotRecognised:
             return Notice(
-                problem: "Face ID didn't recognise you.",
+                problem: "Face ID didn't recognise you",
                 nextStep: "Tap \(entry.name) to try again.", keyEntry: entry)
         case .FaceIdLockedOut:
             return Notice(
-                problem: "Face ID is turned off until you enter your iPhone passcode.",
+                problem: "Face ID is off until you enter your iPhone passcode",
                 nextStep: "Lock and unlock your iPhone, then try again.", keyEntry: entry)
         case .FaceIdNotSetUp:
             return Notice(
-                problem: "Face ID isn't set up on this iPhone, so saved copies can't be opened.",
-                nextStep: "Open \(entry.name) with your key instead.", keyEntry: entry)
+                problem: "Face ID isn't set up on this iPhone",
+                nextStep: "Open \(entry.name) with your key.", keyEntry: entry)
         case .FaceIdChanged:
             return Notice(
-                problem: "Face ID changed on this iPhone, so saved copies were removed.",
+                problem: "Face ID changed, so its saved copies were removed",
                 nextStep: "Open \(entry.name) with your key.", keyEntry: entry)
         default:
-            return Notice(problem: describe(error), nextStep: "Open \(entry.name) with your key instead.", keyEntry: entry)
+            return Notice(problem: describe(error), nextStep: "Open \(entry.name) with your key.", keyEntry: entry)
         }
     }
 
@@ -828,7 +828,7 @@ final class AppModel {
         pathChanged()
         Clipboard.clearIfOurs()
         refreshCopies()
-        toast = ended == 1 ? "Locked. 1 entry now needs your key." : "Locked. \(ended) entries now need your key."
+        toast = ended == 1 ? "Locked. 1 password needs your key again." : "Locked. \(ended) passwords need your key again."
     }
 
     /// The core forgets the PIN after 15 minutes in the background, on the

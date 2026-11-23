@@ -51,7 +51,7 @@ struct AnotherKeyScreen: View {
                             .pawListRow()
                     }
                 } header: {
-                    PawSectionHeader(keys.count == 1 ? "The key that can open it" : "The keys that can open it")
+                    PawSectionHeader(keys.count == 1 ? "That key" : "Those keys")
                 } footer: {
                     Text(footer)
                         .font(PawFont.footnote)
@@ -78,13 +78,11 @@ struct AnotherKeyScreen: View {
 
     private var footer: String {
         let which = keys.count == 1 ? "that key" : "one of these keys"
-        return "Open it on a computer that has \(which). paw checked this from the file alone, without asking your key for anything."
+        return "Open it on a computer that has \(which)."
     }
 
     private var explanation: String {
         let names = keys.joined(separator: ", ")
-        return names.isEmpty
-            ? "Your key can't open this password, so paw won't ask for your PIN or a touch."
-            : "Your key can't open this password. Only \(names) can, so paw won't ask for your PIN or a touch."
+        return names.isEmpty ? "Your key can't open it." : "Only \(names) can open it."
     }
 }
