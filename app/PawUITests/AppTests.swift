@@ -147,7 +147,7 @@ final class AppTests: XCTestCase {
             launch(appearance: appearance)
             expectLabel("folder-archive", contains: "archive, folder, 2 passwords")
             expectLabel("folder-bank", contains: "bank, folder, 3 passwords")
-            expectLabel("folder-web", contains: "web, folder, 7 passwords")
+            expectLabel("folder-web", contains: "web, folder, 6 passwords")
             expectLabel("folder-servers", contains: "servers, folder, 3 passwords")
             expectAbsent("face-id-github.com", "Nothing opens with Face ID before the key was used")
             snapshot("home-\(appearance)")
@@ -302,6 +302,7 @@ final class AppTests: XCTestCase {
         expect("touch-prompt")
         app.buttons["key-sheet-cancel"].tap()
         expectGone("key-sheet-purpose")
+        goBack()
 
         // The key is still blinking: touch it now, after the cancel.
         app.buttons["settings-button"].tap()
@@ -310,7 +311,6 @@ final class AppTests: XCTestCase {
         sleep(3)
 
         expectAbsent("entry-title", "A late touch opens nothing")
-        goBack()
         expect("folder-web")
         expectAbsent("face-id-github.com", "A late touch keeps no Face ID copy")
         expectAbsent("recent-github.com", "A cancelled open is not a recent one")

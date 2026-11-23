@@ -42,7 +42,7 @@ struct AnotherKeyScreen: View {
             }
             if !keys.isEmpty {
                 Section {
-                    ForEach(keys, id: \.self) { key in
+                    ForEach(recipients.map(\.grouped), id: \.self) { key in
                         Text(key)
                             .font(PawFont.password)
                             .foregroundStyle(PawColor.label)

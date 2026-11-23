@@ -589,20 +589,28 @@ extension EntryRef {
 }
 
 extension Recipient {
-    /// "key ID 1234 5678 9ABC DEF0", grouped in fours to read aloud.
+    /// "key ID 1234 5678 9ABC DEF0", for a sentence.
     var spoken: String {
-        func grouped(_ hex: String) -> String {
-            stride(from: 0, to: hex.count, by: 4).map { offset -> String in
-                let start = hex.index(hex.startIndex, offsetBy: offset)
-                let end = hex.index(start, offsetBy: 4, limitedBy: hex.endIndex) ?? hex.endIndex
-                return String(hex[start..<end])
-            }.joined(separator: " ")
-        }
         switch self {
-        case .keyId(let id): return "key ID \(grouped(id))"
-        case .fingerprint(let fingerprint): return "key \(grouped(fingerprint))"
+        case .keyId: return "key ID \(grouped)"
+        case .fingerprint: return "key \(grouped)"
         case .hidden: return "a hidden recipient"
         }
+    }
+
+    /// The hex alone, in groups of four so it can be read aloud.
+    var grouped: String {
+        let hex: String
+        switch self {
+        case .keyId(let id): hex = id
+        case .fingerprint(let fingerprint): hex = fingerprint
+        case .hidden: return "Hidden"
+        }
+        return stride(from: 0, to: hex.count, by: 4).map { offset -> String in
+            let start = hex.index(hex.startIndex, offsetBy: offset)
+            let end = hex.index(start, offsetBy: 4, limitedBy: hex.endIndex) ?? hex.endIndex
+            return String(hex[start..<end])
+        }.joined(separator: " ")
     }
 }
 
