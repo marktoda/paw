@@ -8,8 +8,28 @@ import XCTest
 /// test fail that a fast one passes. Negative checks ("nothing opened")
 /// come after `waitForKeyTasksToEnd()`, the app's own signal that every key
 /// task it started has finished, so they cannot pass vacuously.
+///
+/// Waits poll every fraction of a second (`waitUntil`) rather than use
+/// `waitForExistence` or `XCTWaiter`: those first look a full second after
+/// they start, even when the element is already there, which was a fifth
+/// of every test's time.
 class PawUITestCase: XCTestCase {
     var app: XCUIApplication!
+
+    /// Launches paw with UIKit's animations off (`-pawNoAnimations 1`), so
+    /// a push, sheet or menu is finished as soon as it starts and nothing
+    /// waits for it to settle. A test about an animation sets
+    /// `realAnimations` before launching.
+    final class TestApp: XCUIApplication {
+        var realAnimations = false
+
+        override func launch() {
+            if !realAnimations && !launchArguments.contains("-pawNoAnimations") {
+                launchArguments += ["-pawNoAnimations", "1"]
+            }
+            super.launch()
+        }
+    }
 
     static let pin = "123456"
     static let githubPassword = "tidal-Quartz-88-ferns"
@@ -22,7 +42,7 @@ class PawUITestCase: XCTestCase {
 
     override func setUp() {
         continueAfterFailure = false
-        app = XCUIApplication()
+        app = TestApp()
     }
 
     override func tearDown() {
@@ -48,6 +68,31 @@ class PawUITestCase: XCTestCase {
         expect("home-title", timeout: Self.patience)
     }
 
+    // MARK: Waiting
+
+    /// Checks `condition` now, then again every 0.05 s to 0.5 s until it
+    /// holds or `timeout` has passed; it is always checked once more at the
+    /// end. Each check of an element asks the app for its accessibility
+    /// tree, which takes about half a second on a CI runner, so the checks
+    /// themselves set the pace.
+    @discardableResult
+    func waitUntil(timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        var pause: TimeInterval = 0.05
+        while true {
+            if condition() { return true }
+            let now = Date()
+            if now >= deadline { return false }
+            RunLoop.current.run(until: min(deadline, now.addingTimeInterval(pause)))
+            pause = min(pause * 2, 0.5)
+        }
+    }
+
+    /// `waitForExistence` without its one-second first look.
+    func waitToExist(_ found: XCUIElement, timeout: TimeInterval) -> Bool {
+        waitUntil(timeout: timeout) { found.exists }
+    }
+
     // MARK: Finding
 
     func snapshot(_ name: String) {
@@ -65,7 +110,7 @@ class PawUITestCase: XCTestCase {
     func expect(_ identifier: String, timeout: TimeInterval = PawUITestCase.patience,
                 file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
         let found = element(identifier)
-        XCTAssertTrue(found.waitForExistence(timeout: timeout),
+        XCTAssertTrue(waitToExist(found, timeout: timeout),
                       "\"\(identifier)\" should be on screen", file: file, line: line)
         return found
     }
@@ -87,10 +132,8 @@ class PawUITestCase: XCTestCase {
     func expectLabel(_ identifier: String, contains text: String, timeout: TimeInterval = PawUITestCase.patience,
                      file: StaticString = #filePath, line: UInt = #line) {
         let found = expect(identifier, timeout: timeout, file: file, line: line)
-        let matched = XCTWaiter().wait(
-            for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", text), object: found)],
-            timeout: timeout)
-        if matched != .completed {
+        let predicate = NSPredicate(format: "label CONTAINS %@", text)
+        if !waitUntil(timeout: timeout, { predicate.evaluate(with: found) }) {
             XCTFail("\"\(identifier)\" should say \"\(text)\", it said \"\(found.label)\"", file: file, line: line)
         }
     }
@@ -100,9 +143,7 @@ class PawUITestCase: XCTestCase {
                     file: StaticString = #filePath, line: UInt = #line) {
         let found = expect(identifier, timeout: timeout, file: file, line: line)
         let predicate = NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", text, text)
-        let matched = XCTWaiter().wait(
-            for: [XCTNSPredicateExpectation(predicate: predicate, object: found)], timeout: timeout)
-        if matched != .completed {
+        if !waitUntil(timeout: timeout, { predicate.evaluate(with: found) }) {
             XCTFail("\"\(identifier)\" should say \"\(text)\", it said \"\(found.label)\" \(String(describing: found.value))",
                     file: file, line: line)
         }
@@ -112,10 +153,8 @@ class PawUITestCase: XCTestCase {
     func expectValue(_ identifier: String, _ value: String, timeout: TimeInterval = PawUITestCase.patience,
                      file: StaticString = #filePath, line: UInt = #line) {
         let found = expect(identifier, timeout: timeout, file: file, line: line)
-        let matched = XCTWaiter().wait(
-            for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: found)],
-            timeout: timeout)
-        if matched != .completed {
+        let predicate = NSPredicate(format: "value == %@", value)
+        if !waitUntil(timeout: timeout, { predicate.evaluate(with: found) }) {
             XCTFail("\"\(identifier)\" should be \"\(value)\", it was \"\(found.value ?? "nil")\"",
                     file: file, line: line)
         }
@@ -130,8 +169,8 @@ class PawUITestCase: XCTestCase {
 
     func wait(for predicate: String, on object: XCUIElement, timeout: TimeInterval, _ message: String,
               file: StaticString = #filePath, line: UInt = #line) {
-        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: predicate), object: object)
-        if XCTWaiter().wait(for: [expectation], timeout: timeout) != .completed {
+        let condition = NSPredicate(format: predicate)
+        if !waitUntil(timeout: timeout, { condition.evaluate(with: object) }) {
             XCTFail(message, file: file, line: line)
         }
     }
@@ -143,21 +182,24 @@ class PawUITestCase: XCTestCase {
     func scrollTo(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
         let found = element(identifier)
         // A list builds its rows lazily: one far down doesn't exist until
-        // scrolled to. Give it a moment to appear, then go looking.
-        _ = found.waitForExistence(timeout: 5)
+        // scrolled to. Give it a moment to appear, then go looking. Each
+        // look at an element costs about half a second on CI, so none is
+        // repeated: `exists` is known from the wait, then from each swipe.
+        var exists = waitToExist(found, timeout: 5)
         var swipes = 0
-        while !(found.exists && found.isHittable && !underKeyboard(found)) && swipes < 8 {
-            if found.exists && found.frame.maxY < app.frame.height * 0.2 {
+        while !(exists && found.isHittable && !underKeyboard(found)) && swipes < 8 {
+            if exists && found.frame.maxY < app.frame.height * 0.2 {
                 app.swipeDown()
             } else {
                 app.swipeUp()
             }
             swipes += 1
+            exists = found.exists
         }
-        if !found.exists {
-            _ = found.waitForExistence(timeout: Self.patience)
+        if !exists {
+            exists = waitToExist(found, timeout: Self.patience)
         }
-        XCTAssertTrue(found.exists, "\"\(identifier)\" should be on screen", file: file, line: line)
+        XCTAssertTrue(exists, "\"\(identifier)\" should be on screen", file: file, line: line)
         if swipes > 0 {
             waitUntilStill(found)
         }
@@ -209,7 +251,7 @@ class PawUITestCase: XCTestCase {
         }
         XCTAssertNotEqual(app.state, .runningForeground, "paw should have gone to the background")
         app.activate()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: Self.patience), "paw should be back")
+        XCTAssertTrue(waitUntil(timeout: Self.patience) { app.state == .runningForeground }, "paw should be back")
     }
 
     // MARK: The key sheet
@@ -218,7 +260,7 @@ class PawUITestCase: XCTestCase {
     @discardableResult
     func pinField(file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
         let field = element("pin-field")
-        XCTAssertTrue(field.waitForExistence(timeout: Self.patience), "The key sheet should ask for the PIN",
+        XCTAssertTrue(waitToExist(field, timeout: Self.patience), "The key sheet should ask for the PIN",
                       file: file, line: line)
         return field
     }
@@ -232,7 +274,7 @@ class PawUITestCase: XCTestCase {
         let field = pinField(file: file, line: line)
         for _ in 0..<3 {
             field.tap()
-            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: Self.patience),
+            XCTAssertTrue(waitToExist(app.keyboards.firstMatch, timeout: Self.patience),
                           "The keyboard should come up for the PIN", file: file, line: line)
             clear(field)
             field.typeText(pin)
@@ -262,7 +304,7 @@ class PawUITestCase: XCTestCase {
     /// A simulator control drawn below the key sheet's own buttons.
     func tapSimulated(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {
         let button = app.buttons[identifier]
-        XCTAssertTrue(button.waitForExistence(timeout: Self.patience), "\"\(identifier)\" should be on screen",
+        XCTAssertTrue(waitToExist(button, timeout: Self.patience), "\"\(identifier)\" should be on screen",
                       file: file, line: line)
         button.tap()
     }
@@ -284,7 +326,7 @@ class PawUITestCase: XCTestCase {
     /// `sim-key-tasks` reports. Only then does "nothing opened" mean anything.
     func waitForKeyTasksToEnd(file: StaticString = #filePath, line: UInt = #line) {
         let tasks = element("sim-key-tasks")
-        XCTAssertTrue(tasks.waitForExistence(timeout: Self.patience), "The app should report its key tasks",
+        XCTAssertTrue(waitToExist(tasks, timeout: Self.patience), "The app should report its key tasks",
                       file: file, line: line)
         wait(for: "value == '0'", on: tasks, timeout: Self.patience,
              "Every key task should have ended, \(String(describing: tasks.value)) still running",

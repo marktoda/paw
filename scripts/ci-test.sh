@@ -38,7 +38,7 @@ xcodebuild build-for-testing \
   -project Paw.xcodeproj -scheme Paw \
   -destination "platform=iOS Simulator,id=$udid" \
   -derivedDataPath build/derived \
-  CODE_SIGNING_ALLOWED=NO > "$report/xcodebuild.log" 2>&1
+  CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO > "$report/xcodebuild.log" 2>&1
 status=$?
 mark build-end
 

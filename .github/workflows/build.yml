@@ -65,24 +65,114 @@ jobs:
             app/Generated
           retention-days: 3
 
+  # Splits the UI tests across machines (up to 5 for a full run, 4 for a
+  # narrowed one) so a run takes as long as its slowest part. On a push to
+  # main it also looks for a full run that already passed on exactly these
+  # files (same git tree, e.g. the branch that was fast-forwarded) and, if
+  # there is one, the simulator jobs are skipped.
+  plan:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      parts: ${{ steps.plan.outputs.parts }}
+      tested: ${{ steps.tested.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Look for a full run on the same files
+        id: tested
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TREE: ${{ github.event.head_commit.tree_id }}
+        run: |
+          [ -n "$TREE" ] || exit 0
+          for id in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?status=success&per_page=50" \
+              -q ".workflow_runs[] | select(.head_commit.tree_id == \"$TREE\" and .id != $GITHUB_RUN_ID) | .id"); do
+            # Only a full run counts: one split as "full", every part passed.
+            full=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" \
+              -q '[.jobs[] | select(.name | startswith("ui (full"))] | length > 0 and all(.conclusion == "success")')
+            if [ "$full" = "true" ]; then
+              echo "Run $id already passed every UI test on this tree; skipping them."
+              echo "run=$id" >> "$GITHUB_OUTPUT"
+              break
+            fi
+          done
+      - name: Split the UI tests
+        id: plan
+        env:
+          ONLY: ${{ inputs.only }}
+        run: |
+          python3 -I - <<'PY' >> "$GITHUB_OUTPUT"
+          import glob, json, os, re, sys
+          # Seconds a test of each class takes on a runner (scripts/ci-report.sh
+          # prints them). Only the balance between parts depends on these.
+          weight = {"SyncTests": 167, "EditTests": 120, "LifecycleTests": 90, "StoreTests": 100,
+                    "SetupTests": 50, "AppTests": 45, "EnclaveTests": 53, "GalleryTests": 46, "KeyTests": 16}
+          tests = {}
+          for path in sorted(glob.glob("app/PawUITests/*.swift")):
+              cls = None
+              for line in open(path):
+                  m = re.match(r"\s*(?:final\s+)?class\s+(\w+)\s*:", line)
+                  if m:
+                      cls = m.group(1)
+                  m = re.match(r"\s*func\s+(test\w*)\s*\(\s*\)", line)
+                  if m and cls:
+                      tests.setdefault(cls, []).append(m.group(1))
+          w = lambda cls: weight.get(cls, 60)
+          only = os.environ.get("ONLY", "").split()
+          parts = []
+          if only:
+              # One machine per class named, at most 4.
+              groups = {}
+              for name in only:
+                  groups.setdefault(name.split("/")[0], []).append(name)
+              load = lambda names: sum(w(n.split("/")[0]) * (1 if "/" in n else len(tests.get(n, [1]))) for n in names)
+              bins = [[] for _ in range(min(4, len(groups)))]
+              for cls in sorted(groups, key=lambda c: -load(groups[c])):
+                  min(bins, key=load).extend(groups[cls])
+              n = len(bins)
+              parts = [{"name": f"only-{i + 1}-of-{n}", "only": " ".join(b), "skip": ""} for i, b in enumerate(bins)]
+          else:
+              # Tests in class order, cut into 5 parts of about equal time.
+              # The last part runs whatever the others do not name, so a test
+              # this misses still runs.
+              k = 5
+              items = [(cls, t) for cls in sorted(tests) for t in tests[cls]]
+              total = sum(w(c) for c, _ in items) or 1
+              bins = [[] for _ in range(k)]
+              done = 0
+              for cls, t in items:
+                  bins[min(k - 1, int((done + w(cls) / 2) / total * k))].append((cls, t))
+                  done += w(cls)
+              names = []
+              for b in bins:
+                  # A class wholly in one part is named once.
+                  whole = [c for c in dict.fromkeys(c for c, _ in b) if len([1 for c2, _ in b if c2 == c]) == len(tests[c])]
+                  names.append(whole + [f"{c}/{t}" for c, t in b if c not in whole])
+              named = [n for b in names[:-1] for n in b]
+              parts = [{"name": f"full-{i + 1}-of-{k}", "only": " ".join(b), "skip": ""} for i, b in enumerate(names[:-1]) if b]
+              parts.append({"name": f"full-{k}-of-{k}", "only": "", "skip": " ".join(named)})
+          for p in parts:
+              print(p["name"], "only:", p["only"] or "-", "skip:", p["skip"] or "-", file=sys.stderr)
+          print("parts=" + json.dumps({"include": parts}))
+          PY
+
   ui:
     # The Rust tests run alongside; a failure there still fails the run.
-    needs: [core-ios]
+    needs: [core-ios, plan]
+    if: needs.plan.outputs.tested == ''
+    name: ui (${{ matrix.name }})
     runs-on: macos-26
-    # A full run is split across machines so it takes as long as the slowest
-    # part, not the sum. The last part runs every class the others do not
-    # name, so a new test class is never left out. A run narrowed with `only`
-    # uses one machine.
     strategy:
       fail-fast: false
-      matrix:
-        family: [iPhone]
-        part: ${{ fromJSON(inputs.only && '["rest"]' || '["app","setup","edit","sync","rest"]') }}
+      matrix: ${{ fromJSON(needs.plan.outputs.parts) }}
     steps:
       - uses: actions/checkout@v4
       - name: Start the simulator booting
         run: |
-          udid=$(scripts/ci-sim.sh ${{ matrix.family }})
+          udid=$(scripts/ci-sim.sh iPhone)
           echo "PAW_SIM=$udid" >> "$GITHUB_ENV"
           nohup xcrun simctl boot "$udid" > /dev/null 2>&1 &
       - uses: actions/download-artifact@v4
@@ -90,18 +180,21 @@ jobs:
           name: core
           path: app
       - name: Generate the Xcode project
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
           brew install xcodegen
           scripts/make-xcframework.sh
       - name: Run the UI tests
         env:
-          PAW_ONLY: ${{ inputs.only || (matrix.part == 'app' && 'AppTests') || (matrix.part == 'setup' && 'SetupTests') || (matrix.part == 'edit' && 'EditTests') || (matrix.part == 'sync' && 'SyncTests') || '' }}
-          PAW_SKIP: ${{ (!inputs.only && matrix.part == 'rest') && 'AppTests SetupTests EditTests SyncTests' || '' }}
-        run: scripts/ci-test.sh ${{ matrix.family }}
+          PAW_ONLY: ${{ matrix.only }}
+          PAW_SKIP: ${{ matrix.skip }}
+        run: scripts/ci-test.sh iPhone
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: report-${{ matrix.family }}${{ inputs.only && '' || format('-{0}', matrix.part) }}
+          name: report-iPhone-${{ matrix.name }}
           path: app/build/report
           retention-days: 7
 
@@ -118,6 +211,9 @@ jobs:
           name: core
           path: app
       - name: Generate the Xcode project
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
           brew install xcodegen
           scripts/make-xcframework.sh

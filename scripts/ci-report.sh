@@ -41,6 +41,25 @@ for f in s.get("testFailures", []):
   echo "  $shots screenshots in $report/screenshots"
 done
 
+# Across all parts: each class's total and the slowest tests, to balance the
+# split in .github/workflows/build.yml and to see what to speed up next.
+cat "$dest"/report-*/cases.txt 2>/dev/null | python3 -I -c '
+import re, sys
+times = []
+for line in sys.stdin:
+    m = re.search(r"-\[\w+\.(\w+) (\w+)\]. \w+ \(([\d.]+) seconds\)", line)
+    if m: times.append((float(m.group(3)), m.group(1), m.group(2)))
+if not times: sys.exit()
+print("== %d tests, %.0fs in all" % (len(times), sum(t for t, _, _ in times)))
+classes = {}
+for t, c, _ in times: classes.setdefault(c, []).append(t)
+for c, ts in sorted(classes.items(), key=lambda kv: -sum(kv[1])):
+    print("  %-16s %3d tests %6.0fs  %4.0fs each" % (c, len(ts), sum(ts), sum(ts) / len(ts)))
+print("  slowest:")
+for t, c, n in sorted(times, reverse=True)[:10]:
+    print("  %6.1fs %s/%s" % (t, c, n))
+'
+
 # Failures outside the UI tests (Rust build, project generation) only show in the log.
 gh run view "$run" --log-failed 2>/dev/null \
   | grep -E "error(\[|:)|##\[error\]" | sed -E 's/^([^\t]*)\t[^\t]*\t[0-9TZ:.-]+ /  [\1] /' | awk '!seen[$0]++' | head -25

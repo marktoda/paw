@@ -28,6 +28,20 @@ struct PawApp: App {
 final class PawAppDelegate: NSObject, UIApplicationDelegate {
     func application(
         _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        #if DEBUG && targetEnvironment(simulator)
+        // UI tests: pushes, sheets and menus finish at once, so no step
+        // waits for one to settle.
+        if LaunchArguments.bool("pawNoAnimations") {
+            UIView.setAnimationsEnabled(false)
+        }
+        #endif
+        return true
+    }
+
+    func application(
+        _ application: UIApplication,
         shouldAllowExtensionPointIdentifier extensionPointIdentifier: UIApplication.ExtensionPointIdentifier
     ) -> Bool {
         extensionPointIdentifier != .keyboard
