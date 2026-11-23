@@ -1,6 +1,8 @@
 //! The device checks, run against the simulated card so their commands are
 //! known to be well formed before they meet a real key.
 
+#![cfg(feature = "sim")]
+
 use std::sync::Arc;
 use std::time::Duration;
 

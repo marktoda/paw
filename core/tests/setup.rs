@@ -2,6 +2,8 @@
 //! every step, every failure, resuming after the app is killed, the address
 //! forms, and how host keys are trusted.
 
+#![cfg(feature = "sim")]
+
 mod support;
 
 use std::path::Path;

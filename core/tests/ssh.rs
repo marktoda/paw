@@ -1,6 +1,8 @@
 //! SSH login signatures from a simulated OpenPGP card with an ed25519
 //! authentication key, checked with a verifier that shares no code with it.
 
+#![cfg(feature = "sim")]
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;

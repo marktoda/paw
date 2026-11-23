@@ -3,6 +3,8 @@
 //! encryption. Every key here is generated for the test in a throwaway
 //! GnuPG home, or is the simulated card's public test key.
 
+#![cfg(feature = "sim")]
+
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, OnceLock};

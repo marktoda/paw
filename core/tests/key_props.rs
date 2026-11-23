@@ -1,6 +1,8 @@
 //! Whatever a card (or something posing as one) answers, the key session
 //! does not panic: it fails the task, or carries on.
 
+#![cfg(feature = "sim")]
+
 mod key_common;
 
 use std::sync::{Arc, Mutex};

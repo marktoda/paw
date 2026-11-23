@@ -2,6 +2,8 @@
 //! objects the app uses: open the store, browse, search, ask who can open
 //! an entry, and open one with the (simulated) key.
 
+#![cfg(feature = "sim")]
+
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};

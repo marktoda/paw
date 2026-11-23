@@ -3,6 +3,8 @@
 //! exported by GnuPG choose the key GnuPG would. Every key is generated for
 //! the test in a throwaway GnuPG home.
 
+#![cfg(feature = "sim")]
+
 mod support;
 
 use std::io::Write;

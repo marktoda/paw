@@ -2,6 +2,8 @@
 //! with every login signed by a simulated OpenPGP card. The git host is an
 //! in-process SSH server in front of the real git programs (see `support`).
 
+#![cfg(feature = "sim")]
+
 mod support;
 
 use std::path::Path;

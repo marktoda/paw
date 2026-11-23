@@ -4,6 +4,8 @@
 //! talks to the in-process SSH server (see `support`), the desktop uses the
 //! git command line on the bare repository directly.
 
+#![cfg(feature = "sim")]
+
 mod support;
 
 use std::collections::BTreeMap;

@@ -2,6 +2,8 @@
 //! first time, by Face ID after that, and with the key again once the entry
 //! changes.
 
+#![cfg(feature = "sim")]
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 

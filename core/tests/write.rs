@@ -3,6 +3,8 @@
 //! that no plaintext reaches the disk. Every store is a clone of a bare
 //! repository in a temporary directory, encrypted for the simulated card.
 
+#![cfg(feature = "sim")]
+
 mod support;
 
 use std::path::{Path, PathBuf};

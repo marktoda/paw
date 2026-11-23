@@ -2,6 +2,8 @@
 //! once per plug-in, re-verified silently, dropped when it must be; the
 //! sheet's stages; cancel at every stage; one card job at a time.
 
+#![cfg(feature = "sim")]
+
 mod key_common;
 
 use std::sync::Arc;

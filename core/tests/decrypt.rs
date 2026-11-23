@@ -1,6 +1,8 @@
 //! End-to-end decrypt against a simulated OpenPGP card holding a Curve25519
 //! decryption key, the same key type as on a current YubiKey.
 
+#![cfg(feature = "sim")]
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 

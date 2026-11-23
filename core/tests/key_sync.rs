@@ -1,6 +1,8 @@
 //! A clone over SSH and an entry open through one key session: the PIN is
 //! typed once and serves both.
 
+#![cfg(feature = "sim")]
+
 mod key_common;
 mod support;
 

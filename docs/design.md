@@ -187,6 +187,8 @@ UI tests (`SetupTests`):
 - One test per clone-failure row.
 - `testWrongKeyStopsBeforeTouch` at S4.
 
+**Outcome (branch `core-setup`).** The key steps of setup run as key tasks on the session (`Setup.read_key_from_session`, `download_with_key`, `test_decrypt_with_key`), so a whole setup asks for the PIN once; with the simulated key (SSH slot cached, decryption slot every use) it costs one VERIFY and two touches, one for the login and one for the test decrypt. `check_host` and `confirm_host` stay plain calls: they need no key. A task fails with the key's own `KeyError` for key problems; for anything else (host, repository, store) it fails with `KeyError::Reader` and `Setup.last_task_result` returns the `SetupError` for the S3 table. A cancelled or dropped download goes back to `NeedPin` with nothing left on disk, and the next try needs no PIN. When the test decrypt succeeds, setup pins the card's key, binds its `.gpg-id` line, accepts every `.gpg-id`, and records the key as the store's enrolled key (5.6), on both the session and the older per-call path. `Setup.write_readiness` says whether saving works with no further step, and otherwise which recipients paw needs keys for; setup is done either way. The binding no longer ties another recipient's line to the card when a line already names the card's key. The simulated host for `-pawSimRemote` is `SimRemote` (5.5).
+
 ### 2.5 Daily unlock
 
 **Home**, top to bottom: attention row; "Open with Face ID" (each row shows "until 18:40"); "Recent, needs your key"; "Folders"; sync footer; bottom search with **+** beside it. Top-right menu: **Sync now**, **Settings**, and in a separate destructive section **Lock now**.
@@ -781,6 +783,8 @@ Rules:
 - Errors are a new `KeyError`; status words are read in `key/status.rs`. A security-status refusal after a command that may have waited for a touch is taken as a touch timeout, unverified on a YubiKey. Any reader failure is `KeyRemoved` and ends the session.
 - Not built: the enrolled-fingerprint and serial check before the PIN is sent, the KDF refusal, `ErrorPresentation`, `Handoff`.
 
+**Outcome (branch `core-setup`).** Setup's download and sync's send and refresh now run through sign-in tasks (`*_with_key`), with the network work in the task's thread, progress as `Working`, and cancel honoured between network steps. The enrolled-key check is built (`key/enrolment.rs`): setup records the key's identity in `enrolled-key`, and a `KeyPort` given it (`load_enrolled_key`, or set by setup itself) fails every task on another card before any VERIFY. Keys match by their decryption and authentication fingerprints; the serial is recorded and shown but not compared, so a duplicate key is accepted and asked for its PIN, as above. Because `KeyError` cannot gain a variant without breaking Swift's exhaustive switches, the refusal is `NotForThisKey`, naming both keys in its text, and `KeyTask.key_mismatch` (and `KeyPort.key_mismatch`) return both identities for "This is a different key from the one this store was set up with". `replace_enrolled_key` records the plugged-in key; it does not yet check that the new key opens the store or re-pin it for saving. The KDF refusal, `ErrorPresentation` and `Handoff` are still not built.
+
 ### 3.6 State machine: sync
 
 ```rust
@@ -1283,6 +1287,10 @@ The simulated key's private scalar is a constant in a public repo. A device buil
 5. **Runtime denylist on devices.** `paw-core` hardcodes the simulated public key and fingerprint. The refusal to enrol or encrypt to them is compiled in under `cfg(all(target_os = "ios", not(target_abi = "sim")))`. It cannot be unconditional: every Linux test, scenario and XCUITest enrols and encrypts to the simulated key through `paw-core`, and a runtime off-switch would be the hole this layer exists to close. The pure predicate `is_denied(fingerprint)` is unit-tested on Linux.
 
 `SimKeystore`, the software stand-in for the Secure Enclave, is the most dangerous stand-in and sits under the same gates. The App Store "Try with demo data" path conflicts with this and needs a separate design.
+
+**Outcome (branch `core-setup`).** Smaller than the above. The simulated hardware (`SimulatedKey`, the fixture, `SimKeystore`, `SimClock`, and now `SimRemote`) stays in `paw-core`, in `src/sim`, behind a cargo feature `sim` that is on by default, so tests, the iOS simulator and Debug device builds keep it. `scripts/build-core.sh --release-device` also builds the device library without it, with Swift bindings generated from that library (UniFFI's Swift checks every function's checksum when it loads, so the default bindings cannot be linked against a library that lacks the simulation symbols), and `scripts/check-no-sim.sh` fails if a library has simulation symbols or the fixture's passwords. Not built: a Release configuration in the Xcode project that uses those outputs, `#if DEBUG` around the Swift that names Sim types, the check on the signed app binary, and the runtime denylist (layer 5).
+
+`SimRemote` is an SSH server in the process on a loopback port, serving a fresh bare repository of the fixture store with git's upload-pack and receive-pack written on libgit2 (protocol v0, no `multi_ack`, no side-band, fast-forward pushes only). It starts no `git` program, so it can run inside the app in the iOS simulator; that has been reasoned, not tried. It can refuse the key, present another host key and drop the connection halfway through a pack.
 
 ### 5.6 The never-break rules
 

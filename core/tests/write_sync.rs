@@ -4,6 +4,8 @@
 //! clones of one bare repository behind the in-process SSH server (see
 //! `support`) stand in for the phone and the desktop.
 
+#![cfg(feature = "sim")]
+
 mod support;
 
 use std::path::Path;
