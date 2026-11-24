@@ -271,7 +271,11 @@ impl SitePairings {
     /// Keeps that `entry` has just filled on `service`. Call only after a
     /// fill the person confirmed. Refused (false, nothing kept) unless
     /// `entry` is in `store` and matches `service` by name: a password
-    /// picked from search for another site is never paired.
+    /// picked from search for another site is never paired. Refused too
+    /// when the entry is already paired with another domain of the same
+    /// name: `bankofamerica.co` after `bankofamerica.com` is a lookalike,
+    /// and a fill there never makes it trusted. Clearing the entry's
+    /// pairings is the only way to trust a second domain of one name.
     pub fn record_pairing(&self, store: Arc<PassStore>, entry: String, service: String) -> Result<bool, PawError> {
         let Some(host) = host_of(&service) else { return Ok(false) };
         let (Some(name), Some(site)) = (site_name(&host), registrable_domain(&service)) else {
@@ -279,6 +283,12 @@ impl SitePairings {
         };
         let entries = store.entries();
         if !entries.iter().any(|e| e.path == entry) || !names_site(&entry, &name) {
+            return Ok(false);
+        }
+        let lookalike = self.file.load().into_iter().filter(|p| p.entry == entry).flat_map(|p| p.sites).any(|known| {
+            known != site && site_name(&known).as_deref() == Some(name.as_str())
+        });
+        if lookalike {
             return Ok(false);
         }
         let existing: HashSet<&str> = entries.iter().map(|e| e.path.as_str()).collect();

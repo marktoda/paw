@@ -291,15 +291,16 @@ final class AutoFillModel {
     }
 
     /// "Fill anyway" or "Use it here" on the confirm step. A name match
-    /// confirmed here is paired with the domain once it fills; a password
-    /// from search for another site never is, so one mistaken "Fill
-    /// anyway" does not make a site trusted.
+    /// confirmed the first time is paired with the domain once it fills.
+    /// Nothing else ever is: not a password from search for another site,
+    /// and not a lookalike of a domain the entry is paired with, which
+    /// fills this once and warns every time (the core refuses it too).
     func fillAnyway() {
         guard case .confirm(let entry, let reason) = screen else { return }
         switch reason {
-        case .firstTime(let site), .lookalike(let site, _):
+        case .firstTime(let site):
             pairing = (entry.path, site)
-        case .otherSite:
+        case .lookalike, .otherSite:
             pairing = nil
         }
         screen = .list

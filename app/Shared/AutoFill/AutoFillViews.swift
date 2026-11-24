@@ -275,9 +275,32 @@ private struct AutoFillConfirm: View {
         }
     }
 
+    private var isFirstTime: Bool {
+        if case .firstTime = reason { return true }
+        return false
+    }
+
     var body: some View {
         VStack(spacing: PawMetrics.Spacing.l) {
-            ErrorRow(kind: isLookalike ? .error : .warning, problem: headline, nextStep: line, isBanner: true)
+            if isFirstTime {
+                // The common case for a store named without domains: a
+                // question, not a warning (warning colour is for what must
+                // be read before going on).
+                VStack(spacing: PawMetrics.Spacing.xs) {
+                    Text(headline)
+                        .font(PawFont.columnTitle)
+                        .foregroundStyle(PawColor.label)
+                    Text(line)
+                        .font(PawFont.footnote)
+                        .foregroundStyle(PawColor.labelSecondary)
+                }
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("autofill-confirm-question")
+            } else {
+                ErrorRow(kind: isLookalike ? .error : .warning, problem: headline, nextStep: line, isBanner: true)
+            }
             if let address {
                 Text(address)
                     .font(PawFont.headline.monospaced())

@@ -369,8 +369,8 @@ Nothing learned from a decrypted entry is stored (5.6, rule 6).
 
 A name fits lookalikes (`bankofamerica.co`), so paw keeps, per entry, the registrable domains it has filled on after the person confirmed (`site-pairings.json` in the state directory: not in the repository, not synced, removed with the store, bounded to 300 entries of 4 domains). In the list:
 - Paired with this domain: under "For <site>", fills without asking, published above the keyboard for that domain only.
-- Not yet paired: under "Might be for this site", below; picking it asks first: "Use bankofamerica on bankofamerica.com?" / "First time on this site. Check the address is right.", the full address when it differs, **Cancel** (primary) / **Use it here**. The pairing is kept only after the fill succeeds.
-- Paired only with other domains of that name: not listed; found by search, it asks in red: "You've used this on bankofamerica.com. This is bankofamerica.co."
+- Not yet paired: under "Might be for this site", below; picking it asks first, as a plain question (no warning colour: it is the common case): "Use bankofamerica on bankofamerica.com?" / "First time on this site. Check the address is right.", the full address when it differs, **Cancel** (primary) / **Use it here**. The pairing is kept only after the fill succeeds.
+- Paired only with other domains of that name: not listed; found by search, it asks in red: "You've used this on bankofamerica.com. This is bankofamerica.co." **Use it here** fills once and never pairs (the core refuses), so it warns every time. Trusting a second domain of one name means clearing the entry's pairings, which has no screen yet.
 - A password from search for an unrelated site ("Fill anyway") is never paired.
 
 Pairings involve no decrypted content, so rule 6 holds. The core can list and clear them (`SitePairings`); a "Used on" row on the entry screen or a list in Settings › AutoFill can come later.

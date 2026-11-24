@@ -329,6 +329,12 @@ fn only_a_name_match_for_the_site_is_ever_paired() {
         MatchKind::Name { pairing: NamePairing::PairedElsewhere { sites: vec!["bankofamerica.com".into()] } }
     );
     assert_eq!(lookalike[0].site, "bankofamerica.co");
+    // Filling on the lookalike never pairs it, even through the core.
+    assert!(!record("bank/bankofamerica", "https://www.bankofamerica.co"));
+    assert!(!record("bank/bankofamerica", "https://bank-of-america.com"));
+    assert_eq!(pairings.pairings(), vec![pairing("bank/bankofamerica", &["bankofamerica.com"])]);
+    // Recording the paired domain again is fine.
+    assert!(record("bank/bankofamerica", "https://secure.bankofamerica.com"));
     // Without pairings every name match is unpaired.
     let blind = store.match_site("https://bankofamerica.com".into(), None);
     assert_eq!(blind[0].kind, MatchKind::Name { pairing: NamePairing::Unpaired });
@@ -336,15 +342,18 @@ fn only_a_name_match_for_the_site_is_ever_paired() {
 
 #[test]
 fn recording_again_moves_a_site_to_the_end_and_keeps_few_sites() {
-    let (_dir, store, pairings) = state_with(&["github"]);
-    let sites = ["github.com", "github.co", "github.net", "github.org", "github.dev", "github.com"];
+    // The file itself, under the core's checks: a second domain of one name
+    // is refused by `record_pairing`, so these are names of several sites.
+    let dir = tempfile::tempdir().unwrap();
+    let file = PairingFile::new(dir.path());
+    let sites = ["github.com", "gitlab.com", "bitbucket.org", "codeberg.org", "sourcehut.org", "github.com"];
     for site in sites {
-        assert!(pairings.record_pairing(store.clone(), "github".into(), format!("https://{site}")).unwrap());
+        file.record("code", site, None).unwrap();
     }
-    let kept = pairings.pairings();
+    let kept = file.load();
     assert_eq!(kept.len(), 1);
     assert_eq!(kept[0].sites.len(), MAX_SITES);
-    assert_eq!(kept[0].sites, vec!["github.net", "github.org", "github.dev", "github.com"]);
+    assert_eq!(kept[0].sites, vec!["bitbucket.org", "codeberg.org", "sourcehut.org", "github.com"]);
 }
 
 #[test]

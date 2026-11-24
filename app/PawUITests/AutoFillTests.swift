@@ -161,8 +161,9 @@ final class AutoFillTests: PawUITestCase {
         expectAbsent("autofill-site-section", "A name match is not one of the site's own")
         snapshot("light-maybe-list")
         tap(row(Self.northwind))
-        expectLabel("warning-row", contains: "Use northwind on northwind.example?")
-        expectLabel("warning-row", contains: "First time on this site. Check the address is right.")
+        expectLabel("autofill-confirm-question", contains: "Use northwind on northwind.example?")
+        expectLabel("autofill-confirm-question", contains: "First time on this site. Check the address is right.")
+        expectAbsent("warning-row", "The first time is a question, not a warning")
         expectLabel("autofill-confirm-address", contains: "www.northwind.example")
         expectLabel("autofill-confirm-cancel", contains: "Cancel")
         expect("autofill-use-here")
@@ -216,9 +217,23 @@ final class AutoFillTests: PawUITestCase {
         snapshot("light-lookalike")
         tap("autofill-confirm-cancel")
         expect(row(Self.northwind))
-        waitForKeyTasksToEnd()
-        tap("autofill-cancel")
+
+        // Used here anyway: it fills this once and is never paired.
+        tap(row(Self.northwind))
+        tap("autofill-use-here")
+        expectLabel("key-sheet-purpose", contains: "Fill northwind on login.northwind.test")
+        enterPin(Self.pin)
+        touchTheKey()
+        expectResult("filled user=you@example.com")
         expectValue("harness-pairings", "\(Self.northwind)=northwind.example")
+        waitForKeyTasksToEnd()
+
+        // So the next time still warns.
+        tap("harness-again")
+        expectLabel("autofill-no-match", contains: "Nothing here matches login.northwind.test")
+        search("northwind")
+        tap(row(Self.northwind))
+        expect("error-row")
     }
 
     func testAPasswordFromSearchForAnotherSiteIsNeverPaired() {
