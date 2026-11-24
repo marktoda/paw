@@ -1396,13 +1396,47 @@
    "version": "0.5.1"
   },
   {
+   "licence": "MIT OR Apache-2.0",
+   "name": "idna",
+   "notes": [],
+   "source": "https://github.com/servo/rust-url/",
+   "texts": [
+    18,
+    102
+   ],
+   "version": "1.1.0"
+  },
+  {
+   "licence": "Apache-2.0 OR MIT",
+   "name": "idna_adapter",
+   "notes": [],
+   "source": "https://github.com/hsivonen/idna_adapter",
+   "texts": [
+    18,
+    103
+   ],
+   "version": "1.1.0"
+  },
+  {
+   "licence": "(Apache-2.0 OR MIT) AND Unicode-3.0",
+   "name": "idna_mapping",
+   "notes": [],
+   "source": "https://github.com/hsivonen/idna_mapping",
+   "texts": [
+    18,
+    104,
+    105
+   ],
+   "version": "1.1.0"
+  },
+  {
    "licence": "Apache-2.0 OR MIT",
    "name": "indexmap",
    "notes": [],
    "source": "https://github.com/indexmap-rs/indexmap",
    "texts": [
     18,
-    102
+    106
    ],
    "version": "2.14.2"
   },
@@ -1413,7 +1447,7 @@
    "source": "https://github.com/RustCrypto/utils",
    "texts": [
     0,
-    103
+    107
    ],
    "version": "0.1.4"
   },
@@ -1424,7 +1458,7 @@
    "source": "https://github.com/RustCrypto/utils",
    "texts": [
     0,
-    104
+    108
    ],
    "version": "0.2.6"
   },
@@ -1446,7 +1480,7 @@
    "source": "https://github.com/RustCrypto/elliptic-curves/tree/master/k256",
    "texts": [
     0,
-    105
+    109
    ],
    "version": "0.13.4"
   },
@@ -1468,7 +1502,7 @@
    "source": "https://github.com/RustCrypto/sponges",
    "texts": [
     0,
-    106
+    110
    ],
    "version": "0.2.2"
   },
@@ -1478,7 +1512,7 @@
    "notes": [],
    "source": "https://github.com/RustCrypto/traits",
    "texts": [
-    107,
+    111,
     58
    ],
    "version": "0.3.0"
@@ -1500,7 +1534,7 @@
    "notes": [],
    "source": "https://github.com/trifectatechfoundation/libbzip2-rs",
    "texts": [
-    108
+    112
    ],
    "version": "0.2.7"
   },
@@ -1511,7 +1545,7 @@
    "source": "https://github.com/rust-lang/libc",
    "texts": [
     10,
-    109
+    113
    ],
    "version": "0.2.191"
   },
@@ -1523,7 +1557,7 @@
    ],
    "source": "https://github.com/libgit2/libgit2",
    "texts": [
-    110
+    114
    ],
    "version": "1.9.7"
   },
@@ -1544,7 +1578,7 @@
    "notes": [],
    "source": "https://github.com/rust-lang/compiler-builtins",
    "texts": [
-    111
+    115
    ],
    "version": "0.2.16"
   },
@@ -1555,7 +1589,7 @@
    "source": "https://github.com/rust-lang/libz-sys",
    "texts": [
     18,
-    112
+    116
    ],
    "version": "1.1.33"
   },
@@ -1577,7 +1611,7 @@
    "source": "https://github.com/RustCrypto/hashes",
    "texts": [
     0,
-    113
+    117
    ],
    "version": "0.10.6"
   },
@@ -1587,7 +1621,7 @@
    "notes": [],
    "source": "https://github.com/stainless-steel/md5",
    "texts": [
-    114
+    118
    ],
    "version": "0.8.1"
   },
@@ -1609,9 +1643,9 @@
    "notes": [],
    "source": "https://github.com/Alexhuszagh/minimal-lexical",
    "texts": [
-    115,
+    119,
     11,
-    116
+    120
    ],
    "version": "0.2.1"
   },
@@ -1621,7 +1655,7 @@
    "notes": [],
    "source": "https://github.com/tokio-rs/mio",
    "texts": [
-    117
+    121
    ],
    "version": "1.2.5"
   },
@@ -1632,7 +1666,7 @@
    "source": "https://github.com/RustCrypto/KEMs",
    "texts": [
     0,
-    118
+    122
    ],
    "version": "0.3.4"
   },
@@ -1643,7 +1677,7 @@
    "source": "https://github.com/RustCrypto/KEMs",
    "texts": [
     0,
-    118
+    122
    ],
    "version": "0.2.4"
   },
@@ -1653,7 +1687,7 @@
    "notes": [],
    "source": "https://github.com/nix-rust/nix",
    "texts": [
-    119
+    123
    ],
    "version": "0.31.4"
   },
@@ -1663,7 +1697,7 @@
    "notes": [],
    "source": "https://github.com/Geal/nom",
    "texts": [
-    120
+    124
    ],
    "version": "7.1.3"
   },
@@ -1673,7 +1707,7 @@
    "notes": [],
    "source": "https://github.com/rust-bakery/nom",
    "texts": [
-    120
+    124
    ],
    "version": "8.0.0"
   },
@@ -1739,7 +1773,7 @@
    "source": "https://github.com/illicitonion/num_enum",
    "texts": [
     10,
-    121,
+    125,
     11
    ],
    "version": "0.7.6"
@@ -1751,7 +1785,7 @@
    "source": "https://github.com/RustCrypto/AEADs",
    "texts": [
     0,
-    122
+    126
    ],
    "version": "0.1.0"
   },
@@ -1773,7 +1807,7 @@
    "source": "https://github.com/RustCrypto/utils",
    "texts": [
     0,
-    123
+    127
    ],
    "version": "0.3.1"
   },
@@ -1796,9 +1830,9 @@
    "notes": [],
    "source": "https://codeberg.org/openpgp-card/rpgp",
    "texts": [
-    124,
-    125,
-    126
+    128,
+    129,
+    130
    ],
    "version": "0.9.1"
   },
@@ -1809,7 +1843,7 @@
    "source": "https://github.com/RustCrypto/elliptic-curves/tree/master/p256",
    "texts": [
     0,
-    127
+    131
    ],
    "version": "0.13.2"
   },
@@ -1831,7 +1865,7 @@
    "source": "https://github.com/RustCrypto/elliptic-curves/tree/master/p384",
    "texts": [
     0,
-    128
+    132
    ],
    "version": "0.13.1"
   },
@@ -1842,7 +1876,7 @@
    "source": "https://github.com/RustCrypto/elliptic-curves",
    "texts": [
     0,
-    128
+    132
    ],
    "version": "0.14.0"
   },
@@ -1875,7 +1909,7 @@
    "source": "https://github.com/RustCrypto/traits/tree/master/password-hash",
    "texts": [
     0,
-    127
+    131
    ],
    "version": "0.5.0"
   },
@@ -1897,7 +1931,7 @@
    "source": "https://github.com/RustCrypto/password-hashes",
    "texts": [
     0,
-    129
+    133
    ],
    "version": "0.13.0"
   },
@@ -1919,7 +1953,7 @@
    "source": "https://github.com/RustCrypto/formats",
    "texts": [
     0,
-    130
+    134
    ],
    "version": "1.0.0"
   },
@@ -1930,7 +1964,7 @@
    "source": "https://github.com/servo/rust-url/",
    "texts": [
     18,
-    131
+    102
    ],
    "version": "2.3.2"
   },
@@ -1962,7 +1996,7 @@
    "notes": [],
    "source": "https://github.com/taiki-e/pin-project-lite",
    "texts": [
-    132,
+    135,
     11
    ],
    "version": "0.2.18"
@@ -1974,7 +2008,7 @@
    "source": "https://github.com/RustCrypto/formats/tree/master/pkcs1",
    "texts": [
     0,
-    133
+    136
    ],
    "version": "0.7.5"
   },
@@ -2018,7 +2052,7 @@
    "source": "https://github.com/randomites/plain",
    "texts": [
     18,
-    134
+    137
    ],
    "version": "0.2.3"
   },
@@ -2029,7 +2063,7 @@
    "source": "https://github.com/RustCrypto/universal-hashes",
    "texts": [
     0,
-    135
+    138
    ],
    "version": "0.8.0"
   },
@@ -2040,7 +2074,7 @@
    "source": "https://github.com/RustCrypto/universal-hashes",
    "texts": [
     0,
-    136
+    139
    ],
    "version": "0.9.1"
   },
@@ -2051,7 +2085,7 @@
    "source": "https://github.com/RustCrypto/universal-hashes",
    "texts": [
     0,
-    137
+    140
    ],
    "version": "0.6.2"
   },
@@ -2072,8 +2106,8 @@
    "notes": [],
    "source": "https://github.com/cryptocorrosion/cryptocorrosion",
    "texts": [
-    138,
-    139
+    141,
+    142
    ],
    "version": "0.2.21"
   },
@@ -2084,7 +2118,7 @@
    "source": "https://github.com/RustCrypto/elliptic-curves",
    "texts": [
     0,
-    140
+    143
    ],
    "version": "0.14.0"
   },
@@ -2095,7 +2129,7 @@
    "source": "https://github.com/RustCrypto/elliptic-curves/tree/master/primeorder",
    "texts": [
     0,
-    127
+    131
    ],
    "version": "0.13.6"
   },
@@ -2106,7 +2140,7 @@
    "source": "https://github.com/RustCrypto/elliptic-curves",
    "texts": [
     0,
-    127
+    131
    ],
    "version": "0.14.0"
   },
@@ -2116,7 +2150,7 @@
    "notes": [],
    "source": "https://github.com/addr-rs/psl",
    "texts": [
-    141
+    144
    ],
    "version": "2.1.261"
   },
@@ -2126,7 +2160,7 @@
    "notes": [],
    "source": "https://github.com/addr-rs/psl-types",
    "texts": [
-    142,
+    145,
     18
    ],
    "version": "2.0.11"
@@ -2139,7 +2173,7 @@
    ],
    "source": "https://publicsuffix.org/list/",
    "texts": [
-    143
+    146
    ],
    "version": "in psl 2.1.261"
   },
@@ -2149,7 +2183,7 @@
    "notes": [],
    "source": "https://github.com/bitvecto-rs/radium",
    "texts": [
-    144
+    147
    ],
    "version": "0.7.0"
   },
@@ -2159,9 +2193,9 @@
    "notes": [],
    "source": "https://github.com/rust-random/rand",
    "texts": [
-    145,
-    146,
-    147
+    148,
+    149,
+    150
    ],
    "version": "0.10.4"
   },
@@ -2171,9 +2205,9 @@
    "notes": [],
    "source": "https://github.com/rust-random/rand",
    "texts": [
-    145,
-    146,
-    147
+    148,
+    149,
+    150
    ],
    "version": "0.8.8"
   },
@@ -2183,9 +2217,9 @@
    "notes": [],
    "source": "https://github.com/rust-random/rand",
    "texts": [
-    145,
+    148,
     87,
-    147
+    150
    ],
    "version": "0.3.1"
   },
@@ -2195,9 +2229,9 @@
    "notes": [],
    "source": "https://github.com/rust-random/rand_core",
    "texts": [
-    148,
-    149,
-    150
+    151,
+    152,
+    153
    ],
    "version": "0.10.1"
   },
@@ -2207,9 +2241,9 @@
    "notes": [],
    "source": "https://github.com/rust-random/rand",
    "texts": [
-    145,
-    149,
-    147
+    148,
+    152,
+    150
    ],
    "version": "0.6.4"
   },
@@ -2219,7 +2253,7 @@
    "notes": [],
    "source": "https://github.com/alecmocatta/replace_with",
    "texts": [
-    115,
+    119,
     11
    ],
    "version": "0.1.8"
@@ -2252,12 +2286,12 @@
    "notes": [],
    "source": "https://github.com/briansmith/ring",
    "texts": [
-    151,
-    152,
-    153,
     154,
+    155,
+    156,
+    157,
     18,
-    155
+    158
    ],
    "version": "0.17.14"
   },
@@ -2338,9 +2372,9 @@
    "notes": [],
    "source": "https://github.com/bytecodealliance/rustix",
    "texts": [
-    156,
+    159,
     18,
-    157,
+    160,
     11
    ],
    "version": "1.1.6"
@@ -2352,8 +2386,8 @@
    "source": "https://github.com/rustls/rustls",
    "texts": [
     18,
-    158,
-    159
+    161,
+    162
    ],
    "version": "0.23.46"
   },
@@ -2363,8 +2397,8 @@
    "notes": [],
    "source": "https://github.com/rustls/pki-types",
    "texts": [
-    160,
-    161
+    163,
+    164
    ],
    "version": "1.16.0"
   },
@@ -2374,7 +2408,7 @@
    "notes": [],
    "source": "https://github.com/rustls/webpki",
    "texts": [
-    162
+    165
    ],
    "version": "0.103.17"
   },
@@ -2385,7 +2419,7 @@
    "source": "https://github.com/RustCrypto/stream-ciphers",
    "texts": [
     0,
-    163
+    166
    ],
    "version": "0.11.0"
   },
@@ -2395,7 +2429,7 @@
    "notes": [],
    "source": "https://github.com/m4b/scroll",
    "texts": [
-    164
+    167
    ],
    "version": "0.12.0"
   },
@@ -2417,7 +2451,7 @@
    "source": "https://github.com/RustCrypto/formats/tree/master/sec1",
    "texts": [
     0,
-    165
+    168
    ],
    "version": "0.7.3"
   },
@@ -2439,7 +2473,7 @@
    "source": "https://github.com/iqlusioninc/crates/tree/main/secrecy",
    "texts": [
     50,
-    166
+    169
    ],
    "version": "0.10.3"
   },
@@ -2505,7 +2539,7 @@
    "source": "https://github.com/RustCrypto/formats/tree/master/serdect",
    "texts": [
     50,
-    167
+    170
    ],
    "version": "0.2.0"
   },
@@ -2516,7 +2550,7 @@
    "source": "https://github.com/RustCrypto/formats",
    "texts": [
     50,
-    167
+    170
    ],
    "version": "0.3.0"
   },
@@ -2527,7 +2561,7 @@
    "source": "https://github.com/RustCrypto/formats",
    "texts": [
     50,
-    168
+    171
    ],
    "version": "0.4.3"
   },
@@ -2538,7 +2572,7 @@
    "source": "https://github.com/RustCrypto/hashes",
    "texts": [
     0,
-    113
+    117
    ],
    "version": "0.10.7"
   },
@@ -2549,7 +2583,7 @@
    "source": "https://github.com/RustCrypto/hashes",
    "texts": [
     0,
-    169
+    172
    ],
    "version": "0.11.0"
   },
@@ -2560,7 +2594,7 @@
    "source": "https://github.com/RustCrypto/hashes",
    "texts": [
     0,
-    170
+    173
    ],
    "version": "0.10.0"
   },
@@ -2571,7 +2605,7 @@
    "source": "https://github.com/RustCrypto/hashes",
    "texts": [
     0,
-    113
+    117
    ],
    "version": "0.10.9"
   },
@@ -2582,7 +2616,7 @@
    "source": "https://github.com/RustCrypto/hashes",
    "texts": [
     0,
-    169
+    172
    ],
    "version": "0.11.1"
   },
@@ -2593,7 +2627,7 @@
    "source": "https://github.com/RustCrypto/hashes",
    "texts": [
     0,
-    171
+    174
    ],
    "version": "0.10.9"
   },
@@ -2604,7 +2638,7 @@
    "source": "https://github.com/RustCrypto/hashes",
    "texts": [
     0,
-    172
+    175
    ],
    "version": "0.12.0"
   },
@@ -2615,7 +2649,7 @@
    "source": "https://github.com/RustCrypto/XOFs",
    "texts": [
     0,
-    173
+    176
    ],
    "version": "0.1.0"
   },
@@ -2626,7 +2660,7 @@
    "source": "https://github.com/vorner/signal-hook",
    "texts": [
     18,
-    174
+    177
    ],
    "version": "1.4.8"
   },
@@ -2658,9 +2692,9 @@
    "notes": [],
    "source": "https://github.com/jedisct1/rust-siphash",
    "texts": [
-    175,
+    178,
     50,
-    176
+    179
    ],
    "version": "1.0.4"
   },
@@ -2670,7 +2704,7 @@
    "notes": [],
    "source": "https://github.com/tokio-rs/slab",
    "texts": [
-    177
+    180
    ],
    "version": "0.4.12"
   },
@@ -2681,7 +2715,7 @@
    "source": "https://github.com/smallvec/smallvec",
    "texts": [
     18,
-    178
+    181
    ],
    "version": "1.16.6"
   },
@@ -2691,7 +2725,7 @@
    "notes": [],
    "source": "https://github.com/mgeisler/smawk",
    "texts": [
-    179
+    182
    ],
    "version": "0.3.3"
   },
@@ -2701,8 +2735,8 @@
    "notes": [],
    "source": "https://github.com/shepmaster/snafu",
    "texts": [
-    180,
-    181
+    183,
+    184
    ],
    "version": "0.9.2"
   },
@@ -2723,7 +2757,7 @@
    "notes": [],
    "source": "https://github.com/mvdnes/spin-rs.git",
    "texts": [
-    182
+    185
    ],
    "version": "0.9.9"
   },
@@ -2734,7 +2768,7 @@
    "source": "https://github.com/RustCrypto/formats/tree/master/spki",
    "texts": [
     0,
-    133
+    136
    ],
    "version": "0.7.3"
   },
@@ -2756,7 +2790,7 @@
    "source": "https://github.com/RustCrypto/utils",
    "texts": [
     0,
-    173
+    176
    ],
    "version": "0.1.0"
   },
@@ -2800,7 +2834,7 @@
    "source": "https://github.com/nvzqz/static-assertions-rs",
    "texts": [
     50,
-    183
+    186
    ],
    "version": "1.1.0"
   },
@@ -2810,7 +2844,7 @@
    "notes": [],
    "source": "https://github.com/rapidfuzz/strsim-rs",
    "texts": [
-    184
+    187
    ],
    "version": "0.11.1"
   },
@@ -2820,7 +2854,7 @@
    "notes": [],
    "source": "https://github.com/dalek-cryptography/subtle",
    "texts": [
-    185
+    188
    ],
    "version": "2.6.1"
   },
@@ -2830,7 +2864,7 @@
    "notes": [],
    "source": "https://github.com/myrrlyn/tap",
    "texts": [
-    186
+    189
    ],
    "version": "1.0.1"
   },
@@ -2841,7 +2875,7 @@
    "source": "https://github.com/Stebalien/tempfile",
    "texts": [
     18,
-    187
+    190
    ],
    "version": "3.27.0"
   },
@@ -2851,7 +2885,7 @@
    "notes": [],
    "source": "https://github.com/mgeisler/textwrap",
    "texts": [
-    188
+    191
    ],
    "version": "0.16.4"
   },
@@ -2884,8 +2918,8 @@
    "source": "https://github.com/Lokathor/tinyvec",
    "texts": [
     50,
-    189,
-    190
+    192,
+    193
    ],
    "version": "1.13.3"
   },
@@ -2895,7 +2929,7 @@
    "notes": [],
    "source": "https://github.com/tokio-rs/tokio",
    "texts": [
-    191
+    194
    ],
    "version": "1.54.1"
   },
@@ -2950,7 +2984,7 @@
    "source": "https://github.com/RustCrypto/block-ciphers",
    "texts": [
     0,
-    192
+    195
    ],
    "version": "0.7.1"
   },
@@ -2960,9 +2994,9 @@
    "notes": [],
    "source": "https://github.com/paholg/typenum",
    "texts": [
-    193,
-    194,
-    195
+    196,
+    197,
+    198
    ],
    "version": "1.20.1"
   },
@@ -2973,9 +3007,31 @@
    "source": "https://github.com/seanmonstar/unicase",
    "texts": [
     18,
-    196
+    199
    ],
    "version": "2.10.0"
+  },
+  {
+   "licence": "MIT OR Apache-2.0",
+   "name": "unicode-bidi",
+   "notes": [],
+   "source": "https://github.com/servo/unicode-bidi",
+   "texts": [
+    200,
+    18,
+    94
+   ],
+   "version": "0.3.18"
+  },
+  {
+   "licence": "Apache-2.0",
+   "name": "unicode-joining-type",
+   "notes": [],
+   "source": "https://github.com/yeslogic/unicode-joining-type",
+   "texts": [
+    8
+   ],
+   "version": "1.0.0"
   },
   {
    "licence": "(MIT OR Apache-2.0) AND Unicode-3.0",
@@ -2983,10 +3039,10 @@
    "notes": [],
    "source": "https://github.com/unicode-rs/unicode-normalization",
    "texts": [
-    197,
+    201,
     18,
     94,
-    198
+    202
    ],
    "version": "0.1.26"
   },
@@ -2996,7 +3052,7 @@
    "notes": [],
    "source": "https://github.com/unicode-rs/unicode-width",
    "texts": [
-    197,
+    201,
     18,
     94
    ],
@@ -3010,7 +3066,7 @@
    ],
    "source": "https://github.com/mozilla/uniffi-rs",
    "texts": [
-    143
+    146
    ],
    "version": "0.32.2"
   },
@@ -3022,7 +3078,7 @@
    ],
    "source": "https://github.com/mozilla/uniffi-rs",
    "texts": [
-    143
+    146
    ],
    "version": "0.32.2"
   },
@@ -3034,7 +3090,7 @@
    ],
    "source": "https://github.com/mozilla/uniffi-rs",
    "texts": [
-    143
+    146
    ],
    "version": "0.32.2"
   },
@@ -3046,7 +3102,7 @@
    ],
    "source": "https://github.com/mozilla/uniffi-rs",
    "texts": [
-    143
+    146
    ],
    "version": "0.32.2"
   },
@@ -3058,7 +3114,7 @@
    ],
    "source": "https://github.com/mozilla/uniffi-rs",
    "texts": [
-    143
+    146
    ],
    "version": "0.32.2"
   },
@@ -3070,7 +3126,7 @@
    ],
    "source": "https://github.com/mozilla/uniffi-rs",
    "texts": [
-    143
+    146
    ],
    "version": "0.32.2"
   },
@@ -3081,7 +3137,7 @@
    "source": "https://github.com/RustCrypto/traits",
    "texts": [
     0,
-    199
+    203
    ],
    "version": "0.5.1"
   },
@@ -3092,7 +3148,7 @@
    "source": "https://github.com/RustCrypto/traits",
    "texts": [
     0,
-    200
+    204
    ],
    "version": "0.6.1"
   },
@@ -3102,7 +3158,7 @@
    "notes": [],
    "source": "https://github.com/briansmith/untrusted",
    "texts": [
-    201
+    205
    ],
    "version": "0.9.0"
   },
@@ -3113,7 +3169,7 @@
    "source": "https://github.com/algesten/ureq",
    "texts": [
     50,
-    202
+    206
    ],
    "version": "3.5.2"
   },
@@ -3124,7 +3180,7 @@
    "source": "https://github.com/algesten/ureq-proto",
    "texts": [
     50,
-    203
+    207
    ],
    "version": "0.7.1"
   },
@@ -3140,12 +3196,36 @@
    "version": "0.8.1"
   },
   {
+   "licence": "Apache-2.0 OR MIT",
+   "name": "utf8_iter",
+   "notes": [],
+   "source": "https://github.com/hsivonen/utf8_iter",
+   "texts": [
+    208,
+    50,
+    209
+   ],
+   "version": "1.1.0"
+  },
+  {
+   "licence": "Apache-2.0 OR MIT",
+   "name": "utf_types",
+   "notes": [],
+   "source": "https://github.com/hsivonen/utf_types",
+   "texts": [
+    210,
+    50,
+    209
+   ],
+   "version": "1.0.0"
+  },
+  {
    "licence": "CDLA-Permissive-2.0",
    "name": "webpki-roots",
    "notes": [],
    "source": "https://github.com/rustls/webpki-roots",
    "texts": [
-    204
+    211
    ],
    "version": "1.0.12"
   },
@@ -3155,7 +3235,7 @@
    "notes": [],
    "source": "https://github.com/mozilla/uniffi-rs",
    "texts": [
-    205
+    212
    ],
    "version": "5.0.0"
   },
@@ -3165,7 +3245,7 @@
    "notes": [],
    "source": "https://github.com/winnow-rs/winnow",
    "texts": [
-    206
+    213
    ],
    "version": "1.0.5"
   },
@@ -3176,7 +3256,7 @@
    "source": "https://github.com/RustCrypto/elliptic-curves",
    "texts": [
     0,
-    207
+    214
    ],
    "version": "0.14.1"
   },
@@ -3196,7 +3276,7 @@
    "notes": [],
    "source": "https://github.com/dalek-cryptography/curve25519-dalek/tree/main/x25519-dalek",
    "texts": [
-    208
+    215
    ],
    "version": "2.0.1"
   },
@@ -3206,9 +3286,9 @@
    "notes": [],
    "source": "https://github.com/google/zerocopy",
    "texts": [
-    209,
-    210,
-    211
+    216,
+    217,
+    218
    ],
    "version": "0.8.64"
   },
@@ -3219,7 +3299,7 @@
    "source": "https://github.com/RustCrypto/utils",
    "texts": [
     50,
-    106
+    110
    ],
    "version": "1.9.2"
   },
@@ -3229,7 +3309,7 @@
    "notes": [],
    "source": "https://github.com/trifectatechfoundation/zlib-rs",
    "texts": [
-    212
+    219
    ],
    "version": "0.6.8"
   },
@@ -3703,6 +3783,22 @@
    "title": "LICENSE-MIT"
   },
   {
+   "body": "Copyright (c) 2013-2025 The rust-url developers\n\nPermission is hereby granted, free of charge, to any\nperson obtaining a copy of this software and associated\ndocumentation files (the \"Software\"), to deal in the\nSoftware without restriction, including without\nlimitation the rights to use, copy, modify, merge,\npublish, distribute, sublicense, and/or sell copies of\nthe Software, and to permit persons to whom the Software\nis furnished to do so, subject to the following\nconditions:\n\nThe above copyright notice and this permission notice\nshall be included in all copies or substantial portions\nof the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF\nANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED\nTO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A\nPARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT\nSHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY\nCLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR\nIN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\nDEALINGS IN THE SOFTWARE.\n",
+   "title": "LICENSE-MIT"
+  },
+  {
+   "body": "Copyright (c) The rust-url developers\n\nPermission is hereby granted, free of charge, to any\nperson obtaining a copy of this software and associated\ndocumentation files (the \"Software\"), to deal in the\nSoftware without restriction, including without\nlimitation the rights to use, copy, modify, merge,\npublish, distribute, sublicense, and/or sell copies of\nthe Software, and to permit persons to whom the Software\nis furnished to do so, subject to the following\nconditions:\n\nThe above copyright notice and this permission notice\nshall be included in all copies or substantial portions\nof the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF\nANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED\nTO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A\nPARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT\nSHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY\nCLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR\nIN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\nDEALINGS IN THE SOFTWARE.\n",
+   "title": "LICENSE-MIT"
+  },
+  {
+   "body": "Copyright (c) 2013-2022 The rust-url developers\n\nPermission is hereby granted, free of charge, to any\nperson obtaining a copy of this software and associated\ndocumentation files (the \"Software\"), to deal in the\nSoftware without restriction, including without\nlimitation the rights to use, copy, modify, merge,\npublish, distribute, sublicense, and/or sell copies of\nthe Software, and to permit persons to whom the Software\nis furnished to do so, subject to the following\nconditions:\n\nThe above copyright notice and this permission notice\nshall be included in all copies or substantial portions\nof the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF\nANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED\nTO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A\nPARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT\nSHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY\nCLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR\nIN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\nDEALINGS IN THE SOFTWARE.\n",
+   "title": "LICENSE-MIT"
+  },
+  {
+   "body": "UNICODE LICENSE V3\n\nCOPYRIGHT AND PERMISSION NOTICE\n\nCopyright © 1991-2024 Unicode, Inc.\n\nNOTICE TO USER: Carefully read the following legal agreement. BY\nDOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING DATA FILES, AND/OR\nSOFTWARE, YOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE\nTERMS AND CONDITIONS OF THIS AGREEMENT. IF YOU DO NOT AGREE, DO NOT\nDOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE THE DATA FILES OR SOFTWARE.\n\nPermission is hereby granted, free of charge, to any person obtaining a\ncopy of data files and any associated documentation (the \"Data Files\") or\nsoftware and any associated documentation (the \"Software\") to deal in the\nData Files or Software without restriction, including without limitation\nthe rights to use, copy, modify, merge, publish, distribute, and/or sell\ncopies of the Data Files or Software, and to permit persons to whom the\nData Files or Software are furnished to do so, provided that either (a)\nthis copyright and permission notice appear with all copies of the Data\nFiles or Software, or (b) this copyright and permission notice appear in\nassociated Documentation.\n\nTHE DATA FILES AND SOFTWARE ARE PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY\nKIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF\nMERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF\nTHIRD PARTY RIGHTS.\n\nIN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS NOTICE\nBE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES,\nOR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,\nWHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,\nARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA\nFILES OR SOFTWARE.\n\nExcept as contained in this notice, the name of a copyright holder shall\nnot be used in advertising or otherwise to promote the sale, use or other\ndealings in these Data Files or Software without prior written\nauthorization of the copyright holder.\n",
+   "title": "LICENSE-UNICODE"
+  },
+  {
    "body": "Copyright (c) 2016--2017\n\nPermission is hereby granted, free of charge, to any\nperson obtaining a copy of this software and associated\ndocumentation files (the \"Software\"), to deal in the\nSoftware without restriction, including without\nlimitation the rights to use, copy, modify, merge,\npublish, distribute, sublicense, and/or sell copies of\nthe Software, and to permit persons to whom the Software\nis furnished to do so, subject to the following\nconditions:\n\nThe above copyright notice and this permission notice\nshall be included in all copies or substantial portions\nof the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF\nANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED\nTO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A\nPARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT\nSHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY\nCLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR\nIN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\nDEALINGS IN THE SOFTWARE.\n",
    "title": "LICENSE-MIT"
   },
@@ -3816,10 +3912,6 @@
   },
   {
    "body": "Copyright (c) 2021-2025 The RustCrypto Project Developers\n\nPermission is hereby granted, free of charge, to any\nperson obtaining a copy of this software and associated\ndocumentation files (the \"Software\"), to deal in the\nSoftware without restriction, including without\nlimitation the rights to use, copy, modify, merge,\npublish, distribute, sublicense, and/or sell copies of\nthe Software, and to permit persons to whom the Software\nis furnished to do so, subject to the following\nconditions:\n\nThe above copyright notice and this permission notice\nshall be included in all copies or substantial portions\nof the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF\nANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED\nTO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A\nPARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT\nSHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY\nCLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR\nIN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\nDEALINGS IN THE SOFTWARE.\n",
-   "title": "LICENSE-MIT"
-  },
-  {
-   "body": "Copyright (c) 2013-2025 The rust-url developers\n\nPermission is hereby granted, free of charge, to any\nperson obtaining a copy of this software and associated\ndocumentation files (the \"Software\"), to deal in the\nSoftware without restriction, including without\nlimitation the rights to use, copy, modify, merge,\npublish, distribute, sublicense, and/or sell copies of\nthe Software, and to permit persons to whom the Software\nis furnished to do so, subject to the following\nconditions:\n\nThe above copyright notice and this permission notice\nshall be included in all copies or substantial portions\nof the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF\nANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED\nTO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A\nPARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT\nSHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY\nCLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR\nIN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\nDEALINGS IN THE SOFTWARE.\n",
    "title": "LICENSE-MIT"
   },
   {
@@ -4083,6 +4175,10 @@
    "title": "LICENSE-MIT"
   },
   {
+   "body": "This project is copyright 2015, The Servo Project Developers (given in the\nfile AUTHORS).\n\nLicensed under the Apache License, Version 2.0 <LICENSE-APACHE or\nhttp://www.apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or\nhttp://opensource.org/licenses/MIT>, at your option. All files in the project\ncarrying such notice may not be copied, modified, or distributed except\naccording to those terms.\n",
+   "title": "COPYRIGHT"
+  },
+  {
    "body": "Licensed under the Apache License, Version 2.0\n<LICENSE-APACHE or\nhttp://www.apache.org/licenses/LICENSE-2.0> or the MIT\nlicense <LICENSE-MIT or http://opensource.org/licenses/MIT>,\nat your option. All files in the project carrying such\nnotice may not be copied, modified, or distributed except\naccording to those terms.\n",
    "title": "COPYRIGHT"
   },
@@ -4109,6 +4205,18 @@
   {
    "body": "Copyright 2022 Martin Algesten\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n",
    "title": "LICENSE-MIT.txt"
+  },
+  {
+   "body": "Copyright Mozilla Foundation\n\nLicensed under the Apache License (Version 2.0), or the MIT license,\n(the \"Licenses\") at your option. You may not use this file except in\ncompliance with one of the Licenses. You may obtain copies of the\nLicenses at:\n\n   https://www.apache.org/licenses/LICENSE-2.0\n   https://opensource.org/licenses/MIT\n\nUnless required by applicable law or agreed to in writing, software\ndistributed under the Licenses is distributed on an \"AS IS\" BASIS,\nWITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\nSee the Licenses for the specific language governing permissions and\nlimitations under the Licenses.\n\n--\n\nTest code is dedicated to the Public Domain when so designated (see\nthe individual files for PD/CC0-dedicated sections).\n\n--\n\nThe implementation for Utf8CharIndices was adapted from the\nCharIndices implementation of the Rust standard library at revision\nab32548539ec38a939c1b58599249f3b54130026\n(https://github.com/rust-lang/rust/blob/ab32548539ec38a939c1b58599249f3b54130026/library/core/src/str/iter.rs).\n\nExcerpt from https://github.com/rust-lang/rust/blob/ab32548539ec38a939c1b58599249f3b54130026/COPYRIGHT ,\nwhich refers to\nhttps://github.com/rust-lang/rust/blob/ab32548539ec38a939c1b58599249f3b54130026/LICENSE-APACHE\nand\nhttps://github.com/rust-lang/rust/blob/ab32548539ec38a939c1b58599249f3b54130026/LICENSE-MIT\n:\n\nFor full authorship information, see the version control history or\nhttps://thanks.rust-lang.org\n\nExcept as otherwise noted (below and/or in individual files), Rust is\nlicensed under the Apache License, Version 2.0 <LICENSE-APACHE> or\n<http://www.apache.org/licenses/LICENSE-2.0> or the MIT license\n<LICENSE-MIT> or <http://opensource.org/licenses/MIT>, at your option.\n",
+   "title": "COPYRIGHT"
+  },
+  {
+   "body": "Copyright Mozilla Foundation\n\nPermission is hereby granted, free of charge, to any\nperson obtaining a copy of this software and associated\ndocumentation files (the \"Software\"), to deal in the\nSoftware without restriction, including without\nlimitation the rights to use, copy, modify, merge,\npublish, distribute, sublicense, and/or sell copies of\nthe Software, and to permit persons to whom the Software\nis furnished to do so, subject to the following\nconditions:\n\nThe above copyright notice and this permission notice\nshall be included in all copies or substantial portions\nof the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF\nANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED\nTO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A\nPARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT\nSHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY\nCLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR\nIN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\nDEALINGS IN THE SOFTWARE.\n",
+   "title": "LICENSE-MIT"
+  },
+  {
+   "body": "Copyright Mozilla Foundation\n\nLicensed under the Apache License (Version 2.0), or the MIT license,\n(the \"Licenses\") at your option. You may not use this file except in\ncompliance with one of the Licenses. You may obtain copies of the\nLicenses at:\n\n   https://www.apache.org/licenses/LICENSE-2.0\n   https://opensource.org/licenses/MIT\n\nUnless required by applicable law or agreed to in writing, software\ndistributed under the Licenses is distributed on an \"AS IS\" BASIS,\nWITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\nSee the Licenses for the specific language governing permissions and\nlimitations under the Licenses.\n\n--\n\nTest code is dedicated to the Public Domain when so designated (see\nthe individual files for PD/CC0-dedicated sections).\n",
+   "title": "COPYRIGHT"
   },
   {
    "body": "# Community Data License Agreement - Permissive - Version 2.0\n\nThis is the Community Data License Agreement - Permissive, Version\n2.0 (the \"agreement\"). Data Provider(s) and Data Recipient(s) agree\nas follows:\n\n## 1. Provision of the Data\n\n1.1. A Data Recipient may use, modify, and share the Data made\navailable by Data Provider(s) under this agreement if that Data\nRecipient follows the terms of this agreement.\n\n1.2. This agreement does not impose any restriction on a Data\nRecipient's use, modification, or sharing of any portions of the\nData that are in the public domain or that may be used, modified,\nor shared under any other legal exception or limitation.\n\n## 2. Conditions for Sharing Data\n\n2.1. A Data Recipient may share Data, with or without modifications, so\nlong as the Data Recipient makes available the text of this agreement\nwith the shared Data.\n\n## 3. No Restrictions on Results\n\n3.1. This agreement does not impose any restriction or obligations\nwith respect to the use, modification, or sharing of Results.\n\n## 4. No Warranty; Limitation of Liability\n\n4.1. All Data Recipients receive the Data subject to the following\nterms:\n\nTHE DATA IS PROVIDED ON AN \"AS IS\" BASIS, WITHOUT REPRESENTATIONS,\nWARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED\nINCLUDING, WITHOUT LIMITATION, ANY WARRANTIES OR CONDITIONS OF TITLE,\nNON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.\n\nNO DATA PROVIDER SHALL HAVE ANY LIABILITY FOR ANY DIRECT, INDIRECT,\nINCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING\nWITHOUT LIMITATION LOST PROFITS), HOWEVER CAUSED AND ON ANY THEORY OF\nLIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING\nNEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE DATA OR RESULTS,\nEVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.\n\n## 5. Definitions\n\n5.1. \"Data\" means the material received by a Data Recipient under\nthis agreement.\n\n5.2. \"Data Provider\" means any person who is the source of Data\nprovided under this agreement and in reliance on a Data Recipient's\nagreement to its terms.\n\n5.3. \"Data Recipient\" means any person who receives Data directly\nor indirectly from a Data Provider and agrees to the terms of this\nagreement.\n\n5.4. \"Results\" means any outcome obtained by computational analysis\nof Data, including for example machine learning models and models'\ninsights.\n",
