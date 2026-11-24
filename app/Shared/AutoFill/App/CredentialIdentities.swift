@@ -78,20 +78,30 @@ enum CredentialIdentities {
     @MainActor
     static func publish(_ store: PassStore) {
         current = store
-        Task.detached(priority: .utility) {
-            let identities = make(from: store, pairings: standardPairings()).map { identity -> ASCredentialIdentity in
-                ASPasswordCredentialIdentity(
-                    serviceIdentifier: ASCredentialServiceIdentifier(identifier: identity.domain, type: .domain),
-                    user: identity.user, recordIdentifier: identity.path)
-            }
-            #if !targetEnvironment(simulator)
-            let identityStore = ASCredentialIdentityStore.shared
-            guard await identityStore.state().isEnabled else { return }
-            try? await identityStore.replaceCredentialIdentities(identities)
-            #else
-            _ = identities
-            #endif
+        Task.detached(priority: .utility) { await replace(with: store) }
+    }
+
+    /// `publish`, returning once iOS has the new identities: a background
+    /// task must not end before.
+    @MainActor
+    static func publishAndWait(_ store: PassStore) async {
+        current = store
+        await Task.detached(priority: .utility) { await replace(with: store) }.value
+    }
+
+    private static func replace(with store: PassStore) async {
+        let identities = make(from: store, pairings: standardPairings()).map { identity -> ASCredentialIdentity in
+            ASPasswordCredentialIdentity(
+                serviceIdentifier: ASCredentialServiceIdentifier(identifier: identity.domain, type: .domain),
+                user: identity.user, recordIdentifier: identity.path)
         }
+        #if !targetEnvironment(simulator)
+        let identityStore = ASCredentialIdentityStore.shared
+        guard await identityStore.state().isEnabled else { return }
+        try? await identityStore.replaceCredentialIdentities(identities)
+        #else
+        _ = identities
+        #endif
     }
 
     /// The store was removed: no suggestion may name its entries.

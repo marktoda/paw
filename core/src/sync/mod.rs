@@ -214,7 +214,13 @@ pub(crate) fn git_err(e: git2::Error) -> PawError {
 /// The store lock is not taken: saves and reads go on while the transfer
 /// runs.
 pub(crate) fn begin_fetch(store: &StoreLock, repo: &Repository) -> Result<Fetching, PawError> {
-    let fetching = store.fetching(FETCH_WAIT)?;
+    begin_fetch_within(store, repo, FETCH_WAIT)
+}
+
+/// [`begin_fetch`], waiting at most `wait` for another fetch of the store
+/// to end (a background refresh waits only briefly: [`crate::lock::busy`]).
+pub(crate) fn begin_fetch_within(store: &StoreLock, repo: &Repository, wait: Duration) -> Result<Fetching, PawError> {
+    let fetching = store.fetching(wait)?;
     crate::lock::remove_stale_fetch_locks(store.repo());
     for name in fetched_refs(repo)?.into_iter().map(|(name, _)| name) {
         if let Ok(mut reference) = repo.find_reference(&name) {
