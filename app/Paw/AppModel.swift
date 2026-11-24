@@ -853,6 +853,7 @@ final class AppModel {
             }
             keyPort.session()?.noteForegrounded()
             publishIdentities?(store)
+            edits?.syncing?.cameForward(app: self)
             Clipboard.clearIfExpired()
             sweepCopies()
             if readerPresent, keyPort.session() == nil {

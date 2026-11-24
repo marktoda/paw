@@ -37,6 +37,7 @@ final class PawAppDelegate: NSObject, UIApplicationDelegate {
             UIView.setAnimationsEnabled(false)
         }
         #endif
+        BackgroundRefresh.register()
         return true
     }
 
