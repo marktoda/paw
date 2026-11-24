@@ -104,6 +104,7 @@ struct SettingsSheet: View {
                 }
                 AutoFillSettingsSection()
                 StoreSettingsSections(model: model)
+                LicencesSettingsSection()
                 #if DEBUG && targetEnvironment(simulator)
                 if model.simulator != nil {
                     SimulatorSettingsSection(model: model)
