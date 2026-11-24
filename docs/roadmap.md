@@ -141,7 +141,7 @@ Merged 2026-11-24: plain repository list in the picker; per-process Face ID enro
 
 ## Open decisions for the owner
 
-1. Ink-only buttons, or an indigo accent? Draft answer: ink.
+1. Ink-only buttons, or an indigo accent? Decided 2026-11-24: ink.
 2. Paw icon or plain gold disc? Draft answer: paw.
 3. Rent a Mac or pay for larger GitHub machines? Narrowed runs were tried and are still slow; the queue is the bottleneck when tracks run in parallel.
 4. Opaque sheets (now) or glass? "Lock this password" shortened to "Lock"? Build a "forget server key" option?
