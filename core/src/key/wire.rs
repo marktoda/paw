@@ -31,6 +31,17 @@ fn waits_for_touch(apdu: &[u8]) -> bool {
 
 const GET_RESPONSE: u8 = 0xC0;
 
+/// Whether a command carries a data field (ISO 7816-4 cases 3 and 4), as
+/// opposed to none (case 1), or only an expected length: one byte (case 2)
+/// or `00` and two bytes (extended case 2).
+pub(crate) fn has_data(apdu: &[u8]) -> bool {
+    match apdu.len() {
+        0..=5 => false,
+        7 => apdu[4] != 0x00,
+        _ => true,
+    }
+}
+
 /// Told when a command that may wait for a touch goes out, and when its
 /// answer (or the reader's failure) comes back.
 pub(crate) trait TouchHook: Send + Sync {
@@ -146,8 +157,8 @@ impl ApduTransport for Wire {
         // After the answer and outside the record's lock. The header only:
         // the fifth byte would be the length of the data, which for a
         // VERIFY is the PIN's.
-        if let [cla, ins, p1, p2, rest @ ..] = apdu {
-            self.log.command([*cla, *ins, *p1, *p2], rest.len() > 1, sw, round_trip, sent);
+        if let [cla, ins, p1, p2, ..] = apdu {
+            self.log.command([*cla, *ins, *p1, *p2], has_data(apdu), sw, round_trip, sent);
         }
         // After the log line, so the log reads command, then stage.
         if let Some(hook) = &hook {
@@ -159,7 +170,17 @@ impl ApduTransport for Wire {
 
 #[cfg(test)]
 mod tests {
-    use super::waits_for_touch;
+    use super::{has_data, waits_for_touch};
+
+    #[test]
+    fn only_a_data_field_counts_as_data() {
+        assert!(!has_data(&[0x00, 0x20, 0x00, 0x82]));
+        assert!(!has_data(&[0x00, 0xCA, 0x00, 0x6E, 0x00]));
+        assert!(!has_data(&[0x00, 0xCA, 0x00, 0x6E, 0x00, 0x00, 0x00]));
+        assert!(has_data(&[0x00, 0x20, 0x00, 0x82, 0x01, 0x31]));
+        assert!(has_data(&[0x00, 0x20, 0x00, 0x82, 0x02, 0x31, 0x32]));
+        assert!(has_data(&[0x00, 0x2A, 0x80, 0x86, 0x00, 0x00, 0x01, 0xA6, 0x00, 0x00]));
+    }
 
     #[test]
     fn only_the_last_part_of_a_key_operation_waits_for_a_touch() {

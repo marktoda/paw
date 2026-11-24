@@ -26,6 +26,7 @@
 use std::collections::VecDeque;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -129,11 +130,20 @@ pub(crate) struct KeyLog {
     started: Instant,
     sink: Option<Arc<Sink>>,
     ring: Mutex<VecDeque<(i64, String)>>,
+    /// The PIN stage is showing: lines get whole-second times until the
+    /// VERIFY with the PIN in it has been logged, so the log cannot say
+    /// to the millisecond how long the PIN took to type.
+    coarse: AtomicBool,
 }
 
 impl KeyLog {
     pub(crate) fn new(sink: Option<Arc<Sink>>) -> Arc<Self> {
-        Arc::new(Self { started: Instant::now(), sink, ring: Mutex::new(VecDeque::with_capacity(RING)) })
+        Arc::new(Self {
+            started: Instant::now(),
+            sink,
+            ring: Mutex::new(VecDeque::with_capacity(RING)),
+            coarse: AtomicBool::new(false),
+        })
     }
 
     /// A log that keeps nothing beyond its own ring (for a wire used
@@ -142,9 +152,22 @@ impl KeyLog {
         Self::new(None)
     }
 
+    /// The PIN stage was just shown (or a task starts at it).
+    pub(crate) fn pin_asked(&self) {
+        self.coarse.store(true, Ordering::SeqCst);
+    }
+
+    /// A task ended: whatever it was waiting for is over.
+    pub(crate) fn task_ended(&self) {
+        self.coarse.store(false, Ordering::SeqCst);
+    }
+
     pub(crate) fn line(&self, text: impl Into<String>) {
         let text: String = text.into().replace(['\t', '\n', '\r'], " ");
-        let at_ms = now_ms();
+        let mut at_ms = now_ms();
+        if self.coarse.load(Ordering::SeqCst) {
+            at_ms -= at_ms.rem_euclid(1000);
+        }
         {
             let mut ring = lock(&self.ring);
             if ring.len() == RING {
@@ -160,16 +183,21 @@ impl KeyLog {
     /// One card command, after its answer (or the reader's failure).
     /// `header` is CLA, INS, P1, P2; `has_data` whether it carried data.
     pub(crate) fn command(&self, header: [u8; 4], has_data: bool, sw: Option<u16>, round_trip: Duration, sent: Instant) {
-        let since = sent.saturating_duration_since(self.started).as_millis();
+        let since = sent.saturating_duration_since(self.started);
+        let since = if self.coarse.load(Ordering::SeqCst) {
+            format!("+{} s", since.as_secs())
+        } else {
+            format!("+{} ms", since.as_millis())
+        };
         let answer = match sw {
-            Some(sw) => format!("{sw:04X} {}", sw_words(sw)),
+            Some(sw) => format!("{} {}", sw_code(sw), sw_words(sw)),
             None => "reader failed".into(),
         };
-        self.line(format!(
-            "→ {}: {answer} · {} ms · +{since} ms",
-            command_words(header, has_data),
-            round_trip.as_millis()
-        ));
+        self.line(format!("→ {}: {answer} · {} ms · {since}", command_words(header, has_data), round_trip.as_millis()));
+        // The PIN has gone out: times are exact again.
+        if header[1] == 0x20 && header[2] == 0x00 && has_data {
+            self.coarse.store(false, Ordering::SeqCst);
+        }
     }
 
     /// This session's lines, oldest first.
@@ -207,12 +235,23 @@ pub(crate) fn command_words(header: [u8; 4], has_data: bool) -> String {
     if cla & 0x10 != 0 { format!("{name} (chain part)") } else { name }
 }
 
+/// A status word as hex, with the length byte of `61xx` and `6Cxx` (how
+/// much response data there is) left out.
+pub(crate) fn sw_code(sw: u16) -> String {
+    match sw & 0xFF00 {
+        0x6100 => "61xx".into(),
+        0x6C00 => "6Cxx".into(),
+        _ => format!("{sw:04X}"),
+    }
+}
+
 /// A status word in a few words.
 pub(crate) fn sw_words(sw: u16) -> String {
     match sw {
         0x9000 => "ok".into(),
-        sw if sw & 0xFF00 == 0x6100 => format!("more data ({} bytes)", sw & 0xFF),
-        sw if sw & 0xFF00 == 0x6C00 => format!("wrong length, use {}", sw & 0xFF),
+        // Their low byte is a length of response data: not shown.
+        sw if sw & 0xFF00 == 0x6100 => "more data".into(),
+        sw if sw & 0xFF00 == 0x6C00 => "wrong length".into(),
         0x63C0 => "blocked, 0 tries left".into(),
         sw if sw & 0xFFF0 == 0x63C0 => format!("not verified, {} tries left", sw & 0xF),
         0x6285 => "application terminated".into(),
@@ -343,25 +382,40 @@ fn log_files(dir: &Path) -> Vec<(String, PathBuf)> {
 }
 
 /// Every process's lines in `state_dir`, merged by time, oldest first.
-/// Lines written in the same millisecond keep their order within a process.
+/// Each process's lines keep their file order: lines written while the PIN
+/// stage showed carry whole-second times, so a file is not strictly in
+/// time order, and the merge takes the earliest next line of any file.
 #[uniffi::export]
 pub fn key_log(state_dir: String, utc_offset_secs: i32) -> Vec<KeyLogLine> {
-    let mut lines = Vec::new();
+    let mut files: Vec<std::iter::Peekable<std::vec::IntoIter<KeyLogLine>>> = Vec::new();
     for (process, path) in log_files(Path::new(&state_dir)) {
         let Ok(text) = std::fs::read_to_string(&path) else { continue };
-        for line in text.lines() {
-            let Some((at, text)) = line.split_once('\t') else { continue };
-            let Ok(at_ms) = at.parse::<i64>() else { continue };
-            lines.push(KeyLogLine {
-                at_ms,
-                time: clock_time(at_ms, utc_offset_secs),
-                process: process.clone(),
-                text: text.to_string(),
-            });
-        }
+        let lines: Vec<KeyLogLine> = text
+            .lines()
+            .filter_map(|line| {
+                let (at, text) = line.split_once('\t')?;
+                let at_ms = at.parse::<i64>().ok()?;
+                Some(KeyLogLine {
+                    at_ms,
+                    time: clock_time(at_ms, utc_offset_secs),
+                    process: process.clone(),
+                    text: text.to_string(),
+                })
+            })
+            .collect();
+        files.push(lines.into_iter().peekable());
     }
-    lines.sort_by_key(|line| line.at_ms);
-    lines
+    let mut merged = Vec::new();
+    loop {
+        let next = files
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(index, file)| file.peek().map(|line| (line.at_ms, index)))
+            .min();
+        let Some((_, index)) = next else { break };
+        merged.extend(files[index].next());
+    }
+    merged
 }
 
 /// [`key_log`] as plain text, one line each, oldest first: what Settings ›
@@ -410,7 +464,10 @@ mod tests {
         assert_eq!(sw_words(0x6982), "security status not satisfied");
         assert_eq!(sw_words(0x6985), "conditions not satisfied");
         assert_eq!(sw_words(0x6983), "PIN blocked");
-        assert_eq!(sw_words(0x6110), "more data (16 bytes)");
+        assert_eq!(sw_words(0x6110), "more data");
+        assert_eq!(sw_code(0x6110), "61xx");
+        assert_eq!(sw_code(0x6C20), "6Cxx");
+        assert_eq!(sw_code(0x6982), "6982");
     }
 
     #[test]

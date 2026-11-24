@@ -214,9 +214,7 @@ impl KeySession {
     /// The key was removed (or its reader failed): drop the PIN, and wake
     /// every task so it can fail with `KeyRemoved`.
     pub(crate) fn end(&self) {
-        if !self.ended.swap(true, Ordering::SeqCst) {
-            self.log().line(if self.wire.failed() { "session end (the reader failed)" } else { "session end" });
-        }
+        let first = !self.ended.swap(true, Ordering::SeqCst);
         let tasks = {
             let mut state = self.lock();
             state.pin = None;
@@ -226,6 +224,11 @@ impl KeySession {
         self.card_free.notify_all();
         for task in tasks.iter().filter_map(Weak::upgrade) {
             task.wake();
+        }
+        // Only once the PIN is gone and the tasks are woken: the log may
+        // touch the disk.
+        if first {
+            self.log().line(if self.wire.failed() { "session end (the reader failed)" } else { "session end" });
         }
     }
 
@@ -298,7 +301,6 @@ impl KeySession {
     /// job otherwise. Never sends anything on the caller's thread, which is
     /// often the app's main thread: a reader can take seconds to answer.
     fn forget(&self, after_background: bool) {
-        self.log().line(if after_background { "PIN dropped (background limit)" } else { "PIN dropped (Lock now)" });
         let deverify_now = {
             let mut state = self.lock();
             state.pin = None;
@@ -319,6 +321,9 @@ impl KeySession {
                 true
             }
         };
+        // After the PIN is dropped and outside the lock: the log may touch
+        // the disk.
+        self.log().line(if after_background { "PIN dropped (background limit)" } else { "PIN dropped (Lock now)" });
         if deverify_now {
             self.deverify_in_background();
         }

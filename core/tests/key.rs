@@ -803,7 +803,7 @@ impl LosesPin {
 }
 
 fn take(counter: &AtomicU32) -> bool {
-    counter.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok()
+    counter.load(Ordering::SeqCst) > 0 && counter.fetch_sub(1, Ordering::SeqCst) > 0
 }
 
 impl ApduTransport for LosesPin {

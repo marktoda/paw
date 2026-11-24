@@ -104,7 +104,13 @@ impl TaskCore {
     /// Writes a stage change to the key log of the session the task is on.
     fn log_stage(&self, session: Option<Arc<KeySession>>, state: &KeyTaskState) {
         if let (Some(session), Some(words)) = (session, super::keylog::stage_words(state)) {
-            session.log().line(format!("{} stage {words}", self.tag()));
+            let log = session.log();
+            log.line(format!("{} stage {words}", self.tag()));
+            if matches!(state, KeyTaskState::Pin { .. }) {
+                log.pin_asked();
+            } else if state.is_final() {
+                log.task_ended();
+            }
         }
     }
 

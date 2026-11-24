@@ -5,23 +5,37 @@
 
 mod key_common;
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use key_common::*;
 use paw_core::ApduTransport;
 use paw_core::key::keylog::KEEP_LINES;
-use paw_core::key::{clear_key_log, key_log, key_log_text};
-use paw_core::sim::{SimTouch, SimulatedKey};
+use paw_core::key::{KeyError, KeyTaskState, clear_key_log, key_log, key_log_text};
+use paw_core::sim::{SimOptions, SimTouch, SimulatedKey};
 
 /// The simulated key behind a transport that keeps a copy of every data
-/// byte that went either way, to look for in the log.
+/// byte that went either way, to look for in the log. `losses` times, it
+/// makes the card forget the PIN just before a key operation.
 struct Recording {
     sim: Arc<SimulatedKey>,
     data: Mutex<Vec<Vec<u8>>>,
+    losses: AtomicU32,
+}
+
+impl Recording {
+    fn new(sim: &Arc<SimulatedKey>) -> Arc<Self> {
+        Arc::new(Self { sim: sim.clone(), data: Mutex::new(Vec::new()), losses: AtomicU32::new(0) })
+    }
 }
 
 impl ApduTransport for Recording {
     fn transmit(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
+        let key_operation = matches!(apdu, [cla, 0x2A, 0x80, 0x86, ..] | [cla, 0x88, ..] if cla & 0x10 == 0);
+        if key_operation && self.losses.load(Ordering::SeqCst) > 0 && self.losses.fetch_sub(1, Ordering::SeqCst) > 0 {
+            self.sim.transmit(&[0x00, 0x20, 0xFF, 0x82])?;
+        }
         let response = self.sim.transmit(apdu)?;
         let mut data = self.data.lock().unwrap();
         if apdu.len() > 5 {
@@ -62,7 +76,7 @@ fn a_pin_and_decipher_run_is_logged_with_no_pin_no_data_and_no_names() {
     let state = tempfile::tempdir().unwrap();
     let rig = rig_unplugged(SimTouch::EachUse, SimTouch::Off);
     rig.port.set_key_log(dir_string(&state), "app".into());
-    let recording = Arc::new(Recording { sim: rig.sim.clone(), data: Mutex::new(Vec::new()) });
+    let recording = Recording::new(&rig.sim);
     rig.port.attach(recording.clone()).unwrap();
 
     open_and_finish(&rig, ENTRY);
@@ -86,12 +100,18 @@ fn a_pin_and_decipher_run_is_logged_with_no_pin_no_data_and_no_names() {
     }
 
     let ciphertext = std::fs::read(rig.store_dir().join(format!("{ENTRY}.gpg"))).unwrap();
+    assert_clean(&[&merged, &ring], &recording, &[ciphertext, SECRET.as_bytes().to_vec()], &[]);
+}
+
+/// Neither text holds the PIN, a name, any data that went to or from the
+/// card (4 bytes or more, as hex or raw), or any of `more` and `words`.
+fn assert_clean(texts: &[&str], recording: &Recording, more: &[Vec<u8>], words: &[&str]) {
     let mut secrets: Vec<Vec<u8>> = recording.data.lock().unwrap().clone();
-    secrets.push(ciphertext);
-    secrets.push(SECRET.as_bytes().to_vec());
-    for text in [&merged, &ring] {
-        for words in [PIN, SECRET, ENTRY, "github", "phone-pin", &hex(PIN.as_bytes()).0] {
-            assert!(!text.contains(words), "the log shows {words:?}");
+    secrets.extend_from_slice(more);
+    let pin_hex = hex(PIN.as_bytes()).0;
+    for text in texts {
+        for word in [PIN, SECRET, ENTRY, "github", "phone-pin", "archive", "old-forum", &pin_hex].iter().chain(words) {
+            assert!(!text.contains(word), "the log shows {word:?}:\n{text}");
         }
         for data in &secrets {
             for window in data.windows(4) {
@@ -103,6 +123,164 @@ fn a_pin_and_decipher_run_is_logged_with_no_pin_no_data_and_no_names() {
             }
         }
     }
+}
+
+/// A rig on `recording`'s key, logging to `state`.
+fn recorded_rig(state: &tempfile::TempDir, decrypt: SimTouch, kdf: bool) -> (Rig, Arc<Recording>) {
+    let rig = rig_unplugged(decrypt, SimTouch::Off);
+    if kdf {
+        rig.sim.set_pin_kdf(3);
+    }
+    rig.port.set_key_log(dir_string(state), "app".into());
+    let recording = Recording::new(&rig.sim);
+    rig.port.attach(recording.clone()).unwrap();
+    (rig, recording)
+}
+
+fn all_text(state: &tempfile::TempDir, rig: &Rig) -> (String, String) {
+    (key_log_text(dir_string(state), 0), rig.port.session().map(|s| s.diagnostics(0)).unwrap_or_default())
+}
+
+#[test]
+fn failures_are_logged_with_no_pin_no_data_and_no_names() {
+    let wrong = "918273";
+    let state = tempfile::tempdir().unwrap();
+    let (rig, recording) = recorded_rig(&state, SimTouch::EachUse, false);
+
+    // A wrong PIN, then the right one.
+    let driver = Driver::toucher(&rig.sim);
+    let task = open(&rig, ENTRY, &driver);
+    task.supply_pin(wrong.as_bytes().to_vec());
+    driver.wait_for(|s| matches!(s, KeyTaskState::Pin { last_error: Some(_), .. }));
+    task.supply_pin(PIN.as_bytes().to_vec());
+    assert!(matches!(finish(&task), KeyTaskState::Done { .. }));
+
+    // The key loses the PIN before a decryption: asked again.
+    recording.losses.store(1, Ordering::SeqCst);
+    open_and_finish(&rig, OTHER_ENTRY);
+
+    // A touch that never comes.
+    let driver = Driver::new();
+    let task = open(&rig, OTHER_ENTRY, &driver);
+    driver.wait_for(is_touch);
+    assert!(eventually(|| rig.sim.waiting_for_touch()));
+    rig.sim.time_out_touch();
+    assert!(matches!(finish(&task), KeyTaskState::Failed { error: KeyError::TouchTimeout }));
+
+    // An entry for another key.
+    let task = open(&rig, FOREIGN_ENTRY, &Driver::new());
+    let recipients = match finish(&task) {
+        KeyTaskState::Failed { error: KeyError::NotForThisKey { recipients } } => recipients,
+        other => panic!("expected NotForThisKey, got {other:?}"),
+    };
+
+    // The key loses the PIN twice in one task: it fails.
+    recording.losses.store(2, Ordering::SeqCst);
+    let task = open(&rig, OTHER_ENTRY, &Driver::helpful(PIN, &rig.sim));
+    assert!(matches!(finish(&task), KeyTaskState::Failed { error: KeyError::Reader { .. } }));
+
+    let (merged, ring) = all_text(&state, &rig);
+    for wanted in [
+        "stage Pin (again: WrongPin, 2 left)",
+        "VERIFY 00 82 (with PIN): 6982 security status not satisfied",
+        "PIN check 63C3: the PIN lost, ask again",
+        "stage Pin (again: PinForgotten)",
+        "PIN check 9000: a touch timeout",
+        "stage Failed(TouchTimeout)",
+        "starts at Failed(NotForThisKey)",
+        "the PIN lost a second time",
+        "stage Failed(Reader)",
+    ] {
+        assert!(merged.contains(wanted), "the log should have {wanted:?}:\n{merged}");
+    }
+    let mut words: Vec<&str> = vec![wrong];
+    words.extend(recipients.iter().map(String::as_str));
+    let wrong_hex = hex(wrong.as_bytes()).0;
+    words.push(&wrong_hex);
+    assert_clean(&[&merged, &ring], &recording, &[], &words);
+}
+
+#[test]
+fn a_key_with_a_pin_kdf_is_logged_with_no_derived_pin() {
+    let state = tempfile::tempdir().unwrap();
+    let (rig, recording) = recorded_rig(&state, SimTouch::Off, true);
+    open_and_finish(&rig, ENTRY);
+    let (merged, ring) = all_text(&state, &rig);
+    assert!(merged.contains("VERIFY 00 82 (with PIN): 9000 ok"), "{merged}");
+    assert!(merged.contains("GET DATA 00F9: 9000 ok"), "the KDF object was read:\n{merged}");
+    assert_clean(&[&merged, &ring], &recording, &[], &[]);
+}
+
+/// The log's lines without times, round trips or task numbers.
+fn without_timing(state: &tempfile::TempDir) -> Vec<String> {
+    key_log(dir_string(state), 0)
+        .into_iter()
+        .map(|line| {
+            let text = line.text.split(" · ").next().unwrap().to_string();
+            let mut out = String::new();
+            let mut chars = text.chars().peekable();
+            while let Some(c) = chars.next() {
+                out.push(c);
+                if c == '#' {
+                    while chars.peek().is_some_and(char::is_ascii_digit) {
+                        chars.next();
+                    }
+                }
+            }
+            out
+        })
+        .collect()
+}
+
+#[test]
+fn pins_of_different_lengths_give_the_same_log() {
+    let mut logs = Vec::new();
+    for pin in ["735190", "73519042681"] {
+        let state = tempfile::tempdir().unwrap();
+        let mut rig = rig_unplugged(SimTouch::EachUse, SimTouch::Off);
+        rig.sim = SimulatedKey::with_options(SimOptions {
+            pin: pin.into(),
+            decrypt_touch: true,
+            auth_touch: false,
+            touch_timeout: Duration::from_secs(5),
+            extended_length: false,
+        });
+        rig.port.set_key_log(dir_string(&state), "app".into());
+        rig.port.attach(rig.sim.clone()).unwrap();
+        let driver = Driver::helpful(pin, &rig.sim);
+        let task = open(&rig, ENTRY, &driver);
+        assert!(matches!(finish(&task), KeyTaskState::Done { .. }));
+        logs.push(without_timing(&state));
+    }
+    assert_eq!(logs[0], logs[1]);
+}
+
+#[test]
+fn the_pin_stage_and_the_verify_after_it_have_whole_second_times() {
+    let state = tempfile::tempdir().unwrap();
+    let rig = logged_rig(state.path(), "app", SimTouch::Off);
+    let driver = Driver::new();
+    let task = open(&rig, ENTRY, &driver);
+    // Typing takes a while.
+    std::thread::sleep(Duration::from_millis(30));
+    task.supply_pin(PIN.as_bytes().to_vec());
+    assert!(matches!(finish(&task), KeyTaskState::Done { .. }));
+
+    let lines = key_log(dir_string(&state), 0);
+    let start = lines.iter().position(|l| l.text.contains("starts at Pin")).unwrap();
+    let verify = lines.iter().position(|l| l.text.contains("VERIFY 00 82 (with PIN)")).unwrap();
+    for line in &lines[start + 1..=verify] {
+        assert_eq!(line.at_ms % 1000, 0, "{line:?}");
+        if line.text.starts_with('→') {
+            assert!(line.text.ends_with(" s"), "{line:?}");
+        }
+    }
+    // The VERIFY keeps its round trip in milliseconds.
+    assert!(lines[verify].text.contains(" ms · +"), "{:?}", lines[verify]);
+    // After it, times are exact again.
+    let after = &lines[verify + 1];
+    assert!(after.text.ends_with(" ms") || !after.text.starts_with('→'), "{after:?}");
+    assert!(lines[verify + 1..].iter().filter(|l| l.text.starts_with('→')).all(|l| l.text.ends_with(" ms")));
 }
 
 #[test]
@@ -148,7 +326,10 @@ fn two_processes_write_their_own_files_and_merge_by_time() {
     assert!(state.path().join("key-log.fill").exists());
 
     let lines = key_log(dir_string(&state), 0);
-    assert!(lines.windows(2).all(|pair| pair[0].at_ms <= pair[1].at_ms), "merged by time");
+    assert!(
+        lines.windows(2).all(|pair| pair[0].process == pair[1].process || pair[0].at_ms <= pair[1].at_ms),
+        "merged by time"
+    );
     // The processes take turns: app's first task, then fill's, then app's.
     let starts: Vec<&str> =
         lines.iter().filter(|l| l.text.contains(" task open:")).map(|l| l.process.as_str()).collect();

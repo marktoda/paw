@@ -172,6 +172,7 @@ impl KeyPort {
         let what = keylog::purpose_words(&purpose);
         let starts_at = keylog::stage_words(&initial).unwrap_or_default();
         let finished = initial.is_final();
+        let starts_at_pin = matches!(initial, KeyTaskState::Pin { .. });
         let start_line = move |tag: String, session: &KeySession, plugged_later: bool| {
             let info = session.card_info();
             format!(
@@ -189,6 +190,9 @@ impl KeyPort {
             let session = match session {
                 Some(session) => {
                     session.log().line(line(task.tag(), &session, false));
+                    if starts_at_pin {
+                        session.log().pin_asked();
+                    }
                     task.bind(&session);
                     session
                 }
