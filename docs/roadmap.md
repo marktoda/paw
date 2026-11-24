@@ -122,6 +122,8 @@ Things that are easy to lose track of because nothing fails when they are missin
 | No unit tests in Swift; all app behaviour is tested by clicking through the simulator | slow, and model bugs are found late |
 | Background-time wrapping, file protection, keyboard refusal, auto-close on lock | built, never observed on the device |
 
+Merged 2026-11-24: plain repository list in the picker; per-process Face ID enrolment record; name matching with remembered site pairings (`site-pairings.json`, no screen to view or clear them yet); a lost PIN told apart from a missed touch; the key log.
+
 ## Needs the device
 
 | Check | Status |
@@ -133,6 +135,9 @@ Things that are easy to lose track of because nothing fails when they are missin
 | GitHub sign-in still works the next day (token renewal) | waiting |
 | After AutoFill installs: turn it on, fill with Face ID, fill with the key, suggestion bar, the confirm on another site, Face ID copy survives a fill | waiting on the build |
 | A change sent from the phone reads back in desktop `pass` | waiting |
+| Face ID fill in AutoFill after the per-process enrolment fix (2026-11-24): no "Face ID changed", and the copy survives | waiting |
+| Name matches (entry `name` on `name.com`): first-time confirm, then no confirm, then a keyboard suggestion | waiting |
+| Settings › Key diagnostics › Key log shows the app's and AutoFill's lines; what the key answers after a touch timeout and to the PIN check after it | waiting |
 
 ## Open decisions for the owner
 
