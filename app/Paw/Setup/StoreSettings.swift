@@ -147,10 +147,13 @@ private struct ServerIdentityRows: View {
                                 .font(PawFont.footnote.weight(.semibold))
                                 .foregroundStyle(PawColor.label)
                         }
+                        // One line, shrunk to fit: wrapped, iOS put a
+                        // hyphen inside it that is not part of it.
                         Text(fingerprint)
                             .font(PawFont.footnote.monospaced())
                             .foregroundStyle(PawColor.labelSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.5)
                             .textSelection(.enabled)
                     }
                     .accessibilityElement(children: .combine)
