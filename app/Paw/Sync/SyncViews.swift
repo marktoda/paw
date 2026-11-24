@@ -426,6 +426,22 @@ private struct SyncStatusSheet: View {
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("sync-last-checked")
+                    if syncing.checksWithSignIn {
+                        LabeledContent {
+                            TimelineView(.periodic(from: .now, by: 30)) { context in
+                                Text(syncing.backgroundRun.map {
+                                    "\(syncAgo($0.at, now: context.date).capitalizedFirst) \u{00B7} \($0.result)"
+                                } ?? "Not yet")
+                                    .foregroundStyle(PawColor.labelSecondary)
+                                    .multilineTextAlignment(.trailing)
+                            }
+                        } label: {
+                            Text("Background check")
+                                .foregroundStyle(PawColor.label)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("sync-background")
+                    }
                     VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
                         Text("Store")
                             .foregroundStyle(PawColor.label)

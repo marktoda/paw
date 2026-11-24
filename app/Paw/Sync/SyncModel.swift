@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 import Observation
 import SwiftUI
+import UIKit
 
 /// Screens about sync on the navigation stack (`Route.sync`).
 enum SyncRoute: Hashable {
@@ -237,6 +238,8 @@ final class SyncModel {
     @ObservationIgnored var gitHub: GitHubAccess?
     /// Said in the key sheet when a check fell back to the key.
     private(set) var keyPathNote: String?
+    /// The last background check (`BackgroundRefresh`), for the status page.
+    private(set) var backgroundRun: BackgroundRun?
 
     @ObservationIgnored private weak var app: AppModel?
     @ObservationIgnored private var tasks: [UUID: KeyTask] = [:]
@@ -246,6 +249,7 @@ final class SyncModel {
     /// Where to go once the sheet has gone.
     @ObservationIgnored private var pendingRoute: Route?
     @ObservationIgnored private var pendingSettings = false
+    @ObservationIgnored private var backgroundWatch: NSObjectProtocol?
     private let workQueue = DispatchQueue(label: "paw-sync", qos: .userInitiated)
 
     init(sync: StoreSync, repoDir: String) {
@@ -259,9 +263,23 @@ final class SyncModel {
         refreshSimSummary()
         #endif
         recomputeLocal()
+        backgroundRun = BackgroundRefresh.lastRun()
+        // A background run that ends while paw is on screen (or coming
+        // back to it); one that ends in the background waits for the next
+        // `cameForward`.
+        backgroundWatch = NotificationCenter.default.addObserver(
+            forName: BackgroundRefresh.finished, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let app = self.app, UIApplication.shared.applicationState != .background else { return }
+                self.cameForward(app: app)
+            }
+        }
     }
 
-    private static func checkedKey(_ repoDir: String) -> String {
+    /// Where the time of the last check is kept; the background refresh
+    /// writes it too.
+    nonisolated static func checkedKey(_ repoDir: String) -> String {
         "pawSyncLastChecked:\(repoDir)"
     }
 
@@ -614,6 +632,29 @@ final class SyncModel {
         refreshSimSummary()
         #endif
         return needsLook
+    }
+
+    // MARK: After a background check
+
+    /// paw is on screen again: what background checks brought in shows in
+    /// the list, and what they left for the person comes up through a
+    /// check with the sign-in (no key), as a check from the pill would.
+    func cameForward(app: AppModel) {
+        self.app = app
+        backgroundRun = BackgroundRefresh.lastRun()
+        let seen = UserDefaults.standard.double(forKey: Self.checkedKey(repoDir))
+        if seen > 0 {
+            lastChecked = Date(timeIntervalSince1970: seen)
+        }
+        guard running == nil, !accepting else { return }
+        let pending = BackgroundRefresh.takePending()
+        if pending.changed {
+            app.reloadAfterWrite()
+            recomputeLocal()
+        }
+        if pending.needsLook, checksWithSignIn {
+            check(app: app)
+        }
     }
 
     // MARK: Checking with the GitHub sign-in
