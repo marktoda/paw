@@ -41,12 +41,13 @@ pub(crate) enum KeyOperation {
     Refused(u16),
 }
 
-/// **Unverified on a real key.** paw cannot yet tell a touch timeout from
-/// any other refusal: the YubiKey's status word for "nobody touched me"
-/// has not been measured, and the simulated card answers `6982` after its
-/// timeout. Until it has been, "a touch may have been waited for, and the
-/// card then refused with a security-status error" is read as a touch
-/// timeout. This is the only place that guess is made.
+/// **Unverified on a real key.** The YubiKey's status word for "nobody
+/// touched me" has not been measured, and the simulated card answers
+/// `6982` after its timeout. So "a touch may have been waited for, and the
+/// card then refused with a security-status error" is only a candidate
+/// touch timeout: [`super::session::KeySession::refused`] then asks the
+/// card whether the PIN is still verified and looks at how long the
+/// refusal took before calling it one.
 pub(crate) fn touch_timed_out(touch_possible: bool, sw: u16) -> bool {
     touch_possible && matches!(sw, 0x6982 | 0x6985)
 }

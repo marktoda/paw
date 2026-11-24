@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use super::decrypt::Plan;
 use super::enrolment::{self, KeyIdentity, KeyMismatch};
+use super::keylog::{self, Sink};
 use super::session::{Halt, KeySession};
 use super::signer::SessionSigner;
 use super::task::{Body, KeyTask, TaskCore};
@@ -27,6 +28,8 @@ struct State {
     /// The key the store was set up with. While set, no task sends the PIN
     /// to another card.
     enrolled: Option<KeyIdentity>,
+    /// Where this process writes its key log, once set.
+    log: Option<Arc<Sink>>,
 }
 
 /// Work a task does once the key has done its part, before it ends.
@@ -88,7 +91,9 @@ impl KeyPort {
     /// session, ending any earlier one.
     pub fn attach(&self, transport: Arc<dyn ApduTransport>) -> Result<Arc<KeySession>, KeyError> {
         self.unplugged();
-        let session = KeySession::open(transport, self.clock.clone())?;
+        let sink = self.lock().log.clone();
+        let again = self.plugged.load(Ordering::SeqCst) > 0;
+        let session = KeySession::open(transport, self.clock.clone(), sink, again)?;
         let waiting = {
             let mut state = self.lock();
             if let Some(old) = state.session.replace(session.clone()) {
@@ -162,15 +167,36 @@ impl KeyPort {
     ) -> Arc<KeyTask> {
         let session = self.session();
         let mismatch = session.as_deref().and_then(|session| enrolment_check(expected.as_ref(), session));
+        let held_at_start = session.as_deref().is_some_and(KeySession::holds_pin_now);
         let initial = Self::initial(session.as_deref(), expected.as_ref(), check);
+        let what = keylog::purpose_words(&purpose);
+        let starts_at = keylog::stage_words(&initial).unwrap_or_default();
+        let finished = initial.is_final();
+        let start_line = move |tag: String, session: &KeySession, plugged_later: bool| {
+            let info = session.card_info();
+            format!(
+                "{tag} task {what}: PIN held {}, touch decryption {}, authentication {}, {}",
+                if held_at_start { "yes" } else { "no" },
+                keylog::touch_words(info.decryption_touch),
+                keylog::touch_words(info.authentication_touch),
+                if plugged_later { "key plugged in after it started".to_string() } else { format!("starts at {starts_at}") },
+            )
+        };
+        let logged_session = session.clone();
         let port = self.clone();
+        let line = start_line.clone();
         let body: Body = Box::new(move |task| {
             let session = match session {
                 Some(session) => {
+                    session.log().line(line(task.tag(), &session, false));
                     task.bind(&session);
                     session
                 }
-                None => port.wait_for_session(task)?,
+                None => {
+                    let session = port.wait_for_session(task)?;
+                    session.log().line(line(task.tag(), &session, true));
+                    session
+                }
             };
             if let Some(mismatch) = enrolment_check(expected.as_ref(), &session) {
                 task.set_key_mismatch(mismatch.clone());
@@ -178,7 +204,12 @@ impl KeyPort {
             }
             body(task, &session)
         });
-        KeyTask::start_with_mismatch(purpose, listener, initial, mismatch, body)
+        let task = KeyTask::start_with_mismatch(purpose, listener, initial, mismatch, body);
+        // A task refused before it began never runs its body.
+        if let (true, Some(session)) = (finished, logged_session) {
+            session.log().line(start_line(task.tag(), &session, false));
+        }
+        task
     }
 
     /// The key tasks must be on: the enrolled one, if any.
@@ -297,7 +328,7 @@ impl KeyPort {
         Arc::new(Self {
             clock,
             plugged: AtomicU64::new(0),
-            state: Mutex::new(State { session: None, waiting: Vec::new(), enrolled: None }),
+            state: Mutex::new(State { session: None, waiting: Vec::new(), enrolled: None, log: None }),
         })
     }
 
@@ -372,10 +403,34 @@ impl KeyPort {
     /// Reads the enrolled key of the store in `state_dir` and sets it.
     /// Returns it, or `None` if setup has not recorded one (then every card
     /// is accepted, as during setup).
+    ///
+    /// Also starts this process's key log in `state_dir` if none was set
+    /// (see `set_key_log`), named after the process: this is the call both
+    /// the app and the AutoFill extension make with the store's state
+    /// directory.
     pub fn load_enrolled_key(&self, state_dir: String) -> Result<Option<KeyIdentity>, PawError> {
+        {
+            let mut state = self.lock();
+            if state.log.is_none() {
+                state.log = Some(Sink::new(std::path::Path::new(&state_dir), &keylog::default_process()));
+            }
+        }
         let key = enrolment::load_enrolment(std::path::Path::new(&state_dir))?;
         self.set_enrolled_key(key.clone());
         Ok(key)
+    }
+
+    /// Writes the key log of the sessions read from now on to
+    /// `key-log.<process>` in `state_dir` (only while that folder exists).
+    /// `process` is "app" or "fill"; anything but letters and digits is
+    /// dropped from it.
+    pub fn set_key_log(&self, state_dir: String, process: String) {
+        self.lock().log = Some(Sink::new(std::path::Path::new(&state_dir), &process));
+    }
+
+    /// The state directory this process's key log is written to, if set.
+    pub fn key_log_dir(&self) -> Option<String> {
+        self.lock().log.as_ref().map(|sink| sink.dir().to_string_lossy().into_owned())
     }
 
     pub fn enrolled_key(&self) -> Option<KeyIdentity> {

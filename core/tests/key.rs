@@ -7,12 +7,14 @@
 mod key_common;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use key_common::*;
 use paw_core::key::{
     CACHED_TOUCH_GRACE, KeyError, KeyOutcome, KeyTaskState, LoginPurpose, PIN_BACKGROUND_LIMIT,
 };
+use paw_core::ApduTransport;
 use paw_core::sim::SimTouch;
 use paw_core::ssh::SshSigner;
 use ring::signature::{ED25519, UnparsedPublicKey};
@@ -593,7 +595,8 @@ fn touch_is_shown_only_once_the_command_goes_out() {
 #[test]
 fn a_touch_timeout_fails_the_task_and_keeps_the_pin() {
     let mut rig = rig_unplugged(SimTouch::EachUse, SimTouch::EachUse);
-    rig.sim = sim(SimTouch::EachUse, SimTouch::EachUse, Duration::from_millis(50));
+    // Past `FAST_REFUSAL`: a quicker refusal is not taken for a timeout.
+    rig.sim = sim(SimTouch::EachUse, SimTouch::EachUse, Duration::from_millis(1_100));
     rig.port.attach(rig.sim.clone()).unwrap();
     let driver = Driver::new();
     let task = open(&rig, ENTRY, &driver);
@@ -779,4 +782,163 @@ fn a_key_with_a_pin_kdf_paw_does_not_know_is_refused_before_the_pin() {
     assert!(!driver.saw(is_pin));
     assert_eq!(rig.sim.verify_attempts(), 0);
     assert_eq!(rig.sim.pin_tries_left(), 3);
+}
+
+// A refusal that may be a touch timeout, or a PIN the card lost.
+
+/// The simulated key behind a transport that, a set number of times, makes
+/// the card forget the PIN's verification just before PSO:DECIPHER or
+/// INTERNAL AUTHENTICATE goes out (as a reset of the card mid-job would),
+/// or answers that command with a refusal at once.
+struct LosesPin {
+    sim: Arc<paw_core::sim::SimulatedKey>,
+    losses: AtomicU32,
+    refuse_at_once: AtomicU32,
+}
+
+impl LosesPin {
+    fn new(sim: &Arc<paw_core::sim::SimulatedKey>) -> Arc<Self> {
+        Arc::new(Self { sim: sim.clone(), losses: AtomicU32::new(0), refuse_at_once: AtomicU32::new(0) })
+    }
+}
+
+fn take(counter: &AtomicU32) -> bool {
+    counter.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok()
+}
+
+impl ApduTransport for LosesPin {
+    fn transmit(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
+        let key_operation = matches!(apdu, [cla, 0x2A, 0x80, 0x86, ..] | [cla, 0x88, ..] if cla & 0x10 == 0);
+        if key_operation && take(&self.refuse_at_once) {
+            return Ok(vec![0x69, 0x82]);
+        }
+        if key_operation && take(&self.losses) {
+            self.sim.transmit(&[0x00, 0x20, 0xFF, 0x82])?;
+        }
+        self.sim.transmit(apdu)
+    }
+}
+
+fn rig_losing_pin(decrypt: SimTouch, auth: SimTouch) -> (Rig, Arc<LosesPin>) {
+    let rig = rig_unplugged(decrypt, auth);
+    let wrapped = LosesPin::new(&rig.sim);
+    rig.port.attach(wrapped.clone()).unwrap();
+    (rig, wrapped)
+}
+
+fn pin_lost(state: &KeyTaskState) -> bool {
+    matches!(state, KeyTaskState::Pin { last_error: Some(KeyError::PinForgotten), .. })
+}
+
+#[test]
+fn a_pin_the_key_lost_before_decipher_is_asked_again_after_touch_with_no_try_spent() {
+    let (rig, wrapped) = rig_losing_pin(SimTouch::EachUse, SimTouch::EachUse);
+    open_ok(&rig);
+    let session = rig.port.session().unwrap();
+    assert!(session.holds_pin());
+    wrapped.losses.store(1, Ordering::SeqCst);
+
+    let driver = Driver::helpful(PIN, &rig.sim);
+    let task = open(&rig, OTHER_ENTRY, &driver);
+    assert!(!is_pin(&task.state()), "the PIN was held when the task started");
+    assert_eq!(opened(&finish(&task)).0, "4071");
+
+    let states = driver.states();
+    let touch = states.iter().position(is_touch).expect("Touch was shown");
+    let asked = states.iter().position(pin_lost).expect("the PIN was asked again with a reason");
+    assert!(touch < asked, "Touch, then the PIN: {states:?}");
+    assert_eq!(states.iter().filter(|s| is_pin(s)).count(), 1);
+    assert!(states[asked..].iter().any(is_touch), "a touch after the PIN");
+    assert!(!states.iter().any(|s| matches!(s, KeyTaskState::Failed { .. })));
+    // One VERIFY for the first open and one for the PIN typed again; the
+    // held PIN was not re-sent, and the counter never moved.
+    assert_eq!(rig.sim.verify_attempts(), 2);
+    assert_eq!(rig.sim.pin_tries_left(), 3);
+    assert!(session.holds_pin());
+    let log = session.diagnostics(0);
+    assert!(log.contains("refused 6982 after"), "{log}");
+    assert!(log.contains("PIN check 63C3: the PIN lost, ask again"), "{log}");
+    assert!(log.contains("PIN dropped (the key lost its verification)"), "{log}");
+    assert!(log.contains("stage Pin (again: PinForgotten)"), "{log}");
+}
+
+#[test]
+fn a_pin_lost_on_the_first_open_is_asked_again_too() {
+    let (rig, wrapped) = rig_losing_pin(SimTouch::Off, SimTouch::Off);
+    wrapped.losses.store(1, Ordering::SeqCst);
+    let driver = Driver::helpful(PIN, &rig.sim);
+    let task = open(&rig, ENTRY, &driver);
+    assert_eq!(opened(&finish(&task)).0, SECRET);
+    assert_eq!(driver.count(pin_lost), 1);
+    assert_eq!(rig.sim.verify_attempts(), 2);
+    assert_eq!(rig.sim.pin_tries_left(), 3);
+}
+
+#[test]
+fn a_second_pin_loss_in_one_task_fails_instead_of_asking_again() {
+    let (rig, wrapped) = rig_losing_pin(SimTouch::EachUse, SimTouch::EachUse);
+    open_ok(&rig);
+    wrapped.losses.store(5, Ordering::SeqCst);
+
+    let driver = Driver::helpful(PIN, &rig.sim);
+    let task = open(&rig, OTHER_ENTRY, &driver);
+    let error = failed(&finish(&task));
+
+    assert!(matches!(&error, KeyError::Reader { detail } if detail.contains("lost the PIN twice")), "{error:?}");
+    assert_eq!(driver.count(pin_lost), 1, "asked again once, not in a loop");
+    assert_eq!(rig.sim.verify_attempts(), 2);
+    assert_eq!(rig.sim.pin_tries_left(), 3);
+    assert!(!rig.port.session().unwrap().holds_pin());
+    assert_eq!(wrapped.losses.load(Ordering::SeqCst), 3, "two key operations went out, no more");
+}
+
+#[test]
+fn a_quick_refusal_with_the_pin_still_verified_is_not_called_a_touch_timeout() {
+    let (rig, wrapped) = rig_losing_pin(SimTouch::EachUse, SimTouch::EachUse);
+    open_ok(&rig);
+    wrapped.refuse_at_once.store(1, Ordering::SeqCst);
+
+    let driver = Driver::helpful(PIN, &rig.sim);
+    let error = failed(&finish(&open(&rig, OTHER_ENTRY, &driver)));
+
+    assert!(matches!(&error, KeyError::Reader { detail } if detail.contains("refused at once (6982)")), "{error:?}");
+    assert!(!driver.saw(is_pin));
+    assert!(rig.port.session().unwrap().holds_pin(), "the PIN is still verified, so it is kept");
+    assert_eq!(rig.sim.verify_attempts(), 1);
+}
+
+#[test]
+fn a_slow_refusal_with_the_pin_still_verified_is_a_touch_timeout() {
+    let rig = rig(SimTouch::EachUse, SimTouch::EachUse);
+    open_ok(&rig);
+    let queries = rig.sim.pin_queries();
+    let driver = Driver::new();
+    let task = open(&rig, OTHER_ENTRY, &driver);
+    driver.wait_for(is_touch);
+    assert!(eventually(|| rig.sim.waiting_for_touch()));
+    rig.sim.time_out_touch();
+    assert_eq!(failed(&finish(&task)), KeyError::TouchTimeout);
+    assert!(rig.port.session().unwrap().holds_pin());
+    // The job's own check, then the one after the refusal: no try.
+    assert_eq!(rig.sim.pin_queries(), queries + 2);
+    assert_eq!(rig.sim.verify_attempts(), 1);
+}
+
+#[test]
+fn a_pin_lost_before_a_signature_fails_it_with_pin_forgotten() {
+    let (rig, wrapped) = rig_losing_pin(SimTouch::EachUse, SimTouch::EachUse);
+    let driver = Driver::helpful(PIN, &rig.sim);
+    let task = rig.port.clone().sign_in(LoginPurpose::Push { count: 1 }, driver.clone());
+    driver.drive(&task);
+    let signer = task.login_signer().unwrap();
+    wrapped.losses.store(1, Ordering::SeqCst);
+
+    let error = signer.sign(b"a login").unwrap_err();
+
+    assert!(matches!(error, paw_core::PawError::Sign(_)), "{error:?}");
+    assert_eq!(failed(&finish(&task)), KeyError::PinForgotten);
+    assert!(!rig.port.session().unwrap().holds_pin());
+    assert_eq!(rig.sim.verify_attempts(), 1);
+    assert_eq!(rig.sim.pin_tries_left(), 3);
+    assert_eq!(rig.sim.authentication_count(), 0);
 }

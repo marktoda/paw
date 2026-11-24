@@ -24,7 +24,18 @@ pub(crate) struct TouchWatch {
 }
 
 impl TouchWatch {
-    pub(crate) fn arm(wire: &Arc<Wire>, task: &Arc<TaskCore>, policy: KeyTouch) -> Self {
+    /// `slot` names the slot in the key log ("decryption", "authentication").
+    pub(crate) fn arm(wire: &Arc<Wire>, task: &Arc<TaskCore>, policy: KeyTouch, slot: &str) -> Self {
+        let watch = match policy {
+            KeyTouch::Off => "none",
+            KeyTouch::EachUse => "at once",
+            KeyTouch::Cached | KeyTouch::Unknown => "delayed",
+        };
+        wire.log().line(format!(
+            "{} touch watch {watch} ({slot} slot: {})",
+            task.tag(),
+            super::keylog::touch_words(policy)
+        ));
         let hook: Option<Arc<dyn TouchHook>> = match policy {
             KeyTouch::Off => None,
             KeyTouch::EachUse => Some(Arc::new(AtOnce { task: task.clone() })),

@@ -43,6 +43,11 @@ const MAX_EXTENDED_COMMAND: u16 = 2048;
 /// says otherwise. A YubiKey's is 15 seconds.
 const TOUCH_CACHE: Duration = Duration::from_secs(15);
 
+/// [`SimulatedKey::time_out_touch`] answers no sooner than this after the
+/// command came, so the core takes it for a touch timeout rather than an
+/// instant refusal (see `key::session::FAST_REFUSAL`).
+const MIN_TOUCH_TIMEOUT: Duration = Duration::from_millis(1100);
+
 /// A slot's touch policy, as the simulated key can be set to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum SimTouch {
@@ -653,6 +658,7 @@ impl SimulatedKey {
             SimTouch::Cached => !cached,
         };
         if wait {
+            let waiting_since = Instant::now();
             state.waiting_for_touch = true;
             let (guard, _) = self
                 .touched
@@ -663,6 +669,11 @@ impl SimulatedKey {
             state = guard;
             state.waiting_for_touch = false;
             if std::mem::take(&mut state.time_out_now) {
+                // A real key gives up after about 15 seconds; the core
+                // reads a refusal quicker than a second as something else.
+                // So a timeout asked for at once still takes that second.
+                drop(state);
+                std::thread::sleep(MIN_TOUCH_TIMEOUT.saturating_sub(waiting_since.elapsed()));
                 return Err(0x6982);
             }
             if !state.touch_pending || !state.present {

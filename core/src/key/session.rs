@@ -11,12 +11,14 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
+use std::time::Duration;
 
 use openpgp_card::Card;
 use openpgp_card::state::Open;
 use zeroize::Zeroizing;
 
 use super::kdf::{self, PinKdf};
+use super::keylog::{self, KeyLog, Sink};
 use super::status::{self, Verify};
 use super::task::TaskCore;
 use super::wire::Wire;
@@ -120,6 +122,10 @@ pub struct KeySession {
     card_free: Condvar,
 }
 
+/// A refusal quicker than this was not a touch timeout: a YubiKey waits
+/// about 15 seconds for a touch before it gives up.
+pub(crate) const FAST_REFUSAL: Duration = Duration::from_secs(1);
+
 /// What the PIN stage shows.
 pub(crate) struct PinPrompt {
     pub(crate) tries_left: u8,
@@ -136,9 +142,34 @@ fn read_error(wire: &Wire, error: PawError) -> KeyError {
 
 impl KeySession {
     /// Reads the key's identity, key slots and touch policies. No PIN, no
-    /// touch.
-    pub(crate) fn open(transport: Arc<dyn ApduTransport>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, KeyError> {
-        let wire = Wire::new(transport);
+    /// touch. Every command goes to a key log written to `sink`, if given;
+    /// `again` says the port had read a key before.
+    pub(crate) fn open(
+        transport: Arc<dyn ApduTransport>,
+        clock: Arc<dyn Clock>,
+        sink: Option<Arc<Sink>>,
+        again: bool,
+    ) -> Result<Arc<Self>, KeyError> {
+        let log = KeyLog::new(sink);
+        log.line(if again { "session start (key read again)" } else { "session start" });
+        let wire = Wire::logged(transport, log.clone());
+        let opened = Self::read(wire, clock);
+        match &opened {
+            Ok(session) => {
+                let info = session.card_info();
+                log.line(format!(
+                    "session ready: PIN tries left {}, touch decryption {}, authentication {}",
+                    info.pin_tries_left,
+                    keylog::touch_words(info.decryption_touch),
+                    keylog::touch_words(info.authentication_touch),
+                ));
+            }
+            Err(error) => log.line(format!("session failed to start: {}", keylog::error_name(error))),
+        }
+        opened
+    }
+
+    fn read(wire: Arc<Wire>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, KeyError> {
         let info = crate::card_info(wire.clone()).map_err(|e| read_error(&wire, e))?;
         let decryption_key = match info.decryption_fingerprint {
             Some(_) => Some(crate::card_decryption_key(wire.clone()).map_err(|e| read_error(&wire, e))?),
@@ -183,7 +214,9 @@ impl KeySession {
     /// The key was removed (or its reader failed): drop the PIN, and wake
     /// every task so it can fail with `KeyRemoved`.
     pub(crate) fn end(&self) {
-        self.ended.store(true, Ordering::SeqCst);
+        if !self.ended.swap(true, Ordering::SeqCst) {
+            self.log().line(if self.wire.failed() { "session end (the reader failed)" } else { "session end" });
+        }
         let tasks = {
             let mut state = self.lock();
             state.pin = None;
@@ -224,6 +257,10 @@ impl KeySession {
         &self.wire
     }
 
+    pub(crate) fn log(&self) -> &Arc<KeyLog> {
+        self.wire.log()
+    }
+
     pub(crate) fn card_busy(&self) -> bool {
         self.lock().card_busy
     }
@@ -261,6 +298,7 @@ impl KeySession {
     /// job otherwise. Never sends anything on the caller's thread, which is
     /// often the app's main thread: a reader can take seconds to answer.
     fn forget(&self, after_background: bool) {
+        self.log().line(if after_background { "PIN dropped (background limit)" } else { "PIN dropped (Lock now)" });
         let deverify_now = {
             let mut state = self.lock();
             state.pin = None;
@@ -325,19 +363,98 @@ impl KeySession {
 
     /// Holds `pin`, unless it was dropped since `forgets` was read.
     fn hold(&self, pin: Pin, forgets: u64) {
-        let mut state = self.lock();
-        if state.forgets == forgets {
-            state.pin = Some(pin);
-            state.forgot_after_background = false;
-        }
+        let held = {
+            let mut state = self.lock();
+            let held = state.forgets == forgets;
+            if held {
+                state.pin = Some(pin);
+                state.forgot_after_background = false;
+            }
+            held
+        };
+        self.log().line(if held { "PIN held" } else { "PIN not held (dropped while it was checked)" });
     }
 
-    fn drop_pin(&self) {
+    /// Drops the held PIN; `why` is for the key log.
+    fn drop_pin(&self, why: &str) {
         self.lock().pin = None;
+        self.log().line(format!("PIN dropped ({why})"));
     }
 
     fn held_pin(&self) -> Option<Pin> {
         self.lock().pin.as_ref().map(Pin::copy)
+    }
+
+    /// What it means that the card refused PSO:DECIPHER or INTERNAL
+    /// AUTHENTICATE with `sw` (`6982` or `6985`) after `elapsed`.
+    /// `touch_possible` says the slot's policy can ask for a touch. Called
+    /// in the same card job, right after the refusal.
+    ///
+    /// Both a touch that never came and a PIN verification the card lost
+    /// give that answer, so the card is asked whether the PIN is still
+    /// verified (an empty VERIFY, which uses no try):
+    ///
+    /// - not verified: the held PIN is dropped and the person is asked for
+    ///   it again (`PinForgotten`, "Your key asked for its PIN again"). paw
+    ///   does not re-send the held PIN here: something reset the card
+    ///   mid-job, and a second loss in the same task fails instead, so this
+    ///   never loops;
+    /// - still verified, on a slot that can ask for a touch, and the refusal
+    ///   took [`FAST_REFUSAL`] or longer: a touch timeout;
+    /// - still verified but quicker than that: not a timeout (a YubiKey
+    ///   waits about 15 seconds for a touch), so "Try again and touch the
+    ///   gold part" would be wrong advice. It is reported as the key's own
+    ///   refusal with its status word, which the key log also has. So is a
+    ///   refusal on a slot that never asks for a touch.
+    ///
+    /// A card that cannot say whether the PIN is verified is judged on the
+    /// time alone.
+    pub(crate) fn refused(&self, task: &TaskCore, step: &str, sw: u16, touch_possible: bool, elapsed: Duration) -> Halt {
+        let check = match self.wire.send(&[0x00, 0x20, 0x00, 0x82]) {
+            Ok((_, check)) => check,
+            Err(error) => return Halt::Fail(error),
+        };
+        let slow = elapsed >= FAST_REFUSAL;
+        let (halt, reading) = match status::verify(check) {
+            Verify::Verified | Verify::Other(_) if touch_possible && slow => {
+                (Halt::Fail(KeyError::TouchTimeout), "a touch timeout")
+            }
+            Verify::Verified | Verify::Other(_) if touch_possible => (
+                Halt::Fail(KeyError::Reader { detail: format!("{step}: the key refused at once ({sw:04X})") }),
+                "a refusal, too quick for a touch timeout",
+            ),
+            Verify::Verified | Verify::Other(_) => (
+                Halt::Fail(KeyError::Reader { detail: format!("{step}: the key refused ({sw:04X})") }),
+                "a refusal, and the slot asks for no touch",
+            ),
+            Verify::NotVerified { tries_left } => {
+                if let Some(tries) = tries_left {
+                    self.set_tries(tries);
+                }
+                self.drop_pin("the key lost its verification");
+                if task.note_pin_lost() > 1 {
+                    (
+                        Halt::Fail(KeyError::Reader {
+                            detail: format!("{step}: the key lost the PIN twice ({sw:04X})"),
+                        }),
+                        "the PIN lost a second time",
+                    )
+                } else {
+                    (Halt::AskPin(Some(KeyError::PinForgotten)), "the PIN lost, ask again")
+                }
+            }
+            Verify::Blocked => {
+                self.set_tries(0);
+                self.drop_pin("the key is locked");
+                (Halt::Fail(KeyError::PinBlocked), "the PIN is blocked")
+            }
+        };
+        self.log().line(format!(
+            "{} refused {sw:04X} after {} ms, PIN check {check:04X}: {reading}",
+            task.tag(),
+            elapsed.as_millis()
+        ));
+        halt
     }
 
     /// Waits until the card is free, showing `Busy` meanwhile.
@@ -491,17 +608,17 @@ impl<'a> CardJob<'a> {
         };
         session.set_tries(tries_left);
         if tries_left == 0 {
-            session.drop_pin();
+            session.drop_pin("the key is locked");
             return Err(Halt::Fail(KeyError::PinBlocked));
         }
         match self.verify(&pin)? {
             Verified::Yes => Ok(()),
             Verified::Wrong { tries_left } => {
-                session.drop_pin();
+                session.drop_pin("the key refused it");
                 Err(Halt::AskPin(Some(KeyError::HeldPinRejected { tries_left })))
             }
             Verified::Blocked => {
-                session.drop_pin();
+                session.drop_pin("the key is locked");
                 Err(Halt::Fail(KeyError::PinBlocked))
             }
         }
@@ -562,6 +679,13 @@ impl KeySession {
     /// is dropped and the card de-verified on another thread.
     pub fn holds_pin(&self) -> bool {
         self.holds_pin_now()
+    }
+
+    /// This session's key log, oldest line first, times at `utc_offset_secs`
+    /// from UTC: its last card commands (instruction, P1, P2, status word,
+    /// timings) and task and session events. No data, no PIN, no names.
+    pub fn diagnostics(&self, utc_offset_secs: i32) -> String {
+        self.log().text(utc_offset_secs)
     }
 
     /// The key is still plugged in and answering.

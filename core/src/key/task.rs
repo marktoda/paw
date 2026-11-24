@@ -17,7 +17,7 @@
 
 use std::collections::VecDeque;
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -49,7 +49,15 @@ struct Inner {
     transfer: Option<crate::sync::TransferProgress>,
 }
 
+/// Numbers tasks in the key log, per process.
+static NEXT_TASK: AtomicU64 = AtomicU64::new(1);
+
 pub(crate) struct TaskCore {
+    /// The task's number in the key log.
+    id: u64,
+    /// Times the card was found to have lost the PIN's verification during
+    /// this task's key operation (see `KeySession::refused`).
+    pin_losses: AtomicU32,
     purpose: KeyPurpose,
     listener: Arc<dyn KeyTaskListener>,
     cancelled: AtomicBool,
@@ -82,6 +90,24 @@ impl TaskCore {
         self.cancelled.load(Ordering::SeqCst)
     }
 
+    /// "#3": the task in the key log.
+    pub(crate) fn tag(&self) -> String {
+        format!("#{}", self.id)
+    }
+
+    /// Counts one more loss of the PIN's verification; returns how many
+    /// this task has seen.
+    pub(crate) fn note_pin_lost(&self) -> u32 {
+        self.pin_losses.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    /// Writes a stage change to the key log of the session the task is on.
+    fn log_stage(&self, session: Option<Arc<KeySession>>, state: &KeyTaskState) {
+        if let (Some(session), Some(words)) = (session, super::keylog::stage_words(state)) {
+            session.log().line(format!("{} stage {words}", self.tag()));
+        }
+    }
+
     pub(crate) fn wake(&self) {
         let _inner = self.lock();
         self.changed.notify_all();
@@ -107,8 +133,13 @@ impl TaskCore {
     }
 
     fn set_again(&self, new: KeyTaskState, again: bool) -> bool {
-        let applied = Self::apply(&mut self.lock(), new, again);
+        let (applied, session) = {
+            let mut inner = self.lock();
+            let applied = Self::apply(&mut inner, new.clone(), again);
+            (applied, if applied { inner.session.clone() } else { None })
+        };
         if applied {
+            self.log_stage(session, &new);
             self.changed.notify_all();
             self.drain();
         }
@@ -150,6 +181,7 @@ impl TaskCore {
             Self::apply(&mut inner, KeyTaskState::Cancelled, false);
             inner.session.clone()
         };
+        self.log_stage(session.clone(), &KeyTaskState::Cancelled);
         self.changed.notify_all();
         self.drain();
         if let Some(session) = session {
@@ -301,6 +333,8 @@ impl KeyTask {
     ) -> Arc<Self> {
         let finished = initial.is_final();
         let core = Arc::new(TaskCore {
+            id: NEXT_TASK.fetch_add(1, Ordering::Relaxed),
+            pin_losses: AtomicU32::new(0),
             purpose,
             listener,
             cancelled: AtomicBool::new(false),
@@ -347,6 +381,11 @@ impl KeyTask {
             }
         }
         task
+    }
+
+    /// "#3": the task in the key log.
+    pub(crate) fn tag(&self) -> String {
+        self.core.tag()
     }
 
     /// A task that has already failed with `error`.

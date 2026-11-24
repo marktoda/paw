@@ -16,10 +16,12 @@
 //! - [`decrypt`]: an entry, split into what needs the card and what not.
 //! - [`signer`]: an SSH signer that signs through the session.
 //! - [`enrolment`]: the key the store was set up with; no PIN to another.
+//! - [`keylog`]: what paw and the card said to each other, for diagnosis.
 
 mod decrypt;
 pub mod enrolment;
 pub(crate) mod kdf;
+pub mod keylog;
 mod port;
 mod session;
 mod signer;
@@ -33,6 +35,7 @@ use std::time::Duration;
 
 pub use enrolment::{KeyIdentity, KeyMismatch};
 pub use kdf::PinKdfStatus;
+pub use keylog::{KeyLogLine, clear_key_log, key_log, key_log_text};
 pub use port::KeyPort;
 pub(crate) use port::{After, Work};
 pub(crate) use session::Halt;
@@ -75,7 +78,10 @@ pub enum KeyError {
     #[error("a PIN has 6 to 127 characters")]
     PinFormat,
     /// paw forgot the PIN (Lock now, or 15 minutes in the background)
-    /// while a git login was under way, when it can no longer ask.
+    /// while a git login was under way, when it can no longer ask. Also why
+    /// the PIN is asked again when the key turns out to have lost its
+    /// verification during a decryption (or a signature fails for that):
+    /// paw has then dropped the PIN, and no try was used.
     #[error("paw forgot the PIN before the key was used")]
     PinForgotten,
     /// Nobody touched the key in time. The PIN is still held.

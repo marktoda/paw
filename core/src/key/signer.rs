@@ -11,6 +11,7 @@
 //! [`KeyTask::login_signer`]: super::KeyTask::login_signer
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use super::session::{CardJob, Halt, KeySession, card_error};
 use super::status::{self, KeyOperation};
@@ -52,8 +53,9 @@ fn authenticate(job: &mut CardJob<'_>, task: &Arc<TaskCore>, data: &[u8]) -> Res
     let wire = session.wire().clone();
     let policy = session.card_info().authentication_touch;
     let mut tx = job.card.transaction().map_err(|e| card_error(&wire, "starting to sign", e))?;
-    let _watch = TouchWatch::arm(&wire, task, policy);
+    let _watch = TouchWatch::arm(&wire, task, policy, "authentication");
     wire.clear_last();
+    let sent = Instant::now();
     let error = match tx.card().internal_authenticate(data.to_vec()) {
         Ok(signature) if signature.len() == 64 => return Ok(signature),
         Ok(signature) => {
@@ -68,7 +70,11 @@ fn authenticate(job: &mut CardJob<'_>, task: &Arc<TaskCore>, data: &[u8]) -> Res
     }
     Err(Halt::Fail(match wire.last() {
         Some((INTERNAL_AUTHENTICATE, sw)) => match status::key_operation(sw, touch::possible(policy)) {
-            KeyOperation::TouchTimeout => KeyError::TouchTimeout,
+            // A lost PIN cannot be asked for while the server waits: the
+            // signature fails with `PinForgotten` (see `sign`).
+            KeyOperation::TouchTimeout | KeyOperation::Refused(0x6982 | 0x6985) => {
+                return Err(session.refused(task, "signing", sw, touch::possible(policy), sent.elapsed()));
+            }
             KeyOperation::Refused(sw) => status::unexpected("signing", sw),
             KeyOperation::Done => KeyError::Reader { detail: format!("signing: {error}") },
         },

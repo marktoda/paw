@@ -9,11 +9,14 @@
 //! - whether the reader failed, which ends the session.
 //!
 //! It records instruction bytes and status words only, never command or
-//! response data.
+//! response data, and writes each exchange to the session's key log
+//! ([`super::keylog`]) once the card has answered.
 
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Instant;
 
 use super::KeyError;
+use super::keylog::KeyLog;
 use crate::ApduTransport;
 
 /// PSO:DECIPHER (`2A 80 86`) and INTERNAL AUTHENTICATE (`88`) are the
@@ -47,11 +50,21 @@ struct Record {
 pub(crate) struct Wire {
     inner: Arc<dyn ApduTransport>,
     record: Mutex<Record>,
+    log: Arc<KeyLog>,
 }
 
 impl Wire {
     pub(crate) fn new(inner: Arc<dyn ApduTransport>) -> Arc<Self> {
-        Arc::new(Self { inner, record: Mutex::new(Record::default()) })
+        Self::logged(inner, KeyLog::detached())
+    }
+
+    /// A wire that writes every exchange to `log`.
+    pub(crate) fn logged(inner: Arc<dyn ApduTransport>, log: Arc<KeyLog>) -> Arc<Self> {
+        Arc::new(Self { inner, record: Mutex::new(Record::default()), log })
+    }
+
+    pub(crate) fn log(&self) -> &Arc<KeyLog> {
+        &self.log
     }
 
     fn record(&self) -> MutexGuard<'_, Record> {
@@ -105,25 +118,40 @@ impl ApduTransport for Wire {
         if let Some(hook) = &hook {
             hook.sent();
         }
+        let sent = Instant::now();
         let result = self.inner.transmit(apdu);
+        let round_trip = sent.elapsed();
+
+        let sw = {
+            let mut record = self.record();
+            match &result {
+                Err(_) => {
+                    record.failed = true;
+                    None
+                }
+                Ok(response) => {
+                    let ins = match apdu.get(1) {
+                        Some(&GET_RESPONSE) => record.last.map(|(ins, _)| ins),
+                        other => other.copied(),
+                    };
+                    let sw = match response.as_slice() {
+                        [.., hi, lo] => Some(u16::from_be_bytes([*hi, *lo])),
+                        _ => None,
+                    };
+                    record.last = ins.zip(sw);
+                    sw
+                }
+            }
+        };
+        // After the answer and outside the record's lock. The header only:
+        // the fifth byte would be the length of the data, which for a
+        // VERIFY is the PIN's.
+        if let [cla, ins, p1, p2, rest @ ..] = apdu {
+            self.log.command([*cla, *ins, *p1, *p2], rest.len() > 1, sw, round_trip, sent);
+        }
+        // After the log line, so the log reads command, then stage.
         if let Some(hook) = &hook {
             hook.answered();
-        }
-
-        let mut record = self.record();
-        match &result {
-            Err(_) => record.failed = true,
-            Ok(response) => {
-                let ins = match apdu.get(1) {
-                    Some(&GET_RESPONSE) => record.last.map(|(ins, _)| ins),
-                    other => other.copied(),
-                };
-                let sw = match response.as_slice() {
-                    [.., hi, lo] => Some(u16::from_be_bytes([*hi, *lo])),
-                    _ => None,
-                };
-                record.last = ins.zip(sw);
-            }
         }
         result
     }

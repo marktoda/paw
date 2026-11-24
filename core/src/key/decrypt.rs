@@ -11,6 +11,7 @@
 //! functions Swift still calls.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use openpgp_card::ocard::KeyType;
 use openpgp_card_rpgp::CardSlot;
@@ -86,7 +87,7 @@ impl<'a> Plan<'a> {
         let mut tx = job.card.transaction().map_err(|e| card_error(&wire, "starting to decrypt", e))?;
         let slot = CardSlot::with_public_key(&mut tx, KeyType::Decryption, key.clone(), &|| {})
             .map_err(|e| card_error(&wire, "reading the decryption key", e))?;
-        let _watch = TouchWatch::arm(&wire, task, policy);
+        let _watch = TouchWatch::arm(&wire, task, policy, "decryption");
 
         let mut failure = KeyError::DecryptFailed { detail: "the key did not answer".into() };
         for pkesk in &self.candidates {
@@ -98,6 +99,7 @@ impl<'a> Plan<'a> {
                 _ => EskType::V3_4,
             };
             wire.clear_last();
+            let sent = Instant::now();
             let unwrapped = pkesk
                 .values()
                 .and_then(|values| slot.decrypt(&Password::empty(), values, version))
@@ -114,7 +116,9 @@ impl<'a> Plan<'a> {
                     // The card answered; what it gave did not unwrap this
                     // packet. Try the next hidden one.
                     KeyOperation::Done => failure = KeyError::DecryptFailed { detail: error.to_string() },
-                    KeyOperation::TouchTimeout => return Err(Halt::Fail(KeyError::TouchTimeout)),
+                    KeyOperation::TouchTimeout | KeyOperation::Refused(0x6982 | 0x6985) => {
+                        return Err(session.refused(task, "decrypting", sw, touch_possible, sent.elapsed()));
+                    }
                     KeyOperation::Refused(sw) => return Err(Halt::Fail(status::unexpected("decrypting", sw))),
                 },
                 Some((_, sw)) if sw != status::OK => {
