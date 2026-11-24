@@ -23,11 +23,12 @@
 //!   ([`crate::write::keyring`]), written by the same step;
 //! - `repo/` — the store itself.
 //!
-//! The steps that need the key exist twice: with a card connection and the
-//! PIN passed per call (`download`, `test_decrypt`), and as key tasks on
-//! the key session, which share the PIN typed once (see `ffi::sync`). Both
-//! go through the same `begin_*` and `finish_*` steps here, so they save
-//! the same state and leave the same files.
+//! The app runs the steps that need the key as key tasks on the key
+//! session, which share the PIN typed once (see `ffi::sync`). Builds with
+//! the `sim` feature also have them with a card and the PIN passed per call
+//! (`download`, `test_decrypt`), which the Rust tests use to set stores up;
+//! device builds do not. Both go through the same `begin_*` and `finish_*`
+//! steps here, so they save the same state and leave the same files.
 
 pub mod address;
 pub mod outcome;
@@ -37,12 +38,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+#[cfg(feature = "sim")]
 use zeroize::Zeroizing;
 
 use crate::key::KeyIdentity;
 use crate::key::enrolment::save_enrolment;
 use crate::recipients::Access;
-use crate::ssh::{CardSigner, SshPublicKey, card_ssh_public_key};
+use crate::ssh::{SshPublicKey, card_ssh_public_key};
+#[cfg(feature = "sim")]
+use crate::ssh::CardSigner;
 use crate::store::PassStore;
 use crate::sync::hosts::{KnownHosts, is_bundled, pin_for};
 use crate::sync::{self, Cloned, Connection, PresentedHostKey, RefusedPath};
@@ -177,6 +181,7 @@ fn write_failed(error: WriteError) -> SetupError {
     failed(format!("could not record the store's keys: {error}"))
 }
 
+#[cfg(feature = "sim")]
 /// What setup tells the app while a step runs.
 pub trait SetupEvents: Send + Sync {
     /// The key is about to wait for a touch, or may be.
@@ -343,6 +348,7 @@ fn remove_dir(path: &Path, _held: &crate::lock::Exclusive) -> Result<(), SetupEr
     }
 }
 
+#[cfg(feature = "sim")]
 /// What a login or a key operation failing means to the person.
 fn key_error(error: PawError, touch_asked: bool) -> SetupError {
     match error {
@@ -752,6 +758,7 @@ impl SetupFlow {
         }
     }
 
+#[cfg(feature = "sim")]
     /// Clones the store with one login. `pin` is used for that login and
     /// dropped when this returns.
     pub fn download(
@@ -896,6 +903,7 @@ impl SetupFlow {
         })
     }
 
+#[cfg(feature = "sim")]
     /// Opens one entry the key can open, to prove it works. The plaintext is
     /// wiped at once. `pin` is dropped when this returns.
     ///
@@ -1052,7 +1060,9 @@ impl SetupFlow {
         self.refused.clone()
     }
 
-    /// For the per-call steps that take a card and a PIN: refuses, before
+#[cfg(feature = "sim")]
+    /// For the per-call steps that take a card and a PIN (`sim` builds
+    /// only): refuses, before
     /// any VERIFY, a card other than the key read at "Your key", and other
     /// than the store's enrolled key if one is recorded here (a store set up
     /// again in the same place).

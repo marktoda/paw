@@ -2,13 +2,11 @@
 //! the sync footer, the attention row and the "not yet pushed" screen use
 //! [`StoreSync`].
 //!
-//! The steps that need the key come in two forms. The older ones take a
-//! [`CardConnection`] and the PIN per call, and call `touch_needed` only
-//! when a touch is, or may be, needed. The `*_with_key` ones run as a
-//! [`KeyTask`] on the [`KeyPort`]'s session instead: the key sheet binds to
-//! the task, the PIN is asked at most once while the key stays plugged in,
-//! `Touch` and progress are the task's stages, and `cancel` stops the work
-//! between network steps. When such a task fails for a reason that is not
+//! The steps that need the key run as a [`KeyTask`] on the [`KeyPort`]'s
+//! session (the `*_with_key` calls): the key sheet binds to the task, the
+//! PIN is asked at most once while the key stays plugged in, `Touch` and
+//! progress are the task's stages, and `cancel` stops the work between
+//! network steps. No call here takes a PIN. When such a task fails for a reason that is not
 //! the key's (the host, the repository, the store), its error is
 //! `KeyError::Reader` with the reason as text, and `last_task_result`
 //! returns the structured error.
@@ -17,8 +15,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
-use zeroize::Zeroizing;
-
 use super::{Adapter, CardConnection};
 use crate::key::{
     After, Halt, KeyError, KeyIdentity, KeyOutcome, KeyPort, KeyPurpose, KeySession, KeyTask, KeyTaskListener,
@@ -26,8 +22,7 @@ use crate::key::{
 };
 use crate::setup::address::StoreAddress;
 use crate::setup::touch::{TouchClock, TouchExpectation};
-use crate::setup::{SetupError, SetupEvents, SetupFlow, SetupState, SetupWriteReadiness};
-use crate::ssh::CardSigner;
+use crate::setup::{SetupError, SetupFlow, SetupState, SetupWriteReadiness};
 use crate::store::PassStore;
 use crate::sync::{Cloned, Connection};
 use crate::{KeyTouch, PawError};
@@ -36,36 +31,6 @@ use crate::sync::operation::{self, SyncReport};
 use crate::sync::queue::{self, HeldBack, QueueItem};
 use crate::sync::{IntegrateReport, RefusedPath, SyncError, TransferProgress, accept_replaced_remote};
 
-/// Told how a download is going.
-#[uniffi::export(with_foreign)]
-pub trait ProgressListener: Send + Sync {
-    /// Objects received so far and expected in all. Return `false` to stop.
-    fn progress(&self, received: u32, total: u32) -> bool;
-}
-
-struct Events {
-    connection: Arc<dyn CardConnection>,
-    listener: Option<Arc<dyn ProgressListener>>,
-    transfer: Arc<Mutex<Option<TransferProgress>>>,
-}
-
-impl SetupEvents for Events {
-    fn touch_needed(&self, _expectation: TouchExpectation) {
-        // The state returned before this call says whether it is "needed" or
-        // "may be needed", for the wording.
-        self.connection.touch_needed();
-    }
-
-    fn progress(&self, received: u32, total: u32) -> bool {
-        self.listener.as_ref().is_none_or(|l| l.progress(received, total))
-    }
-
-    fn transfer(&self, update: TransferProgress) -> bool {
-        *lock(&self.transfer) = Some(update);
-        self.progress(update.received_objects, update.total_objects)
-    }
-}
-
 /// First-run setup; see [`crate::setup`]. Each call is one step and returns
 /// the state to show next.
 #[derive(uniffi::Object)]
@@ -73,8 +38,8 @@ pub struct Setup {
     flow: Mutex<SetupFlow>,
     /// Why the last key task setup started failed, if for a setup reason.
     last_error: Mutex<Option<SetupError>>,
-    /// How far the last download's clone got. Outside `flow`, which the
-    /// older download holds while it runs.
+    /// How far the last download's clone got. Outside `flow`, so it
+    /// answers while the download runs.
     transfer: Arc<Mutex<Option<TransferProgress>>>,
 }
 
@@ -189,31 +154,6 @@ impl Setup {
         self.flow().confirm_host(&fingerprint)
     }
 
-    /// Clones the store: one login, so one signature.
-    pub fn download(
-        &self,
-        connection: Arc<dyn CardConnection>,
-        pin: String,
-        listener: Arc<dyn ProgressListener>,
-    ) -> Result<SetupState, SetupError> {
-        let pin = Zeroizing::new(pin);
-        *lock(&self.transfer) = None;
-        let events =
-            Arc::new(Events { connection: connection.clone(), listener: Some(listener), transfer: self.transfer.clone() });
-        self.flow().download(Arc::new(Adapter(connection)), &pin, events)
-    }
-
-    /// Opens one entry to prove the key works.
-    pub fn test_decrypt(
-        &self,
-        connection: Arc<dyn CardConnection>,
-        pin: String,
-    ) -> Result<SetupState, SetupError> {
-        let pin = Zeroizing::new(pin);
-        let events = Arc::new(Events { connection: connection.clone(), listener: None, transfer: Arc::default() });
-        self.flow().test_decrypt(Arc::new(Adapter(connection)), &pin, events)
-    }
-
     /// "Your key", from the plugged-in key's session: what the session read
     /// when the key was plugged in. No PIN, no touch, no card exchange. A
     /// key whose PIN KDF paw does not support is refused here with
@@ -310,9 +250,8 @@ impl Setup {
     }
 
     /// How far the current or last download's clone has got: objects and
-    /// bytes received, updated at most ten times a second, on either
-    /// download path. `None` before its transfer starts. Answers while a
-    /// download runs.
+    /// bytes received, updated at most ten times a second. `None` before
+    /// its transfer starts. Answers while a download runs.
     pub fn transfer_progress(&self) -> Option<TransferProgress> {
         *lock(&self.transfer)
     }
@@ -378,37 +317,6 @@ impl StoreSync {
             clock.used_at(at);
         }
         clock
-    }
-
-    fn with_card(
-        &self,
-        connection: Arc<dyn CardConnection>,
-        pin: String,
-        run: fn(&crate::sync::Remote, &dyn crate::ssh::SshSigner, &std::path::Path, &std::path::Path) -> Result<SyncReport, SyncError>,
-    ) -> Result<SyncReport, SyncError> {
-        let pin = Zeroizing::new(pin);
-        let remote = self.remote()?;
-        let transport: Arc<dyn crate::ApduTransport> = Arc::new(Adapter(connection.clone()));
-        // The PIN goes to the store's enrolled key only.
-        crate::key::enrolment::check_card(&self.state_dir, &transport).map_err(|refusal| match refusal {
-            crate::key::enrolment::CardRefusal::Mismatch(mismatch) => {
-                SyncError::Failed { message: crate::key::enrolment::mismatch_message(&mismatch) }
-            }
-            crate::key::enrolment::CardRefusal::Failed(error) => error.into(),
-        })?;
-        let policy = crate::card_info(transport.clone())?.authentication_touch;
-        let clock = self.clock(policy);
-        let signer = CardSigner::new(transport, &pin, move || {
-            if clock.expectation() != TouchExpectation::NotNeeded {
-                connection.touch_needed();
-            }
-        })?;
-        drop(pin);
-        let report = run(&remote, &signer, &self.repo(), &self.state_dir);
-        if report.as_ref().is_ok_and(|r| r.signatures > 0) {
-            *self.last_login.lock().unwrap_or_else(|p| p.into_inner()) = Some(Instant::now());
-        }
-        report
     }
 
     /// A sync as a sign-in task on the key session; see the module comment.
@@ -489,20 +397,6 @@ impl StoreSync {
     /// Whether the next login will wait for a touch, given the slot's policy.
     pub fn touch_expectation(&self, policy: KeyTouch) -> TouchExpectation {
         self.clock(policy).expectation()
-    }
-
-    /// "Send": fetch, integrate and push on one login. A card other than
-    /// the store's enrolled key is refused (`Failed`, "a different key from
-    /// the one this store was set up with: ...") before any VERIFY; so is
-    /// every card if the enrolment record is damaged.
-    pub fn send(&self, connection: Arc<dyn CardConnection>, pin: String) -> Result<SyncReport, SyncError> {
-        self.with_card(connection, pin, operation::send_checked)
-    }
-
-    /// Fetch and integrate on one login, pushing nothing. Refuses another
-    /// card as `send` does.
-    pub fn refresh(&self, connection: Arc<dyn CardConnection>, pin: String) -> Result<SyncReport, SyncError> {
-        self.with_card(connection, pin, |remote, signer, dir, _| operation::refresh(remote, signer, dir))
     }
 
     /// "Send" as a key task (sign-in, `Push`): fetch, integrate and push on

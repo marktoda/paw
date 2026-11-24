@@ -15,9 +15,12 @@
 //! plugged-in key in place of the old one.
 
 use std::path::Path;
+#[cfg(feature = "sim")]
 use std::sync::Arc;
 
-use crate::{ApduTransport, CardInfo, PawError};
+#[cfg(feature = "sim")]
+use crate::ApduTransport;
+use crate::{CardInfo, PawError};
 
 /// The file in the state directory. Public data only.
 const FILE: &str = "enrolled-key";
@@ -168,7 +171,9 @@ pub(crate) fn mismatch_message(mismatch: &KeyMismatch) -> String {
     )
 }
 
-/// Why the older per-call paths refuse a card.
+#[cfg(feature = "sim")]
+/// Why the Rust tests' per-call setup path (`SetupFlow::download` and
+/// `test_decrypt`, sim builds only) refuses a card.
 #[derive(Debug)]
 pub(crate) enum CardRefusal {
     /// It is not the key the store was set up with.
@@ -177,8 +182,9 @@ pub(crate) enum CardRefusal {
     Failed(PawError),
 }
 
-/// For the older paths that take a card and a PIN per call (`open_entry`,
-/// `StoreSync.send`, `Setup.download`, ...): refuses, before any VERIFY, a
+#[cfg(feature = "sim")]
+/// For the per-call setup path that takes a card and a PIN (sim builds
+/// only; the app uses key tasks): refuses, before any VERIFY, a
 /// card that is not the key enrolled in `state_dir`, as the key port does
 /// for tasks. Reads only public data from the card, and only if a key is
 /// enrolled. A damaged record refuses every card.
@@ -189,22 +195,13 @@ pub(crate) fn check_card(state_dir: &Path, card: &Arc<dyn ApduTransport>) -> Res
     check_card_against(&enrolled, card)
 }
 
+#[cfg(feature = "sim")]
 /// [`check_card`] against a known identity.
 pub(crate) fn check_card_against(expected: &KeyIdentity, card: &Arc<dyn ApduTransport>) -> Result<(), CardRefusal> {
     let info = crate::card_info(card.clone()).map_err(CardRefusal::Failed)?;
     match expected.check(&KeyIdentity::of(&info)) {
         Some(mismatch) => Err(CardRefusal::Mismatch(Box::new(mismatch))),
         None => Ok(()),
-    }
-}
-
-impl CardRefusal {
-    /// As a `PawError`: the "not for this key" refusal, as the key port's.
-    pub(crate) fn into_paw_error(self) -> PawError {
-        match self {
-            Self::Mismatch(mismatch) => PawError::NotForThisKey { recipients: vec![mismatch_message(&mismatch)] },
-            Self::Failed(error) => error,
-        }
     }
 }
 

@@ -48,7 +48,7 @@ fn paw_error(error: &KeyError) -> PawError {
     }
 }
 
-fn authenticate(job: &mut CardJob<'_>, task: &Arc<TaskCore>, data: &[u8]) -> Result<Vec<u8>, Halt> {
+pub(crate) fn authenticate(job: &mut CardJob<'_>, task: &Arc<TaskCore>, data: &[u8]) -> Result<Vec<u8>, Halt> {
     let session = job.session();
     let wire = session.wire().clone();
     let policy = session.card_info().authentication_touch;

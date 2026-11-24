@@ -9,7 +9,6 @@
 //! the password store is cloned and pushed ([`sync`]).
 
 pub mod copies;
-pub mod diag;
 pub mod entry;
 pub mod ffi;
 pub mod path;
@@ -32,12 +31,17 @@ use std::io::Read;
 use std::sync::Arc;
 
 use card_backend::{CardBackend, CardCaps, CardTransaction, PinType, SmartcardError};
-use openpgp_card::ocard::{KeyType, StatusBytes};
+use openpgp_card::ocard::KeyType;
+#[cfg(feature = "sim")]
+use openpgp_card::ocard::StatusBytes;
 use openpgp_card::state::{Open, Transaction};
 use openpgp_card::Card;
 use openpgp_card_rpgp::CardSlot;
+#[cfg(feature = "sim")]
 use pgp::composed::{Esk, Message};
+#[cfg(feature = "sim")]
 use pgp::packet::PublicKeyEncryptedSessionKey;
+#[cfg(feature = "sim")]
 use pgp::types::{DecryptionKey, EskType, Password};
 
 /// How many recipient packets of one entry the card is asked to unwrap:
@@ -265,6 +269,7 @@ pub fn card_info(transport: Arc<dyn ApduTransport>) -> Result<CardInfo, PawError
     })
 }
 
+#[cfg(feature = "sim")]
 /// Verifies the user PIN in the mode that unlocks both decryption and
 /// authentication (PW1 mode 82), turning the card's refusals into
 /// [`PawError::WrongPin`] and [`PawError::PinBlocked`].
@@ -294,6 +299,7 @@ fn verify_pin(tx: &mut Card<Transaction<'_>>, pin: &str) -> Result<(), PawError>
     })
 }
 
+#[cfg(feature = "sim")]
 /// Whether a recipient packet hides whom it is for (`gpg --throw-keyids`).
 fn is_hidden(pkesk: &PublicKeyEncryptedSessionKey) -> bool {
     match pkesk {
@@ -303,7 +309,12 @@ fn is_hidden(pkesk: &PublicKeyEncryptedSessionKey) -> bool {
     }
 }
 
-/// Decrypts one `pass` entry (the bytes of a `.gpg` file) with the card.
+#[cfg(feature = "sim")]
+/// Decrypts one `pass` entry (the bytes of a `.gpg` file) with the card,
+/// with the PIN passed in. Only in builds with the `sim` feature, where the
+/// Rust tests use it as a path to the card independent of the key session
+/// (`key::decrypt` follows the same rules); the app opens entries with key
+/// tasks, and device builds have nothing else that takes a PIN.
 ///
 /// An entry can be encrypted for several keys. The card is asked to unwrap
 /// only the session key addressed to it, because every request costs a
@@ -449,9 +460,9 @@ pub fn encrypt_to_keys<R: rand::Rng + rand::CryptoRng>(
         .map_err(|e| PawError::Card(e.to_string()))
 }
 
+#[cfg(feature = "sim")]
 /// Encrypts `plaintext` to the card's own decryption key, the way `pass`
-/// encrypts an entry. Needs no PIN. Used to prove a key works end to end
-/// without touching the password store.
+/// encrypts an entry. Needs no PIN. For the Rust tests (`sim` builds only).
 pub fn encrypt_to_card(
     transport: Arc<dyn ApduTransport>,
     plaintext: &[u8],

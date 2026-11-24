@@ -2,8 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::store::PassStore;
-use crate::{ApduTransport, CardInfo, PawError};
+use crate::ApduTransport;
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum ConnectionError {
@@ -44,52 +43,6 @@ pub fn is_store_busy(message: String) -> bool {
     crate::lock::is_store_busy(&message)
 }
 
-/// Reads the key's identity and state. Needs no PIN and no touch.
-#[uniffi::export]
-pub fn read_card(connection: Arc<dyn CardConnection>) -> Result<CardInfo, PawError> {
-    crate::card_info(Arc::new(Adapter(connection)))
-}
-
-/// Decrypts the bytes of one `.gpg` entry with the key.
-#[uniffi::export]
-pub fn decrypt(
-    connection: Arc<dyn CardConnection>,
-    pin: String,
-    ciphertext: Vec<u8>,
-) -> Result<Vec<u8>, PawError> {
-    let touch = connection.clone();
-    crate::decrypt_entry(Arc::new(Adapter(connection)), &pin, &ciphertext, &move || {
-        touch.touch_needed()
-    })
-}
-
-/// Encrypts a message to the key's own decryption key. Needs no PIN.
-#[uniffi::export]
-pub fn encrypt_to_card(
-    connection: Arc<dyn CardConnection>,
-    plaintext: Vec<u8>,
-) -> Result<Vec<u8>, PawError> {
-    crate::encrypt_to_card(Arc::new(Adapter(connection)), &plaintext)
-}
-
-/// Raw checks of the key's behaviour for the diagnostics screen. Needs the
-/// PIN and three touches; `touch_needed` is called before each.
-#[uniffi::export]
-pub fn card_checks(connection: Arc<dyn CardConnection>, pin: String) -> Vec<crate::diag::CheckResult> {
-    let touch = connection.clone();
-    crate::diag::card_checks(Arc::new(Adapter(connection)), &pin, &move || touch.touch_needed())
-}
-
-/// Asks for one signature the user must not touch for, to see how the key
-/// reports a touch timeout.
-#[uniffi::export]
-pub fn card_touch_timeout_check(
-    connection: Arc<dyn CardConnection>,
-    pin: String,
-) -> Vec<crate::diag::CheckResult> {
-    crate::diag::card_touch_timeout_check(Arc::new(Adapter(connection)), &pin)
-}
-
 mod copies;
 mod entry;
 pub mod github;
@@ -97,38 +50,5 @@ pub mod sync;
 mod key;
 pub mod write;
 
-pub use copies::{FaceIdOpen, KeyOpen};
+pub use copies::FaceIdOpen;
 pub use entry::{EntryView, FieldView, OpenedEntry};
-
-#[uniffi::export]
-impl PassStore {
-    /// Decrypts `entry` with the key and keeps the plaintext on the Rust
-    /// side, behind an [`OpenedEntry`].
-    ///
-    /// An entry that is encrypted for other keys only fails with
-    /// [`PawError::NotForThisKey`] before the PIN is sent or a touch is
-    /// asked for (see [`crate::decrypt_entry`]). Call `access` first to
-    /// know without a card exchange.
-    ///
-    /// For a store paw set up (opened at `<state dir>/repo`), a card other
-    /// than the store's enrolled key is refused the same way, naming both
-    /// keys, before any VERIFY.
-    pub fn open_entry(
-        &self,
-        connection: Arc<dyn CardConnection>,
-        pin: String,
-        entry: String,
-    ) -> Result<Arc<OpenedEntry>, PawError> {
-        let ciphertext = self.read_entry(&entry)?;
-        let card: Arc<dyn ApduTransport> = Arc::new(Adapter(connection.clone()));
-        self.check_card(&card)?;
-        let touch = connection.clone();
-        let plaintext = crate::decrypt_entry(
-            card,
-            &pin,
-            &ciphertext,
-            &move || touch.touch_needed(),
-        )?;
-        OpenedEntry::from_plaintext(plaintext)
-    }
-}

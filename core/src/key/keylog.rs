@@ -298,6 +298,7 @@ pub(crate) fn purpose_words(purpose: &KeyPurpose) -> &'static str {
         KeyPurpose::SignIn { login: LoginPurpose::Clone } => "sign in to download",
         KeyPurpose::SignIn { login: LoginPurpose::Fetch } => "sign in to check for changes",
         KeyPurpose::SignIn { login: LoginPurpose::Push { .. } } => "sign in to send",
+        KeyPurpose::CheckTouchTimeout => "touch timeout check",
     }
 }
 

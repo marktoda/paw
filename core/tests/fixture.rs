@@ -1,16 +1,21 @@
 //! The fixture store the simulator runs on, driven through the same
 //! objects the app uses: open the store, browse, search, ask who can open
-//! an entry, and open one with the (simulated) key.
+//! an entry, and open one with the (simulated) key through a key task.
 
 #![cfg(feature = "sim")]
+
+mod key_common;
 
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use paw_core::ffi::{CardConnection, ConnectionError, OpenedEntry};
+use key_common::{Driver, finish, is_touch};
+use paw_core::ffi::OpenedEntry;
+use paw_core::key::{KeyError, KeyOutcome, KeyPort, KeyTaskState};
 use paw_core::recipients::{Access, Recipient};
 use paw_core::sim::SimulatedKey;
+use paw_core::sim::copies::SimClock;
 use paw_core::sim::fixture::{
     OTHER_KEY_FOLDER, other_key, other_key_fingerprint_hex, write_fixture_store, write_name_match_entries,
 };
@@ -20,26 +25,44 @@ use paw_core::{PawError, card_decryption_key, card_info, decrypt_entry, encrypt_
 
 const PIN: &str = "123456";
 
-/// The simulated key behind the interface the app's USB connection has.
-/// Whenever the core says a touch is needed, it counts and touches.
+/// A simulated key plugged into a key port, as the app holds one.
 struct Plugged {
     key: Arc<SimulatedKey>,
-    touches_asked: AtomicU32,
+    port: Arc<KeyPort>,
 }
 
-impl CardConnection for Plugged {
-    fn transmit(&self, apdu: Vec<u8>) -> Result<Vec<u8>, ConnectionError> {
-        Ok(self.key.exchange(apdu))
-    }
+/// How one open went: the entry or the task's error, and how often the
+/// task asked for a touch.
+struct Opened {
+    result: Result<Arc<OpenedEntry>, KeyError>,
+    touches: usize,
+}
 
-    fn touch_needed(&self) {
-        self.touches_asked.fetch_add(1, Ordering::SeqCst);
-        self.key.touch();
+impl Plugged {
+    /// Opens `entry` from `store` as the app does: a key task, which types
+    /// `pin` and touches the key whenever it asks.
+    fn open(&self, store: &Arc<PassStore>, pin: &str, entry: &str) -> Opened {
+        let driver = Driver::helpful(pin, &self.key);
+        let task = self.port.clone().open_entry(store.clone(), entry.into(), None, 0, driver.clone());
+        driver.drive(&task);
+        let result = match finish(&task) {
+            KeyTaskState::Done { outcome: KeyOutcome::Opened { entry, .. } } => Ok(entry),
+            KeyTaskState::Failed { error } => Err(error),
+            other => panic!("{entry}: the task ended {other:?}"),
+        };
+        Opened { result, touches: driver.count(is_touch) }
     }
 }
 
-fn plugged() -> Arc<Plugged> {
-    Arc::new(Plugged { key: SimulatedKey::new(PIN.into(), true, 50), touches_asked: AtomicU32::new(0) })
+fn plugged_key(key: Arc<SimulatedKey>) -> Plugged {
+    let port = KeyPort::new(SimClock::new(1_790_000_000_000));
+    port.attach(key.clone()).unwrap();
+    Plugged { key, port }
+}
+
+/// A key whose slots ask for a touch every time.
+fn plugged() -> Plugged {
+    plugged_key(SimulatedKey::new(PIN.into(), true, 5_000))
 }
 
 fn fixture() -> (tempfile::TempDir, Arc<PassStore>) {
@@ -166,51 +189,55 @@ fn the_card_can_open_everything_but_the_archive() {
 #[test]
 fn opening_an_entry_takes_the_pin_and_one_touch() {
     let (_dir, store) = fixture();
-    let connection = plugged();
+    let plugged = plugged();
+    assert!(!plugged.port.session().unwrap().holds_pin());
 
-    let opened = store.open_entry(connection.clone(), PIN.into(), "web/github.com".into()).unwrap();
+    let done = plugged.open(&store, PIN, "web/github.com");
+    let opened = done.result.unwrap();
 
     assert_eq!(opened.password().as_deref(), Some("tidal-Quartz-88-ferns"));
     assert_eq!(opened.username().as_deref(), Some("you@example.com"));
     assert_eq!(opened.url().as_deref(), Some("https://github.com/login"));
     assert_eq!(opened.notes().as_deref(), Some("recovery codes are in the blue notebook"));
-    assert_eq!(connection.touches_asked.load(Ordering::SeqCst), 1);
-    assert_eq!(connection.key.decipher_count(), 1);
+    assert!(plugged.port.session().unwrap().holds_pin(), "the PIN typed is held for the next open");
+    assert_eq!(done.touches, 1);
+    assert_eq!(plugged.key.decipher_count(), 1);
 }
 
 #[test]
 fn every_fixture_entry_for_the_card_opens_as_text() {
     let (_dir, store) = fixture();
-    let connection = plugged();
+    let plugged = plugged();
 
     let mut opened = 0;
     for entry in store.entries().iter().filter(|e| e.folder != OTHER_KEY_FOLDER) {
-        let doc = store.open_entry(connection.clone(), PIN.into(), entry.path.clone()).unwrap();
+        let doc = plugged.open(&store, PIN, &entry.path).result.unwrap();
         assert!(doc.view().has_password, "{}", entry.path);
         opened += 1;
     }
     assert_eq!(opened, 27);
-    assert_eq!(connection.key.decipher_count(), 27);
+    assert_eq!(plugged.key.decipher_count(), 27);
 }
 
 #[test]
 fn an_entry_for_another_key_is_refused_before_the_pin_or_a_touch() {
     let (_dir, store) = fixture();
-    let connection = plugged();
+    let plugged = plugged();
 
     // Even a wrong PIN is not sent: the refusal comes first.
     for pin in [PIN, "000000"] {
-        match store.open_entry(connection.clone(), pin.into(), "archive/old-forum".into()) {
-            Err(PawError::NotForThisKey { recipients }) => {
+        let done = plugged.open(&store, pin, "archive/old-forum");
+        match done.result {
+            Err(KeyError::NotForThisKey { recipients }) => {
                 let other = other_key_fingerprint_hex().unwrap();
                 assert_eq!(recipients, [format!("key ID {}", &other[other.len() - 16..])]);
             }
             other => panic!("expected NotForThisKey, got {:?}", other.map(|_| "an opened entry")),
         }
+        assert_eq!(done.touches, 0);
     }
-    assert_eq!(connection.touches_asked.load(Ordering::SeqCst), 0);
-    assert_eq!(connection.key.decipher_count(), 0);
-    assert_eq!(card_info(connection.key.clone()).unwrap().pin_tries_left, 3);
+    assert_eq!(plugged.key.decipher_count(), 0);
+    assert_eq!(card_info(plugged.key.clone()).unwrap().pin_tries_left, 3);
 }
 
 #[test]
@@ -239,20 +266,24 @@ fn an_entry_for_several_keys_costs_one_touch_wherever_the_card_is_listed() {
 #[test]
 fn a_missing_or_unsafe_entry_is_refused_without_touching_the_card() {
     let (_dir, store) = fixture();
-    let connection = plugged();
+    let plugged = plugged();
 
     for (entry, unsafe_path) in [("web/nothing-here", false), ("../elsewhere", true), (".git/config", true)] {
-        let refused = store.open_entry(connection.clone(), PIN.into(), entry.into()).err().unwrap();
-        assert_eq!(matches!(refused, PawError::UnsafePath(_)), unsafe_path, "{entry}: {refused:?}");
-        assert_eq!(matches!(refused, PawError::Store(_)), !unsafe_path, "{entry}: {refused:?}");
+        let refused = plugged.open(&store, PIN, entry).result.err().unwrap();
+        assert!(matches!(refused, KeyError::EntryUnreadable { .. }), "{entry}: {refused:?}");
+        // Why, as the store says it.
+        let why = store.read_entry(entry).err().unwrap();
+        assert_eq!(matches!(why, PawError::UnsafePath(_)), unsafe_path, "{entry}: {why:?}");
+        assert_eq!(matches!(why, PawError::Store(_)), !unsafe_path, "{entry}: {why:?}");
     }
-    assert_eq!(connection.key.decipher_count(), 0);
+    assert_eq!(plugged.key.decipher_count(), 0);
+    assert!(!plugged.port.session().unwrap().holds_pin(), "nothing asked for the PIN");
 }
 
 #[test]
 fn the_view_of_an_opened_entry_holds_no_secret_values() {
     let (_dir, store) = fixture();
-    let opened = store.open_entry(plugged(), PIN.into(), "bank/first-example-bank".into()).unwrap();
+    let opened = plugged().open(&store, PIN, "bank/first-example-bank").result.unwrap();
 
     let view = opened.view();
     assert!(view.has_password && view.has_username && view.has_url && view.has_notes);
@@ -275,7 +306,7 @@ fn the_view_of_an_opened_entry_holds_no_secret_values() {
 #[test]
 fn a_one_time_code_secret_is_flagged_and_never_handed_out() {
     let (_dir, store) = fixture();
-    let opened = store.open_entry(plugged(), PIN.into(), "web/github.com".into()).unwrap();
+    let opened = plugged().open(&store, PIN, "web/github.com").result.unwrap();
 
     let view = opened.view();
     assert!(view.has_otp);
@@ -308,10 +339,8 @@ fn an_entry_that_is_not_text_opens_as_an_error() {
     let binary = paw_core::encrypt_to_card(key.clone(), &[0xFF, 0xD8, 0xFF, 0xE0, 0x00]).unwrap();
     std::fs::write(dir.path().join("photo.gpg"), binary).unwrap();
     let store = PassStore::open(dir.path().to_str().unwrap().into()).unwrap();
-    let connection = Arc::new(Plugged { key, touches_asked: AtomicU32::new(0) });
-
-    let refused = store.open_entry(connection, PIN.into(), "photo".into()).err().unwrap();
-    assert!(matches!(refused, PawError::NotText));
+    let refused = plugged_key(key).open(&store, PIN, "photo").result.err().unwrap();
+    assert_eq!(refused, KeyError::EntryUnreadable { detail: "it is not text".into() });
     assert!(matches!(OpenedEntry::from_plaintext(vec![0xC3, 0x28]), Err(PawError::NotText)));
 }
 
@@ -320,9 +349,9 @@ fn the_harness_adds_entries_named_without_a_domain_that_open_and_match_by_name()
     let (dir, _) = fixture();
     write_name_match_entries(dir.path().to_str().unwrap().into()).unwrap();
     let store = PassStore::open(dir.path().to_str().unwrap().into()).unwrap();
-    let connection = plugged();
+    let plugged = plugged();
     for entry in ["finance/northwind", "contoso/alice"] {
-        let opened = store.open_entry(connection.clone(), PIN.into(), entry.into()).unwrap();
+        let opened = plugged.open(&store, PIN, entry).result.unwrap();
         assert!(opened.view().has_password, "{entry}");
     }
     let found: Vec<_> = store
