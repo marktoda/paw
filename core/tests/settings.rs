@@ -18,7 +18,7 @@ use paw_core::ffi::sync::StoreSync;
 use paw_core::ffi::write::StoreWriter;
 use paw_core::github::{TokenVault, VaultError};
 use paw_core::key::KeyPort;
-use paw_core::report::{DiagnosticsFacts, SyncSummary, diagnostics_text};
+use paw_core::report::{DiagnosticsFacts, LastSyncState, diagnostics_text};
 use paw_core::sim::SimulatedKey;
 use paw_core::sim::copies::{SimClock, SimKeystore};
 use paw_core::sim::fixture::other_key;
@@ -266,7 +266,7 @@ fn facts() -> DiagnosticsFacts {
         app_build: "42".into(),
         system_version: "iOS 26.1".into(),
         device_model: "iPhone17,1".into(),
-        last_sync: Some(SyncSummary::UpToDate),
+        last_sync: Some(LastSyncState::UpToDate),
         last_checked_ms: Some(1_795_520_000_000),
     }
 }

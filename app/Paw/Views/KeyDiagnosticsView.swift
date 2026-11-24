@@ -142,7 +142,7 @@ struct KeyDiagnosticsView: View {
     }
 
     /// What the sync pill says now, as one fixed word.
-    private var syncSummary: SyncSummary? {
+    private var syncSummary: LastSyncState? {
         guard let edits = model.edits, let syncing = edits.syncing else { return nil }
         switch syncing.pillState(unpushed: edits.unpushed.count) {
         case .working: return .working

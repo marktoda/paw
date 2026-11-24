@@ -29,7 +29,7 @@ use crate::store::tree::StoreTree;
 /// The last sync, as the pill on Home last said it. A fixed word, so no
 /// text from git or the server can reach the report.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum SyncSummary {
+pub enum LastSyncState {
     NotChecked,
     Working,
     UpToDate,
@@ -51,21 +51,21 @@ pub struct DiagnosticsFacts {
     pub system_version: String,
     /// The model identifier, e.g. "iPhone17,1".
     pub device_model: String,
-    pub last_sync: Option<SyncSummary>,
+    pub last_sync: Option<LastSyncState>,
     /// When paw last checked for changes, milliseconds since 1970.
     pub last_checked_ms: Option<i64>,
 }
 
-fn sync_words(summary: SyncSummary) -> &'static str {
+fn sync_words(summary: LastSyncState) -> &'static str {
     match summary {
-        SyncSummary::NotChecked => "not checked yet",
-        SyncSummary::Working => "working",
-        SyncSummary::UpToDate => "up to date",
-        SyncSummary::NotSent => "changes not sent",
-        SyncSummary::Offline => "offline",
-        SyncSummary::Failed => "failed",
-        SyncSummary::Paused => "paused",
-        SyncSummary::NeedsKey => "needs the key",
+        LastSyncState::NotChecked => "not checked yet",
+        LastSyncState::Working => "working",
+        LastSyncState::UpToDate => "up to date",
+        LastSyncState::NotSent => "changes not sent",
+        LastSyncState::Offline => "offline",
+        LastSyncState::Failed => "failed",
+        LastSyncState::Paused => "paused",
+        LastSyncState::NeedsKey => "needs the key",
     }
 }
 
