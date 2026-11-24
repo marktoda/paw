@@ -22,13 +22,16 @@ final class EditTests: PawUITestCase {
     /// Types into a form field, replacing what is there.
     private func type(_ text: String, into identifier: String, file: StaticString = #filePath, line: UInt = #line) {
         let field = scrollTo(identifier, file: file, line: line)
-        field.tap()
+        focus(field, file: file, line: line)
         let current = (field.value as? String) ?? ""
         let placeholder = field.placeholderValue ?? ""
         if !current.isEmpty && current != placeholder {
             field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
         }
         if !text.isEmpty {
+            // The form can redraw and take the keyboard away between the tap
+            // and the typing; typing then fails outright, so take it back.
+            if !hasFocus(field) { focus(field, file: file, line: line) }
             field.typeText(text)
         }
     }
