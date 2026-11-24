@@ -22,7 +22,7 @@ import Foundation
 /// `bücher.example` and `xn--bcher-kva.example` both match it, and a site
 /// spelled with lookalike letters (`pаypal.com`, Cyrillic `а`) never
 /// matches an entry spelled with plain ones. Names are shown by the core's
-/// `displayHost`: Unicode only for Latin letters, else `xn--`. Name
+/// `displayHost`: always the `xn--` form. Name
 /// matches stay plain ASCII. paw offers nothing automatically for a site
 /// address that is not printable ASCII. Search still finds every entry.
 enum SiteMatch {

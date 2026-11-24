@@ -50,9 +50,9 @@ final class AutoFillRestTests: PawUITestCase {
         expectValue("harness-pairings", "none")
     }
 
-    func testAnInternationalNameMatchesItsAsciiFormAndShowsInUnicode() {
+    func testAnInternationalNameMatchesItsAsciiFormAndShowsInAscii() {
         launchProvider(["-pawHostProvider", "https://xn--bcher-kva.example/login"])
-        expectLabel("autofill-site-section", contains: "For b\u{00FC}cher.example")
+        expectLabel("autofill-site-section", contains: "For xn--bcher-kva.example")
         tap(row(Self.bucher))
         expectLabel("key-sheet-purpose", contains: "Fill b\u{00FC}cher.example")
         enterPin(Self.pin)
