@@ -32,7 +32,7 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 | Raw card checks on the test screen | core + app | done |
 | Exact touch policy per slot | core | done |
 | Keep the simulated key and fixture out of device builds (cargo feature, device-library scan in CI) | foundations | partly: the cargo feature and the scan script exist; the Xcode Release build that uses them is not wired; next |
-| App Group container and shared keychain group for app and extension | foundations | registered and in both profiles; the store moves into it with `autofill` |
+| App Group container and shared keychain group for app and extension | foundations | done; the store and Face ID copies live there |
 | Key session in the core: one object per plugged-in key, PIN held for the session and forgotten after 15 minutes in the background, cancel, structured errors | key-session | done |
 | Key task state machine (plug in, PIN, touch, working, done) driving the real key sheet | key-session, then screens | done |
 | Touch-timeout status word from the real key | device | blocked on the owner running one check |
@@ -87,14 +87,14 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 
 | Item | Status |
 |---|---|
-| Key sheet inside the extension (proven reachable), suggestions above the keyboard, site matching, hand-off fallback | in progress (`autofill`): list, site matching, Face ID and key fill, suggestions, confirm before filling another site; reviewed, full run pending. Not built: hand-off fallback, international domain names, the `url` cross-check, saving from the extension |
+| AutoFill extension: list for the site, matching by registered domain, fill with Face ID or the key, suggestions above the keyboard, confirm before filling another site, store in the App Group | merged 2026-11-24; waiting on the owner's device checks. Not built: saving from the extension, hand-off fallback, international domain names, the `url` cross-check |
 
 ### M8 Settings and finish
 
 | Item | Status |
 |---|---|
 | Settings, "Who can open these passwords", replace key, diagnostics export, remove store | partly: Settings has store, GitHub, AutoFill, diagnostics and remove store. Not built: "Who can open these passwords", replace key, Face ID on/off, diagnostics export, forget server key |
-| Copy and UX polish passes: shorter, plainer text everywhere; fix the janky spots the owner saw on the phone | first pass merged 2026-11-23; second batch next (copy the GitHub code, one line for the server fingerprints, privacy cover, leftovers) |
+| Copy and UX polish passes | two passes merged (2026-11-23, 2026-11-24); further passes follow the owner's notes from the phone |
 | App icon (paw built from discs) and wordmark rework | later |
 | Licence notices for bundled libraries | later |
 
