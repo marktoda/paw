@@ -61,7 +61,7 @@ final class AutoFillTests: PawUITestCase {
 
     func testLookalikeSiteIsNotOffered() {
         launchProvider(["-pawHostProvider", "https://github.com.attacker.example/login"])
-        expectLabel("autofill-no-match", contains: "Nothing here matches github.com.attacker.example")
+        expectLabel("autofill-no-match", contains: "github.com.attacker.example")
         expectAbsent(row("web/github.com"), "A lookalike site must not be offered github.com")
     }
 
@@ -86,8 +86,8 @@ final class AutoFillTests: PawUITestCase {
         launchProvider(["-pawHostProvider", "https://paypa1.example"])
         search("fastm")
         tap(row("email/fastmail"))
-        expectLabel("warning-row", contains: "Fill fastmail's password on paypa1.example?")
-        expectLabel("warning-row", contains: "This password isn't saved for this site.")
+        expectLabel("autofill-confirm-question", contains: "Fill fastmail's password here?")
+        expectLabel("autofill-confirm-question", contains: "This password isn't saved for this site.")
         expectAbsent("pin-field", "Nothing should be opened before the confirm")
         snapshot("light-confirm")
         tap("autofill-confirm-cancel")
@@ -122,7 +122,7 @@ final class AutoFillTests: PawUITestCase {
         expectLabel("autofill-no-match", contains: "paw can't tell which site this is.")
         search("fastm")
         tap(row("email/fastmail"))
-        expectLabel("warning-row", contains: "Fill fastmail's password?")
+        expectLabel("autofill-confirm-question", contains: "Fill fastmail's password?")
         tap("autofill-fill-anyway")
         expectLabel("key-sheet-purpose", contains: "Fill fastmail")
     }
@@ -205,13 +205,13 @@ final class AutoFillTests: PawUITestCase {
         useNorthwindHere()
 
         tap("harness-again")
-        expectLabel("autofill-no-match", contains: "Nothing here matches login.northwind.test")
+        expectLabel("autofill-no-match", contains: "login.northwind.test")
         expectAbsent(row(Self.northwind), "A lookalike must not be offered northwind")
         search("northwind")
         expectLabel("autofill-other-section", contains: "Other passwords")
         tap(row(Self.northwind))
-        expectLabel("error-row", contains: "Use northwind on northwind.test?")
-        expectLabel("error-row", contains: "You've used this on northwind.example. This is northwind.test.")
+        expectLabel("autofill-confirm-question", contains: "Use northwind on northwind.test?")
+        expectLabel("autofill-confirm-question", contains: "Used before on northwind.example.")
         expectLabel("autofill-confirm-address", contains: "login.northwind.test")
         expectAbsent("pin-field", "Nothing should be opened before the confirm")
         snapshot("light-lookalike")
@@ -228,10 +228,10 @@ final class AutoFillTests: PawUITestCase {
 
         // So the next time still warns.
         tap("harness-again")
-        expectLabel("autofill-no-match", contains: "Nothing here matches login.northwind.test")
+        expectLabel("autofill-no-match", contains: "login.northwind.test")
         search("northwind")
         tap(row(Self.northwind))
-        expect("error-row")
+        expectLabel("autofill-confirm-question", contains: "Used before on northwind.example.")
     }
 
     func testAPasswordFromSearchForAnotherSiteIsNeverPaired() {

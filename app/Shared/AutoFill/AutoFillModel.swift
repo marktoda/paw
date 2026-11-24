@@ -133,7 +133,9 @@ final class AutoFillModel {
     var pinEntry = ""
     /// Key tasks not yet ended, for the harness's "task ended" signal.
     private(set) var pendingKeyTasks = 0
-    /// Face ID copies can be kept: the key sheet says fills afterwards use Face ID.
+    /// Face ID copies can be kept and are on in Settings: the key sheet
+    /// says fills afterwards use Face ID, and Fill after a url warning
+    /// opens from the copy rather than with the key again.
     private(set) var keepsCopies = false
 
     @ObservationIgnored private let open: @Sendable () -> AutoFillOpening
@@ -209,7 +211,7 @@ final class AutoFillModel {
             screen = .problem("paw couldn't read your store", "Open paw to fix it.", backToList: false)
         case .ready(let source):
             self.source = source
-            keepsCopies = source.copies != nil
+            keepsCopies = source.copies?.copiesEnabled() == true
             self.live = Set(live)
             self.matches = matches
             switch request {
@@ -300,7 +302,7 @@ final class AutoFillModel {
         }
     }
 
-    /// "Fill anyway" or "Use it here" on the confirm step. A name match
+    /// Fill on the confirm step. A name match
     /// confirmed the first time is paired with the domain once it fills.
     /// Nothing else ever is: not a password from search for another site,
     /// not a lookalike of a domain the entry is paired with, which fills
@@ -342,6 +344,12 @@ final class AutoFillModel {
         case .confirm, .problem(_, _, backToList: true): screen = .list
         default: break
         }
+    }
+
+    /// Whether opening `entry` now takes the key rather than Face ID: what
+    /// the url warning says before Fill when there is no copy to fill from.
+    func opensWithKey(_ entry: EntryRef) -> Bool {
+        !(live.contains(entry.path) && source?.copies != nil)
     }
 
     /// Face ID if the entry has a live copy, else the key.
@@ -406,18 +414,19 @@ final class AutoFillModel {
         }
         switch error as? PawError {
         case .FaceIdCancelled?:
-            return AutoFillNotice(problem: "Face ID was cancelled", nextStep: "Tap \(entry.name) to try again.",
+            return AutoFillNotice(problem: Device.words("Face ID was cancelled"), nextStep: "Tap \(entry.name) to try again.",
                                   keyEntry: entry)
         case .FaceIdNotRecognised?:
-            return AutoFillNotice(problem: "Face ID didn't recognise you", nextStep: "Tap \(entry.name) to try again.",
+            return AutoFillNotice(problem: Device.words("Face ID didn't recognise you"), nextStep: "Tap \(entry.name) to try again.",
                                   keyEntry: entry)
         case .FaceIdLockedOut?:
-            return AutoFillNotice(problem: "Face ID is locked", nextStep: "Lock and unlock your iPhone, then try again.",
+            return AutoFillNotice(problem: Device.words("Face ID is locked"),
+                                  nextStep: Device.words("Lock and unlock your iPhone, then try again."),
                                   keyEntry: entry)
         case .FaceIdChanged?:
-            return AutoFillNotice(problem: "Face ID changed on this iPhone", nextStep: "", keyEntry: entry)
+            return AutoFillNotice(problem: Device.words("Face ID changed on this iPhone"), nextStep: "", keyEntry: entry)
         default:
-            return AutoFillNotice(problem: "Face ID didn't open \(entry.name)", nextStep: "", keyEntry: entry)
+            return AutoFillNotice(problem: Device.words("Face ID") + " didn't open \(entry.name)", nextStep: "", keyEntry: entry)
         }
     }
 
