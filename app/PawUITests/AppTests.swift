@@ -477,14 +477,14 @@ final class AppTests: PawUITestCase {
         goBack()
         openSettings()
         tap("settings-key-diagnostics")
-        expect("key-log-copy")
+        // Copy before looking down the list: once scrolled, the button can
+        // sit under the navigation bar, where a tap lands on the bar.
+        tap("key-log-copy")
+        expectLabel("key-log-copy", contains: "Log copied")
         XCTAssertTrue(keyLogLine(containing: "PSO:DECIPHER: 9000 ok").exists, "The log should show the decryption")
         XCTAssertTrue(keyLogLine(containing: "VERIFY 00 82 (with PIN): 9000 ok").exists,
                       "The log should show the PIN being checked, without the PIN")
         snapshot("key-log")
-
-        tap("key-log-copy")
-        expectLabel("key-log-copy", contains: "Log copied")
         app.buttons["diagnostics-done"].tap()
         expectGone("diagnostics-done")
         closeSettings()
