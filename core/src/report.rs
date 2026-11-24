@@ -36,6 +36,9 @@ pub enum SyncSummary {
     NotSent,
     Offline,
     Failed,
+    /// Stopped until the person looks (replaced history, refused or held
+    /// back changes).
+    Paused,
     NeedsKey,
 }
 
@@ -61,6 +64,7 @@ fn sync_words(summary: SyncSummary) -> &'static str {
         SyncSummary::NotSent => "changes not sent",
         SyncSummary::Offline => "offline",
         SyncSummary::Failed => "failed",
+        SyncSummary::Paused => "paused",
         SyncSummary::NeedsKey => "needs the key",
     }
 }
