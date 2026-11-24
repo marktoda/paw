@@ -237,6 +237,10 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
     Ok(held)
 }
 
+/// Gives the text of a held-back change from its waiting ciphertext (with
+/// the key, or a Face ID copy), for [`reencrypt_held_back`].
+pub type OpenWaiting<'a> = dyn FnMut(&HeldBack, &[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>, SyncError> + 'a;
+
 /// What [`reencrypt_held_back`] did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reencrypted {
@@ -265,7 +269,7 @@ pub struct Reencrypted {
 pub fn reencrypt_held_back(
     dir: &Path,
     state_dir: &Path,
-    open: &mut dyn FnMut(&HeldBack, &[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>, SyncError>,
+    open: &mut OpenWaiting<'_>,
 ) -> Result<Reencrypted, SyncError> {
     let failed = |e: crate::write::WriteError| SyncError::Failed { message: e.to_string() };
     let held = held_back(dir, state_dir)?;

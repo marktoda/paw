@@ -139,7 +139,7 @@ enum BackgroundRefresh {
         let core = GitHub.open(stateDir: location.stateDir.path, vault: KeychainTokenVault())
         #endif
         let report = core.backgroundRefreshStoppable(seconds: budgetSeconds, stop: stop)
-        let run = describe(report, at: Date())
+        let run = summary(of: report, at: Date())
         if run.success, report.integration != nil {
             // The store matches the server as of now, as after a check.
             UserDefaults.standard.set(run.at.timeIntervalSince1970, forKey: SyncModel.checkedKey(location.repoDir.path))
@@ -157,7 +157,7 @@ enum BackgroundRefresh {
     }
 
     /// The core's report in Sync's words.
-    static func describe(_ report: BackgroundRefreshReport, at: Date) -> BackgroundRun {
+    static func summary(of report: BackgroundRefreshReport, at: Date) -> BackgroundRun {
         let changed = report.integration.map { $0.fastForwarded > 0 || $0.replayed > 0 } ?? false
         // Held-back changes are said on Home already; they stop nothing here.
         let needsLook = report.decisions.contains { decision in
