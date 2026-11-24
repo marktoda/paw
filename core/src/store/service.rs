@@ -12,8 +12,12 @@
 //! Nothing is ever matched on a piece of a name. `hub.com` is not
 //! `github.com` and `github.com.evil.example` is not `github.com`.
 //!
-//! Hosts are compared as lower-case text. An internationalised name matches
-//! only if the entry spells it the same way the system reports it.
+//! Hosts are compared in ASCII: lower case, and an internationalised name
+//! in its `xn--` form by UTS-46 ([`ascii_host`]), on both sides. So the
+//! entries `bücher.example` and `xn--bcher-kva.example` both match
+//! `https://xn--bcher-kva.example`, and `pаypal.com` spelled with a
+//! Cyrillic `а` is `xn--pypal-4ve.com`, a stranger to `paypal.com`. How a
+//! host is shown is [`display_host`].
 //!
 //! **Name matches** ([`match_site`]). Many stores name entries without a
 //! top-level domain: `bankofamerica`, `bank/bankofamerica`,
@@ -38,8 +42,11 @@
 //! with this domain, not yet paired, or paired only with other domains of
 //! the same name (a lookalike: the app does not offer it).
 
+use std::sync::Arc;
+
 use super::pairings::Pairing;
 use super::tree::EntryRef;
+use crate::ffi::OpenedEntry;
 
 /// An entry that may hold the login for a service.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -77,7 +84,14 @@ pub fn host_of(service: &str) -> Option<String> {
         Some((name, port)) if port.chars().all(|c| c.is_ascii_digit()) => name,
         _ => host,
     };
-    let host = host.strip_suffix('.').unwrap_or(host).to_lowercase();
+    ascii_host(host.strip_suffix('.').unwrap_or(host))
+}
+
+/// `text` as a host name in ASCII: lower case, with every internationalised
+/// label in its `xn--` form (UTS-46, as browsers map names). `None` if it is
+/// not a host name.
+pub fn ascii_host(text: &str) -> Option<String> {
+    let host = if text.is_ascii() { text.to_ascii_lowercase() } else { idna::domain_to_ascii(text).ok()? };
     is_host(&host).then_some(host)
 }
 
@@ -188,12 +202,12 @@ pub fn names_site(path: &str, name: &str) -> bool {
 /// How well one part of an entry's path fits the host: 0 exact, 1 same
 /// registrable domain.
 fn fit(part: &str, host: &str, host_domain: Option<&str>) -> Option<u8> {
-    let part = part.to_lowercase();
+    let part = ascii_host(part)?;
     if part == host {
         return Some(0);
     }
     // A part without a dot is a word, not a host.
-    if !part.contains('.') || !is_host(&part) {
+    if !part.contains('.') {
         return None;
     }
     let domain = registrable(&part)?;
@@ -324,4 +338,166 @@ fn pairing_of(pairings: &[Pairing], path: &str, site: &str, name: &str) -> NameP
     let sites: Vec<String> =
         known.sites.iter().filter(|s| site_name(s).as_deref() == Some(name)).cloned().collect();
     if sites.is_empty() { NamePairing::Unpaired } else { NamePairing::PairedElsewhere { sites } }
+}
+
+/// How to show a host or domain to the person: the Unicode form
+/// (`bücher.example`) only when it cannot pass for another name, else the
+/// `xn--` form. The rule, per character of the Unicode form: ASCII, or a
+/// lower-case letter of Latin-1 Supplement or Latin Extended-A
+/// (U+00DF–U+017F without `÷`), except dotless `ı`, `ĸ` and long `ſ`, which
+/// pass for `i`, `k` and `f`. Anything else (Cyrillic, Greek, CJK, symbols,
+/// a mix) is shown as `xn--`: `pаypal.com` with a Cyrillic `а` is shown as
+/// `xn--pypal-4ve.com`. Only for display: matching is always on the ASCII
+/// form. Text that is not a host comes back as it was.
+#[uniffi::export]
+pub fn display_host(host: String) -> String {
+    let trimmed = host.trim();
+    let Some(ascii) = ascii_host(trimmed.strip_suffix('.').unwrap_or(trimmed)) else {
+        return host;
+    };
+    if !ascii.split('.').any(|label| label.starts_with("xn--")) {
+        return ascii;
+    }
+    let (unicode, decoded) = idna::domain_to_unicode(&ascii);
+    if decoded.is_err() || !unicode.chars().all(shows_as_is) {
+        return ascii;
+    }
+    unicode
+}
+
+/// Whether a character of a decoded host name may be shown as it is
+/// ([`display_host`]).
+fn shows_as_is(c: char) -> bool {
+    c.is_ascii()
+        || matches!(c, '\u{00DF}'..='\u{00F6}' | '\u{00F8}'..='\u{017E}')
+            && !matches!(c, '\u{0131}' | '\u{0138}')
+}
+
+/// What an entry's own web address says about the site being filled
+/// ([`check_entry_url`]).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum UrlCheck {
+    /// No address field with a usable host, or no site to compare with.
+    NoUrl,
+    /// An address field is on the site's registrable domain.
+    Same,
+    /// Every address field is on another site. Both are registrable
+    /// domains (the host where there is none), as [`display_host`] shows
+    /// them: `url` the entry's first, `site` the site being filled.
+    Differs { url: String, site: String },
+}
+
+/// Field keys read as the entry's web address, compared in lower case
+/// without spaces, `-` and `_`: `url`, `URL`, `Login URL`, `website`…
+const URL_KEYS: &[&str] = &["url", "uri", "link", "website", "web", "site", "loginurl", "siteurl", "websiteurl"];
+
+fn is_url_key(key: &str) -> bool {
+    let key: String = key.chars().filter(|c| !matches!(c, ' ' | '-' | '_')).flat_map(char::to_lowercase).collect();
+    URL_KEYS.contains(&key.as_str())
+}
+
+/// The site an address field names: the registrable domain of its host,
+/// or the host itself where there is none (an IP address). Tolerant of how
+/// people write them: `northwind.example`, `HTTPS://Login.Northwind.Example:8443/x`,
+/// `<https://northwind.example>`, a trailing dot, a note after a space.
+/// `None` for a value without a host with a dot, and for a scheme other
+/// than http and https (`androidapp://com.example`, `mailto:`).
+pub fn url_site(value: &str) -> Option<String> {
+    let value = value.trim().trim_start_matches('<');
+    let token = value.split_whitespace().next()?.trim_end_matches('>');
+    if let Some((scheme, _)) = token.split_once("://")
+        && is_scheme(scheme)
+        && !scheme.eq_ignore_ascii_case("http")
+        && !scheme.eq_ignore_ascii_case("https")
+    {
+        return None;
+    }
+    if token.get(..7).is_some_and(|start| start.eq_ignore_ascii_case("mailto:")) {
+        return None;
+    }
+    let host = host_of(token)?;
+    if !host.contains('.') {
+        return None;
+    }
+    Some(registrable(&host).map_or_else(|| host.clone(), str::to_owned))
+}
+
+/// Compares address field values (`url: …` lines) with the sites being
+/// filled ([`check_entry_url`]): [`UrlCheck::Same`] when any address is on
+/// the registrable domain of any of `services`.
+pub fn check_urls(values: &[String], services: &[String]) -> UrlCheck {
+    let urls: Vec<String> = values.iter().filter_map(|value| url_site(value)).collect();
+    let sites: Vec<String> = services
+        .iter()
+        .filter_map(|service| host_of(service))
+        .map(|host| registrable(&host).map_or_else(|| host.clone(), str::to_owned))
+        .collect();
+    let (Some(url), Some(site)) = (urls.first(), sites.first()) else {
+        return UrlCheck::NoUrl;
+    };
+    if urls.iter().any(|url| sites.contains(url)) {
+        return UrlCheck::Same;
+    }
+    UrlCheck::Differs { url: display_host(url.clone()), site: display_host(site.clone()) }
+}
+
+/// Checks an opened entry's own address fields (`url:`, `website:`,
+/// `site:`, `Login URL:`… in any case, every such line) against the sites
+/// being filled, for AutoFill before it hands the password over. Reads the
+/// fields only; keeps nothing.
+#[uniffi::export]
+pub fn check_entry_url(entry: Arc<OpenedEntry>, services: Vec<String>) -> UrlCheck {
+    // `url()` is the first address line; the view lists every other field.
+    let mut values: Vec<String> = entry.url().into_iter().collect();
+    for field in entry.view().fields {
+        if is_url_key(&field.key)
+            && let Some(value) = entry.field_value(field.id)
+        {
+            values.push(value);
+        }
+    }
+    check_urls(&values, &services)
+}
+
+/// Keys read as the user name, in order of preference, as in
+/// [`crate::entry`].
+const USERNAME_KEYS: [&str; 4] = ["login", "username", "user", "email"];
+
+/// The user name AutoFill fills for the entry at `path`: the entry's own
+/// `login:` line, else `username:`, `user:` or `email:` (the first that is
+/// not empty), else the path's guess ([`path_user`]). The entry's line
+/// always wins over the path.
+#[uniffi::export]
+pub fn fill_username(entry: Arc<OpenedEntry>, path: String) -> Option<String> {
+    let first = entry.username().filter(|user| !user.trim().is_empty());
+    let from_body = first.or_else(|| {
+        // The first user name line was empty: the other user name lines
+        // are among the view's fields.
+        let fields = entry.view().fields;
+        USERNAME_KEYS.iter().find_map(|wanted| {
+            fields
+                .iter()
+                .filter(|field| field.key.to_lowercase() == *wanted)
+                .find_map(|field| entry.field_value(field.id).filter(|user| !user.trim().is_empty()))
+        })
+    });
+    from_body.map(|user| user.trim().to_owned()).or_else(|| path_user(&path))
+}
+
+/// The user name a path gives in a `site/user` layout: the entry's name
+/// when a folder above it is a host name with a dot (`github.com/alice`,
+/// `servers/example.net/root`). `None` when the entry's own name is the
+/// host (`web/github.com`) or no part is one (`bank/chase`).
+pub fn path_user(path: &str) -> Option<String> {
+    let parts: Vec<&str> = path.split('/').collect();
+    let (last, folders) = parts.split_last()?;
+    let is_site = |part: &str| {
+        ascii_host(part).is_some_and(|host| {
+            host.contains('.') && host.rsplit('.').next().is_some_and(|tld| tld.chars().any(|c| c.is_ascii_alphabetic()))
+        })
+    };
+    if is_site(last) || !folders.iter().any(|part| is_site(part)) || last.is_empty() {
+        return None;
+    }
+    Some((*last).to_owned())
 }
