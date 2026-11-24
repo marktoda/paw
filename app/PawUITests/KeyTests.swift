@@ -10,8 +10,9 @@ final class KeyTests: PawUITestCase {
         expect("diagnostics-done")
     }
 
-    /// A line of the key log that contains `text`, scrolled to: the list
-    /// builds its rows lazily.
+    /// A line of the key log that contains `text`, scrolled down to: the
+    /// list builds its rows lazily. The log is newest first and this only
+    /// scrolls down, so look for newer lines first.
     private func keyLogLine(containing text: String) -> XCUIElement {
         let found = app.staticTexts.matching(
             NSPredicate(format: "identifier == 'key-log-line' AND label CONTAINS %@", text)).firstMatch
@@ -45,16 +46,11 @@ final class KeyTests: PawUITestCase {
         expect("touch-timeout-waiting")
         expectLabel("touch-timeout-result", contains: "gave up waiting for a touch", timeout: 20)
         snapshot("touch-timeout")
-        XCTAssertTrue(keyLogLine(containing: "task touch timeout check").exists,
-                      "The key log should name the check")
         XCTAssertTrue(keyLogLine(containing: "PIN check 9000: a touch timeout").exists,
                       "The key log should have what the key answered after the timeout")
-
-        // The PIN is held: a second check asks for none.
-        tap("touch-timeout-check")
-        expect("touch-timeout-waiting")
-        expectAbsent("pin-field", "The PIN should still be held after a touch timeout")
-        expectLabel("touch-timeout-result", contains: "gave up waiting for a touch", timeout: 20)
+        XCTAssertTrue(keyLogLine(containing: "task touch timeout check").exists,
+                      "The key log should name the check")
+        // That a second check asks for no PIN is core/tests/touch_check.rs.
     }
 
     func testSettingsSayWhichBuildThisIs() {

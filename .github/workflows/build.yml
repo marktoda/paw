@@ -199,6 +199,7 @@ jobs:
       # be found in this Debug simulator build, which has all of it. (A Debug
       # build may put the code in a `.debug.dylib` beside the executable.)
       - name: The device scan finds the debug harnesses in the simulator build
+        if: ${{ !cancelled() }}
         run: |
           products=app/build/derived/Build/Products/Debug-iphonesimulator
           binaries=$(find "$products/Paw.app" -type f \( -name Paw -o -name PawAutoFill -o -name '*.debug.dylib' \))
