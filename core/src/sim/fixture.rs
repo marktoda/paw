@@ -80,6 +80,11 @@ const OTHER_KEY_ENTRIES: &[(&str, &str)] = &[
 const NAME_MATCH_ENTRIES: &[(&str, &str)] = &[
     ("finance/northwind", "Ledger-otter-73\nlogin: you@example.com\n"),
     ("contoso/alice", "Quill-maple-58\nlogin: alice@example.com\n"),
+    // A url line for another site; an international name; a Latin name a
+    // Cyrillic lookalike must not reach.
+    ("shop/tailspin.example", "Signal-pepper-12\nlogin: you@example.com\nurl: https://tailspin.test\n"),
+    ("web/bücher.example", "Folio-lantern-27\nlogin: you@example.com\nurl: https://bücher.example\n"),
+    ("web/fabrikam.example", "Harbor-quill-90\nlogin: you@example.com\n"),
 ];
 
 /// A Curve25519 encryption key the simulated card does not hold. Its
@@ -153,7 +158,8 @@ pub fn write_fixture_store(dir: String) -> Result<(), PawError> {
 }
 
 /// Adds to the fixture store in `dir` entries named without a domain
-/// (`finance/northwind`, `contoso/alice`), encrypted for the simulated key.
+/// (`finance/northwind`, `contoso/alice`) and a few for AutoFill's other
+/// checks, encrypted for the simulated key.
 /// For the AutoFill harness; call after [`write_fixture_store`].
 #[uniffi::export]
 pub fn write_name_match_entries(dir: String) -> Result<(), PawError> {
