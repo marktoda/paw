@@ -35,18 +35,7 @@ struct StoreSettingsSections: View {
                         .foregroundStyle(PawColor.label)
                 }
                 .accessibilityIdentifier("settings-address")
-                ForEach(controls.hostFingerprints, id: \.self) { fingerprint in
-                    VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
-                        Text("Server fingerprint")
-                            .foregroundStyle(PawColor.label)
-                        Text(fingerprint)
-                            .font(PawFont.footnote.monospaced())
-                            .foregroundStyle(PawColor.labelSecondary)
-                            .textSelection(.enabled)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier("settings-host-fingerprint")
-                }
+                ServerIdentityRows(address: controls.address, fingerprints: controls.hostFingerprints)
             } header: {
                 PawSectionHeader("Store")
             }
@@ -109,5 +98,79 @@ struct StoreSettingsSections: View {
         } else {
             dismiss()
         }
+    }
+}
+
+/// The store's server: its name and why paw trusts it, one row. Tapping it
+/// shows the fingerprints in place, to compare with the server's own.
+private struct ServerIdentityRows: View {
+    let address: String
+    let fingerprints: [String]
+    @State private var expanded = false
+
+    private var reading: AddressReading? { try? readStoreAddress(text: address) }
+
+    var body: some View {
+        let reading = reading
+        let bundled = reading?.hostKeyBundled ?? false
+        Button {
+            withAnimation { expanded.toggle() }
+        } label: {
+            HStack(spacing: PawMetrics.Spacing.m) {
+                VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
+                    Text(reading?.host ?? "Server")
+                        .font(PawFont.body)
+                        .foregroundStyle(PawColor.label)
+                    Text(bundled ? "Identity built into paw" : "Trusted by you")
+                        .font(PawFont.footnote)
+                        .foregroundStyle(PawColor.labelSecondary)
+                }
+                Spacer(minLength: PawMetrics.Spacing.s)
+                Image(systemName: "chevron.right")
+                    .font(PawFont.footnote.weight(.semibold))
+                    .foregroundStyle(PawColor.labelTertiary)
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
+                    .accessibilityHidden(true)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(expanded ? "Fingerprints shown" : "")
+        .accessibilityHint(expanded ? "" : "Shows the server's fingerprints")
+        .accessibilityIdentifier("settings-host-fingerprint")
+        if expanded {
+            VStack(alignment: .leading, spacing: PawMetrics.Spacing.s) {
+                ForEach(Array(fingerprints.enumerated()), id: \.offset) { index, fingerprint in
+                    VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
+                        if let type = Self.keyType(index, of: fingerprints.count, bundled: bundled) {
+                            Text(type)
+                                .font(PawFont.footnote.weight(.semibold))
+                                .foregroundStyle(PawColor.label)
+                        }
+                        Text(fingerprint)
+                            .font(PawFont.footnote.monospaced())
+                            .foregroundStyle(PawColor.labelSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+                Text("Compare with your server's published fingerprints.")
+                    .font(PawFont.footnote)
+                    .foregroundStyle(PawColor.labelSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("settings-host-fingerprints")
+        }
+    }
+
+    /// The core gives fingerprints without their types. Every bundled host
+    /// ships Ed25519, ECDSA and RSA keys in that order (core
+    /// `sync/hosts.rs`); a key the person confirmed has no type to show.
+    static func keyType(_ index: Int, of count: Int, bundled: Bool) -> String? {
+        let types = ["Ed25519", "ECDSA", "RSA"]
+        guard bundled, count == types.count else { return nil }
+        return types[index]
     }
 }

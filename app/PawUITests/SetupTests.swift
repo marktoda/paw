@@ -397,6 +397,12 @@ final class SetupTests: PawUITestCase {
         launch()
         setUpFully()
         openSettings()
+        // The simulated host is not bundled: the person trusted it in setup.
+        scrollTo("settings-host-fingerprint")
+        expectText("settings-host-fingerprint", contains: "Trusted by you")
+        tap("settings-host-fingerprint")
+        expect("settings-host-fingerprints")
+        snapshot("settings-server")
         tap("settings-remove-store")
         // The confirmation opens at the foot of the list, below the fold.
         scrollTo("settings-remove-confirm")
