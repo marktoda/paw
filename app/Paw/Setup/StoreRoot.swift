@@ -37,6 +37,9 @@ final class StoreRootModel {
     }
 
     private(set) var phase: Phase = .failed(detail: "", unpushed: 0)
+    /// Whether the store paw kept before the App Group is still on this
+    /// iPhone (`LegacyStore`): "present", "gone", or "unknown" until looked.
+    private(set) var legacyFolder = "unknown"
     let location: StoreLocation
     let keyPort: KeyPort
     /// The GitHub sign-in, if this build has one (the simulator only with
@@ -67,6 +70,17 @@ final class StoreRootModel {
         keyPort = KeyPort(clock: clock)
         gitHub = GitHubRefresh.access(stateDir: location.stateDir)
         route()
+        #if DEBUG && targetEnvironment(simulator)
+        if LegacyStore.plantsInstead {
+            LegacyStore.plant { [weak self] left in self?.legacyFolder = left ? "present" : "gone" }
+            return
+        }
+        #endif
+        removeLegacy()
+    }
+
+    private func removeLegacy() {
+        LegacyStore.remove { [weak self] left in self?.legacyFolder = left ? "present" : "gone" }
     }
 
     /// Setup if it is not done, else Home.
@@ -166,6 +180,7 @@ final class StoreRootModel {
         let keychain = wipeKeychain()
         Clipboard.clearIfOurs()
         let files = wipeAndRestart()
+        removeLegacy()
         return [keychain, files].compactMap { $0 }.first
     }
 
@@ -243,8 +258,15 @@ struct StoreRoot: View {
         }
     }
 
-    /// "Remove the store" when even opening paw's folder failed.
+    /// "Remove the store" when even opening paw's folder failed: what the
+    /// normal remove deletes, as far as it can without the store open.
     private func removeEverything() {
+        #if !targetEnvironment(simulator)
+        DispatchQueue.global(qos: .utility).async { try? EnclaveKeystore().resetDetailed() }
+        #endif
+        CredentialIdentities.clear()
+        Clipboard.clearIfOurs()
+        LegacyStore.remove()
         do {
             try StoreLocation.standard().removeAll()
             build()
@@ -302,12 +324,13 @@ private struct StoreRootContent: View {
 
 #if DEBUG && targetEnvironment(simulator)
 extension StoreRootModel {
-    /// "copies 0 · keychain resets 1 · pin none · pasteboard empty".
+    /// "copies 0 · keychain resets 1 · pin none · pasteboard empty · legacy gone".
     func debugState() -> String {
         let copies = (try? FileManager.default.contentsOfDirectory(atPath: location.copiesDir.path).count) ?? 0
         let pin = keyPort.session()?.holdsPin() == true ? "held" : "none"
         let pasteboard = UIPasteboard.general.hasStrings ? "full" : "empty"
         return "copies \(copies) · keychain resets \(keystore.resetCount()) · pin \(pin) · pasteboard \(pasteboard)"
+            + " · legacy \(legacyFolder)"
     }
 }
 #endif

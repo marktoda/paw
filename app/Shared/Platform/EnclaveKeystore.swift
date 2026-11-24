@@ -286,7 +286,12 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
     // MARK: Reset
 
     func resetDetailed() throws {
-        let group = try KeychainGroup.shared()
+        try resetDetailed(group: try KeychainGroup.shared())
+    }
+
+    /// Deletes this namespace's keys in `group`: the shared group, or the
+    /// app's own, where paw kept them before AutoFill (`LegacyStore`).
+    func resetDetailed(group: String) throws {
         try lock.withLock {
             var failures: [String] = []
             let keys: [String: Any] = [

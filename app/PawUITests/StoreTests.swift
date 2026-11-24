@@ -64,6 +64,20 @@ final class StoreTests: PawUITestCase {
         expect("setup-welcome")
     }
 
+    func testTheOldStoreFolderIsDeletedAtLaunch() {
+        app.launchArguments = ["-pawSetup", "1", "-pawAppearance", "light", "-pawPlantLegacy", "1"] + keyArguments()
+        app.launch()
+        let planted = expect("sim-store-state")
+        wait(for: "value CONTAINS 'legacy present'", on: planted, timeout: Self.patience,
+             "The old folder should have been planted: \(String(describing: planted.value))")
+
+        app.terminate()
+        launchSetup(keep: true)
+        let state = expect("sim-store-state")
+        wait(for: "value CONTAINS 'legacy gone'", on: state, timeout: Self.patience,
+             "Launch should delete the old folder: \(String(describing: state.value))")
+    }
+
     func testTheStoresFilesAreProtectedAtRest() {
         launchSetup()
         expect("setup-welcome")

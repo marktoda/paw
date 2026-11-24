@@ -24,7 +24,8 @@ struct StoreLocation {
     }
 
     /// The App Group container. The unsigned simulator build has none, so
-    /// there it is the app's Application Support folder; the debug AutoFill
+    /// there it is a folder in the app's Application Support, apart from
+    /// where paw kept the store before (`LegacyStore`); the debug AutoFill
     /// harness runs inside the app and so shares it.
     static func base() throws -> URL {
         if let group = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup) {
@@ -33,6 +34,7 @@ struct StoreLocation {
         #if targetEnvironment(simulator)
         return try FileManager.default.url(
             for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            .appendingPathComponent("app-group", isDirectory: true)
         #else
         throw Problem.noAppGroup
         #endif
