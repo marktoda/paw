@@ -301,7 +301,7 @@ struct KeySheetContent: View {
         case .pin(_, let forgotten):
             return forgotten
                 ? "Asked again after 15 minutes away."
-                : "The key's PIN, not your iPhone passcode."
+                : "Not your iPhone passcode."
         case .wrongPin(let triesLeft):
             return triesLeft == 1 ? "Not sure? Stop and check your PIN first." : nil
         case .pinAgain(_, _, let nextStep):
