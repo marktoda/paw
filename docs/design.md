@@ -365,7 +365,15 @@ Nothing learned from a decrypted entry is stored (5.6, rule 6).
 
 **Matching** is exact on registrable domain, using a compiled-in public suffix list, after IDNA normalisation. There is no substring or fuzzy match. Names containing bidirectional controls or mixed-script confusables are never offered automatically. Exact host ranks above registrable domain; covered entries rank first.
 
-**Associations.** Most real stores have entries called "GitHub" or "bank" that never parse as a domain. After a confirmed manual pick, the provider offers once: "Always offer 'GitHub' for github.com?" **Always** / **Just this once**. An association is an entry path plus a domain the user approved, stored in `config.json`. It involves no decrypted content, so rule 6 holds. Associations are listed and removable in Settings › AutoFill.
+**Name matches** (built 2026-11-24, replacing the planned associations). Most real stores have entries called `bankofamerica` or `alaskaair/alice` that never parse as a domain. Such an entry matches a site when its own name, or its direct parent folder unless that is a category word (`bank`, `web`, `mail`, `work`…), squeezed of case, spaces, `-` and `_`, equals the first label of the site's registrable domain (`bankofamerica` for `www.bankofamerica.com`; `alice`, not `github`, for `alice.github.io`). Neither counts when a host comes earlier in the path. Whole parts only, at least 3 ASCII letters or digits; never an IP address, a dotless host or a `xn--` label (core/src/store/service.rs).
+
+A name fits lookalikes (`bankofamerica.co`), so paw keeps, per entry, the registrable domains it has filled on after the person confirmed (`site-pairings.json` in the state directory: not in the repository, not synced, removed with the store, bounded to 300 entries of 4 domains). In the list:
+- Paired with this domain: under "For <site>", fills without asking, published above the keyboard for that domain only.
+- Not yet paired: under "Might be for this site", below; picking it asks first: "Use bankofamerica on bankofamerica.com?" / "First time on this site. Check the address is right.", the full address when it differs, **Cancel** (primary) / **Use it here**. The pairing is kept only after the fill succeeds.
+- Paired only with other domains of that name: not listed; found by search, it asks in red: "You've used this on bankofamerica.com. This is bankofamerica.co."
+- A password from search for an unrelated site ("Fill anyway") is never paired.
+
+Pairings involve no decrypted content, so rule 6 holds. The core can list and clear them (`SitePairings`); a "Used on" row on the entry screen or a list in Settings › AutoFill can come later.
 
 **Tapping a suggestion.** `provideCredentialWithoutUserInteraction` always returns `userInteractionRequired`, so the provider always presents a view. The minimal one shows the entry name behind the Face ID prompt.
 

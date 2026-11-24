@@ -25,13 +25,12 @@
 //! Whole parts only, at least three letters or digits, plain ASCII, never a
 //! `xn--` label, never an IP address or a dotless host.
 //!
-//! Eligible parts: every part without a dot, except the entry's own name
-//! when an earlier part is a host (`github.com/bankofamerica` is the user
-//! `bankofamerica` on github.com, as the user name is derived in the app).
-//! Folders count, so `bankofamerica/alice` matches; so does a category
-//! folder named like a site (`bank/chase` on `bank.com`). Nothing is capped:
-//! a folder named like a site is offered there, behind the first-use
-//! confirm.
+//! Eligible parts ([`names_site`]): the entry's own name, and its direct
+//! parent folder unless that is a category word (`bank`, `web`, `mail`,
+//! [`CATEGORY_FOLDERS`]); neither when a host comes earlier in the path
+//! (`github.com/bankofamerica` is a user on github.com). So
+//! `bankofamerica/alice` matches bankofamerica.com, `bank/chase` does not
+//! match bank.com, and `web/fastmail` does not match web.com.
 //!
 //! A name carries no domain, so `bankofamerica.co` has the same name as
 //! `bankofamerica.com`. Every name match is therefore classed by the
@@ -148,15 +147,42 @@ pub fn registrable_domain(service: &str) -> Option<String> {
     registrable(&host).map(str::to_owned)
 }
 
+/// Folder names that sort entries by kind rather than name a site:
+/// `bank/chase` is Chase, not bank.com. Squeezed like [`name_key`].
+/// A folder with one of these names never matches by name.
+pub const CATEGORY_FOLDERS: &[&str] = &[
+    "accounts", "apps", "archive", "bank", "banking", "banks", "bills", "business", "cloud", "crypto", "dev",
+    "education", "email", "emails", "entertainment", "family", "finance", "food", "forums", "games", "gaming",
+    "government", "health", "home", "insurance", "internet", "logins", "mail", "media", "misc", "money", "music",
+    "network", "news", "old", "online", "other", "personal", "phone", "private", "school", "servers", "services",
+    "shop", "shopping", "sites", "social", "store", "stores", "streaming", "tax", "taxes", "tech", "travel",
+    "utilities", "video", "web", "websites", "wifi", "work", "www",
+];
+
 /// Whether `path` matches the site named `name` by name ([`site_name`]).
+///
+/// Eligible parts, and only when no part before the entry's own name is
+/// a host (`github.com/bankofamerica` is a user on github.com, as the app
+/// derives user names):
+/// - the entry's own name: `bankofamerica`, `bank/bankofamerica`;
+/// - its direct parent folder, as in a `site/user` layout
+///   (`bankofamerica/alice`), unless that folder's name is a category
+///   ([`CATEGORY_FOLDERS`]): `bank/chase` does not match bank.com.
+///
+/// No other folder counts: `bankofamerica/old/alice` does not match.
 pub fn names_site(path: &str, name: &str) -> bool {
     let parts: Vec<&str> = path.split('/').collect();
     let Some((last, folders)) = parts.split_last() else { return false };
-    let user_layout = folders.iter().any(|part| part.contains('.') && is_host(&part.to_lowercase()));
+    if folders.iter().any(|part| part.contains('.') && is_host(&part.to_lowercase())) {
+        return false;
+    }
+    if name_key(last).as_deref() == Some(name) {
+        return true;
+    }
     folders
-        .iter()
-        .chain((!user_layout).then_some(last))
-        .any(|part| name_key(part).as_deref() == Some(name))
+        .last()
+        .and_then(|parent| name_key(parent))
+        .is_some_and(|parent| parent == name && !CATEGORY_FOLDERS.contains(&parent.as_str()))
 }
 
 /// How well one part of an entry's path fits the host: 0 exact, 1 same

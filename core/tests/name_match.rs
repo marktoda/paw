@@ -48,6 +48,13 @@ const STORE: &[&str] = &[
     "web/fastmail",
     "co",
     "localhost",
+    "bankofamerica/alice",
+    "bankofamerica/old/alice",
+    "mail/fastmail",
+    "Shop/amazon",
+    "work/vpn",
+    "home/router",
+    "social/mastodon",
 ];
 
 /// The name-matched paths for `service`, as `(path, pairing)` with no
@@ -68,6 +75,8 @@ fn a_part_matches_only_the_first_label_of_the_registrable_domain() {
         "finance/bank-of-america",
         "Finance/Bank of America",
         "finance/BANK_OF_AMERICA",
+        // A `site/user` layout matches by its parent folder.
+        "bankofamerica/alice",
     ];
     let cases: &[(&str, &[&str])] = &[
         // The plain cases.
@@ -106,7 +115,7 @@ fn a_part_matches_only_the_first_label_of_the_registrable_domain() {
         // it is `alice`, so the entry named `alice` (a user, to a person,
         // but nothing in the name says so) matches, behind the first-use
         // confirm.
-        ("https://alice.github.io", &["contoso/alice"]),
+        ("https://alice.github.io", &["contoso/alice", "bankofamerica/alice", "bankofamerica/old/alice"]),
         ("https://mallory.github.io", &[]),
         ("https://github.io", &[]),
         ("https://contoso.github.io", &["contoso/alice", "contoso/bob"]),
@@ -114,7 +123,16 @@ fn a_part_matches_only_the_first_label_of_the_registrable_domain() {
         ("https://co.uk", &[]),
         ("co", &[]),
         // Whole parts only: never a prefix, a suffix or a piece.
-        ("https://bank.com", &["bank/bankofamerica", "bank/chase"]),
+        // A category folder is not a site: `bank/chase` is Chase.
+        ("https://bank.com", &[]),
+        ("https://web.com", &[]),
+        ("https://www.mail.com", &[]),
+        ("https://shop.com", &[]),
+        ("https://work.com", &[]),
+        ("https://home.com", &[]),
+        ("https://social.com", &[]),
+        ("https://amazon.com", &["Shop/amazon"]),
+        ("https://chase.com", &["bank/chase"]),
         ("https://alaska.com", &["travel/alaska"]),
         ("https://america.com", &[]),
         ("https://bankofamerica2.com", &[]),
@@ -138,8 +156,12 @@ fn a_part_matches_only_the_first_label_of_the_registrable_domain() {
         // A user in a `site/user` layout is not a site: `github.com/bankofamerica`.
         // A folder named like the site is: `contoso/alice`.
         ("https://contoso.com", &["contoso/alice", "contoso/bob"]),
-        ("https://fastmail.com", &["web/fastmail"]),
-        ("https://www.fastmail.com", &["web/fastmail"]),
+        ("https://fastmail.com", &["web/fastmail", "mail/fastmail"]),
+        ("https://www.fastmail.com", &["web/fastmail", "mail/fastmail"]),
+        // Only the direct parent counts: `bankofamerica/old/alice` is not
+        // matched by `bankofamerica` (checked under bankofamerica.com above)
+        // and `old` is a category.
+        ("https://old.com", &[]),
     ];
     assert!(cases.len() >= 40);
     for (service, expected) in cases {
@@ -480,7 +502,10 @@ fn moving_an_entry_keeps_its_pairings_and_forgetting_drops_them() {
 
 #[test]
 fn paired_sites_are_only_those_that_still_match_by_name() {
-    let (dir, store, pairings) = state_with(&["bankofamerica", "travel/alaska", "contoso/alice"]);
+    // `alaskaair` and `github` match sites by name but were never filled
+    // there: no suggestion is ever published for them.
+    let (dir, store, pairings) =
+        state_with(&["bankofamerica", "travel/alaska", "contoso/alice", "alaskaair", "github"]);
     let file = PairingFile::new(dir.path());
     file.record("bankofamerica", "bankofamerica.com", None).unwrap();
     file.record("bankofamerica", "bankofamerica.co", None).unwrap();
