@@ -210,7 +210,7 @@ class PawUITestCase: XCTestCase {
 
     /// A swipe leaves the list coasting, and a tap on a coasting list only
     /// stops it: wait until the element is in the same place twice running.
-    private func waitUntilStill(_ found: XCUIElement) {
+    func waitUntilStill(_ found: XCUIElement) {
         var last = found.frame
         for _ in 0..<20 {
             RunLoop.current.run(until: Date().addingTimeInterval(0.15))
@@ -228,6 +228,22 @@ class PawUITestCase: XCTestCase {
 
     func tap(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {
         scrollTo(identifier, file: file, line: line).tap()
+    }
+
+    /// Taps an element found some other way than by identifier alone (a
+    /// menu item, a button of a given type, one inside a row) once it is
+    /// there and can be tapped. No scrolling.
+    func tapWhenHittable(_ found: XCUIElement, _ what: String,
+                         file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(waitUntil(timeout: Self.patience) { found.exists && found.isHittable },
+                      "\(what) should be on screen and tappable", file: file, line: line)
+        found.tap()
+    }
+
+    /// Waits until the element has gone, and fails with `message` otherwise.
+    func expectGone(_ found: XCUIElement, _ message: String, timeout: TimeInterval = PawUITestCase.patience,
+                    file: StaticString = #filePath, line: UInt = #line) {
+        wait(for: "exists == false", on: found, timeout: timeout, message, file: file, line: line)
     }
 
     func goBack() {
