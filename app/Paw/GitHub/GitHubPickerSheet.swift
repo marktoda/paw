@@ -106,6 +106,32 @@ private struct GitHubCodeView: View {
     let code: DeviceCode
     @Environment(\.openURL) private var openURL
     @State private var copied = false
+    @State private var opened = false
+
+    /// This device only, gone when the code expires. Not a secret, so not
+    /// `Clipboard`, which clears on Lock now.
+    private func copyCode() {
+        UIPasteboard.general.setItems(
+            [[UTType.utf8PlainText.identifier: code.userCode]],
+            options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(TimeInterval(code.expiresIn))])
+    }
+
+    static let gitHubDevicePage = "https://github.com/login/device"
+
+    /// The page to open: GitHub's own page carries the code (GitHub may
+    /// ignore it); any other address opens exactly as the core gave it.
+    static func pageURL(_ code: DeviceCode) -> URL? {
+        guard code.verificationUri == gitHubDevicePage else { return URL(string: code.verificationUri) }
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "github.com"
+        components.path = "/login/device"
+        // Letters, digits and "-" as they are; anything else encoded.
+        let plain = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-")
+        guard let value = code.userCode.addingPercentEncoding(withAllowedCharacters: plain) else { return nil }
+        components.percentEncodedQueryItems = [URLQueryItem(name: "user_code", value: value)]
+        return components.url
+    }
 
     var body: some View {
         ScrollView {
@@ -127,16 +153,26 @@ private struct GitHubCodeView: View {
                     .accessibilityIdentifier("github-code")
                 VStack(spacing: PawMetrics.Spacing.s) {
                     Button {
-                        if let url = URL(string: code.verificationUri) { openURL(url) }
+                        copyCode()
+                        opened = true
+                        #if !targetEnvironment(simulator)
+                        // The simulated GitHub has no page to open.
+                        if let url = Self.pageURL(code) { openURL(url) }
+                        #endif
                     } label: {
                         Text("Open \(Self.shown(code.verificationUri))")
                     }
                     .buttonStyle(.pawPrimary)
                     .accessibilityIdentifier("github-open")
+                    if opened {
+                        Text("Code copied. Paste it on GitHub.")
+                            .font(PawFont.footnote)
+                            .foregroundStyle(PawColor.labelSecondary)
+                            .multilineTextAlignment(.center)
+                            .accessibilityIdentifier("github-copied")
+                    }
                     Button(copied ? "Copied" : "Copy code") {
-                        UIPasteboard.general.setItems(
-                            [[UTType.utf8PlainText.identifier: code.userCode]],
-                            options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(TimeInterval(code.expiresIn))])
+                        copyCode()
                         copied = true
                     }
                     .buttonStyle(.pawSecondary)

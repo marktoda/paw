@@ -95,6 +95,10 @@ final class GitHubTests: PawUITestCase {
         snapshot("address")
         openPicker()
         snapshot("code")
+        // In the simulator "Open" only copies: the simulated GitHub has no page.
+        tap("github-open")
+        expectText("github-copied", contains: "Code copied")
+        snapshot("code-copied")
         authorise()
         expectText(Self.store, contains: "looks like a password store")
         expectText(Self.store, contains: "private")
@@ -103,6 +107,7 @@ final class GitHubTests: PawUITestCase {
         expectGone("github-repositories")
         finishSetup()
         expectText("folder-web", contains: "web, folder, 6 passwords")
+        XCTAssertEqual(pasteboardContents(), "WDJB-MJHT", "Open copies the code")
     }
 
     func testTheCodeSheetAndTheListInDark() {
