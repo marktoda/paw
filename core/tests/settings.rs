@@ -161,7 +161,7 @@ fn entries_with_a_hidden_recipient_or_a_passphrase_are_unsure() {
     let store = store_with(&[
         (".gpg-id", format!("{fpr}\n").as_bytes()),
         ("card.gpg", &invented_entry(&[for_key_id(card_id)])),
-        ("hidden.gpg", &invented_entry(&[hidden.clone()])),
+        ("hidden.gpg", &invented_entry(std::slice::from_ref(&hidden))),
         ("card-and-hidden.gpg", &invented_entry(&[for_key_id(card_id), hidden])),
         ("card-and-passphrase.gpg", &invented_entry(&[passphrase.clone(), for_key_id(card_id)])),
         ("passphrase.gpg", &invented_entry(&[passphrase])),
