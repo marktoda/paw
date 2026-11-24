@@ -112,8 +112,11 @@ jobs:
           import glob, json, os, re, sys
           # Seconds a test of each class takes on a runner (scripts/ci-report.sh
           # prints them). Only the balance between parts depends on these.
-          weight = {"SyncTests": 167, "EditTests": 108, "LifecycleTests": 84, "StoreTests": 64,
-                    "SetupTests": 46, "AppTests": 42, "EnclaveTests": 53, "GalleryTests": 46, "KeyTests": 16}
+          # Measured on run 45500441073 (2026-11-24).
+          weight = {"EditTests": 123, "SyncTests": 113, "LifecycleTests": 116, "SettingsRestTests": 78,
+                    "KeyTests": 65, "EnclaveTests": 59, "BackgroundRefreshTests": 59, "GitHubTests": 55,
+                    "AppTests": 53, "StoreTests": 52, "LicencesTests": 50, "SetupTests": 32,
+                    "GalleryTests": 32, "AutoFillTests": 21, "AutoFillRestTests": 21}
           tests = {}
           for path in sorted(glob.glob("app/PawUITests/*.swift")):
               cls = None

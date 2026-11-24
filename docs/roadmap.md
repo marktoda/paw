@@ -124,7 +124,10 @@ Things that are easy to lose track of because nothing fails when they are missin
 
 Merged 2026-11-24: plain repository list in the picker; per-process Face ID enrolment record; name matching with remembered site pairings (`site-pairings.json`, no screen to view or clear them yet); a lost PIN told apart from a missed touch; the key log.
 
-## Needs the device
+Merged 2026-11-24, batch 3 (one build, run 45500441073, all green): Release device build without the simulated key, scanned in CI; legacy PIN-taking exports and the test screen removed; background refresh scheduled (skips while the iPhone is locked: the store is unreadable then); held-back re-encryption in the core (no UI yet); Settings: who can open, Face ID switch, sites used, server keys with forget, copy diagnostics, licences, build stamp; AutoFill: `url` cross-check, international names (always shown as `xn--`), username from the body; the paw icon; Sync, Gallery and Enclave tests on the shared helpers; iPad three-column layout with its own CI part.
+
+Not built: saving a password from the extension (needs iOS 26.2; minimum is 26.0); replace key (design only: both keys in turn, one touch per password); "iPad"/"Touch ID" wording on iPad. libgit2's bundled xdiff is LGPL: decide before any App Store listing.
+
 
 | Check | Status |
 |---|---|
@@ -138,6 +141,9 @@ Merged 2026-11-24: plain repository list in the picker; per-process Face ID enro
 | A change sent from the phone reads back in desktop `pass` | waiting |
 | Face ID fill in AutoFill after the per-process enrolment fix (2026-11-24): no "Face ID changed", and the copy survives | waiting |
 | Name matches (entry `name` on `name.com`): first-time confirm, then no confirm, then a keyboard suggestion | waiting |
+| First run of the Release build: Face ID, AutoFill, the key, the icon; Settings › About says the commit and "Release" | waiting |
+| Background check row in the sync sheet after a few hours in the background | waiting |
+| Who can open these passwords shows the three old-key entries | waiting |
 | Settings › Key diagnostics › Key log shows the app's and AutoFill's lines; what the key answers after a touch timeout and to the PIN check after it | waiting |
 | iPad: the key opens an entry over USB-C, and AutoFill fills with it | waiting on the `ipad` branch |
 | iPad: three columns in landscape, the right column first in portrait; Slide Over and a narrow window fall back to the iPhone layout without losing the open folder or entry | waiting on the `ipad` branch |
