@@ -43,8 +43,16 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
     private var sealTag: Data { Data("\(namespace).seal".utf8) }
     private var service: String { namespace }
     private static let indexAccount = "index-key"
-    /// The Face ID enrolment state when the seal key was made.
-    private static let enrolmentAccount = "seal-key-enrolment"
+    /// The Face ID enrolment state this process saw for the seal key.
+    ///
+    /// One record per process (app, AutoFill extension), because iOS gives
+    /// each bundle id a different enrolment hash for the same faces: a
+    /// record the app wrote would always look "changed" to the extension.
+    private static let enrolmentAccount: String = {
+        "seal-key-enrolment." + (Bundle.main.bundleIdentifier ?? "unknown")
+    }()
+    /// The single record shared by both processes in earlier builds.
+    private static let legacyEnrolmentAccount = "seal-key-enrolment"
 
     // MARK: DeviceKeystore
 
@@ -90,7 +98,7 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
         let group = try KeychainGroup.shared()
         try Self.preflightBiometry()
         let key = try lock.withLock { try findOrCreateKey(group: group) }
-        if !key.created, enrolmentChanged(group: group) {
+        if !key.created, enrolmentChanged(keyLabel: key.label, group: group) {
             throw EnclaveFailure(.KeyGone, "Face ID enrolment changed since the seal key was made")
         }
         guard let publicKey = SecKeyCopyPublicKey(key.ref) else {
@@ -151,7 +159,7 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
         guard try findKey(label: label, group: group, context: nil) != nil else {
             throw EnclaveFailure(.KeyGone, "the seal key is not in the keychain")
         }
-        if enrolmentChanged(group: group) {
+        if enrolmentChanged(keyLabel: label, group: group) {
             throw EnclaveFailure(.KeyGone, "Face ID enrolment changed since the seal key was made")
         }
 
@@ -179,7 +187,7 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
         // faces it was bound to are gone. Ending every copy is the safe
         // answer; anything else would seal new copies to a dead key.
         let keyStillThere = (try? findKey(label: label, group: group, context: nil)).map { $0 != nil }
-        if failure.isAuthRefusal || keyStillThere == false || enrolmentChanged(group: group) {
+        if failure.isAuthRefusal || keyStillThere == false || enrolmentChanged(keyLabel: label, group: group) {
             throw EnclaveFailure(.KeyGone, "Face ID matched but the key refused: \(failure.detail)")
         }
         throw failure
@@ -299,8 +307,11 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
                 kSecAttrApplicationTag as String: sealTag,
                 kSecAttrAccessGroup as String: group,
             ]
+            // The other process's enrolment record stays: it names the key
+            // it was written for, so it is ignored once that key is gone.
             for query in [keys, secretQuery(account: Self.indexAccount, group: group),
-                          secretQuery(account: Self.enrolmentAccount, group: group)] {
+                          secretQuery(account: Self.enrolmentAccount, group: group),
+                          secretQuery(account: Self.legacyEnrolmentAccount, group: group)] {
                 let status = SecItemDelete(query as CFDictionary)
                 if status != errSecSuccess && status != errSecItemNotFound {
                     failures.append("OSStatus \(status)")
@@ -356,9 +367,7 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
         // before a pointless prompt. If this fails, unseal still finds out
         // from the Secure Enclave's refusal.
         if let state = Self.currentEnrolment() {
-            _ = SecItemDelete(secretQuery(account: Self.enrolmentAccount, group: group) as CFDictionary)
-            _ = addSecret(state, account: Self.enrolmentAccount, group: group,
-                          accessible: kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly)
+            recordEnrolment(state, keyLabel: label, group: group)
         }
         return FoundKey(ref: key, label: label, created: true)
     }
@@ -427,11 +436,28 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
         return context.domainState.biometry.stateHash
     }
 
-    /// True only when both states are known and differ.
-    private func enrolmentChanged(group: String) -> Bool {
-        guard let stored = try? readSecret(account: Self.enrolmentAccount, group: group),
-              let current = Self.currentEnrolment() else { return false }
-        return stored != current
+    /// True only when this process recorded the faces for this very key
+    /// and they differ now.
+    ///
+    /// A process that has no record for the key (the other process made
+    /// it) records what it sees and answers false: the Secure Enclave
+    /// still refuses a key whose faces changed, which unseal reports.
+    private func enrolmentChanged(keyLabel: Data, group: String) -> Bool {
+        guard let current = Self.currentEnrolment() else { return false }
+        if let stored = try? readSecret(account: Self.enrolmentAccount, group: group),
+           stored.count > keyLabel.count, stored.prefix(keyLabel.count) == keyLabel {
+            return Data(stored.dropFirst(keyLabel.count)) != current
+        }
+        recordEnrolment(current, keyLabel: keyLabel, group: group)
+        return false
+    }
+
+    /// The record is the key's label followed by the enrolment hash, so a
+    /// record left from an earlier key is never compared.
+    private func recordEnrolment(_ state: Data, keyLabel: Data, group: String) {
+        _ = SecItemDelete(secretQuery(account: Self.enrolmentAccount, group: group) as CFDictionary)
+        _ = addSecret(keyLabel + state, account: Self.enrolmentAccount, group: group,
+                      accessible: kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly)
     }
 
     // MARK: Generic-password items
