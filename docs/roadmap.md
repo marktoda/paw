@@ -29,9 +29,9 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 
 | Item | Track | Status |
 |---|---|---|
-| Raw card checks on the test screen | core + app | done |
+| Raw card checks on the test screen | core + app | done; the test screen and its PIN-taking checks are gone (branch `release-build`); the touch timeout check is in Settings › Key diagnostics, as a key task |
 | Exact touch policy per slot | core | done |
-| Keep the simulated key and fixture out of device builds (cargo feature, device-library scan in CI) | foundations | partly: the cargo feature and the scan script exist; the Xcode Release build that uses them is not wired; next |
+| Keep the simulated key and fixture out of device builds (cargo feature, device-library scan in CI) | foundations | done on branch `release-build`: the `device` job builds Release against the core without `sim` and scans the library, the app and the extension; never run on the phone |
 | App Group container and shared keychain group for app and extension | foundations | done; the store and Face ID copies live there |
 | Key session in the core: one object per plugged-in key, PIN held for the session and forgotten after 15 minutes in the background, cancel, structured errors | key-session | done |
 | Key task state machine (plug in, PIN, touch, working, done) driving the real key sheet | key-session, then screens | done |
@@ -114,8 +114,7 @@ Things that are easy to lose track of because nothing fails when they are missin
 
 | Gap | Why it matters |
 |---|---|
-| Release build without the simulated key and fixture | the build on the phone is a debug build that contains test code and debug controls |
-| Legacy PIN-taking exports still in the core | a second, older path to the card beside the key session |
+| The Release build has never run on the phone | optimisation, stripped harnesses and the device bindings are only proven by CI |
 | Held-back changes are not re-encrypted automatically after recipients change | they stay queued until done by hand |
 | Three entries in the owner's store are encrypted to old keys | paw cannot open them; needs the owner |
 | Sync, gallery, key and enclave tests use their own slow helpers | the slowest part of a full run |
@@ -128,7 +127,8 @@ Merged 2026-11-24: plain repository list in the picker; per-process Face ID enro
 
 | Check | Status |
 |---|---|
-| "Check the touch timeout (do not touch)" on the test screen | waiting |
+| Settings › Key diagnostics › "Check the touch timeout", without touching the key; then copy the key log | waiting |
+| First Release build: Settings › About says the commit and "Release"; open an entry, AutoFill fill, Face ID copy, send | waiting |
 | "Read key" on the newest build, to see both slots' touch policies | waiting |
 | First real clone | done 2026-11-23 |
 | Auto-close after locking the phone and after 2 minutes away | waiting |
