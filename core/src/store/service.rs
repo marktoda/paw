@@ -103,12 +103,30 @@ fn is_scheme(text: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
 }
 
+/// Whether a browser would read `host` as an IPv4 address: its last label
+/// is a number, in decimal or `0x` hex (the URL Standard's "ends in a
+/// number"). That covers every form, canonical or not (`127.1`,
+/// `0x7f.0.0.1`, `0177.0.0.1`, `2130706433`, `10.0.0.0x1`).
+fn ends_in_number(host: &str) -> bool {
+    let Some(last) = host.rsplit('.').next() else { return false };
+    if !last.is_empty() && last.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    last.strip_prefix("0x")
+        .or_else(|| last.strip_prefix("0X"))
+        .is_some_and(|hex| hex.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
 /// The registrable domain of `host`, e.g. `example.co.uk` for
-/// `www.example.co.uk`. `None` for a bare word and for an IP address, which
-/// only ever match exactly.
+/// `www.example.co.uk`. `None` for a bare word and for an IP address in
+/// any form, which only ever match exactly, as written.
+///
+/// Known limit: a multi-tenant host the Public Suffix List does not split
+/// (`sharepoint.com`, `atlassian.net`, `zendesk.com`, `wordpress.com`,
+/// `myshopify.com`) is one registrable domain, so one tenant's entry is
+/// offered on every other tenant's site (docs/design.md 2.10).
 pub(crate) fn registrable(host: &str) -> Option<&str> {
-    let last = host.rsplit('.').next()?;
-    if last.chars().all(|c| c.is_ascii_digit()) {
+    if ends_in_number(host) {
         return None;
     }
     psl::domain_str(host)

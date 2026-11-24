@@ -2,7 +2,7 @@
 //! are pure functions of the entry list, tested as tables.
 
 use paw_core::store::search::{HighlightRange, search};
-use paw_core::store::service::{host_of, match_service};
+use paw_core::store::service::{host_of, match_service, registrable_domain};
 use paw_core::store::tree::EntryRef;
 
 fn entries(paths: &[&str]) -> Vec<EntryRef> {
@@ -306,4 +306,32 @@ fn a_piece_of_a_name_never_matches() {
         let paths: Vec<String> = offered(service).into_iter().map(|(path, _)| path).collect();
         assert_eq!(paths, *expected, "service {service:?}");
     }
+}
+
+#[test]
+fn an_ipv4_address_in_any_form_matches_only_itself_as_written() {
+    let addresses = [
+        "10.0.0.0x1",
+        "192.168.0.0x1",
+        "0x7f.0.0.1",
+        "127.0.0.0x01",
+        "0177.0.0.1",
+        "127.1",
+        "127.0.0.1",
+        "2130706433",
+        "0x7f000001",
+        "1.0x",
+    ];
+    let paths: Vec<String> = addresses.iter().map(|a| format!("home/{a}")).collect();
+    let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+    for address in addresses {
+        assert_eq!(registrable_domain(&format!("http://{address}/")), None, "{address}");
+        let offered: Vec<(String, bool)> = match_service(&entries(&paths), &format!("http://{address}/"))
+            .into_iter()
+            .map(|m| (m.entry.path, m.exact))
+            .collect();
+        assert_eq!(offered, [(format!("home/{address}"), true)], "{address}");
+    }
+    // A hex-looking label that is not last is part of a name.
+    assert_eq!(registrable_domain("https://0x1.example.com").as_deref(), Some("example.com"));
 }
