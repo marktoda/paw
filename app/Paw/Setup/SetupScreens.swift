@@ -102,7 +102,7 @@ private struct WelcomeScreen: View {
                     .foregroundStyle(PawColor.label)
                     .fixedSize(horizontal: false, vertical: true)
                 Label {
-                    Text("You'll need your YubiKey and your store's SSH address.")
+                    Text("You'll need your YubiKey and its PIN.")
                         .font(PawFont.body)
                         .foregroundStyle(PawColor.labelSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -291,14 +291,27 @@ private struct AddressScreen: View {
     @Bindable var model: SetupModel
     let notice: String?
     @FocusState private var focused: Bool
+    @Environment(\.gitHubAccess) private var gitHub
 
     var body: some View {
         SetupPage(
             step: 2, title: "Where is your password store?",
-            message: "Its SSH address. Your git host shows it under Code \u{203A} SSH.",
+            // With GitHub the choice comes first and the typed address is
+            // the other way; without it, the address is the only way.
+            message: gitHub == nil ? "Its SSH address, under Code \u{203A} SSH on your git host." : nil,
             identifier: "setup-address", simulatorActions: simulatorActions
         ) {
+            if gitHub != nil {
+                GitHubChooseButton(model: model)
+            }
             VStack(alignment: .leading, spacing: PawMetrics.Spacing.s) {
+                if gitHub != nil {
+                    Text("Or type its SSH address")
+                        .font(PawFont.footnote.weight(.semibold))
+                        .foregroundStyle(PawColor.labelSecondary)
+                        .padding(.top, PawMetrics.Spacing.s)
+                        .accessibilityAddTraits(.isHeader)
+                }
                 HStack(spacing: PawMetrics.Spacing.s) {
                     // Vertical, so a long address wraps instead of being cut
                     // off. Return then types a newline: it is taken out and
@@ -379,7 +392,6 @@ private struct AddressScreen: View {
                 .buttonStyle(.pawPrimary)
                 .disabled(model.working != nil || model.addressText.trimmingCharacters(in: .whitespaces).isEmpty)
                 .accessibilityIdentifier("address-connect")
-            GitHubChooseButton(model: model)
         }
     }
 
