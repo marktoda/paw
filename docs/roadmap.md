@@ -7,7 +7,7 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 ## How the work is run
 
 - Building is done by subagents, each on its own branch in `.worktrees/<branch>`, one track per area so branches do not collide. Each branch is reviewed, built on GitHub, then merged.
-- Rust core work is tested on Linux in minutes. Swift work compiles only on GitHub: a full run is about 20 minutes, a run narrowed to chosen tests is a few. Tracks are therefore cut so that as much as possible lands in the core.
+- Rust core work is tested on Linux in minutes. Swift work compiles only on GitHub: a full run is about 30 minutes across five machines when the queue is empty, a narrowed run about 15; GitHub runs about five Mac jobs at once for the account, so parallel tracks queue. Tracks are therefore cut so that as much as possible lands in the core.
 - Anything that needs the owner's iPhone and YubiKey is collected under "Needs the device" so those checks can be done in one sitting.
 
 ## Proven so far
@@ -31,10 +31,10 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 |---|---|---|
 | Raw card checks on the test screen | core + app | done |
 | Exact touch policy per slot | core | done |
-| Keep the simulated key and fixture out of device builds (cargo feature, device-library scan in CI) | foundations | next |
-| App Group container and shared keychain group for app and extension | foundations | the owner registered `group.com.marktoda.paw` on both identifiers (2026-11-23); both provisioning profiles carry it; moving the store into it is part of the AutoFill track |
+| Keep the simulated key and fixture out of device builds (cargo feature, device-library scan in CI) | foundations | partly: the cargo feature and the scan script exist; the Xcode Release build that uses them is not wired; next |
+| App Group container and shared keychain group for app and extension | foundations | registered and in both profiles; the store moves into it with `autofill` |
 | Key session in the core: one object per plugged-in key, PIN held for the session and forgotten after 15 minutes in the background, cancel, structured errors | key-session | done |
-| Key task state machine (plug in, PIN, touch, working, done) driving the real key sheet | key-session, then screens | core done; Swift half next |
+| Key task state machine (plug in, PIN, touch, working, done) driving the real key sheet | key-session, then screens | done |
 | Touch-timeout status word from the real key | device | blocked on the owner running one check |
 
 ### M2 Read a store
@@ -52,7 +52,7 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 | Copy cache in the core: per-entry deadline from the key touch, sealed by a device keystore trait, wiped on expiry, clock moved back or reboot ends all copies, "Lock now" | face-id-copies | done |
 | Simulated keystore and clock for Linux and the simulator | face-id-copies | done |
 | Secure Enclave keystore in Swift (current face only, no passcode fallback) | screens | done; the owner opened entries with Face ID on the iPhone, 2026-11-23 |
-| Early AutoFill skeleton: fill from a copy, shared index, staleness after a pull | autofill | in progress (`autofill`) |
+| Early AutoFill skeleton: fill from a copy, shared index, staleness after a pull | autofill | superseded by the full extension in M7 |
 
 ### M4 Clone, setup, fetch
 
@@ -62,9 +62,9 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 | Integrate after fetch: fast-forward, replay local commits on top, keep both when one entry changed on both sides | sync | done |
 | Setup flow as a core state machine: read key, address, check the host accepts the key before the PIN, clone, test decrypt | sync | done |
 | GitHub host keys shipped in the app; first-connection confirm for other hosts | sync | done (core) |
-| Setup screens | screens | in progress (branch `setup-screens`; end to end in the simulator against the simulated key and host) |
+| Setup screens | screens | done |
 | First real clone of the owner's store from GitHub with the YubiKey | device | done 2026-11-23: setup, clone, download and decrypt worked on the iPhone |
-| Pick the repository from a list after GitHub sign-in, instead of typing its address | screens | later, with the GitHub sign-in in M6 |
+| Pick the repository from a list after GitHub sign-in, instead of typing its address | screens | done; the owner signed in on the iPhone 2026-11-23 |
 
 ### M5 Write and push
 
@@ -72,29 +72,29 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 |---|---|---|
 | Entry draft, password generator, encrypt to the recipient list, pass-style commit messages, delete, rename, move | core | done |
 | Unpushed queue, undo, discard; push with fetch and replay on one login | sync | done |
-| Add, edit, delete, rename screens | screens | later |
-| A real push, read back by desktop `pass` | device | later |
+| Add, edit, delete, rename screens | screens | done |
+| A real push, read back by desktop `pass` | device | the owner sent a change from the iPhone 2026-11-23; reading it back with desktop `pass` not yet confirmed |
 
 ### M6 Silent pull
 
 | Item | Status |
 |---|---|
-| GitHub sign-in (GitHub App, read-only on one repository) for background pull and the repository picker. The owner registered the app `paw-password-store` (client id `Iv23liyBePbnvQPCcGRz`, device sign-in enabled) on 2026-11-23 | built, tested against a simulated GitHub only; the first real sign-in is the owner's, on the phone |
+| GitHub sign-in (GitHub App, read-only on one repository) for background pull and the repository picker. The owner registered the app `paw-password-store` (client id `Iv23liyBePbnvQPCcGRz`, device sign-in enabled) on 2026-11-23 | done; signed in and checked for changes without the key on the iPhone 2026-11-23; token renewal after 8 hours not yet observed |
 | Deploy key in the Secure Enclave for other hosts | later |
-| Background refresh, "recipients changed" warning, replaced history | later |
+| Background refresh, "recipients changed" warning, replaced history | warning and replaced-history screens done; the core entry point for background refresh exists; scheduling it in iOS is next |
 
 ### M7 AutoFill, the rest
 
 | Item | Status |
 |---|---|
-| Key sheet inside the extension (proven reachable), suggestions above the keyboard, site matching, hand-off fallback | later |
+| Key sheet inside the extension (proven reachable), suggestions above the keyboard, site matching, hand-off fallback | in progress (`autofill`): list, site matching, Face ID and key fill, suggestions, confirm before filling another site; reviewed, full run pending. Not built: hand-off fallback, international domain names, the `url` cross-check, saving from the extension |
 
 ### M8 Settings and finish
 
 | Item | Status |
 |---|---|
-| Settings, "Who can open these passwords", replace key, diagnostics export, remove store | later |
-| Copy and UX polish passes: shorter, plainer text everywhere; fix the janky spots the owner saw on the phone | first pass merged 2026-11-23 (about a third fewer words; Voice rules in design-language.md); second pass after the owner sees it on the phone |
+| Settings, "Who can open these passwords", replace key, diagnostics export, remove store | partly: Settings has store, GitHub, AutoFill, diagnostics and remove store. Not built: "Who can open these passwords", replace key, Face ID on/off, diagnostics export, forget server key |
+| Copy and UX polish passes: shorter, plainer text everywhere; fix the janky spots the owner saw on the phone | first pass merged 2026-11-23; second batch next (copy the GitHub code, one line for the server fingerprints, privacy cover, leftovers) |
 | App icon (paw built from discs) and wordmark rework | later |
 | Licence notices for bundled libraries | later |
 
@@ -108,6 +108,20 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 
 Several recipients (the owner's backup key), TOTP, import from other managers, creating a store from scratch, NFC, keys without a YubiKey, public App Store release.
 
+## Known gaps
+
+Things that are easy to lose track of because nothing fails when they are missing.
+
+| Gap | Why it matters |
+|---|---|
+| Release build without the simulated key and fixture | the build on the phone is a debug build that contains test code and debug controls |
+| Legacy PIN-taking exports still in the core | a second, older path to the card beside the key session |
+| Held-back changes are not re-encrypted automatically after recipients change | they stay queued until done by hand |
+| Three entries in the owner's store are encrypted to old keys | paw cannot open them; needs the owner |
+| Sync, gallery, key and enclave tests use their own slow helpers | the slowest part of a full run |
+| No unit tests in Swift; all app behaviour is tested by clicking through the simulator | slow, and model bugs are found late |
+| Background-time wrapping, file protection, keyboard refusal, auto-close on lock | built, never observed on the device |
+
 ## Needs the device
 
 | Check | Status |
@@ -115,9 +129,14 @@ Several recipients (the owner's backup key), TOTP, import from other managers, c
 | "Check the touch timeout (do not touch)" on the test screen | waiting |
 | "Read key" on the newest build, to see both slots' touch policies | waiting |
 | First real clone | done 2026-11-23 |
+| Auto-close after locking the phone and after 2 minutes away | waiting |
+| GitHub sign-in still works the next day (token renewal) | waiting |
+| After AutoFill installs: turn it on, fill with Face ID, fill with the key, suggestion bar, the confirm on another site, Face ID copy survives a fill | waiting on the build |
+| A change sent from the phone reads back in desktop `pass` | waiting |
 
 ## Open decisions for the owner
 
 1. Ink-only buttons, or an indigo accent? Draft answer: ink.
 2. Paw icon or plain gold disc? Draft answer: paw.
-3. Rent cloud Mac hours for visual polish, once real screens exist? Draft answer: try narrowed GitHub runs first.
+3. Rent a Mac or pay for larger GitHub machines? Narrowed runs were tried and are still slow; the queue is the bottleneck when tracks run in parallel.
+4. Opaque sheets (now) or glass? "Lock this password" shortened to "Lock"? Build a "forget server key" option?
