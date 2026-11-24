@@ -17,11 +17,14 @@ import Foundation
 /// domains it has filled on are kept (`SitePairings`). One paired only
 /// with other domains of the same name is not offered at all.
 ///
-/// On top of that, paw offers nothing automatically for a site whose
-/// address is not plain ASCII. iOS reports internationalised names in
-/// their `xn--` form, the core compares names as text (no IDNA mapping),
-/// and so a site spelled with lookalike letters never matches an entry
-/// spelled with plain ones. Search still finds every entry.
+/// Internationalised names: iOS reports a site in its `xn--` form, and the
+/// core compares hosts in that form on both sides (UTS-46), so the entries
+/// `bücher.example` and `xn--bcher-kva.example` both match it, and a site
+/// spelled with lookalike letters (`pаypal.com`, Cyrillic `а`) never
+/// matches an entry spelled with plain ones. Names are shown by the core's
+/// `displayHost`: Unicode only for Latin letters, else `xn--`. Name
+/// matches stay plain ASCII. paw offers nothing automatically for a site
+/// address that is not printable ASCII. Search still finds every entry.
 enum SiteMatch {
     /// The host to show for a service: `github.com` for
     /// `https://github.com/login`. `nil` if there is none.
@@ -113,14 +116,6 @@ enum EntrySite {
     /// suggestion looks broken).
     static func suggestionUser(forPath path: String) -> String {
         path.split(separator: "/").last.map(String.init) ?? path
-    }
-
-    /// The user name to fill when the entry has no `login:` (or `user:`,
-    /// `username:`, `email:`) line: the file name in a `domain/user` layout
-    /// such as `github.com/alice`, else none.
-    static func fallbackUser(forPath path: String) -> String? {
-        guard let site = domain(ofPath: path), !site.isName else { return nil }
-        return path.split(separator: "/").last.map(String.init)
     }
 
     static func isPlainHost(_ part: String) -> Bool {

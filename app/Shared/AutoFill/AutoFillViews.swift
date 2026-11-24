@@ -231,7 +231,8 @@ private struct AutoFillList: View {
 
 /// An entry that is not this site's, or is this site's by name only and
 /// has not filled on this domain, was picked: say so before Face ID or the
-/// key, inline. Not filling is the primary action.
+/// key, inline. Or it was opened and its `url:` line names another site:
+/// say so before it fills. Not filling is the primary action.
 private struct AutoFillConfirm: View {
     let model: AutoFillModel
     let entry: EntryRef
@@ -243,6 +244,8 @@ private struct AutoFillConfirm: View {
             model.site.map { "Fill \(entry.name)'s password on \($0)?" } ?? "Fill \(entry.name)'s password?"
         case .firstTime(let site), .lookalike(let site, _):
             "Use \(entry.name) on \(site)?"
+        case .urlDiffers(let url, _):
+            "This password's url is \(url)"
         }
     }
 
@@ -254,16 +257,26 @@ private struct AutoFillConfirm: View {
             "First time on this site. Check the address is right."
         case .lookalike(let site, let known):
             "You've used this on \(ListFormatter.localizedString(byJoining: known)). This is \(site)."
+        case .urlDiffers(_, let site):
+            "This is \(site)."
         }
     }
 
-    private var isLookalike: Bool {
-        if case .lookalike = reason { return true }
-        return false
+    /// Red: the entry says it belongs to another site.
+    private var isError: Bool {
+        switch reason {
+        case .lookalike, .urlDiffers: true
+        case .otherSite, .firstTime: false
+        }
     }
 
-    private var isOtherSite: Bool {
-        reason == .otherSite
+    /// "Fill anyway" rather than "Use it here": paw knows this is another
+    /// site's password.
+    private var fillsAnyway: Bool {
+        switch reason {
+        case .otherSite, .urlDiffers: true
+        case .firstTime, .lookalike: false
+        }
     }
 
     /// The full address, for a name match: the registrable domain is in
@@ -271,7 +284,8 @@ private struct AutoFillConfirm: View {
     private var address: String? {
         switch reason {
         case .otherSite: nil
-        case .firstTime(let site), .lookalike(let site, _): model.site.flatMap { $0 == site ? nil : $0 }
+        case .firstTime(let site), .lookalike(let site, _), .urlDiffers(_, let site):
+            model.site.flatMap { $0 == site ? nil : $0 }
         }
     }
 
@@ -299,7 +313,7 @@ private struct AutoFillConfirm: View {
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("autofill-confirm-question")
             } else {
-                ErrorRow(kind: isLookalike ? .error : .warning, problem: headline, nextStep: line, isBanner: true)
+                ErrorRow(kind: isError ? .error : .warning, problem: headline, nextStep: line, isBanner: true)
             }
             if let address {
                 Text(address)
@@ -312,9 +326,9 @@ private struct AutoFillConfirm: View {
             Button("Cancel") { model.backToList() }
                 .buttonStyle(.pawPrimary)
                 .accessibilityIdentifier("autofill-confirm-cancel")
-            Button(isOtherSite ? "Fill anyway" : "Use it here") { model.fillAnyway() }
+            Button(fillsAnyway ? "Fill anyway" : "Use it here") { model.fillAnyway() }
                 .buttonStyle(.pawSecondary)
-                .accessibilityIdentifier(isOtherSite ? "autofill-fill-anyway" : "autofill-use-here")
+                .accessibilityIdentifier(fillsAnyway ? "autofill-fill-anyway" : "autofill-use-here")
             Spacer(minLength: 0)
         }
         .padding(PawMetrics.Spacing.l)

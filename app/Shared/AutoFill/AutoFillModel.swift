@@ -9,8 +9,9 @@ enum AutoFillRequest: Equatable, Sendable {
     /// The key icon or "Passwords…": a list for these sites (web addresses
     /// or domains, as iOS gives them).
     case list(services: [String])
-    /// A suggestion above the keyboard was tapped: one entry, by path.
-    case entry(path: String)
+    /// A suggestion above the keyboard was tapped: one entry, by path,
+    /// and the site the suggestion was made for, when iOS says.
+    case entry(path: String, service: String? = nil)
 }
 
 /// Where a request ends. The extension passes these to iOS; the debug
@@ -31,6 +32,9 @@ enum AutoFillConfirmReason: Equatable, Sendable {
     /// Named like the site, but filled only on other domains of that name:
     /// `known` is `bankofamerica.com`, this is `bankofamerica.co`.
     case lookalike(site: String, known: [String])
+    /// Opened, and its own `url:` line names another site: `url` is that
+    /// site, `site` this one.
+    case urlDiffers(url: String, site: String)
 }
 
 /// A Face ID problem from the last tap, said at the top of the list.
@@ -111,6 +115,10 @@ final class AutoFillModel {
     /// The name match the person confirmed for this domain, recorded once
     /// it has filled: (entry path, registrable domain).
     @ObservationIgnored private var pairing: (path: String, site: String)?
+    /// The entry the person has already been warned is for another site,
+    /// in this pick, and filled anyway: its `url:` line is not checked
+    /// again.
+    @ObservationIgnored private var warned: String?
     var query = "" {
         didSet { search() }
     }
@@ -176,7 +184,7 @@ final class AutoFillModel {
                     found = SiteMatch.entries(in: source.store, for: services, pairings: source.pairings)
                     matches = found.filter { SiteMatch.isTrusted($0.kind) }.map(\.entry)
                     maybe = found.filter { $0.kind == .name(pairing: .unpaired) }.map(\.entry)
-                case .entry(let path):
+                case .entry(let path, _):
                     matches = SiteMatch.entry(path, in: source.store).map { [$0] } ?? []
                 }
             }
@@ -206,7 +214,7 @@ final class AutoFillModel {
             self.matches = matches
             switch request {
             case .list(let services):
-                site = services.lazy.compactMap(SiteMatch.host(of:)).first
+                site = services.lazy.compactMap(SiteMatch.host(of:)).first.map { displayHost(host: $0) }
                 screen = .list
             case .entry:
                 guard let entry = matches.first else {
@@ -272,6 +280,7 @@ final class AutoFillModel {
         guard screen == .list else { return }
         notice = nil
         pairing = nil
+        warned = nil
         if isSuggestion {
             open(entry)
             return
@@ -284,33 +293,51 @@ final class AutoFillModel {
         case .exactHost, .sameDomain, .name(.paired):
             open(entry)
         case .name(.unpaired):
-            screen = .confirm(entry, .firstTime(site: match.site))
+            screen = .confirm(entry, .firstTime(site: displayHost(host: match.site)))
         case .name(.pairedElsewhere(let known)):
-            screen = .confirm(entry, .lookalike(site: match.site, known: known))
+            screen = .confirm(entry, .lookalike(
+                site: displayHost(host: match.site), known: known.map { displayHost(host: $0) }))
         }
     }
 
     /// "Fill anyway" or "Use it here" on the confirm step. A name match
     /// confirmed the first time is paired with the domain once it fills.
     /// Nothing else ever is: not a password from search for another site,
-    /// and not a lookalike of a domain the entry is paired with, which
-    /// fills this once and warns every time (the core refuses it too).
+    /// not a lookalike of a domain the entry is paired with, which fills
+    /// this once and warns every time (the core refuses it too), and not
+    /// one whose `url:` line names another site.
+    ///
+    /// A first-time name match is still checked against its `url:` line
+    /// once opened. The other warnings already said this is another site,
+    /// so the entry fills without a second one.
     func fillAnyway() {
         guard case .confirm(let entry, let reason) = screen else { return }
         switch reason {
-        case .firstTime(let site):
-            pairing = (entry.path, site)
-        case .lookalike, .otherSite:
+        case .firstTime:
+            if let match = found[entry.path] {
+                pairing = (path: entry.path, site: match.site)
+            } else {
+                pairing = nil
+            }
+            warned = nil
+        case .lookalike, .otherSite, .urlDiffers:
             pairing = nil
+            warned = entry.path
         }
         screen = .list
         open(entry)
     }
 
     /// Cancel on the confirm step, or "Back to the list" after a problem:
-    /// the list again, nothing filled.
+    /// the list again, nothing filled. A suggestion has no list: its
+    /// request ends.
     func backToList() {
         pairing = nil
+        warned = nil
+        if isSuggestion, case .confirm = screen {
+            end(.userCanceled)
+            return
+        }
         switch screen {
         case .confirm, .problem(_, _, backToList: true): screen = .list
         default: break
@@ -500,8 +527,11 @@ final class AutoFillModel {
             keyStage = .touch
         case .working:
             keyStage = .working(message: "Opening \(entry.name)\u{2026}", progress: nil)
-        case .done(.opened(let opened, _)):
+        case .done(.opened(let opened, let until)):
             keyStage = .done
+            if until != nil, source?.copies != nil {
+                live.insert(entry.path)
+            }
             fill(opened, entry: entry)
         case .done:
             keyStage = .done
@@ -634,9 +664,21 @@ final class AutoFillModel {
 
     /// Hands the credential over and wipes the entry. The password is in
     /// this function's locals only, never in a view or the pasteboard.
+    ///
+    /// First, the entry's own `url:` lines: if they name another site, the
+    /// entry is wiped unread and the person is asked. Filling anyway opens
+    /// it again (Face ID, from the copy the key just kept).
     private func fill(_ opened: OpenedEntry, entry: EntryRef) {
+        if let warning = urlWarning(opened, entry: entry) {
+            opened.close()
+            source?.keyPort.session()?.forgetPin()
+            guard !finished else { return }
+            pairing = nil
+            screen = .confirm(entry, warning)
+            return
+        }
         let password = opened.password()
-        let user = opened.username() ?? EntrySite.fallbackUser(forPath: entry.path) ?? ""
+        let user = fillUsername(entry: opened, path: entry.path) ?? ""
         opened.close()
         source?.keyPort.session()?.forgetPin()
         guard let password, !password.isEmpty else {
@@ -650,6 +692,22 @@ final class AutoFillModel {
         screen = .filled
         recordPairing(entry)
         completion?.fill(user: user, password: password)
+    }
+
+    /// The warning to show before filling `entry` on this site, from its
+    /// `url:` lines (`checkEntryUrl` in the core), unless the person was
+    /// already told this is another site.
+    private func urlWarning(_ opened: OpenedEntry, entry: EntryRef) -> AutoFillConfirmReason? {
+        guard warned != entry.path else { return nil }
+        let services: [String]
+        switch request {
+        case .list(let all): services = all
+        case .entry(_, let service): services = service.map { [$0] } ?? []
+        }
+        switch checkEntryUrl(entry: opened, services: services) {
+        case .differs(let url, let site): return .urlDiffers(url: url, site: site)
+        case .noUrl, .same: return nil
+        }
     }
 
     /// After a fill the person confirmed by name: next time this domain
