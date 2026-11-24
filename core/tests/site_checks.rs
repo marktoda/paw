@@ -100,15 +100,15 @@ fn hosts_are_read_in_ascii() {
 }
 
 #[test]
-fn display_shows_unicode_only_for_latin_names() {
+fn display_is_always_the_ascii_form() {
     let cases: &[(&str, &str)] = &[
-        ("xn--bcher-kva.example", "bücher.example"),
-        ("www.xn--bcher-kva.example", "www.bücher.example"),
-        ("bücher.example", "bücher.example"),
-        ("BÜCHER.example.", "bücher.example"),
-        ("xn--mnchen-3ya.de", "münchen.de"),
-        ("xn--strae-oqa.de", "straße.de"),
-        ("xn--dbo-iwa2zka.pl", "żdźbło.pl"),
+        ("xn--bcher-kva.example", "xn--bcher-kva.example"),
+        ("www.xn--bcher-kva.example", "www.xn--bcher-kva.example"),
+        ("bücher.example", "xn--bcher-kva.example"),
+        ("BÜCHER.example.", "xn--bcher-kva.example"),
+        ("xn--mnchen-3ya.de", "xn--mnchen-3ya.de"),
+        ("xn--strae-oqa.de", "xn--strae-oqa.de"),
+        ("xn--dbo-iwa2zka.pl", "xn--dbo-iwa2zka.pl"),
         ("github.com", "github.com"),
         ("GitHub.COM", "github.com"),
         // Homographs and other scripts stay in ASCII.
@@ -214,7 +214,7 @@ fn the_entrys_url_is_checked_against_the_site() {
         (
             "pw\nurl: https://bücher.example\n",
             on("https://bucher.example"),
-            differs("bücher.example", "bucher.example"),
+            differs("xn--bcher-kva.example", "bucher.example"),
         ),
         // CRLF files, as in the fixture.
         ("pw\r\nurl: https://northwind.example\r\n", on("https://northwind.test"), differs("northwind.example", "northwind.test")),

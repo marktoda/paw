@@ -340,37 +340,20 @@ fn pairing_of(pairings: &[Pairing], path: &str, site: &str, name: &str) -> NameP
     if sites.is_empty() { NamePairing::Unpaired } else { NamePairing::PairedElsewhere { sites } }
 }
 
-/// How to show a host or domain to the person: the Unicode form
-/// (`bücher.example`) only when it cannot pass for another name, else the
-/// `xn--` form. The rule, per character of the Unicode form: ASCII, or a
-/// lower-case letter of Latin-1 Supplement or Latin Extended-A
-/// (U+00DF–U+017F without `÷`), except dotless `ı`, `ĸ` and long `ſ`, which
-/// pass for `i`, `k` and `f`. Anything else (Cyrillic, Greek, CJK, symbols,
-/// a mix) is shown as `xn--`: `pаypal.com` with a Cyrillic `а` is shown as
-/// `xn--pypal-4ve.com`. Only for display: matching is always on the ASCII
-/// form. Text that is not a host comes back as it was.
+/// How to show a host or domain to the person: lower case, no trailing
+/// dot, and always the `xn--` form for a name with non-ASCII letters, so
+/// `pаypal.com` with a Cyrillic `а` is shown as `xn--pypal-4ve.com`. Text
+/// that is not a host comes back as it was.
 #[uniffi::export]
 pub fn display_host(host: String) -> String {
     let trimmed = host.trim();
     let Some(ascii) = ascii_host(trimmed.strip_suffix('.').unwrap_or(trimmed)) else {
         return host;
     };
-    if !ascii.split('.').any(|label| label.starts_with("xn--")) {
-        return ascii;
-    }
-    let (unicode, decoded) = idna::domain_to_unicode(&ascii);
-    if decoded.is_err() || !unicode.chars().all(shows_as_is) {
-        return ascii;
-    }
-    unicode
-}
-
-/// Whether a character of a decoded host name may be shown as it is
-/// ([`display_host`]).
-fn shows_as_is(c: char) -> bool {
-    c.is_ascii()
-        || matches!(c, '\u{00DF}'..='\u{00F6}' | '\u{00F8}'..='\u{017E}')
-            && !matches!(c, '\u{0131}' | '\u{0138}')
+    // Always the `xn--` form for a name with non-ASCII letters: many
+    // accented Latin letters pass for plain ones at a glance (`ı`, `ł`,
+    // `ġ`…), and telling which do is a job for a full confusables table.
+    ascii
 }
 
 /// What an entry's own web address says about the site being filled
