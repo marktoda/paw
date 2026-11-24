@@ -41,9 +41,13 @@ final class EditTests: PawUITestCase {
     }
 
     private func chooseFolder(_ folder: String) {
-        tap("form-folder")
+        // The first tap on the menu can be spent on putting the keyboard away.
         let item = app.buttons[folder].firstMatch
-        XCTAssertTrue(item.waitForExistence(timeout: 10), "The folder menu should list \(folder)")
+        for _ in 0..<3 where !item.exists {
+            tap("form-folder")
+            if waitUntil(timeout: 5, { item.exists }) { break }
+        }
+        XCTAssertTrue(item.exists, "The folder menu should list \(folder)")
         item.tap()
         expectValue("form-folder", folder)
     }
