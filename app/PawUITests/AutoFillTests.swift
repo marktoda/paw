@@ -218,12 +218,10 @@ final class AutoFillTests: PawUITestCase {
         tap("autofill-confirm-cancel")
         expect(row(Self.northwind))
 
-        // Used here anyway: it fills this once and is never paired.
+        // Used here anyway: it fills this once (Face ID, from the copy the
+        // first fill left) and is never paired.
         tap(row(Self.northwind))
         tap("autofill-use-here")
-        expectLabel("key-sheet-purpose", contains: "Fill northwind on login.northwind.test")
-        enterPin(Self.pin)
-        touchTheKey()
         expectResult("filled user=you@example.com")
         expectValue("harness-pairings", "\(Self.northwind)=northwind.example")
         waitForKeyTasksToEnd()
