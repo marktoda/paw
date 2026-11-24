@@ -31,7 +31,7 @@ struct RecipientsScreen: View {
 
     private func load() async {
         let writer = writer
-        // Reads the first bytes of every password file: off the main thread.
+        // Reads every password file's headers: off the main thread.
         let result = await Task.detached(priority: .userInitiated) {
             Result { try writer.recipientScopes() }
         }.value
@@ -52,7 +52,7 @@ private struct RecipientScopeSection: View {
     @State private var namesShown = false
 
     private var title: String {
-        if scope.folder.isEmpty { return only ? "All passwords" : "Everywhere else" }
+        if scope.folder.isEmpty { return only ? "All passwords" : "Top of the store" }
         return scope.folder
     }
 
