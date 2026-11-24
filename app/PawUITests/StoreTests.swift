@@ -33,6 +33,7 @@ final class StoreTests: PawUITestCase {
     private func removeStore() {
         openSettings()
         tap("settings-remove-store")
+        scrollTo("settings-remove-warning")
         expectText("settings-remove-warning", contains: "not touched")
         snapshot("remove-confirm")
         tap("settings-remove-confirm")

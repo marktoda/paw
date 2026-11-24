@@ -275,18 +275,36 @@ class PawUITestCase: XCTestCase {
     func enterPin(_ pin: String, send: Bool = true, file: StaticString = #filePath, line: UInt = #line) {
         let field = pinField(file: file, line: line)
         for _ in 0..<3 {
-            field.tap()
-            XCTAssertTrue(waitToExist(app.keyboards.firstMatch, timeout: Self.patience),
-                          "The keyboard should come up for the PIN", file: file, line: line)
+            focus(field, file: file, line: line)
             clear(field)
             field.typeText(pin)
-            if typedLength(field) == pin.count { break }
+            guard typedLength(field) == pin.count else { continue }
+            // The field can lose the keyboard while the sheet redraws;
+            // the return key then has nowhere to go, so check first and
+            // type the PIN again if it went.
+            if !send { return }
+            if hasFocus(field) {
+                field.typeText("\n")
+                return
+            }
         }
         XCTAssertEqual(typedLength(field), pin.count, "Every character of the PIN should have arrived",
                        file: file, line: line)
-        if send {
-            field.typeText("\n")
+        XCTFail("The PIN field kept losing the keyboard", file: file, line: line)
+    }
+
+    /// Whether the field has the keyboard now.
+    func hasFocus(_ field: XCUIElement) -> Bool {
+        (field.value(forKey: "hasKeyboardFocus") as? Bool) == true
+    }
+
+    /// Taps the field until it has the keyboard.
+    func focus(_ field: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+        for _ in 0..<3 {
+            field.tap()
+            if waitUntil(timeout: 5, { hasFocus(field) }) { return }
         }
+        XCTFail("The field should take the keyboard", file: file, line: line)
     }
 
     /// How many characters the PIN field holds: it shows dots, or the PIN
@@ -351,9 +369,12 @@ class PawUITestCase: XCTestCase {
     /// closed until it is tapped.
     func showSimulatorControls(file: StaticString = #filePath, line: UInt = #line) {
         let row = scrollTo("sim-controls", file: file, line: line)
-        if (row.value as? String) != "shown" {
+        // A tap while a row above is still settling can miss: tap until open.
+        for _ in 0..<3 where (row.value as? String) != "shown" {
             row.tap()
+            if waitUntil(timeout: 2, { (row.value as? String) == "shown" }) { break }
         }
+        XCTAssertEqual(row.value as? String, "shown", "The simulator controls should open", file: file, line: line)
     }
 
     /// Taps a control in Settings' Simulator section, then closes Settings.
@@ -371,7 +392,7 @@ class PawUITestCase: XCTestCase {
         openSettings()
         showSimulatorControls(file: file, line: line)
         tap("sim-read-pasteboard", file: file, line: line)
-        let shown = expect("sim-pasteboard-value", file: file, line: line)
+        let shown = scrollTo("sim-pasteboard-value", file: file, line: line)
         let value = (shown.value as? String) ?? ""
         closeSettings()
         return value

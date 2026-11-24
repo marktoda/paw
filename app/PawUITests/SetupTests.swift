@@ -400,6 +400,7 @@ final class SetupTests: PawUITestCase {
         tap("settings-remove-store")
         // The confirmation opens at the foot of the list, below the fold.
         scrollTo("settings-remove-confirm")
+        scrollTo("settings-remove-warning")
         expectText("settings-remove-warning", contains: "not touched")
         snapshot("remove-confirm")
         tap("settings-remove-confirm")

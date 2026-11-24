@@ -68,7 +68,7 @@ final class AutoFillTests: PawUITestCase {
     private func search(_ text: String) {
         let search = app.searchFields.firstMatch
         XCTAssertTrue(waitToExist(search, timeout: Self.patience), "The list should have a search field")
-        search.tap()
+        focus(search)
         search.typeText(text)
     }
 

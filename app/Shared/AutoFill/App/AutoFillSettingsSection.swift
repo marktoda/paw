@@ -18,7 +18,9 @@ struct AutoFillSettingsSection: View {
             }
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("settings-autofill")
-            if enabled == false {
+            // Shown until AutoFill is known to be on, so the rows below
+            // don't move when the state arrives a moment after Settings opens.
+            if enabled != true {
                 Button("Turn on AutoFill") { turnOn() }
                     .foregroundStyle(PawColor.label)
                     .accessibilityIdentifier("settings-autofill-turn-on")
