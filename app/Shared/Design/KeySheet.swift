@@ -506,9 +506,14 @@ struct KeyStepPills: View {
         }
     }
 
+    /// Says the steps already done as well, as the pills show them: at
+    /// Touch with the PIN held from earlier, "PIN correct" tells the person
+    /// it was given before, not skipped.
     private var spokenLabel: String {
         guard current < Self.steps.count else { return "All 3 steps finished" }
-        return "Step \(current + 1) of \(Self.steps.count): \(Self.steps[current].todo)"
+        let now = "Step \(current + 1) of \(Self.steps.count): \(Self.steps[current].todo)"
+        let done = Self.steps.prefix(current).map(\.done)
+        return done.isEmpty ? now : now + ". Done: " + done.joined(separator: ", ")
     }
 }
 

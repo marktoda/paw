@@ -62,6 +62,10 @@ enum FixtureLaunch {
             dir: copiesDir.path, keystore: SimKeystoreAdapter(sim: keystore), clock: sharedClock)
         let key = SimulatedKeyHolder.shared
         let away = LaunchArguments.int("pawSimAwayMs") ?? 0
+        // The key log goes into the fixture's own folder, so Settings ›
+        // Key diagnostics shows it; set before the key is first read.
+        let keyPort = KeyPort(clock: sharedClock)
+        keyPort.setKeyLog(stateDir: root.path, process: "app")
         let model = AppModel(
             store: store, copies: copies, clock: sharedClock,
             connect: { try KeyConnection.openForSession() },
@@ -69,7 +73,8 @@ enum FixtureLaunch {
                 advanceClock: { clock.advanceMs(ms: $0) },
                 plugIn: { key.key.plugIn() },
                 startsUnplugged: key.startsUnplugged,
-                awayMs: UInt64(max(away, 0))))
+                awayMs: UInt64(max(away, 0))),
+            keyPort: keyPort)
         WritableFixture.attach(writable, to: model)
         return model
     }

@@ -120,6 +120,8 @@ final class AppTests: PawUITestCase {
         expectLabel("key-sheet-purpose", contains: "Open gitlab.com")
         expect("touch-prompt")
         expectAbsent("pin-field", "The PIN is held for the run")
+        // The PIN chip reads as done ("PIN correct"), not skipped.
+        expectLabel("key-sheet-steps", contains: "Step 3 of 3: Touch. Done: Plugged in, PIN correct")
         snapshot("touch-only")
         tapSimulated("simulated-touch")
         expectLabel("entry-title", contains: "gitlab.com")
@@ -451,5 +453,47 @@ final class AppTests: PawUITestCase {
         backgroundAndReturn()
         expectGone("large-type-group-1")
         expectValue("password-value", "hidden")
+    }
+
+    // MARK: Key log
+
+    /// A line of Settings › Key diagnostics' key log that contains `text`,
+    /// scrolled to: the list builds its rows lazily.
+    private func keyLogLine(containing text: String) -> XCUIElement {
+        let found = app.staticTexts.matching(
+            NSPredicate(format: "identifier == 'key-log-line' AND label CONTAINS %@", text)).firstMatch
+        var swipes = 0
+        while !waitToExist(found, timeout: 2) && swipes < 6 {
+            app.swipeUp()
+            swipes += 1
+        }
+        return found
+    }
+
+    func testTheKeyLogShowsTheCommandsOfAnOpenAndCopyPutsItOnThePasteboard() {
+        launch(extra: ["-pawSimPasteboardSecs", "3600"])
+        openGitHubWithKey()
+        goBack()
+        goBack()
+        openSettings()
+        tap("settings-key-diagnostics")
+        expect("key-log-copy")
+        XCTAssertTrue(keyLogLine(containing: "PSO:DECIPHER: 9000 ok").exists, "The log should show the decryption")
+        XCTAssertTrue(keyLogLine(containing: "VERIFY 00 82 (with PIN): 9000 ok").exists,
+                      "The log should show the PIN being checked, without the PIN")
+        snapshot("key-log")
+
+        tap("key-log-copy")
+        expectLabel("key-log-copy", contains: "Log copied")
+        app.buttons["diagnostics-done"].tap()
+        expectGone("diagnostics-done")
+        closeSettings()
+
+        let copied = pasteboardContents()
+        XCTAssertTrue(copied.contains("PSO:DECIPHER: 9000 ok"), copied)
+        XCTAssertTrue(copied.contains("task open: PIN held no"), copied)
+        for secret in [Self.pin, Self.githubPassword, "github.com"] {
+            XCTAssertFalse(copied.contains(secret), "The key log must not hold \(secret)")
+        }
     }
 }

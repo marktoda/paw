@@ -68,6 +68,9 @@ final class StoreRootModel {
         self.location = location
         self.clock = clock
         keyPort = KeyPort(clock: clock)
+        // The app's half of the key log; the AutoFill extension starts its
+        // own from `loadEnrolledKey`, with the same state directory.
+        keyPort.setKeyLog(stateDir: location.stateDir.path, process: "app")
         gitHub = GitHubRefresh.access(stateDir: location.stateDir)
         route()
         #if DEBUG && targetEnvironment(simulator)

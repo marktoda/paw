@@ -535,7 +535,7 @@ final class AppModel {
             case .WrongPin(let left)?:
                 request.stage = .wrongPin(triesLeft: Int(left))
             case let error?:
-                let words = KeyErrorWords(error, entry: request.entry.name)
+                let words = KeyErrorWords(pinAskedAgain: error, entry: request.entry.name)
                 request.stage = .pinAgain(triesLeft: tries, problem: words.problem, nextStep: words.nextStep)
             }
         case .busy:

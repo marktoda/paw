@@ -762,7 +762,7 @@ final class SetupModel {
             case .WrongPin(let left)?:
                 sheet.stage = .wrongPin(triesLeft: Int(left))
             case let error?:
-                let words = KeyErrorWords(error, entry: entryName(task), purpose: purpose)
+                let words = KeyErrorWords(pinAskedAgain: error, entry: entryName(task), purpose: purpose)
                 sheet.stage = .pinAgain(triesLeft: tries, problem: words.problem, nextStep: words.nextStep)
             }
         case .busy:

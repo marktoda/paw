@@ -28,6 +28,18 @@ struct KeyErrorWords: Equatable {
         self.nextStep = nextStep
     }
 
+    /// What the PIN stage says when it is asked again because of `error`
+    /// (any but a wrong PIN, which has its own stage). `PinForgotten` there
+    /// means the key lost the PIN's verification during the task: paw
+    /// dropped the PIN without trying it again, so no try was used.
+    init(pinAskedAgain error: KeyError, entry: String, purpose: Purpose = .open) {
+        if case .PinForgotten = error {
+            self.init(problem: "Your key asked for its PIN again", nextStep: "Enter it again; no try was used.")
+        } else {
+            self.init(error, entry: entry, purpose: purpose)
+        }
+    }
+
     init(_ error: KeyError, entry: String, purpose: Purpose = .open) {
         switch error {
         case .WrongPin(let triesLeft):
