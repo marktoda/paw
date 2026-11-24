@@ -73,16 +73,20 @@ final class SettingsRestTests: PawUITestCase {
         // The simulated host is not one whose keys ship with paw.
         expectText("settings-host-fingerprint", contains: "Trusted by you")
         tap("settings-host-fingerprint")
-        expect("settings-host-fingerprints")
+        // The rows below the fold don't exist until scrolled to.
+        _ = scrollTo("settings-host-fingerprints")
         expectLabel("settings-host-key", contains: "Ed25519")
         expectLabel("settings-host-key", contains: "SHA256:")
         snapshot("server-keys")
 
+        _ = scrollTo("settings-forget-host-key")
         tap("settings-forget-host-key")
         tap("settings-forget-host-confirm")
         expectText("settings-host-fingerprint", contains: "Not trusted yet")
+        _ = scrollTo("settings-check-host")
         tap("settings-check-host")
         expectLabel("settings-presented-key", contains: "SHA256:")
+        _ = scrollTo("settings-trust-host")
         tap("settings-trust-host")
         expectText("settings-host-fingerprint", contains: "Trusted by you")
     }

@@ -401,7 +401,7 @@ final class SetupTests: PawUITestCase {
         scrollTo("settings-host-fingerprint")
         expectText("settings-host-fingerprint", contains: "Trusted by you")
         tap("settings-host-fingerprint")
-        expect("settings-host-fingerprints")
+        _ = scrollTo("settings-host-fingerprints")
         snapshot("settings-server")
         tap("settings-remove-store")
         // The confirmation opens at the foot of the list, below the fold.
