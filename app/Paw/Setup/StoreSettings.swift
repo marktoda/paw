@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// Settings › Store, Face ID copies on a device, Key diagnostics and
-/// Remove (design.md 2.12). The store's part shows only on a set-up store,
-/// not on the simulator's fixture.
+/// Remove (design.md 2.12). Address and Remove show only on a set-up
+/// store; the server's keys and who can open the passwords show wherever
+/// the store can be written, the simulator's fixture included.
 struct StoreSettingsSections: View {
     let model: AppModel
     @Environment(\.storeControls) private var controls
@@ -23,23 +24,8 @@ struct StoreSettingsSections: View {
                     PawSectionHeader("Face ID copies")
                 }
             }
-            Section {
-                LabeledContent {
-                    Text(controls.address)
-                        .font(PawFont.footnote.monospaced())
-                        .foregroundStyle(PawColor.labelSecondary)
-                        .multilineTextAlignment(.trailing)
-                        .textSelection(.enabled)
-                } label: {
-                    Text("Address")
-                        .foregroundStyle(PawColor.label)
-                }
-                .accessibilityIdentifier("settings-address")
-                ServerIdentityRows(address: controls.address, fingerprints: controls.hostFingerprints)
-            } header: {
-                PawSectionHeader("Store")
-            }
         }
+        storeSection
         GitHubSettingsSection()
         Section {
             Button("Key diagnostics") { showsDiagnostics = true }
@@ -81,6 +67,43 @@ struct StoreSettingsSections: View {
         }
     }
 
+    /// Address, the server and its keys, and who can open the passwords.
+    @ViewBuilder private var storeSection: some View {
+        let sync = model.edits?.sync
+        let writer = model.edits?.writer
+        if controls != nil || sync != nil || writer != nil {
+            Section {
+                if let address = controls?.address ?? sync?.address() {
+                    LabeledContent {
+                        Text(address)
+                            .font(PawFont.footnote.monospaced())
+                            .foregroundStyle(PawColor.labelSecondary)
+                            .multilineTextAlignment(.trailing)
+                            .textSelection(.enabled)
+                    } label: {
+                        Text("Address")
+                            .foregroundStyle(PawColor.label)
+                    }
+                    .accessibilityIdentifier("settings-address")
+                }
+                if let sync {
+                    ServerIdentityRows(sync: sync)
+                }
+                if let writer {
+                    NavigationLink {
+                        RecipientsScreen(writer: writer)
+                    } label: {
+                        Text("Who can open these passwords")
+                            .foregroundStyle(PawColor.label)
+                    }
+                    .accessibilityIdentifier("settings-recipients")
+                }
+            } header: {
+                PawSectionHeader("Store")
+            }
+        }
+    }
+
     private func removeWarning(_ controls: StoreControls) -> String {
         var text = "Deletes the store, its Face ID copies and your key's record from this iPhone. "
             + "The store on the server is not touched."
@@ -102,26 +125,33 @@ struct StoreSettingsSections: View {
 }
 
 /// The store's server: its name and why paw trusts it, one row. Tapping it
-/// shows the fingerprints in place, to compare with the server's own.
+/// shows each key the server must present, by type and SHA256 fingerprint,
+/// to compare with the server's own. A server the person trusted (not one
+/// whose keys ship with paw, like GitHub's) can be forgotten; then the
+/// next check shows the key it presents now, to trust again.
 private struct ServerIdentityRows: View {
-    let address: String
-    let fingerprints: [String]
+    let sync: StoreSync
+    @State private var keys: ServerKeys?
     @State private var expanded = false
-
-    private var reading: AddressReading? { try? readStoreAddress(text: address) }
+    @State private var confirmingForget = false
+    /// The key the server presented, waiting for "Trust this server".
+    @State private var presented: ServerKey?
+    @State private var checking = false
+    @State private var problem: String?
 
     var body: some View {
-        let reading = reading
-        let bundled = reading?.hostKeyBundled ?? false
+        let shown = self.keys ?? (try? sync.serverKeys())
+        let bundled = shown?.bundled ?? false
+        let pinned = shown?.keys ?? []
         Button {
             withAnimation { expanded.toggle() }
         } label: {
             HStack(spacing: PawMetrics.Spacing.m) {
                 VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
-                    Text(reading?.host ?? "Server")
+                    Text(shown?.host ?? "Server")
                         .font(PawFont.body)
                         .foregroundStyle(PawColor.label)
-                    Text(bundled ? "Identity built into paw" : "Trusted by you")
+                    Text(bundled ? "Identity built into paw" : pinned.isEmpty ? "Not trusted yet" : "Trusted by you")
                         .font(PawFont.footnote)
                         .foregroundStyle(PawColor.labelSecondary)
                 }
@@ -140,40 +170,138 @@ private struct ServerIdentityRows: View {
         .accessibilityIdentifier("settings-host-fingerprint")
         if expanded {
             VStack(alignment: .leading, spacing: PawMetrics.Spacing.s) {
-                ForEach(Array(fingerprints.enumerated()), id: \.offset) { index, fingerprint in
-                    VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
-                        if let type = Self.keyType(index, of: fingerprints.count, bundled: bundled) {
-                            Text(type)
-                                .font(PawFont.footnote.weight(.semibold))
-                                .foregroundStyle(PawColor.label)
-                        }
-                        // One line, shrunk to fit: wrapped, iOS put a
-                        // hyphen inside it that is not part of it.
-                        Text(fingerprint)
-                            .font(PawFont.footnote.monospaced())
-                            .foregroundStyle(PawColor.labelSecondary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.5)
-                            .textSelection(.enabled)
-                    }
-                    .accessibilityElement(children: .combine)
+                ForEach(Array(pinned.enumerated()), id: \.offset) { _, key in
+                    KeyFingerprintLines(key: key, identifier: "settings-host-key")
                 }
-                Text("Compare with your server's published fingerprints.")
+                Text(pinned.isEmpty
+                     ? "paw asks you to check the server's key before it connects again."
+                     : "paw only connects to a server that shows one of these keys. "
+                        + "Compare them with your server's published fingerprints.")
                     .font(PawFont.footnote)
                     .foregroundStyle(PawColor.labelSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("settings-host-fingerprints")
+            if !bundled {
+                trustRows(pinned: pinned)
+            }
+            if let problem {
+                ErrorRow(kind: .error, problem: "The server's key wasn't changed", nextStep: problem)
+            }
         }
     }
 
-    /// The core gives fingerprints without their types. Every bundled host
-    /// ships Ed25519, ECDSA and RSA keys in that order (core
-    /// `sync/hosts.rs`); a key the person confirmed has no type to show.
-    static func keyType(_ index: Int, of count: Int, bundled: Bool) -> String? {
-        let types = ["Ed25519", "ECDSA", "RSA"]
-        guard bundled, count == types.count else { return nil }
-        return types[index]
+    @ViewBuilder private func trustRows(pinned: [ServerKey]) -> some View {
+        if !pinned.isEmpty {
+            if confirmingForget {
+                InlineConfirmRow(
+                    question: "Forget this server's key?",
+                    detail: "Sending and checking for changes wait until you check its key again.",
+                    confirmTitle: "Forget", cancelTitle: "Keep it",
+                    identifier: "settings-forget-host",
+                    onConfirm: forget,
+                    onCancel: { confirmingForget = false })
+            } else {
+                Button("Forget server key\u{2026}") { confirmingForget = true }
+                    .foregroundStyle(PawColor.danger)
+                    .accessibilityIdentifier("settings-forget-host-key")
+            }
+        } else if let presented {
+            VStack(alignment: .leading, spacing: PawMetrics.Spacing.s) {
+                KeyFingerprintLines(key: presented, identifier: "settings-presented-key")
+                Text("Compare this with what your server's admin gave you.")
+                    .font(PawFont.footnote)
+                    .foregroundStyle(PawColor.labelSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("settings-presented-host-key")
+            Button("Trust this server") { trust(presented) }
+                .foregroundStyle(PawColor.label)
+                .accessibilityIdentifier("settings-trust-host")
+            Button("Cancel") { self.presented = nil }
+                .foregroundStyle(PawColor.label)
+                .accessibilityIdentifier("settings-trust-host-cancel")
+        } else {
+            Button(checking ? "Checking\u{2026}" : "Check the server's key") { check() }
+                .foregroundStyle(PawColor.label)
+                .disabled(checking)
+                .accessibilityIdentifier("settings-check-host")
+        }
+    }
+
+    private func reload() {
+        keys = try? sync.serverKeys()
+    }
+
+    private func forget() {
+        confirmingForget = false
+        do {
+            try sync.forgetHostKey()
+            problem = nil
+        } catch {
+            problem = describeEditError(error)
+        }
+        reload()
+    }
+
+    /// Connects without the key and without logging in: network only.
+    private func check() {
+        checking = true
+        problem = nil
+        let sync = sync
+        Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                Result { try sync.checkServerKey() }
+            }.value
+            checking = false
+            switch result {
+            case .success(let key):
+                presented = key
+            case .failure(let error):
+                problem = describeEditError(error)
+            }
+        }
+    }
+
+    private func trust(_ key: ServerKey) {
+        let sync = sync
+        Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                Result { try sync.trustServerKey(fingerprint: key.fingerprint) }
+            }.value
+            presented = nil
+            if case .failure(let error) = result {
+                problem = describeEditError(error)
+            } else {
+                problem = nil
+            }
+            reload()
+        }
+    }
+}
+
+/// One host key: its type, then its fingerprint on one line.
+private struct KeyFingerprintLines: View {
+    let key: ServerKey
+    let identifier: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
+            Text(key.keyType)
+                .font(PawFont.footnote.weight(.semibold))
+                .foregroundStyle(PawColor.label)
+            // One line, shrunk to fit: wrapped, iOS put a hyphen inside it
+            // that is not part of it.
+            Text(key.fingerprint)
+                .font(PawFont.footnote.monospaced())
+                .foregroundStyle(PawColor.labelSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+                .textSelection(.enabled)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(identifier)
     }
 }

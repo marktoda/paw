@@ -14,6 +14,10 @@ struct KeyDiagnosticsView: View {
     @State private var logLines: [KeyLogLine] = []
     @State private var logProblem: String?
     @State private var logCopied = false
+    @Environment(\.gitHubAccess) private var gitHub
+    /// What Copy diagnostics put on the pasteboard, shown below it.
+    @State private var copiedReport: String?
+    @State private var assembling = false
 
     /// The most lines shown; Copy log takes them all.
     private static let shownLines = 300
@@ -66,6 +70,7 @@ struct KeyDiagnosticsView: View {
                     row("Readers", KeyConnection.readerNames.isEmpty ? "None" : KeyConnection.readerNames.joined(separator: ", "),
                         identifier: "diagnostics-readers")
                 }
+                reportSection
                 keyLogSection
             }
             .listStyle(.insetGrouped)
@@ -78,6 +83,89 @@ struct KeyDiagnosticsView: View {
                         .accessibilityIdentifier("diagnostics-done")
                 }
             }
+        }
+    }
+
+    // MARK: Copy diagnostics
+
+    @ViewBuilder private var reportSection: some View {
+        Section {
+            Button(copiedReport == nil ? "Copy diagnostics" : "Diagnostics copied", action: copyReport)
+                .foregroundStyle(PawColor.label)
+                .disabled(assembling)
+                .accessibilityIdentifier("diagnostics-copy")
+            if let copiedReport {
+                Text(copiedReport)
+                    .font(PawFont.caption.monospaced())
+                    .foregroundStyle(PawColor.labelSecondary)
+                    .lineLimit(24)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("diagnostics-report")
+            }
+        } footer: {
+            Text("App, store and key facts, and the key log. No names, addresses, fingerprints or tokens.")
+                .font(PawFont.footnote)
+                .foregroundStyle(PawColor.labelSecondary)
+        }
+    }
+
+    /// The core writes the text (core/src/report.rs, checked by
+    /// core/tests/settings.rs); the app gives only what it alone knows.
+    private func copyReport() {
+        let facts = DiagnosticsFacts(
+            appVersion: Self.bundleString("CFBundleShortVersionString"),
+            appBuild: Self.bundleString("CFBundleVersion"),
+            systemVersion: "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)",
+            deviceModel: Self.deviceModel,
+            lastSync: syncSummary,
+            lastCheckedMs: model.edits?.syncing?.lastChecked.map { Int64($0.timeIntervalSince1970 * 1000) })
+        let stateDir = model.settingsStateDir
+        let port = model.keyPort
+        let github = gitHub?.core
+        let copies = model.copies
+        assembling = true
+        Task {
+            // Reads the store, the queue and the keychain: off the main thread.
+            let text = await Task.detached(priority: .userInitiated) {
+                diagnosticsText(facts: facts, stateDir: stateDir, port: port, github: github, copies: copies)
+            }.value
+            assembling = false
+            // Plain pasteboard, as Copy log: it is pasted on a desktop.
+            UIPasteboard.general.string = text
+            copiedReport = text
+        }
+    }
+
+    /// What the sync pill says now, as one fixed word.
+    private var syncSummary: SyncSummary? {
+        guard let edits = model.edits, let syncing = edits.syncing else { return nil }
+        switch syncing.pillState(unpushed: edits.unpushed.count) {
+        case .working: return .working
+        case .upToDate: return .upToDate
+        case .needsKey: return .needsKey
+        case .notChecked: return .notChecked
+        case .notSent: return .notSent
+        case .offline: return .offline
+        case .failed: return .failed
+        case .paused: return .paused
+        }
+    }
+
+    private static func bundleString(_ key: String) -> String {
+        Bundle.main.object(forInfoDictionaryKey: key) as? String ?? "unknown"
+    }
+
+    /// The model identifier, e.g. "iPhone17,1"; the simulator's says which
+    /// device it simulates.
+    private static var deviceModel: String {
+        if let simulated = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] {
+            return simulated
+        }
+        var info = utsname()
+        uname(&info)
+        return withUnsafeBytes(of: &info.machine) { raw in
+            String(decoding: raw.prefix(while: { $0 != 0 }), as: UTF8.self)
         }
     }
 

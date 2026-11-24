@@ -103,6 +103,8 @@ struct SettingsSheet: View {
                         .foregroundStyle(PawColor.labelSecondary)
                 }
                 AutoFillSettingsSection()
+                SitesUsedSettingsSection(model: model)
+                FaceIdSettingsSection(model: model)
                 StoreSettingsSections(model: model)
                 #if DEBUG && targetEnvironment(simulator)
                 if model.simulator != nil {
