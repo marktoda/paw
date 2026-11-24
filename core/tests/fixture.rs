@@ -11,7 +11,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use paw_core::ffi::{CardConnection, ConnectionError, OpenedEntry};
 use paw_core::recipients::{Access, Recipient};
 use paw_core::sim::SimulatedKey;
-use paw_core::sim::fixture::{OTHER_KEY_FOLDER, other_key, other_key_fingerprint_hex, write_fixture_store};
+use paw_core::sim::fixture::{
+    OTHER_KEY_FOLDER, other_key, other_key_fingerprint_hex, write_fixture_store, write_name_match_entries,
+};
+use paw_core::store::service::{MatchKind, NamePairing};
 use paw_core::store::PassStore;
 use paw_core::{PawError, card_decryption_key, card_info, decrypt_entry, encrypt_to_keys};
 
@@ -310,4 +313,47 @@ fn an_entry_that_is_not_text_opens_as_an_error() {
     let refused = store.open_entry(connection, PIN.into(), "photo".into()).err().unwrap();
     assert!(matches!(refused, PawError::NotText));
     assert!(matches!(OpenedEntry::from_plaintext(vec![0xC3, 0x28]), Err(PawError::NotText)));
+}
+
+#[test]
+fn the_harness_adds_entries_named_without_a_domain_that_open_and_match_by_name() {
+    let (dir, _) = fixture();
+    write_name_match_entries(dir.path().to_str().unwrap().into()).unwrap();
+    let store = PassStore::open(dir.path().to_str().unwrap().into()).unwrap();
+    let connection = plugged();
+    for entry in ["finance/northwind", "contoso/alice"] {
+        let opened = store.open_entry(connection.clone(), PIN.into(), entry.into()).unwrap();
+        assert!(opened.view().has_password, "{entry}");
+    }
+    let found: Vec<_> = store
+        .match_site("https://www.northwind.example/login".into(), None)
+        .into_iter()
+        .map(|m| (m.entry.path, m.kind, m.site))
+        .collect();
+    assert_eq!(
+        found,
+        [(
+            "finance/northwind".to_owned(),
+            MatchKind::Name { pairing: NamePairing::Unpaired },
+            "northwind.example".to_owned()
+        )]
+    );
+}
+
+#[test]
+fn the_sites_the_autofill_tests_use_gain_no_name_matches_from_the_fixture() {
+    let (_dir, store) = fixture();
+    let sites = [
+        "https://github.com/login",
+        "https://github.com",
+        "https://example.com",
+        "https://github.com.attacker.example/login",
+        "https://nothing.example",
+        "https://paypa1.example",
+    ];
+    for site in sites {
+        let tier_one: Vec<_> = store.match_service(site.into()).into_iter().map(|m| m.entry.path).collect();
+        let all: Vec<_> = store.match_site(site.into(), None).into_iter().map(|m| m.entry.path).collect();
+        assert_eq!(all, tier_one, "{site}");
+    }
 }

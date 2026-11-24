@@ -1023,3 +1023,36 @@ fn the_ffi_draft_reports_problems_and_the_writer_checks_the_name_is_free() {
     let FolderRecipients { lines, .. } = writer(&s).folder_recipients("Work".into()).unwrap();
     assert_eq!(lines.len(), 1);
 }
+
+#[test]
+fn site_pairings_follow_a_rename_a_move_and_an_edit_and_go_with_a_delete() {
+    use paw_core::store::pairings::PairingFile;
+    let s = store();
+    let pairings = PairingFile::new(&s.state);
+    let paired = || {
+        let mut all = pairings.load().into_iter().map(|p| (p.entry, p.sites)).collect::<Vec<_>>();
+        all.sort();
+        all
+    };
+    let jira = || vec!["jira.com".to_owned()];
+    pairings.record("Work/Jira", "jira.com", None).unwrap();
+    pairings.record("Work/github.com", "github.com", None).unwrap();
+
+    writer(&s).rename("Work/Jira".into(), "Work".into(), "jira".into(), None).unwrap();
+    assert!(paired().contains(&("Work/jira".to_owned(), jira())), "{:?}", paired());
+
+    // An edit that moves it.
+    let draft = writer(&s).edit_draft(opened(&s, "Work/jira"), "Work/jira".into()).unwrap();
+    draft.set_folder("Tools".into());
+    writer(&s).save(draft, None, 0).unwrap();
+    assert!(paired().contains(&("Tools/jira".to_owned(), jira())), "{:?}", paired());
+
+    // An edit that does not move it leaves the pairings alone.
+    let draft = writer(&s).edit_draft(opened(&s, "Tools/jira"), "Tools/jira".into()).unwrap();
+    draft.set_password("new".into());
+    writer(&s).save(draft, None, 0).unwrap();
+    assert!(paired().contains(&("Tools/jira".to_owned(), jira())), "{:?}", paired());
+
+    writer(&s).delete("Tools/jira".into(), None).unwrap();
+    assert_eq!(paired(), vec![("Work/github.com".to_owned(), vec!["github.com".to_owned()])]);
+}

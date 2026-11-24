@@ -6,6 +6,7 @@
 //! [`read`] for how paw stays inside it.
 
 pub mod gpg_id;
+pub mod pairings;
 pub mod read;
 pub mod search;
 pub mod service;
@@ -17,7 +18,8 @@ use std::sync::Arc;
 use crate::PawError;
 use crate::recipients::{Access, EntryRecipients};
 use search::SearchHit;
-use service::ServiceMatch;
+use pairings::SitePairings;
+use service::{MatchedEntry, ServiceMatch};
 use tree::{EntryRef, FolderListing, StoreTree};
 
 /// A password store on this device, as the screens see it: a snapshot of
@@ -110,6 +112,14 @@ impl PassStore {
     /// [`service::match_service`].
     pub fn match_service(&self, service: String) -> Vec<ServiceMatch> {
         service::match_service(self.tree.entries(), &service)
+    }
+
+    /// The entries to offer for a website, by host and by name, each with
+    /// why; see [`service::match_site`]. `pairings` class the name
+    /// matches; without them every name match is unpaired.
+    pub fn match_site(&self, service: String, pairings: Option<Arc<SitePairings>>) -> Vec<MatchedEntry> {
+        let known = pairings.map(|p| p.pairings()).unwrap_or_default();
+        service::match_site(self.tree.entries(), &service, &known)
     }
 
     /// The keys `.gpg-id` names for entries in `folder`, as written there.

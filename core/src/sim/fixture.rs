@@ -75,6 +75,13 @@ const OTHER_KEY_ENTRIES: &[(&str, &str)] = &[
     ("archive/university", "Lecture-hall-2009\nlogin: s0912345\n"),
 ];
 
+/// Entries named without a domain, for the AutoFill harness only
+/// ([`write_name_match_entries`]), so the shared fixture stays as it is.
+const NAME_MATCH_ENTRIES: &[(&str, &str)] = &[
+    ("finance/northwind", "Ledger-otter-73\nlogin: you@example.com\n"),
+    ("contoso/alice", "Quill-maple-58\nlogin: alice@example.com\n"),
+];
+
 /// A Curve25519 encryption key the simulated card does not hold. Its
 /// private half is as public as this file.
 pub fn other_key() -> Result<PublicKey, PawError> {
@@ -141,6 +148,22 @@ pub fn write_fixture_store(dir: String) -> Result<(), PawError> {
             )?;
             write(&root.join(format!("{path}.gpg")), &ciphertext)?;
         }
+    }
+    Ok(())
+}
+
+/// Adds to the fixture store in `dir` entries named without a domain
+/// (`finance/northwind`, `contoso/alice`), encrypted for the simulated key.
+/// For the AutoFill harness; call after [`write_fixture_store`].
+#[uniffi::export]
+pub fn write_name_match_entries(dir: String) -> Result<(), PawError> {
+    let root = Path::new(&dir);
+    let card = SimulatedKey::new(String::new(), false, 0);
+    let card_key = crate::card_decryption_key(card)?;
+    for (seed, (path, contents)) in (1000u64..).zip(NAME_MATCH_ENTRIES) {
+        let ciphertext =
+            crate::encrypt_to_keys(StdRng::seed_from_u64(seed), std::slice::from_ref(&card_key), contents.as_bytes())?;
+        write(&root.join(format!("{path}.gpg")), &ciphertext)?;
     }
     Ok(())
 }

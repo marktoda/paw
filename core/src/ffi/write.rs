@@ -12,6 +12,7 @@ use std::time::Duration;
 use super::{Adapter, CardConnection, FieldView, OpenedEntry};
 use crate::copies::{CopyCache, content_id};
 use crate::generate::{self, PasswordPolicy};
+use crate::store::pairings::PairingFile;
 use crate::store::tree::StoreTree;
 use crate::write::cert::{CertificateInfo, evaluate, read_certificates};
 use crate::write::draft::join;
@@ -236,6 +237,17 @@ impl StoreWriter {
     }
 }
 
+/// An entry moved or went: its site pairings follow it. A pairing that
+/// could not be moved or removed is harmless: it is only ever used for an
+/// entry at that path that matches the site by name.
+fn pairings_moved(store: &WriteStore, from: &str, to: Option<&str>) {
+    let file = PairingFile::new(store.state_dir());
+    let _ = match to {
+        Some(to) => file.moved(from, to),
+        None => file.clear(Some(from)),
+    };
+}
+
 fn forget_copy(copies: Option<&Arc<CopyCache>>, entry: &str) {
     if let Some(copies) = copies {
         // The entry is gone either way; a copy that could not be removed
@@ -290,6 +302,9 @@ impl StoreWriter {
     ) -> Result<SaveOutcome, WriteError> {
         let draft = draft.draft();
         let (saved, doc) = self.store.save(&draft)?;
+        if let Some(previous) = &saved.previous {
+            pairings_moved(&self.store, previous, Some(&saved.entry));
+        }
         let face_id_until_ms = copies.as_ref().and_then(|copies| {
             let text = doc.to_bytes();
             // The entry is saved; a copy that cannot be made only means the
@@ -315,6 +330,7 @@ impl StoreWriter {
     pub fn delete(&self, entry: String, copies: Option<Arc<CopyCache>>) -> Result<(), WriteError> {
         self.store.delete(&entry)?;
         forget_copy(copies.as_ref(), &entry);
+        pairings_moved(&self.store, &entry, None);
         Ok(())
     }
 
@@ -332,6 +348,7 @@ impl StoreWriter {
         let saved = self.store.rename(&entry, &join(folder.trim_matches('/'), &name), None)?;
         if saved.previous.is_some() {
             forget_copy(copies.as_ref(), &entry);
+            pairings_moved(&self.store, &entry, Some(&saved.entry));
         }
         Ok(saved.entry)
     }
@@ -349,6 +366,9 @@ impl StoreWriter {
     ) -> Result<SaveOutcome, WriteError> {
         let doc = opened.duplicate_doc().ok_or_else(|| WriteError::Failed { message: "the entry was closed".into() })?;
         let saved = self.store.rename(&entry, &join(folder.trim_matches('/'), &name), Some(&doc))?;
+        if let Some(previous) = &saved.previous {
+            pairings_moved(&self.store, previous, Some(&saved.entry));
+        }
         let face_id_until_ms = match (&copies, &saved.previous) {
             (Some(copies), Some(previous)) => copies.reseal(previous, &saved.entry, &doc.to_bytes(), &saved.content_id).ok().flatten(),
             _ => None,
