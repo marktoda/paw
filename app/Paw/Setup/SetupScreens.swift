@@ -90,9 +90,6 @@ struct SetupFlowView: View {
 
 private struct WelcomeScreen: View {
     let model: SetupModel
-    #if DEBUG
-    @State private var showsSelfTest = false
-    #endif
 
     var body: some View {
         SetupPage(step: nil, title: "paw", titleFont: PawFont.homeTitle, identifier: "setup-welcome") {
@@ -123,23 +120,7 @@ private struct WelcomeScreen: View {
             }
             .buttonStyle(.pawPrimary)
             .accessibilityIdentifier("setup-start")
-            #if DEBUG
-            Button("Test my key") {
-                showsSelfTest = true
-            }
-            .buttonStyle(.borderless)
-            .font(PawFont.subheadline.weight(.semibold))
-            .foregroundStyle(PawColor.label)
-            .frame(minHeight: PawMetrics.tapMin)
-            .accessibilityIdentifier("setup-test-key")
-            #endif
         }
-        #if DEBUG
-        .sheet(isPresented: $showsSelfTest) {
-            SelfTestView(host: "app")
-                .privacyCover()
-        }
-        #endif
     }
 }
 

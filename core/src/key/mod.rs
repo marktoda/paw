@@ -121,6 +121,9 @@ pub enum KeyPurpose {
     /// Opens one entry to prove the key works, and keeps nothing.
     CheckKey { entry: String },
     SignIn { login: LoginPurpose },
+    /// Key diagnostics: one signature nobody is meant to touch for, to see
+    /// what the key answers when a touch times out.
+    CheckTouchTimeout,
 }
 
 /// Why a git login is being signed.
@@ -146,7 +149,9 @@ pub enum KeyOutcome {
     Opened { entry: Arc<OpenedEntry>, face_id_until_ms: Option<i64> },
     /// The key opened the test entry; its text was wiped at once.
     KeyChecked,
-    /// The login was signed and the caller has finished with the key.
+    /// The login was signed and the caller has finished with the key. For
+    /// `CheckTouchTimeout`: the key signed, so it was touched, or its
+    /// authentication slot asks for no touch.
     SignedIn,
 }
 

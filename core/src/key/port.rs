@@ -13,7 +13,7 @@ use super::decrypt::Plan;
 use super::enrolment::{self, KeyIdentity, KeyMismatch};
 use super::keylog::{self, Sink};
 use super::session::{Halt, KeySession};
-use super::signer::SessionSigner;
+use super::signer::{SessionSigner, authenticate};
 use super::task::{Body, KeyTask, TaskCore};
 use super::{KeyError, KeyOutcome, KeyPurpose, KeyTaskListener, KeyTaskState, LoginPurpose};
 use crate::{ApduTransport, PawError};
@@ -31,6 +31,10 @@ struct State {
     /// Where this process writes its key log, once set.
     log: Option<Arc<Sink>>,
 }
+
+/// The bytes the touch timeout check asks the key to sign: as many as an
+/// SSH login for user `git` has it sign.
+const TOUCH_CHECK_LEN: usize = 146;
 
 /// Work a task does once the key has done its part, before it ends.
 pub(crate) type After = Box<dyn FnOnce(&Arc<KeySession>) -> Result<(), KeyError> + Send>;
@@ -393,6 +397,39 @@ impl KeyPort {
                 task.set(KeyTaskState::Working { progress: None });
                 task.mark_signer_ready();
                 Ok(None)
+            },
+        )
+    }
+
+    /// Key diagnostics' touch timeout check: with the PIN (asked if the
+    /// session holds none), the key is asked for one signature with its
+    /// authentication key, of fixed bytes the size of a git login, and
+    /// nobody is meant to touch it. Shows `Touch` as a sign-in does.
+    ///
+    /// A key that waits for a touch fails the task with `TouchTimeout` once
+    /// it gives up (about 15 seconds on a YubiKey); the key log then has the
+    /// status word, how long the key waited, and what the PIN check after
+    /// it answered. `Done` with `SignedIn` means the key signed: it was
+    /// touched, or the slot asks for no touch. Nothing else is sent, and
+    /// the signature is thrown away.
+    ///
+    /// Refused before the PIN, as every task is, on a card that is not the
+    /// enrolled key, and on a key with no authentication key.
+    pub fn check_touch_timeout(self: Arc<Self>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
+        let expected = self.expected();
+        self.start(
+            KeyPurpose::CheckTouchTimeout,
+            listener,
+            expected,
+            |session| session.ssh_key().map(drop),
+            |task, session| {
+                session.ssh_key()?;
+                let unsigned: Vec<u8> = (0..TOUCH_CHECK_LEN).map(|i| i as u8).collect();
+                task.unlocked(session, |job| authenticate(job, task, &unsigned))?;
+                if task.cancelled() {
+                    return Err(Halt::Fail(KeyError::Cancelled));
+                }
+                Ok(Some(KeyOutcome::SignedIn))
             },
         )
     }

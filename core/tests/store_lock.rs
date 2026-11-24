@@ -9,6 +9,8 @@
 
 #![cfg(feature = "sim")]
 
+mod key_common;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
@@ -16,7 +18,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Barrier, Mutex, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use key_common::Driver;
 use paw_core::ffi::sync::StoreSync;
+use paw_core::key::{KeyPort, KeyTaskState};
+use paw_core::sim::copies::SimClock;
 use paw_core::github::{Endpoints, GitHubAccount, RepositoryList, SignInState, TokenVault, VaultError};
 use paw_core::lock::{STORE_LOCK_FILE, StoreLock};
 use paw_core::setup::touch::TouchExpectation;
@@ -30,6 +35,30 @@ use paw_core::sync::{self, operation, queue};
 use paw_core::write::{EntryDraft, WriteError, WriteStore};
 
 const PIN: &str = "123456";
+
+/// A sync as the app runs it: a key task on a port with `key` plugged in,
+/// driven by `driver`. Its report, or what it failed with.
+fn sync_task(
+    sync: &Arc<StoreSync>,
+    key: &Arc<SimulatedKey>,
+    push: bool,
+    driver: Arc<Driver>,
+) -> Result<operation::SyncReport, String> {
+    let port = KeyPort::new(SimClock::new(1_790_000_000_000));
+    port.attach(key.clone()).map_err(|e| e.to_string())?;
+    let task = if push {
+        sync.clone().send_with_key(port, driver.clone())
+    } else {
+        sync.clone().refresh_with_key(port, driver.clone())
+    };
+    driver.drive(&task);
+    let end = task.wait_final(Duration::from_secs(60)).ok_or("the sync task never finished")?;
+    match (end, sync.last_task_result()) {
+        (_, Err(error)) => Err(error.to_string()),
+        (KeyTaskState::Done { .. }, Ok(Some(report))) => Ok(report),
+        (other, _) => Err(format!("the sync task ended {other:?}")),
+    }
+}
 const REPOSITORY: &str = "you/password-store";
 const CHILD: &str = "PAW_LOCK_TEST_CHILD";
 
@@ -553,7 +582,8 @@ fn a_save_finishes_while_a_send_waits_for_a_touch() {
     let sync = StoreSync::open(w.state().to_string_lossy().into_owned()).unwrap();
     let sending = {
         let (sync, key) = (sync.clone(), key.clone());
-        std::thread::spawn(move || sync.send(key.as_connection(), PIN.into()))
+        // Types the PIN; the touch is the test's.
+        std::thread::spawn(move || sync_task(&sync, &key, true, Driver::typist(PIN)))
     };
     let started = Instant::now();
     while !key.waiting_for_touch() {
@@ -824,8 +854,13 @@ fn every_mutating_entry_point_returns_even_when_its_thread_holds_the_lock() {
 
             // These fetch. Under the lock they are refused at once (the
             // fetch lock is never taken under the store lock), never stuck.
-            note("store_sync.refresh", sync_api.refresh(w.key.clone().as_connection(), PIN.into()).map(drop).map_err(|e| text(&e)));
-            note("store_sync.send", sync_api.send(w.key.clone().as_connection(), PIN.into()).map(drop).map_err(|e| text(&e)));
+            // StoreSync's syncs are key tasks, on a thread of their own:
+            // they cannot run under the caller's lock, so only plainly.
+            if !nested {
+                let key = w.key.clone();
+                note("store_sync.refresh", sync_task(&sync_api, &key, false, Driver::helpful(PIN, &key)).map(drop));
+                note("store_sync.send", sync_task(&sync_api, &key, true, Driver::helpful(PIN, &key)).map(drop));
+            }
             note("sync.push", {
                 let signer = CardSigner::new(w.key.clone(), PIN, || {}).unwrap();
                 let remote = w.remote.remote().unwrap();

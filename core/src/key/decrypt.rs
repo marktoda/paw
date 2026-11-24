@@ -7,8 +7,9 @@
 //! this key, however many recipients it has). [`Plan::finish`] is the
 //! symmetric decryption, after the card is free again.
 //!
-//! The same rules as [`crate::decrypt_entry`], which stays for the one-shot
-//! functions Swift still calls.
+//! The same rules as `crate::decrypt_entry`, which builds with the `sim`
+//! feature keep as the Rust tests' own path to the card; device builds have
+//! only this one.
 
 use std::sync::Arc;
 use std::time::Instant;

@@ -15,9 +15,12 @@ use base64::Engine;
 use openpgp_card::ocard::KeyType;
 use openpgp_card::ocard::algorithm::{AlgorithmAttributes, Curve};
 use openpgp_card::ocard::crypto::PublicKeyMaterial;
+#[cfg(feature = "sim")]
 use zeroize::Zeroizing;
 
-use crate::{ApduTransport, PawError, card_err, open, verify_pin};
+use crate::{ApduTransport, PawError, card_err, open};
+#[cfg(feature = "sim")]
+use crate::verify_pin;
 
 const ED25519: &str = "ssh-ed25519";
 
@@ -86,8 +89,11 @@ pub fn card_ssh_public_key(transport: Arc<dyn ApduTransport>) -> Result<SshPubli
     }
 }
 
+#[cfg(feature = "sim")]
 /// Signs `data` with the card's authentication key and returns the 64-byte
-/// ed25519 signature.
+/// ed25519 signature, with the PIN passed in. Only in builds with the `sim`
+/// feature, for the Rust tests; the app signs through the key session
+/// (`key::SessionSigner`).
 ///
 /// `on_touch_needed` is called just before the card starts waiting for a
 /// touch, if the authentication slot's own touch policy asks for one.
@@ -120,6 +126,7 @@ pub fn card_ssh_sign(
     Ok(signature)
 }
 
+#[cfg(feature = "sim")]
 /// The card as an [`SshSigner`], for one connection attempt.
 ///
 /// It holds the PIN, so make it just before connecting and drop it as soon as
@@ -131,6 +138,7 @@ pub struct CardSigner {
     on_touch_needed: Box<dyn Fn() + Send + Sync>,
 }
 
+#[cfg(feature = "sim")]
 impl CardSigner {
     /// Reads the public key from the card. The PIN is not sent until the
     /// git host has said it accepts that key and asks for the signature.
@@ -148,6 +156,7 @@ impl CardSigner {
     }
 }
 
+#[cfg(feature = "sim")]
 impl SshSigner for CardSigner {
     fn public_key(&self) -> &SshPublicKey {
         &self.public_key

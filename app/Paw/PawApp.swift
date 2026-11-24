@@ -50,8 +50,7 @@ final class PawAppDelegate: NSObject, UIApplicationDelegate {
 }
 
 /// Setup until a store is set up, then Home on it (`StoreRoot`). In debug
-/// simulator builds, `-pawFixture 1` opens the made-up store instead, and
-/// `-pawSelfTest 1` the spike's key test screen.
+/// simulator builds, `-pawFixture 1` opens the made-up store instead.
 private struct LaunchRoot: View {
     var body: some View {
         #if DEBUG && targetEnvironment(simulator)
@@ -59,8 +58,6 @@ private struct LaunchRoot: View {
             AutoFillHarnessRoot()
         } else if FixtureLaunch.isRequested {
             FixtureRoot()
-        } else if LaunchArguments.bool("pawSelfTest") {
-            SelfTestView(host: "app")
         } else {
             StoreRoot()
         }

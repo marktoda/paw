@@ -4,12 +4,16 @@
 
 #![cfg(feature = "sim")]
 
+mod key_common;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use key_common::{Driver, finish, is_touch};
 use paw_core::PawError;
 use paw_core::copies::{CopyCache, CopyStatus};
-use paw_core::ffi::{CardConnection, ConnectionError, FaceIdOpen};
+use paw_core::ffi::FaceIdOpen;
+use paw_core::key::{KeyOutcome, KeyPort, KeyTaskState};
 use paw_core::sim::SimulatedKey;
 use paw_core::sim::copies::{SimClock, SimKeystore};
 use paw_core::sim::fixture::write_fixture_store;
@@ -19,20 +23,12 @@ const PIN: &str = "123456";
 const ENTRY: &str = "web/github.com";
 const EIGHT_HOURS: u32 = 8 * 60 * 60;
 
+/// The simulated key plugged into the app's key port. `touches` counts the
+/// times a task asked for a touch (and got one).
 struct Plugged {
     key: Arc<SimulatedKey>,
+    port: Arc<KeyPort>,
     touches: AtomicU32,
-}
-
-impl CardConnection for Plugged {
-    fn transmit(&self, apdu: Vec<u8>) -> Result<Vec<u8>, ConnectionError> {
-        Ok(self.key.exchange(apdu))
-    }
-
-    fn touch_needed(&self) {
-        self.touches.fetch_add(1, Ordering::SeqCst);
-        self.key.touch();
-    }
 }
 
 struct Phone {
@@ -49,10 +45,13 @@ fn phone() -> Phone {
     let store_dir = tempfile::tempdir().unwrap();
     write_fixture_store(store_dir.path().to_str().unwrap().into()).unwrap();
     let store = PassStore::open(store_dir.path().to_str().unwrap().into()).unwrap();
-    let key = Arc::new(Plugged { key: SimulatedKey::new(PIN.into(), true, 50), touches: AtomicU32::new(0) });
     let window = tempfile::tempdir().unwrap();
     let keystore = SimKeystore::new();
     let clock = SimClock::new(1_790_000_000_000);
+    let sim = SimulatedKey::new(PIN.into(), true, 5_000);
+    let port = KeyPort::new(clock.clone());
+    port.attach(sim.clone()).unwrap();
+    let key = Arc::new(Plugged { key: sim, port, touches: AtomicU32::new(0) });
     let copies = CopyCache::new(
         window.path().join("window").to_str().unwrap().into(),
         keystore.clone(),
@@ -62,13 +61,24 @@ fn phone() -> Phone {
 }
 
 impl Phone {
+    /// Opens the entry as the app does, with a key task that keeps a Face
+    /// ID copy for `ttl_secs`; types the PIN and touches when asked.
     fn open_with_key(&self, ttl_secs: u32) -> Option<i64> {
-        let opened = self
-            .store
-            .open_entry_keeping_copy(self.key.clone(), PIN.into(), ENTRY.into(), self.copies.clone(), ttl_secs)
-            .unwrap();
-        assert_eq!(opened.entry.password().as_deref(), Some("tidal-Quartz-88-ferns"));
-        opened.face_id_until_ms
+        let driver = Driver::helpful(PIN, &self.key.key);
+        let task = self.key.port.clone().open_entry(
+            self.store.clone(),
+            ENTRY.into(),
+            Some(self.copies.clone()),
+            ttl_secs,
+            driver.clone(),
+        );
+        driver.drive(&task);
+        let KeyTaskState::Done { outcome: KeyOutcome::Opened { entry, face_id_until_ms } } = finish(&task) else {
+            panic!("the entry did not open: {:?}", driver.states());
+        };
+        self.key.touches.fetch_add(driver.count(is_touch) as u32, Ordering::SeqCst);
+        assert_eq!(entry.password().as_deref(), Some("tidal-Quartz-88-ferns"));
+        face_id_until_ms
     }
 
     fn open_with_face_id(&self) -> Result<FaceIdOpen, PawError> {

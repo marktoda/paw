@@ -134,6 +134,11 @@ impl Driver {
         Arc::new(Self { pin: Some(pin.into()), toucher: Some(sim.clone()), ..Self::default() })
     }
 
+    /// Types `pin` at the PIN stage, but never touches.
+    pub fn typist(pin: &str) -> Arc<Self> {
+        Arc::new(Self { pin: Some(pin.into()), ..Self::default() })
+    }
+
     /// Touches `sim` when asked, but types nothing.
     pub fn toucher(sim: &Arc<SimulatedKey>) -> Arc<Self> {
         Arc::new(Self { toucher: Some(sim.clone()), ..Self::default() })

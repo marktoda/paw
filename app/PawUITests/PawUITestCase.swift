@@ -62,8 +62,10 @@ class PawUITestCase: XCTestCase {
     }
 
     /// The app on the fixture store (`-pawFixture 1`), at Home.
-    func launchFixture(appearance: String = "light", extra: [String] = []) {
-        app.launchArguments = ["-pawFixture", "1", "-pawAppearance", appearance] + keyArguments() + extra
+    func launchFixture(appearance: String = "light", touchTimeoutMs: Int = PawUITestCase.touchTimeoutMs,
+                       extra: [String] = []) {
+        app.launchArguments = ["-pawFixture", "1", "-pawAppearance", appearance]
+            + keyArguments(touchTimeoutMs: touchTimeoutMs) + extra
         app.launch()
         expect("home-title", timeout: Self.patience)
     }

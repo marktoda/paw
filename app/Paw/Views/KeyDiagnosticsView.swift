@@ -2,9 +2,10 @@ import SwiftUI
 import UIKit
 
 /// Settings › Key diagnostics on a set-up store: what the key session read
-/// when the key was plugged in. It asks for no PIN and sends nothing to the
-/// key, so it cannot get round the enrolled-key and PIN KDF checks that
-/// every key task makes. (The spike's PIN test screen is debug-only.)
+/// when the key was plugged in, which asks for no PIN and sends nothing to
+/// the key. Then the touch timeout check (`TouchTimeoutCheck`), a key task
+/// like any other, so it cannot get round the enrolled-key and PIN KDF
+/// checks every key task makes.
 ///
 /// Below that, the key log: the card commands and key sheet stages of the
 /// app and the AutoFill extension, newest first, to copy into a report.
@@ -18,6 +19,7 @@ struct KeyDiagnosticsView: View {
     /// What Copy diagnostics put on the pasteboard, shown below it.
     @State private var copiedReport: String?
     @State private var assembling = false
+    @State private var touchCheck = TouchTimeoutCheck()
 
     /// The most lines shown; Copy log takes them all.
     private static let shownLines = 300
@@ -71,10 +73,12 @@ struct KeyDiagnosticsView: View {
                         identifier: "diagnostics-readers")
                 }
                 reportSection
+                TouchTimeoutSection(model: model, check: touchCheck, finished: loadLog)
                 keyLogSection
             }
             .listStyle(.insetGrouped)
             .onAppear(perform: loadLog)
+            .onDisappear { touchCheck.cancel() }
             .navigationTitle("Key diagnostics")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

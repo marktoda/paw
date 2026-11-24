@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Signs the unsigned device build from a GitHub run and installs it on a
-# device over Wi-Fi. Runs on Linux; the signing key stays on this machine.
+# Signs the unsigned device build from a GitHub run (the `device` job's
+# Release build, without the simulated key, the fixture or the debug
+# harnesses) and installs it on a device over Wi-Fi. Runs on Linux; the
+# signing key stays on this machine.
 # Usage: install.sh [iphone|ipad] [run-id]
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -22,6 +24,10 @@ gh run download "$run" --name device-app --dir "$work"
 (cd "$work" && unzip -q Paw.app.zip)
 app="$work/Paw.app"
 appex="PlugIns/PawAutoFill.appex"
+# What Settings › About will say, e.g. "build 1a2b3c4 Release".
+python3 -I -c 'import plistlib, sys
+info = plistlib.load(open(sys.argv[1], "rb"))
+print("build", info.get("PawCommit", "?"), info.get("PawConfiguration", "a build from before the stamp"))' "$app/Info.plist"
 
 # The team ID and full entitlements come from the provisioning profiles.
 entitlements() { # profile, extra keys as python dict literal

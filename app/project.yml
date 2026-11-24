@@ -9,12 +9,23 @@ settings:
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "0.0.1"
     CURRENT_PROJECT_VERSION: "1"
+    # The commit Settings shows (Paw/BuildStamp.swift). CI passes the real
+    # one on the xcodebuild command line.
+    PAW_COMMIT: unknown
     TARGETED_DEVICE_FAMILY: "1,2"
     GENERATE_INFOPLIST_FILE: "NO"
   configs:
+    # Debug: the simulator and its UI tests. The component gallery, the
+    # launch-argument harnesses and the debug screens are compiled under
+    # DEBUG only, and the simulated hardware under
+    # `targetEnvironment(simulator)` as well.
     Debug:
-      # The component gallery (app/Paw/Gallery) is compiled under DEBUG only.
       SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+    # Release: what is installed on a device (the CI `device` job,
+    # scripts/install.sh). Optimised, no DEBUG, and linked against the core
+    # built without the `sim` feature (scripts/build-core.sh).
+    Release:
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: ""
 targets:
   Paw:
     type: application
@@ -40,6 +51,9 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false
+        # Settings › About › Build (Paw/BuildStamp.swift).
+        PawCommit: $(PAW_COMMIT)
+        PawConfiguration: $(CONFIGURATION)
         NSFaceIDUsageDescription: "Face ID opens an entry you recently opened with your key, until the time you chose runs out. Your passcode cannot be used instead."
         # The background check with the GitHub sign-in (Paw/Sync/BackgroundRefresh.swift).
         BGTaskSchedulerPermittedIdentifiers:

@@ -1,9 +1,13 @@
 import Foundation
 
+#if DEBUG
 /// The debug launch arguments (`-pawFixture 1`, `-pawSimPin 123456`), read
 /// from this launch's command line only. `UserDefaults` would also answer
 /// from values persisted in the app's defaults, which survive launches and
 /// could switch a hook on with nobody passing the argument.
+///
+/// Debug builds only: a Release build reads no launch argument at all, so
+/// nothing passed on its command line can switch a harness on.
 enum LaunchArguments {
     /// The word after `-name`, if this launch was given it.
     static func string(_ name: String) -> String? {
@@ -24,3 +28,4 @@ enum LaunchArguments {
         string(name).flatMap { Int($0) }
     }
 }
+#endif
