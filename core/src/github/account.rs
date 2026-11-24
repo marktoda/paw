@@ -76,6 +76,13 @@ impl GitHubAccount {
         self.keeper.signed_in()
     }
 
+    /// When the kept sign-in's tokens stop working, in seconds since 1970:
+    /// `(access, renewal)`, each `None` if GitHub gave no end. `None` when
+    /// signed out. Reads the vault only; the tokens stay in the core.
+    pub fn sign_in_expiry(&self) -> Result<Option<(Option<u64>, Option<u64>)>, GitHubError> {
+        Ok(self.keeper.load()?.map(|tokens| (tokens.access_expires_at, tokens.refresh_expires_at)))
+    }
+
     /// Starts a device sign-in; see [`DeviceSignIn`].
     pub fn start_sign_in(&self) -> Result<DeviceSignIn, GitHubError> {
         DeviceSignIn::start(&self.endpoints, self.keeper.clone(), self.clock.clone())

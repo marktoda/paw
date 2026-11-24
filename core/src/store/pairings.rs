@@ -224,6 +224,21 @@ impl PairingFile {
         })
     }
 
+    /// Forgets that `entry` filled on `site`, and the entry altogether if
+    /// that was its last site.
+    pub fn forget_site(&self, entry: &str, site: &str) -> std::io::Result<()> {
+        self.update(|pairings| {
+            let mut changed = false;
+            for pairing in pairings.iter_mut().filter(|p| p.entry == entry) {
+                let before = pairing.sites.len();
+                pairing.sites.retain(|s| s != site);
+                changed |= pairing.sites.len() != before;
+            }
+            pairings.retain(|p| !p.sites.is_empty());
+            changed
+        })
+    }
+
     /// Forgets one entry's pairings, or with `None` every pairing.
     pub fn clear(&self, entry: Option<&str>) -> std::io::Result<()> {
         match entry {
@@ -304,6 +319,12 @@ impl SitePairings {
     /// Forgets the pairings of `entry`, or with `None` all of them.
     pub fn clear_pairings(&self, entry: Option<String>) -> Result<(), PawError> {
         self.file.clear(entry.as_deref()).map_err(failed)
+    }
+
+    /// Settings › AutoFill › Sites used: forgets that `entry` filled on
+    /// `site`. The next fill there asks again.
+    pub fn forget_site(&self, entry: String, site: String) -> Result<(), PawError> {
+        self.file.forget_site(&entry, &site).map_err(failed)
     }
 
     /// The pairings that still hold in `store`: the entry is there and

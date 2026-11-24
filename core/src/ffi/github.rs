@@ -14,6 +14,15 @@ use crate::github::{
 use crate::sync::SyncError;
 use crate::sync::operation::SyncReport;
 
+/// When a kept GitHub sign-in stops working, seconds since 1970.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SignInExpiry {
+    /// The access token; GitHub renews it with the renewal token.
+    pub access_until_secs: Option<u64>,
+    /// The renewal token: after this, sign in again.
+    pub renewal_until_secs: Option<u64>,
+}
+
 /// The GitHub sign-in of the store kept in `state_dir`.
 #[derive(uniffi::Object)]
 pub struct GitHub {
@@ -59,6 +68,15 @@ impl GitHub {
     /// Whether a sign-in is kept. Reads the vault only; sends nothing.
     pub fn is_signed_in(&self) -> Result<bool, GitHubError> {
         self.account.signed_in()
+    }
+
+    /// When the kept sign-in ends, for Copy diagnostics: `None` when
+    /// signed out. Reads the vault only; sends nothing, shows no token.
+    pub fn sign_in_expiry(&self) -> Result<Option<SignInExpiry>, GitHubError> {
+        Ok(self.account.sign_in_expiry()?.map(|(access, renewal)| SignInExpiry {
+            access_until_secs: access,
+            renewal_until_secs: renewal,
+        }))
     }
 
     /// Starts a device sign-in: one request to GitHub with paw's client id.

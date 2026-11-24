@@ -17,6 +17,7 @@ pub mod cert;
 pub mod draft;
 pub mod keyring;
 pub mod ops;
+pub mod scopes;
 
 use std::path::Path;
 
@@ -28,6 +29,7 @@ use crate::sync::Author;
 pub use draft::{DraftField, DraftProblem, EntryDraft};
 pub use keyring::{FolderRecipients, KeySource, Keyring, LineStatus, RecipientLine};
 pub use ops::{Saved, WriteStore};
+pub use scopes::{RecipientScope, ScopeKey};
 
 /// Why a change was not made. In every case nothing in the store changed.
 #[derive(Debug, thiserror::Error, uniffi::Error)]

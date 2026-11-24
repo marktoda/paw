@@ -454,6 +454,25 @@ impl StoreSync {
     }
 }
 
+/// One host key the store's server must present.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ServerKey {
+    /// "Ed25519", "ECDSA P-256", "RSA".
+    pub key_type: String,
+    /// `SHA256:...`, as `ssh-keygen -lf` and the host's documentation show it.
+    pub fingerprint: String,
+}
+
+/// The store's server and the keys paw accepts from it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ServerKeys {
+    pub host: String,
+    pub port: u16,
+    /// The keys ship with paw; they cannot be forgotten.
+    pub bundled: bool,
+    pub keys: Vec<ServerKey>,
+}
+
 #[uniffi::export]
 impl StoreSync {
     /// Opens the store set up in `state_dir`.
@@ -472,6 +491,59 @@ impl StoreSync {
     /// The fingerprints of the host keys the store's host must present.
     pub fn host_fingerprints(&self) -> Result<Vec<String>, SyncError> {
         Ok(self.remote()?.host_key.fingerprints())
+    }
+
+    /// Settings › Store › server keys: the host, whether its keys ship
+    /// with paw (and so cannot be forgotten), and each pinned key's type
+    /// and fingerprint. A forgotten key leaves `keys` empty until the next
+    /// connection is confirmed.
+    pub fn server_keys(&self) -> Result<ServerKeys, SyncError> {
+        let host = self.address.connect_host();
+        let pin = pin_for(&crate::setup::known_hosts(&self.state_dir), host, self.address.port)?;
+        Ok(ServerKeys {
+            host: host.to_owned(),
+            port: self.address.port,
+            bundled: crate::sync::hosts::is_bundled(host, self.address.port),
+            keys: pin
+                .map(|pin| {
+                    pin.described()
+                        .into_iter()
+                        .map(|(key_type, fingerprint)| ServerKey { key_type, fingerprint })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        })
+    }
+
+    /// After Forget: connects to the store's server, without the key and
+    /// without logging in, and returns the key it presents, for the person
+    /// to compare before [`Self::trust_server_key`]. Network only.
+    pub fn check_server_key(&self) -> Result<ServerKey, SyncError> {
+        let host = self.address.connect_host();
+        let presented = crate::sync::scan_host_key(host, self.address.port)?;
+        Ok(ServerKey {
+            key_type: crate::sync::key_type_words(&presented.algorithm()),
+            fingerprint: presented.fingerprint(),
+        })
+    }
+
+    /// The person compared `fingerprint` and trusts it: connects again and
+    /// pins the key the server presents, if it is the one with that
+    /// fingerprint. Refused for a host whose keys ship with paw, and for a
+    /// host that already has a saved key (forget it first).
+    pub fn trust_server_key(&self, fingerprint: String) -> Result<(), SyncError> {
+        let host = self.address.connect_host();
+        if crate::sync::hosts::is_bundled(host, self.address.port) {
+            return Err(SyncError::Failed { message: crate::setup::bundled_refusal(host) });
+        }
+        let presented = crate::sync::scan_host_key(host, self.address.port)?;
+        if presented.fingerprint() != fingerprint.trim() {
+            return Err(SyncError::Failed {
+                message: format!("{host} now shows a different key from the one you checked"),
+            });
+        }
+        let line = presented.line()?;
+        Ok(crate::setup::known_hosts(&self.state_dir).add(host, self.address.port, &line)?)
     }
 
     /// Settings › Store › Forget server key. The next setup or sync of a

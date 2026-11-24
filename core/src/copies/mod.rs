@@ -23,6 +23,7 @@ mod dir;
 pub mod format;
 mod seams;
 
+use std::os::unix::fs::DirBuilderExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,6 +38,9 @@ pub use seams::{Clock, DeviceKeystore, KeystoreError};
 pub const DEFAULT_TTL: Duration = Duration::from_secs(8 * 60 * 60);
 /// No copy lives longer, whatever the caller asks for.
 pub const MAX_TTL: Duration = Duration::from_secs(12 * 60 * 60);
+/// In the copies folder while the person has turned Face ID copies off
+/// (Settings). Not a `.copy` file, so ending every copy leaves it.
+pub const OFF_MARKER: &str = "copies-off";
 
 /// Whether an entry can be opened by Face ID now. Asking never prompts.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -161,6 +165,32 @@ impl CopyCache {
         self.end_all()
     }
 
+    /// Whether Face ID copies are on: the default, until the person turns
+    /// them off in Settings. Both processes read the same folder.
+    pub fn copies_enabled(&self) -> bool {
+        !self.off()
+    }
+
+    /// Settings › Face ID. Off ends every copy now, as Lock now does, and
+    /// no copy is kept or opened after that: every open needs the key. On
+    /// lets the next key open keep one again. Persisted beside the copies,
+    /// so the AutoFill extension honours it with no change of its own.
+    pub fn set_copies_enabled(&self, enabled: bool) -> Result<(), PawError> {
+        let marker = self.dir.join(OFF_MARKER);
+        if enabled {
+            return dir::remove(&marker).map_err(io_err);
+        }
+        // The marker first: a copy another process seals in between is
+        // wiped by its next read and was sealed under keys reset below.
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&self.dir)
+            .and_then(|()| std::fs::write(&marker, b"off\n"))
+            .map_err(io_err)?;
+        self.end_all()
+    }
+
     /// Removes `entry`'s copy, if it has one, and no other: "Lock now" on
     /// an entry's screen, or an open that was cancelled. Never prompts and
     /// never resets the keystore. Copies that have ended are wiped too, as
@@ -171,6 +201,11 @@ impl CopyCache {
 }
 
 impl CopyCache {
+    /// The person turned copies off.
+    fn off(&self) -> bool {
+        self.dir.join(OFF_MARKER).exists()
+    }
+
     fn now(&self) -> Now {
         Now {
             wall_ms: self.clock.wall_ms(),
@@ -202,6 +237,11 @@ impl CopyCache {
     /// so a copy another process has just written is never "from the
     /// future".
     fn scan(&self, keys: &IndexKeys) -> Result<Vec<Found>, PawError> {
+        // Turned off: nothing is live, and anything written since goes.
+        if self.off() {
+            dir::wipe(&self.dir).map_err(io_err)?;
+            return Ok(Vec::new());
+        }
         let mut files = Vec::new();
         for (stem, path) in dir::copy_files(&self.dir).map_err(io_err)? {
             let Some(bytes) = dir::read(&path).map_err(io_err)? else { continue };
@@ -251,7 +291,7 @@ impl CopyCache {
         // the old ones would be unreadable, and lost, at once.
         self.scan(&self.keys()?)?;
         let keys = self.keys()?;
-        if ttl.is_zero() {
+        if ttl.is_zero() || self.off() {
             dir::remove(&self.path(&keys, entry)).map_err(io_err)?;
             return Ok(None);
         }
