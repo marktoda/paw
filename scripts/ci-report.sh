@@ -42,15 +42,24 @@ for f in s.get("testFailures", []):
 done
 
 # Across all parts: each class's total and the slowest tests, to balance the
-# split in .github/workflows/build.yml and to see what to speed up next.
+# split in .github/workflows/build.yml and to see what to speed up next. The
+# unit tests (app/PawTests) are counted apart from the UI tests.
 cat "$dest"/report-*/cases.txt 2>/dev/null | python3 -I -c '
 import re, sys
 times = []
+unit = []
 for line in sys.stdin:
-    m = re.search(r"-\[\w+\.(\w+) (\w+)\]. \w+ \(([\d.]+) seconds\)", line)
-    if m: times.append((float(m.group(3)), m.group(1), m.group(2)))
+    m = re.search(r"-\[(\w+)\.(\w+) (\w+)\]. (\w+) \(([\d.]+) seconds\)", line)
+    if not m: continue
+    if m.group(1) == "PawTests":
+        unit.append((float(m.group(5)), m.group(4)))
+    else:
+        times.append((float(m.group(5)), m.group(2), m.group(3)))
+if unit:
+    failed = len([1 for _, outcome in unit if outcome != "passed"])
+    print("== %d unit tests, %.0fs in all, %d failed" % (len(unit), sum(t for t, _ in unit), failed))
 if not times: sys.exit()
-print("== %d tests, %.0fs in all" % (len(times), sum(t for t, _, _ in times)))
+print("== %d UI tests, %.0fs in all" % (len(times), sum(t for t, _, _ in times)))
 classes = {}
 for t, c, _ in times: classes.setdefault(c, []).append(t)
 for c, ts in sorted(classes.items(), key=lambda kv: -sum(kv[1])):

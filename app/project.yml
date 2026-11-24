@@ -21,6 +21,8 @@ settings:
     # `targetEnvironment(simulator)` as well.
     Debug:
       SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+      # The unit tests (PawTests) reach the app's internal types.
+      ENABLE_TESTABILITY: "YES"
     # Release: what is installed on a device (the CI `device` job,
     # scripts/install.sh). Optimised, no DEBUG, and linked against the core
     # built without the `sim` feature (scripts/build-core.sh).
@@ -131,12 +133,34 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.marktoda.paw.uitests
         GENERATE_INFOPLIST_FILE: "YES"
         TEST_TARGET_NAME: Paw
+  # Unit tests, hosted in the Debug simulator app: the models and the
+  # wording, on the core's simulated key, keystore, clock and fixture
+  # store in-process, with no UI. They run once per CI run
+  # (scripts/ci-test.sh).
+  PawTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - PawTests
+    dependencies:
+      - target: Paw
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.marktoda.paw.tests
+        GENERATE_INFOPLIST_FILE: "YES"
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Paw.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Paw
+        BUNDLE_LOADER: $(TEST_HOST)
+        # The app's Swift module imports the core's C module; the
+        # simulator library's module map (scripts/build-core.sh).
+        SWIFT_INCLUDE_PATHS: $(PROJECT_DIR)/build/core/headers
 schemes:
   Paw:
     build:
       targets:
         Paw: all
         PawUITests: [test]
+        PawTests: [test]
     test:
       targets:
         - PawUITests
+        - PawTests

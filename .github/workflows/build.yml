@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Run only these UI tests: space-separated Class or Class/test names. Empty runs all."
+        description: "Run only these tests: space-separated Class or Class/test names, UI (app/PawUITests) or unit (app/PawTests). The unit tests always run too. Empty runs all."
         default: ""
 
 concurrency:
@@ -70,7 +70,10 @@ jobs:
           retention-days: 3
 
   # Splits the UI tests across machines (up to 5 for a full run, 4 for a
-  # narrowed one) so a run takes as long as its slowest part. On a push to
+  # narrowed one) so a run takes as long as its slowest part. The unit
+  # tests (app/PawTests, seconds in all) run once: in the last part of a
+  # full run, which names no tests and so runs them, and in the first part
+  # of a narrowed one (`unit`). On a push to
   # main it also looks for a full run that already passed on exactly these
   # files (same git tree, e.g. the branch that was fast-forwarded) and, if
   # there is one, the simulator jobs are skipped.
@@ -112,7 +115,9 @@ jobs:
           import glob, json, os, re, sys
           # Seconds a test of each class takes on a runner (scripts/ci-report.sh
           # prints them). Only the balance between parts depends on these.
-          # Measured on run 45500441073 (2026-11-24).
+          # Measured on run 45500441073 (2026-11-24). Since then 3 AppTests and
+          # 4 LifecycleTests became unit tests (app/PawTests); each class's
+          # per-test weight stands.
           weight = {"EditTests": 123, "SyncTests": 113, "LifecycleTests": 116, "SettingsRestTests": 78,
                     "KeyTests": 65, "EnclaveTests": 59, "BackgroundRefreshTests": 59, "GitHubTests": 55,
                     "AppTests": 53, "StoreTests": 52, "LicencesTests": 50, "SetupTests": 32,
@@ -129,6 +134,14 @@ jobs:
                       tests.setdefault(cls, []).append(m.group(1))
           w = lambda cls: weight.get(cls, 60)
           only = os.environ.get("ONLY", "").split()
+          # A narrowed run always runs every unit test, in its first part, so
+          # a unit test class named (app/PawTests/<Class>.swift) needs no part
+          # of its own.
+          unit_classes = {"PawTests"} | {os.path.basename(p)[:-6] for p in glob.glob("app/PawTests/*.swift")}
+          named_only = only
+          only = [n for n in only if n.split("/")[0] not in unit_classes]
+          if named_only and not only:
+              only = ["PawTests"]
           parts = []
           if only:
               # One machine per class named, at most 4.
@@ -140,7 +153,9 @@ jobs:
               for cls in sorted(groups, key=lambda c: -load(groups[c])):
                   min(bins, key=load).extend(groups[cls])
               n = len(bins)
-              parts = [{"name": f"only-{i + 1}-of-{n}", "only": " ".join(b), "skip": ""} for i, b in enumerate(bins)]
+              # The first part runs the unit tests as well (PAW_UNIT).
+              parts = [{"name": f"only-{i + 1}-of-{n}", "only": " ".join(b), "skip": "", "unit": "1" if i == 0 else ""}
+                       for i, b in enumerate(bins)]
           else:
               # Tests in class order, cut into 5 parts of about equal time.
               # The last part runs whatever the others do not name, so a test
@@ -149,7 +164,9 @@ jobs:
               # The iPad tests run once, on an iPad simulator, as their own part.
               pad = tests.pop("IPadTests", None)
               items = [(cls, t) for cls in sorted(tests) for t in tests[cls]]
-              total = sum(w(c) for c, _ in items) or 1
+              # The last part also runs the unit tests: leave it that much less.
+              unit = 40
+              total = sum(w(c) for c, _ in items) + unit
               bins = [[] for _ in range(k)]
               done = 0
               for cls, t in items:
@@ -203,6 +220,7 @@ jobs:
         env:
           PAW_ONLY: ${{ matrix.only }}
           PAW_SKIP: ${{ matrix.skip }}
+          PAW_UNIT: ${{ matrix.unit }}
         run: scripts/ci-test.sh ${{ matrix.family }}
       # Keeps the device job's scan honest: every pattern it looks for must
       # be found in this Debug simulator build, which has all of it. (A Debug
