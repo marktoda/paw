@@ -125,6 +125,15 @@ pub fn remove_stale_temps(dir: &Path) -> std::io::Result<()> {
     remove_temps(dir, false)
 }
 
+/// Creates `dir/<name>` (empty) and flushes it and the directory entry to
+/// disk, so it is still there after a power loss.
+pub fn write_marker(dir: &Path, name: &str) -> std::io::Result<()> {
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
+    let file = std::fs::OpenOptions::new().write(true).create(true).truncate(false).mode(0o600).open(dir.join(name))?;
+    file.sync_all()?;
+    std::fs::File::open(dir)?.sync_all()
+}
+
 /// Removes every copy and temporary file. Anything else in `dir` is left.
 pub fn wipe(dir: &Path) -> std::io::Result<()> {
     for (_, path) in copy_files(dir)? {

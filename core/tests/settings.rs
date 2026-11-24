@@ -174,6 +174,53 @@ fn turning_copies_off_ends_them_in_both_processes_and_keeps_none() {
     assert_eq!(app.list().unwrap().len(), 1);
 }
 
+#[test]
+fn turning_copies_off_ends_them_even_if_the_setting_cannot_be_written() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let window = dir.path().join("window");
+    let keystore = SimKeystore::new();
+    let clock = SimClock::new(1_790_000_000_000);
+    let app = copies_in(&window, &keystore, &clock);
+    app.put("web/github.com", b"pw\n", b"id", Duration::from_secs(3600)).unwrap().unwrap();
+    // As good as a full disk: nothing new can be created in the folder.
+    std::fs::set_permissions(&window, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+    let result = app.set_copies_enabled(false);
+    let opened = app.open("web/github.com", b"id", "Open").map(|text| text.to_vec());
+
+    std::fs::set_permissions(&window, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(result.is_err(), "the failure is reported");
+    assert_eq!(keystore.reset_count(), 1, "the keys were reset anyway");
+    assert!(opened.is_err(), "the copy can no longer be opened");
+    assert!(app.list().unwrap().is_empty());
+}
+
+#[test]
+fn turning_copies_on_wipes_a_copy_sealed_while_they_were_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let window = dir.path().join("window");
+    let keystore = SimKeystore::new();
+    let clock = SimClock::new(1_790_000_000_000);
+    let app = copies_in(&window, &keystore, &clock);
+    app.set_copies_enabled(false).unwrap();
+    // A `put` in the other process that saw "on" just before the switch
+    // seals under the keys reset by it and writes its copy afterwards. The
+    // same file, made in a folder that is on and moved in.
+    let elsewhere = dir.path().join("elsewhere");
+    let late = copies_in(&elsewhere, &keystore, &clock);
+    late.put("web/github.com", b"pw\n", b"id", Duration::from_secs(3600)).unwrap().unwrap();
+    for child in std::fs::read_dir(&elsewhere).unwrap() {
+        let child = child.unwrap();
+        std::fs::rename(child.path(), window.join(child.file_name())).unwrap();
+    }
+
+    app.set_copies_enabled(true).unwrap();
+
+    assert!(app.list().unwrap().is_empty(), "{:?}", app.list());
+    assert_eq!(app.status("web/github.com", b"id").unwrap(), CopyStatus::NeedsKey);
+}
+
 // MARK: Sites used
 
 #[test]

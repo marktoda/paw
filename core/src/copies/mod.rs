@@ -23,7 +23,6 @@ mod dir;
 pub mod format;
 mod seams;
 
-use std::os::unix::fs::DirBuilderExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -175,20 +174,26 @@ impl CopyCache {
     /// no copy is kept or opened after that: every open needs the key. On
     /// lets the next key open keep one again. Persisted beside the copies,
     /// so the AutoFill extension honours it with no change of its own.
+    ///
+    /// The setting is the marker file's presence: absent means on, as the
+    /// app has always written it. Off flushes it to disk, so a power loss
+    /// cannot turn copies back on.
     pub fn set_copies_enabled(&self, enabled: bool) -> Result<(), PawError> {
         let marker = self.dir.join(OFF_MARKER);
         if enabled {
+            // A `put` that saw "on" just before copies went off may have
+            // sealed under the keys reset then, and written its copy since.
+            // While the marker is there nothing reads it; wipe it before the
+            // marker goes, or it would be live again.
+            dir::wipe(&self.dir).map_err(io_err)?;
             return dir::remove(&marker).map_err(io_err);
         }
         // The marker first: a copy another process seals in between is
-        // wiped by its next read and was sealed under keys reset below.
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(&self.dir)
-            .and_then(|()| std::fs::write(&marker, b"off\n"))
-            .map_err(io_err)?;
-        self.end_all()
+        // wiped by its next read and was sealed under keys reset below. If
+        // the marker cannot be written, every copy still ends.
+        let marked = dir::write_marker(&self.dir, OFF_MARKER).map_err(io_err);
+        let ended = self.end_all();
+        marked.and(ended)
     }
 
     /// Removes `entry`'s copy, if it has one, and no other: "Lock now" on
