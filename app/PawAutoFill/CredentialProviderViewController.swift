@@ -30,7 +30,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             end(.credentialIdentityNotFound)
             return
         }
-        show(.entry(path: path))
+        show(.entry(path: path, service: Self.service(of: credentialRequest)))
     }
 
     /// Every way the provider can go away ends its key tasks and drops the
@@ -55,6 +55,14 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         guard let identity = request.credentialIdentity as? ASPasswordCredentialIdentity,
               let path = identity.recordIdentifier, !path.isEmpty else { return nil }
         return path
+    }
+
+    /// The site the suggestion was published for, which the entry's own
+    /// `url:` line is checked against.
+    private static func service(of request: ASCredentialRequest) -> String? {
+        guard let identity = request.credentialIdentity as? ASPasswordCredentialIdentity else { return nil }
+        let service = identity.serviceIdentifier.identifier
+        return service.isEmpty ? nil : service
     }
 
     private func show(_ request: AutoFillRequest) {

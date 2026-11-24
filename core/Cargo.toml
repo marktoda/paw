@@ -32,6 +32,11 @@ flate2 = { version = "1", default-features = false, features = ["zlib-rs"], opti
 # the only transport is our own, over russh (see src/sync/transport.rs).
 git2 = { version = "0.21", default-features = false, features = ["vendored-libgit2"] }
 hmac = "0.12"
+# International domain names for site matching (src/store/service.rs): UTS-46
+# to the `xn--` form. The adapter is pinned to 1.1, its unicode-rs back end
+# (small, pure Rust), instead of ICU4X.
+idna = "1.1"
+idna_adapter = "=1.1.0"
 openpgp-card = "0.7.3"
 openpgp-card-rpgp = "0.9.1"
 pgp = "0.21.1"

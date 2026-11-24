@@ -326,7 +326,9 @@ enum MatchTable {
         ("https://alice.github.io/x", ["web/alice.github.io"]),
         ("http://192.168.1.1:8080/admin", ["web/192.168.1.1"]),
         ("http://192.168.1.10", []),
-        ("https://xn--exmple-cua.com", ["web/xn--exmple-cua.com"]),
+        // Compared in the `xn--` form: both spellings are this site.
+        ("https://xn--exmple-cua.com", ["web/ex\u{00E4}mple.com", "web/xn--exmple-cua.com"]),
+        ("https://xn--gthub-n2e.com", ["web/g\u{0456}thub.com"]),
         ("https://ex\u{00E4}mple.com", []),
         ("https://[::1]/", []),
         ("", []),
