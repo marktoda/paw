@@ -515,6 +515,37 @@ impl StoreSync {
         })
     }
 
+    /// After Forget: connects to the store's server, without the key and
+    /// without logging in, and returns the key it presents, for the person
+    /// to compare before [`Self::trust_server_key`]. Network only.
+    pub fn check_server_key(&self) -> Result<ServerKey, SyncError> {
+        let host = self.address.connect_host();
+        let presented = crate::sync::scan_host_key(host, self.address.port)?;
+        Ok(ServerKey {
+            key_type: crate::sync::key_type_words(&presented.algorithm()),
+            fingerprint: presented.fingerprint(),
+        })
+    }
+
+    /// The person compared `fingerprint` and trusts it: connects again and
+    /// pins the key the server presents, if it is the one with that
+    /// fingerprint. Refused for a host whose keys ship with paw, and for a
+    /// host that already has a saved key (forget it first).
+    pub fn trust_server_key(&self, fingerprint: String) -> Result<(), SyncError> {
+        let host = self.address.connect_host();
+        if crate::sync::hosts::is_bundled(host, self.address.port) {
+            return Err(SyncError::Failed { message: crate::setup::bundled_refusal(host) });
+        }
+        let presented = crate::sync::scan_host_key(host, self.address.port)?;
+        if presented.fingerprint() != fingerprint.trim() {
+            return Err(SyncError::Failed {
+                message: format!("{host} now shows a different key from the one you checked"),
+            });
+        }
+        let line = presented.line()?;
+        Ok(crate::setup::known_hosts(&self.state_dir).add(host, self.address.port, &line)?)
+    }
+
     /// Settings › Store › Forget server key. The next setup or sync of a
     /// host that is not bundled asks to confirm its key again. A bundled
     /// host's keys (github.com's, ...) cannot be forgotten: `Failed`.

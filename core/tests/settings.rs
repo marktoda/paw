@@ -361,3 +361,48 @@ fn diagnostics_say_what_they_should_and_name_nothing() {
         assert!(text.contains(line), "missing {line:?} in:\n{text}");
     }
 }
+
+#[test]
+fn the_simulator_seeds_sites_used_from_the_fixture() {
+    // What `-pawSimPairings 1` records in Settings › Sites used.
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    paw_core::sim::fixture::write_fixture_store(repo.to_string_lossy().into_owned()).unwrap();
+    let store = paw_core::store::PassStore::open(repo.to_string_lossy().into_owned()).unwrap();
+    let pairings = SitePairings::open(dir.path().to_string_lossy().into_owned());
+    assert!(pairings.record_pairing(store.clone(), "email/fastmail".into(), "https://www.fastmail.com".into()).unwrap());
+    assert!(pairings.record_pairing(store, "work/Jira".into(), "https://jira.com".into()).unwrap());
+    let found: Vec<(String, Vec<String>)> = pairings.pairings().into_iter().map(|p| (p.entry, p.sites)).collect();
+    assert_eq!(
+        found,
+        vec![
+            ("email/fastmail".to_owned(), vec!["fastmail.com".to_owned()]),
+            ("work/Jira".to_owned(), vec!["jira.com".to_owned()]),
+        ]
+    );
+}
+
+#[test]
+fn a_forgotten_server_key_is_checked_and_trusted_again() {
+    let server = support::GitServer::start(&[]);
+    let state = tempfile::tempdir().unwrap();
+    std::fs::write(state.path().join("remote"), format!("{}\n", server.sim.address())).unwrap();
+    let sync = StoreSync::open(state.path().to_string_lossy().into_owned()).unwrap();
+    assert!(sync.server_keys().unwrap().keys.is_empty(), "nothing trusted yet");
+
+    let presented = sync.check_server_key().unwrap();
+    assert_eq!(presented.key_type, "Ed25519");
+    assert_eq!(presented.fingerprint, server.sim.host_key_fingerprint());
+    // A fingerprint the person did not see is not pinned.
+    assert!(sync.trust_server_key("SHA256:somethingElse".into()).is_err());
+    assert!(sync.server_keys().unwrap().keys.is_empty());
+
+    sync.trust_server_key(presented.fingerprint.clone()).unwrap();
+    let keys = sync.server_keys().unwrap();
+    assert!(!keys.bundled);
+    assert_eq!(keys.keys, vec![presented.clone()]);
+    // A second trust without Forget is refused.
+    assert!(sync.trust_server_key(presented.fingerprint).is_err());
+    sync.forget_host_key().unwrap();
+    assert!(sync.server_keys().unwrap().keys.is_empty());
+}
