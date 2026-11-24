@@ -284,3 +284,113 @@ fn a_waiting_change_is_not_pushed_after_its_recipients_changed() {
     git(w.desktop.path(), &["pull", "--quiet", "--ff-only"]);
     assert_eq!(w.decrypt(w.desktop.path(), "Work/new"), "newer-pw\n");
 }
+
+/// The desktop adds the fixture's other key to the whole store.
+fn add_a_recipient(w: &World) -> (String, String) {
+    let card_fpr = w.card.fingerprint_hex();
+    let other_fpr = hex(paw_core::sim::fixture::other_key().unwrap().fingerprint().as_bytes());
+    w.desktop_push(&[(".gpg-id", format!("{card_fpr}\n{other_fpr}\n").into_bytes())], "Add a recipient.");
+    w.pull();
+    (card_fpr, other_fpr)
+}
+
+/// Opens a waiting ciphertext with the card, as the key task would.
+fn open_with_card(
+    w: &World,
+    opened: &std::cell::RefCell<Vec<String>>,
+) -> impl FnMut(&queue::HeldBack, &[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>, sync::SyncError> {
+    move |item, bytes| {
+        opened.borrow_mut().push(item.entry.clone());
+        Ok(zeroize::Zeroizing::new(decrypt_entry(w.card.clone(), PIN, bytes, &|| {}).unwrap()))
+    }
+}
+
+fn head(dir: &Path) -> String {
+    git2::Repository::open(dir).unwrap().head().unwrap().target().unwrap().to_string()
+}
+
+#[test]
+fn held_back_changes_are_encrypted_again_once_the_new_recipients_are_accepted_and_then_sent() {
+    let w = world();
+    w.write().save(&new_entry("Work", "new", "new-pw")).unwrap();
+    let mut edit = w.open("Work/new");
+    edit.set_password("newer-pw");
+    w.write().save(&edit).unwrap();
+    w.write().delete("Work/Jira").unwrap();
+    let (_, other_fpr) = add_a_recipient(&w);
+    let before = queued(&w);
+    assert_eq!(queue::held_back(&w.repo(), w.state.path()).unwrap().len(), 2);
+    let opened = std::cell::RefCell::new(Vec::new());
+
+    // Not accepted yet: nothing is opened and nothing changes.
+    let tip = head(&w.repo());
+    let report = queue::reencrypt_held_back(&w.repo(), w.state.path(), &mut open_with_card(&w, &opened)).unwrap();
+    assert_eq!(report, queue::Reencrypted { reencrypted: 0, not_accepted: 2 });
+    assert!(opened.borrow().is_empty());
+    assert_eq!(head(&w.repo()), tip);
+
+    Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Work").unwrap();
+    let report = queue::reencrypt_held_back(&w.repo(), w.state.path(), &mut open_with_card(&w, &opened)).unwrap();
+
+    assert_eq!(report, queue::Reencrypted { reencrypted: 2, not_accepted: 0 });
+    assert_eq!(*opened.borrow(), ["Work/new", "Work/new"]);
+    assert_eq!(queued(&w), before, "the same changes, in the same order");
+    assert!(queue::held_back(&w.repo(), w.state.path()).unwrap().is_empty());
+    let bytes = std::fs::read(w.repo().join("Work/new.gpg")).unwrap();
+    let found = paw_core::recipients::entry_recipients(&bytes).unwrap();
+    assert_eq!(found.keys.len(), 2, "{found:?}");
+    assert!(found.keys.iter().any(|k| k.describe().contains(&other_fpr[24..28])), "{found:?}");
+    assert_eq!(w.decrypt(&w.repo(), "Work/new"), "newer-pw\n");
+
+    let report = operation::send_checked(&w.server.remote(), &signer(&w.card), &w.repo(), w.state.path()).unwrap();
+    assert_eq!(report.state, SyncState::UpToDate);
+    assert_eq!(report.pushed, 3);
+    git(w.desktop.path(), &["pull", "--quiet", "--ff-only"]);
+    assert_eq!(w.decrypt(w.desktop.path(), "Work/new"), "newer-pw\n");
+    assert!(!w.desktop.path().join("Work/Jira.gpg").exists());
+    // Every version of it that was sent is encrypted for both keys.
+    let desktop = git2::Repository::open(w.desktop.path()).unwrap();
+    let mut commit = desktop.head().unwrap().peel_to_commit().unwrap();
+    for _ in 0..3 {
+        if let Ok(entry) = commit.tree().unwrap().get_path(Path::new("Work/new.gpg")) {
+            let blob = desktop.find_blob(entry.id()).unwrap();
+            assert_eq!(paw_core::recipients::entry_recipients(blob.content()).unwrap().keys.len(), 2, "{}", commit.id());
+        }
+        commit = commit.parent(0).unwrap();
+    }
+}
+
+#[test]
+fn a_save_while_the_held_back_changes_are_being_opened_stops_the_re_encryption() {
+    let w = world();
+    w.write().save(&new_entry("Work", "new", "new-pw")).unwrap();
+    add_a_recipient(&w);
+    Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Work").unwrap();
+
+    let mut open = |_: &queue::HeldBack, bytes: &[u8]| {
+        // Meanwhile, a save (in the app, with no lock held here).
+        w.write().save(&new_entry("Work", "meanwhile", "pw")).unwrap();
+        Ok(zeroize::Zeroizing::new(decrypt_entry(w.card.clone(), PIN, bytes, &|| {}).unwrap()))
+    };
+    let error = queue::reencrypt_held_back(&w.repo(), w.state.path(), &mut open).unwrap_err();
+
+    assert!(error.to_string().contains("try again"), "{error}");
+    assert_eq!(queue::held_back(&w.repo(), w.state.path()).unwrap().len(), 1, "nothing was re-encrypted");
+    assert_eq!(queue::unpushed(&w.repo()).unwrap().len(), 2, "the save made meanwhile is kept");
+}
+
+#[test]
+fn a_held_back_change_that_cannot_be_opened_is_left_as_it_was() {
+    let w = world();
+    w.write().save(&new_entry("Work", "new", "new-pw")).unwrap();
+    add_a_recipient(&w);
+    Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Work").unwrap();
+    let tip = head(&w.repo());
+
+    let mut open = |_: &queue::HeldBack, _: &[u8]| Err(sync::SyncError::Failed { message: "no touch".into() });
+    let error = queue::reencrypt_held_back(&w.repo(), w.state.path(), &mut open).unwrap_err();
+
+    assert!(error.to_string().contains("no touch"), "{error}");
+    assert_eq!(head(&w.repo()), tip);
+    assert_eq!(queue::held_back(&w.repo(), w.state.path()).unwrap().len(), 1);
+}

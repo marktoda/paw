@@ -829,3 +829,106 @@ fn a_store_with_no_chosen_repository_is_not_refreshed() {
     assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::NotLinked);
     assert_eq!(w.github.request_count(), before);
 }
+
+// --- the background task: stopped from another thread, bounded, busy ----------------
+
+/// No lock is left: the store lock can be taken at once, and git left no
+/// lock file behind.
+fn assert_no_lock_left(w: &World) {
+    let free = paw_core::lock::StoreLock::for_state_dir(w.state_dir()).exclusive_within(Duration::ZERO);
+    assert!(free.is_ok(), "the store lock is still held");
+    drop(free);
+    let git = w.repo().join(".git");
+    let left: Vec<PathBuf> =
+        files_under(&git).into_iter().map(|(p, _)| p).filter(|p| p.extension().is_some_and(|e| e == "lock")).collect();
+    assert!(left.is_empty(), "git lock files left: {left:?}");
+}
+
+fn wait_for_stalled_pack(w: &World) {
+    let started = std::time::Instant::now();
+    while w.github.stalled_packs() == 0 {
+        assert!(started.elapsed() < secs(10), "the fetch never reached the pack");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn a_stop_from_another_thread_mid_transfer_ends_the_run_with_nothing_changed() {
+    let w = Arc::new(world());
+    w.set_up();
+    let head = w.head();
+    let changed = w.remote.commit_file(NEW_ENTRY.into(), vec![b's'; 64 << 10], "A big one.".into()).unwrap();
+    w.github.stall_packs();
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let running = {
+        let (w, stop) = (w.clone(), stop.clone());
+        std::thread::spawn(move || w.account.background_refresh_with(secs(25), &|_| stop.load(Ordering::SeqCst)))
+    };
+    wait_for_stalled_pack(&w);
+
+    // The expiration handler: stop, then the next chunk ends the transfer.
+    stop.store(true, Ordering::SeqCst);
+    w.github.release_packs();
+    let report = running.join().unwrap();
+
+    assert_eq!(report.outcome, BackgroundOutcome::OutOfTime, "{report:?}");
+    assert_eq!(w.head(), head);
+    w.assert_consistent();
+    assert_no_lock_left(&w);
+    assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::Updated);
+    assert_eq!(w.head(), changed);
+}
+
+#[test]
+fn a_stalled_transfer_ends_by_the_deadline() {
+    let w = world();
+    w.set_up();
+    let head = w.head();
+    w.remote.commit_file(NEW_ENTRY.into(), vec![b's'; 64 << 10], "A big one.".into()).unwrap();
+    w.github.stall_packs();
+
+    let started = std::time::Instant::now();
+    let report = w.account.background_refresh(secs(2));
+    let took = started.elapsed();
+    w.github.release_packs();
+
+    assert_eq!(report.outcome, BackgroundOutcome::OutOfTime, "{report:?}");
+    assert!(took < secs(6), "the run took {took:?} with a 2 s budget");
+    assert_eq!(w.head(), head);
+    w.assert_consistent();
+    assert_no_lock_left(&w);
+}
+
+#[test]
+fn a_store_in_use_ends_the_background_run_busy_and_changes_nothing() {
+    let w = world();
+    w.set_up();
+    let head = w.head();
+    let changed = w.remote.commit_file(NEW_ENTRY.into(), b"x".to_vec(), "Add.".into()).unwrap();
+    // A save in the app (another thread) holds the store.
+    let (taken, release) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
+    let holder = {
+        let state = w.state_dir().to_path_buf();
+        let (taken, release) = (taken.0, release.1);
+        std::thread::spawn(move || {
+            let held = paw_core::lock::StoreLock::for_state_dir(&state).exclusive().unwrap();
+            taken.send(()).unwrap();
+            release.recv().unwrap();
+            drop(held);
+        })
+    };
+    taken.1.recv().unwrap();
+
+    let started = std::time::Instant::now();
+    let report = w.account.background_refresh(secs(25));
+    let took = started.elapsed();
+    release.0.send(()).unwrap();
+    holder.join().unwrap();
+
+    assert_eq!(report.outcome, BackgroundOutcome::Busy, "{report:?}");
+    assert!(took < secs(10), "waited {took:?} for the store");
+    assert_eq!(w.head(), head);
+    w.assert_consistent();
+    assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::Updated);
+    assert_eq!(w.head(), changed);
+}

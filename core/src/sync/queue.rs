@@ -236,3 +236,126 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
     }
     Ok(held)
 }
+
+/// What [`reencrypt_held_back`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reencrypted {
+    /// Waiting changes now encrypted for exactly their entry's recipients:
+    /// no longer held back.
+    pub reencrypted: u32,
+    /// Still held back: their folder's new recipients are not accepted on
+    /// this device yet, so paw cannot encrypt to them.
+    pub not_accepted: u32,
+}
+
+/// Encrypts every held-back change whose new recipients the person has
+/// accepted again, for exactly those recipients, in place in the queue:
+/// the same changes in the same order, with the same messages and times,
+/// so the old ciphertext never reaches the remote. Needs each entry's
+/// text, which `open` gives for the held-back change and its waiting
+/// ciphertext (with the key, or a Face ID copy): never call it in the
+/// background.
+///
+/// The store lock is never held while `open` runs (a card decrypt waits
+/// for a touch). The ciphertext is read under the shared lock; the queue
+/// is rewritten under the exclusive lock, and only if it is still exactly
+/// what was read: a save or a send in between ends this with an error and
+/// changes nothing. One branch move: either every one is re-encrypted, or
+/// none is. Nothing is sent.
+pub fn reencrypt_held_back(
+    dir: &Path,
+    state_dir: &Path,
+    open: &mut dyn FnMut(&HeldBack, &[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>, SyncError>,
+) -> Result<Reencrypted, SyncError> {
+    let failed = |e: crate::write::WriteError| SyncError::Failed { message: e.to_string() };
+    let held = held_back(dir, state_dir)?;
+    let not_accepted = held.iter().filter(|h| !h.accepted).count() as u32;
+    let ready: Vec<HeldBack> = held.into_iter().filter(|h| h.accepted).collect();
+    if ready.is_empty() {
+        return Ok(Reencrypted { reencrypted: 0, not_accepted });
+    }
+    let changed = || SyncError::Failed {
+        message: "the waiting changes changed while paw was opening them; try again".into(),
+    };
+
+    // 1. The waiting ciphertext, read under the shared lock.
+    let (head, waiting) = {
+        let _reading = StoreLock::for_repo(dir).shared()?;
+        let repo = super::guard::open(dir)?;
+        let local = local(&repo)?;
+        let mut waiting = Vec::new();
+        for item in &ready {
+            let commit = local.commits.iter().find(|c| c.commit.id().to_string() == item.id).ok_or_else(changed)?;
+            let (path, blob) = match &commit.change {
+                Change::Write { path, blob } | Change::Rename { to: path, blob, .. } => (path.clone(), blob.0),
+                Change::Delete { .. } => return Err(changed()),
+            };
+            let bytes = repo.find_blob(blob).map_err(git_err)?.content().to_vec();
+            waiting.push((item, path, blob, bytes));
+        }
+        (local.head, waiting)
+    };
+
+    // 2. Opened with no lock held.
+    let mut opened = Vec::with_capacity(waiting.len());
+    for (item, path, blob, bytes) in waiting {
+        let text = open(item, &bytes)?;
+        opened.push((path, blob, text));
+    }
+
+    // 3. Encrypted again and the queue rebuilt, under the exclusive lock.
+    let store = StoreLock::for_repo(dir);
+    let held = store.exclusive()?;
+    let repo = super::guard::open(dir)?;
+    let local = local(&repo)?;
+    if local.head != head {
+        return Err(changed());
+    }
+    ensure_clean(&repo)?;
+    let keyring = crate::write::Keyring::open(state_dir).map_err(failed)?;
+    let now = crate::write::now_secs();
+    let mut swaps: std::collections::HashMap<Oid, Oid> = std::collections::HashMap::new();
+    for (path, old, text) in &opened {
+        let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
+        let keys = keyring.resolve(dir, folder, now).map_err(failed)?;
+        let ciphertext = crate::write::encrypt(&keys, text.as_slice()).map_err(failed)?;
+        swaps.insert(*old, repo.blob(&ciphertext).map_err(git_err)?);
+    }
+    drop(opened);
+    let Some(first) = local.commits.iter().position(|c| {
+        matches!(&c.change, Change::Write { blob, .. } | Change::Rename { blob, .. } if swaps.contains_key(&blob.0))
+    }) else {
+        return Err(changed());
+    };
+    check_not_being_sent(&held, &store, &repo, &local.branch, local.commits[first].commit.id())?;
+    // Every path a waiting change writes: where an old ciphertext can be.
+    let paths: Vec<&str> = local.commits[first..]
+        .iter()
+        .filter_map(|c| match &c.change {
+            Change::Write { path, .. } | Change::Rename { to: path, .. } => Some(path.as_str()),
+            Change::Delete { .. } => None,
+        })
+        .collect();
+    let mut tip = local.commits[first].commit.parent_id(0).map_err(git_err)?;
+    for commit in &local.commits[first..] {
+        let tree = commit.commit.tree().map_err(git_err)?;
+        let mut index = git2::Index::new().map_err(git_err)?;
+        index.read_tree(&tree).map_err(git_err)?;
+        for path in &paths {
+            if let Ok(entry) = tree.get_path(Path::new(path))
+                && let Some(new) = swaps.get(&entry.id())
+            {
+                index.add(&super::history::index_entry(path, *new, entry.filemode() as u32)).map_err(git_err)?;
+            }
+        }
+        let tree = repo.find_tree(index.write_tree_to(&repo).map_err(git_err)?).map_err(git_err)?;
+        let parent = repo.find_commit(tip).map_err(git_err)?;
+        let committer = commit.commit.committer();
+        let committer =
+            git2::Signature::now(committer.name().unwrap_or("paw"), committer.email().unwrap_or("")).map_err(git_err)?;
+        let message = String::from_utf8_lossy(commit.commit.message_bytes()).into_owned();
+        tip = repo.commit(None, &commit.commit.author(), &committer, &message, &tree, &[&parent]).map_err(git_err)?;
+    }
+    move_branch(&held, &repo, &local.branch, local.head, tip, None, "paw: re-encrypt waiting changes")?;
+    Ok(Reencrypted { reencrypted: swaps.len() as u32, not_accepted })
+}

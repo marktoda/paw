@@ -18,7 +18,12 @@
 //! - the remote's history was replaced;
 //! - waiting changes are held back (reported; it never pushes anyway).
 //!
-//! It is bounded by a deadline and stops between whole steps once past it.
+//! It is bounded by a deadline and stops between whole steps once past it
+//! or once its `stop` says so (the transfer is also cut at the next chunk);
+//! every request is cut at the deadline too ([`Http`]). It waits at most
+//! [`BACKGROUND_LOCK_WAIT`] for the store or another fetch, and ends `Busy`
+//! instead. The store lock is held for the local steps only (publish,
+//! check, integrate), never across the network.
 //! Being killed at any point leaves the store consistent: the token
 //! rotation is one vault write; libgit2 writes the pack and then the
 //! `origin/*` refs; integrate moves branch, index and working copy last,
@@ -40,6 +45,11 @@ use crate::sync::operation::{SyncReport, SyncState};
 use crate::sync::{RefusedPath, SyncError, TransferProgress};
 
 const LINK_FILE: &str = "github";
+
+/// The longest a background refresh waits for the store lock or for
+/// another fetch of the store: past it the run ends `Busy`, having changed
+/// nothing. Short, because the app in front (a save, a sync) comes first.
+pub const BACKGROUND_LOCK_WAIT: Duration = Duration::from_secs(3);
 
 /// The GitHub repository chosen for a store. Not secret.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -137,6 +147,9 @@ pub enum BackgroundOutcome {
     Offline { message: String },
     /// The deadline came first; the store is as it was or fully updated.
     OutOfTime,
+    /// Another part of paw (or the AutoFill extension) was using the store
+    /// or fetching it. Nothing was changed; the next run tries again.
+    Busy,
     Failed { message: String },
 }
 
@@ -200,13 +213,14 @@ impl GitHubAccount {
         http: &Http,
         link: &GitHubLink,
         token: Secret,
+        fetch_wait: Duration,
         progress: Option<crate::sync::TransferCallback<'_>>,
     ) -> Result<Fetching, Result<FetchError, ()>> {
         let repo = crate::sync::guard::open(&self.repo_dir()).map_err(|e| Ok(FetchError::Paw(e)))?;
         // The transfer runs without the store lock, under the fetch lock,
         // into private refs; [`Self::publish`] moves them.
         let fetching =
-            crate::sync::begin_fetch(&self.store_lock(), &repo).map_err(|e| Ok(FetchError::Paw(e)))?;
+            crate::sync::begin_fetch_within(&self.store_lock(), &repo, fetch_wait).map_err(|e| Ok(FetchError::Paw(e)))?;
         let limit = *self.download_limit.lock().unwrap_or_else(|p| p.into_inner());
         let remote = HttpsRemote::new(http.clone(), &link.full_name, token, limit);
         match remote.with_remote(&repo, |r| crate::sync::fetch_connected(r, progress)) {
@@ -226,8 +240,8 @@ impl GitHubAccount {
 
     /// With the store lock: what [`Self::fetch_with_token`] received
     /// becomes the store's `origin/*`. Returns the lock, held.
-    fn publish(&self, fetching: Fetching) -> Result<Exclusive, PawError> {
-        let held = self.store_lock().exclusive()?;
+    fn publish(&self, fetching: Fetching, wait: Duration) -> Result<Exclusive, PawError> {
+        let held = self.store_lock().exclusive_within(wait)?;
         let repo = crate::sync::guard::open(&self.repo_dir())?;
         crate::sync::publish_fetched(&held, &repo, fetching)?;
         Ok(held)
@@ -240,11 +254,18 @@ impl GitHubAccount {
         &self,
         http: &Http,
         link: &GitHubLink,
+        fetch_wait: Duration,
         mut progress: Option<crate::sync::TransferCallback<'_>>,
     ) -> Result<Fetching, FetchError> {
         let token = self.keeper.access_token(http, None)?;
         let refused = token.clone();
-        let first = self.fetch_once(http, link, token, progress.as_mut().map(|p| &mut **p as crate::sync::TransferCallback<'_>));
+        let first = self.fetch_once(
+            http,
+            link,
+            token,
+            fetch_wait,
+            progress.as_mut().map(|p| &mut **p as crate::sync::TransferCallback<'_>),
+        );
         match first {
             Ok(fetching) => Ok(fetching),
             Err(Ok(error)) => Err(error),
@@ -252,7 +273,7 @@ impl GitHubAccount {
             Err(Err(())) => {
                 let token = self.keeper.access_token(http, Some(&refused))?;
                 drop(refused);
-                match self.fetch_once(http, link, token, progress) {
+                match self.fetch_once(http, link, token, fetch_wait, progress) {
                     Ok(fetching) => Ok(fetching),
                     Err(Ok(error)) => Err(error),
                     Err(Err(())) => Err(FetchError::GitHub(GitHubError::Refused {
@@ -281,8 +302,8 @@ impl GitHubAccount {
         }
         let link = self.checked_link().map_err(FetchError::GitHub)?;
         let http = Http::new(&self.endpoints, None);
-        let fetching = self.fetch_with_token(&http, &link, progress)?;
-        let held = self.publish(fetching)?;
+        let fetching = self.fetch_with_token(&http, &link, crate::lock::FETCH_WAIT, progress)?;
+        let held = self.publish(fetching, crate::lock::DEFAULT_WAIT)?;
         crate::sync::operation::integrate_fetched(&held, &self.repo_dir())
     }
 
@@ -294,9 +315,15 @@ impl GitHubAccount {
 
     /// [`Self::background_refresh`] that also stops before `stop(step)`
     /// says so, as if the deadline had come (or the app were killed) there.
+    /// During the transfer `stop(RefreshStep::Fetch)` is asked at each
+    /// chunk, so a stop from another thread (the background task's
+    /// expiration) cuts it short; the store is left as it was.
     pub fn background_refresh_with(&self, budget: Duration, stop: &dyn Fn(RefreshStep) -> bool) -> BackgroundRefreshReport {
         let deadline = Instant::now() + budget;
         let stopping = |step| stop(step) || Instant::now() >= deadline;
+        // How long to wait for a lock: briefly, and never past the deadline.
+        let lock_wait = || BACKGROUND_LOCK_WAIT.min(deadline.saturating_duration_since(Instant::now()));
+        let busy = |e: &PawError| crate::lock::is_store_busy(&e.to_string());
         let failed = |e: &dyn std::fmt::Display| BackgroundRefreshReport::ended(BackgroundOutcome::Failed { message: e.to_string() });
         match self.keeper.signed_in() {
             Ok(true) => {}
@@ -331,10 +358,11 @@ impl GitHubAccount {
         if stopping(RefreshStep::Fetch) {
             return out_of_time();
         }
-        let mut in_time = |_: TransferProgress| Instant::now() < deadline;
-        let fetching = match self.fetch_with_token(&http, &link, Some(&mut in_time)) {
+        let mut in_time = |_: TransferProgress| !stopping(RefreshStep::Fetch);
+        let fetching = match self.fetch_with_token(&http, &link, lock_wait(), Some(&mut in_time)) {
             Ok(fetching) => fetching,
-            Err(_) if Instant::now() >= deadline => return out_of_time(),
+            Err(_) if stopping(RefreshStep::Fetch) => return out_of_time(),
+            Err(FetchError::Paw(e)) if busy(&e) => return BackgroundRefreshReport::ended(BackgroundOutcome::Busy),
             Err(FetchError::GitHub(e)) => return from_github(e),
             Err(FetchError::Paw(PawError::Network(message))) => {
                 return BackgroundRefreshReport::ended(BackgroundOutcome::Offline { message });
@@ -343,8 +371,13 @@ impl GitHubAccount {
         };
         // From here to the end, local work only, with the store lock held:
         // published, checked and integrated as one step.
-        let held = match self.publish(fetching) {
+        // Stopped after the transfer: nothing published, nothing changed.
+        if stopping(RefreshStep::Check) {
+            return out_of_time();
+        }
+        let held = match self.publish(fetching, lock_wait()) {
             Ok(held) => held,
+            Err(e) if busy(&e) => return BackgroundRefreshReport::ended(BackgroundOutcome::Busy),
             Err(e) => return failed(&e),
         };
 

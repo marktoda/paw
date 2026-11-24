@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::github::{
@@ -18,6 +19,29 @@ use crate::sync::operation::SyncReport;
 #[derive(uniffi::Object)]
 pub struct GitHub {
     account: GitHubAccount,
+}
+
+/// Stops a `GitHub.background_refresh_stoppable` from another thread.
+#[derive(uniffi::Object, Default)]
+pub struct BackgroundStop {
+    stopped: AtomicBool,
+}
+
+#[uniffi::export]
+impl BackgroundStop {
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// The refresh ends at its next step or chunk. Returns at once.
+    pub fn stop(&self) {
+        self.stopped.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_stopped(&self) -> bool {
+        self.stopped.load(Ordering::SeqCst)
+    }
 }
 
 /// One device sign-in. Call `poll` in a loop on a background thread while
@@ -98,6 +122,16 @@ impl GitHub {
     /// (see `BackgroundRefreshReport.decisions`). Safe to be killed.
     pub fn background_refresh(&self, seconds: u32) -> BackgroundRefreshReport {
         self.account.background_refresh(Duration::from_secs(u64::from(seconds)))
+    }
+
+    /// `background_refresh` that also ends early once `stop.stop()` is
+    /// called from any thread (the background task's expiration handler):
+    /// between steps, or at the transfer's next chunk; a request already
+    /// waiting on the network ends by the deadline. Ends `OutOfTime` then,
+    /// with the store as it was or fully updated, and no lock held.
+    pub fn background_refresh_stoppable(&self, seconds: u32, stop: Arc<BackgroundStop>) -> BackgroundRefreshReport {
+        self.account
+            .background_refresh_with(Duration::from_secs(u64::from(seconds)), &|_| stop.stopped.load(Ordering::SeqCst))
     }
 
     /// Forgets the sign-in on this device. With `revoke`, also asks GitHub
