@@ -104,6 +104,21 @@ struct SettingsSheet: View {
                 }
                 AutoFillSettingsSection()
                 StoreSettingsSections(model: model)
+                Section {
+                    LabeledContent {
+                        Text(BuildStamp.words)
+                            .font(PawFont.footnote.monospaced())
+                            .foregroundStyle(PawColor.labelSecondary)
+                            .textSelection(.enabled)
+                    } label: {
+                        Text("Build")
+                            .foregroundStyle(PawColor.label)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("settings-build")
+                } header: {
+                    PawSectionHeader("About")
+                }
                 #if DEBUG && targetEnvironment(simulator)
                 if model.simulator != nil {
                     SimulatorSettingsSection(model: model)

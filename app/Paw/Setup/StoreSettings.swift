@@ -47,16 +47,15 @@ struct StoreSettingsSections: View {
                 .accessibilityIdentifier("settings-key-diagnostics")
                 .sheet(isPresented: $showsDiagnostics) {
                     // What the key session read when the key was plugged
-                    // in: no PIN is asked here, and nothing is sent to the
-                    // key. Opening a password is the test that uses the PIN,
-                    // through the same session and its checks.
+                    // in, the touch timeout check (a key task, through the
+                    // same session and its checks) and the key log.
                     KeyDiagnosticsView(model: model)
                         .privacyCover()
                 }
         } header: {
             PawSectionHeader("Key")
         } footer: {
-            Text("Read from the key when it was plugged in.")
+            Text("What your key said when plugged in, a touch timeout check, and the key log.")
                 .font(PawFont.footnote)
                 .foregroundStyle(PawColor.labelSecondary)
         }
