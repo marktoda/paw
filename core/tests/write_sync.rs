@@ -394,3 +394,152 @@ fn a_held_back_change_that_cannot_be_opened_is_left_as_it_was() {
     assert_eq!(head(&w.repo()), tip);
     assert_eq!(queue::held_back(&w.repo(), w.state.path()).unwrap().len(), 1);
 }
+
+/// How many keys each version of `path` in the queue is encrypted for,
+/// oldest first (versions where it does not exist are skipped).
+fn key_counts(w: &World, path: &str) -> Vec<usize> {
+    let repo = git2::Repository::open(w.repo()).unwrap();
+    let remote = repo.refname_to_id("refs/remotes/origin/main").unwrap();
+    let mut walk = repo.revwalk().unwrap();
+    walk.push_head().unwrap();
+    walk.hide(remote).unwrap();
+    walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::REVERSE).unwrap();
+    walk.filter_map(|id| {
+        let tree = repo.find_commit(id.unwrap()).unwrap().tree().unwrap();
+        let entry = tree.get_path(Path::new(path)).ok()?;
+        let blob = repo.find_blob(entry.id()).unwrap();
+        Some(paw_core::recipients::entry_recipients(blob.content()).unwrap().keys.len())
+    })
+    .collect()
+}
+
+/// The desktop gives `Personal` both keys; the phone accepts them and
+/// re-encrypts what is held back. A second run has nothing to do, and the
+/// queue is sent.
+fn personal_gets_two_keys_then_reencrypt(w: &World, expected: u32) {
+    let card_fpr = w.card.fingerprint_hex();
+    let other_fpr = hex(paw_core::sim::fixture::other_key().unwrap().fingerprint().as_bytes());
+    w.desktop_push(&[("Personal/.gpg-id", format!("{card_fpr}\n{other_fpr}\n").into_bytes())], "Personal.");
+    w.pull();
+    Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Personal").unwrap();
+    let opened = std::cell::RefCell::new(Vec::new());
+    let before = queued(w);
+
+    let report = queue::reencrypt_held_back(&w.repo(), w.state.path(), &mut open_with_card(w, &opened)).unwrap();
+    assert_eq!(report, queue::Reencrypted { reencrypted: expected, not_accepted: 0 });
+    assert_eq!(queued(w), before, "the same changes, in the same order");
+    let held = queue::held_back(&w.repo(), w.state.path()).unwrap();
+    assert!(held.is_empty(), "{held:?}");
+
+    let tip = head(&w.repo());
+    let report = queue::reencrypt_held_back(&w.repo(), w.state.path(), &mut open_with_card(w, &opened)).unwrap();
+    assert_eq!(report, queue::Reencrypted { reencrypted: 0, not_accepted: 0 });
+    assert_eq!(head(&w.repo()), tip, "a second run is a no-op");
+
+    let report = operation::send_checked(&w.server.remote(), &signer(&w.card), &w.repo(), w.state.path()).unwrap();
+    assert_eq!(report.state, SyncState::UpToDate);
+    assert_eq!(report.pushed as usize, before.len());
+}
+
+#[test]
+fn a_rename_that_kept_its_blob_is_re_encrypted_only_at_its_new_path() {
+    let w = world();
+    w.write().save(&new_entry("Work", "new", "new-pw")).unwrap();
+    w.write().rename("Work/new", "Personal/new", None).unwrap();
+
+    personal_gets_two_keys_then_reencrypt(&w, 1);
+
+    assert!(key_counts(&w, "Work/new.gpg").is_empty(), "sent");
+    git(w.desktop.path(), &["pull", "--quiet", "--ff-only"]);
+    let desktop = git2::Repository::open(w.desktop.path()).unwrap();
+    let saved = desktop.revparse_single("HEAD~1").unwrap().peel_to_tree().unwrap();
+    let blob = desktop.find_blob(saved.get_path(Path::new("Work/new.gpg")).unwrap().id()).unwrap();
+    assert_eq!(paw_core::recipients::entry_recipients(blob.content()).unwrap().keys.len(), 1);
+    assert_eq!(w.decrypt(w.desktop.path(), "Personal/new"), "new-pw\n");
+}
+
+#[test]
+fn a_rename_chain_through_another_scope_is_re_encrypted_only_there() {
+    let w = world();
+    w.write().save(&new_entry("Work", "a", "a-pw")).unwrap();
+    w.write().rename("Work/a", "Personal/b", None).unwrap();
+    w.write().rename("Personal/b", "Work/c", None).unwrap();
+    // Before the re-encryption: the same blob at all three paths.
+    assert_eq!(key_counts(&w, "Work/a.gpg"), [1]);
+
+    let card_fpr = w.card.fingerprint_hex();
+    let other_fpr = hex(paw_core::sim::fixture::other_key().unwrap().fingerprint().as_bytes());
+    w.desktop_push(&[("Personal/.gpg-id", format!("{card_fpr}\n{other_fpr}\n").into_bytes())], "Personal.");
+    w.pull();
+    Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Personal").unwrap();
+    let opened = std::cell::RefCell::new(Vec::new());
+    let report = queue::reencrypt_held_back(&w.repo(), w.state.path(), &mut open_with_card(&w, &opened)).unwrap();
+
+    assert_eq!(report.reencrypted, 1);
+    assert_eq!(key_counts(&w, "Work/a.gpg"), [1]);
+    assert_eq!(key_counts(&w, "Personal/b.gpg"), [2]);
+    assert_eq!(key_counts(&w, "Work/c.gpg"), [1]);
+    assert!(queue::held_back(&w.repo(), w.state.path()).unwrap().is_empty());
+    let report = operation::send_checked(&w.server.remote(), &signer(&w.card), &w.repo(), w.state.path()).unwrap();
+    assert_eq!(report.state, SyncState::UpToDate);
+    assert_eq!(report.pushed, 3);
+}
+
+#[test]
+fn a_rename_chain_within_the_new_scope_is_re_encrypted_at_each_path() {
+    let w = world();
+    w.write().save(&new_entry("Work", "a", "a-pw")).unwrap();
+    w.write().rename("Work/a", "Personal/b", None).unwrap();
+    w.write().rename("Personal/b", "Personal/c", None).unwrap();
+
+    personal_gets_two_keys_then_reencrypt(&w, 2);
+}
+
+#[test]
+fn a_write_then_delete_is_re_encrypted_and_stays_deleted() {
+    let w = world();
+    w.write().save(&new_entry("Personal", "x", "x-pw")).unwrap();
+    w.write().delete("Personal/x").unwrap();
+
+    personal_gets_two_keys_then_reencrypt(&w, 1);
+
+    assert!(!w.repo().join("Personal/x.gpg").exists());
+}
+
+#[test]
+fn the_same_ciphertext_at_two_paths_is_re_encrypted_only_where_its_recipients_changed() {
+    let w = world();
+    w.write().save(&new_entry("Work", "a", "a-pw")).unwrap();
+    // The same file at a second path, as a desktop `cp` would leave it.
+    std::fs::create_dir_all(w.repo().join("Personal")).unwrap();
+    std::fs::copy(w.repo().join("Work/a.gpg"), w.repo().join("Personal/b.gpg")).unwrap();
+    git(&w.repo(), &["add", "Personal/b.gpg"]);
+    git(&w.repo(), &["commit", "--quiet", "-m", "Add given password for Personal/b to store."]);
+
+    personal_gets_two_keys_then_reencrypt(&w, 1);
+}
+
+#[test]
+fn a_move_re_encrypted_for_its_new_scope_keeps_that_ciphertext_when_the_old_scope_changes() {
+    let w = world();
+    w.write().save(&new_entry("Work", "a", "a-pw")).unwrap();
+    let doc = EntryDoc::parse(w.decrypt(&w.repo(), "Work/a").into_bytes()).unwrap();
+    w.write().rename("Work/a", "Shared/a", Some(&doc)).unwrap();
+    assert_eq!(key_counts(&w, "Shared/a.gpg"), [2]);
+    let shared = git(&w.repo(), &["rev-parse", "HEAD:Shared/a.gpg"]);
+    // The desktop adds the other key to the whole store.
+    add_a_recipient(&w);
+    Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Work").unwrap();
+
+    let opened = std::cell::RefCell::new(Vec::new());
+    let report = queue::reencrypt_held_back(&w.repo(), w.state.path(), &mut open_with_card(&w, &opened)).unwrap();
+
+    assert_eq!(report, queue::Reencrypted { reencrypted: 1, not_accepted: 0 });
+    assert_eq!(*opened.borrow(), ["Work/a"]);
+    assert_eq!(key_counts(&w, "Work/a.gpg"), [2]);
+    assert_eq!(git(&w.repo(), &["rev-parse", "HEAD:Shared/a.gpg"]), shared, "left as it was");
+    let report = queue::reencrypt_held_back(&w.repo(), w.state.path(), &mut open_with_card(&w, &opened)).unwrap();
+    assert_eq!(report.reencrypted, 0);
+    let report = operation::send_checked(&w.server.remote(), &signer(&w.card), &w.repo(), w.state.path()).unwrap();
+    assert_eq!(report.state, SyncState::UpToDate);
+}

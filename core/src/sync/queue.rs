@@ -318,36 +318,35 @@ pub fn reencrypt_held_back(
     ensure_clean(&repo)?;
     let keyring = crate::write::Keyring::open(state_dir).map_err(failed)?;
     let now = crate::write::now_secs();
-    let mut swaps: std::collections::HashMap<Oid, Oid> = std::collections::HashMap::new();
+    // Keyed by path and blob: a rename that kept the blob puts the same
+    // ciphertext at another path, whose folder may have other recipients,
+    // and each path gets the ciphertext its own folder needs.
+    let mut swaps: std::collections::HashMap<(String, Oid), Oid> = std::collections::HashMap::new();
+    let reencrypted = opened.len() as u32;
     for (path, old, text) in &opened {
         let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
         let keys = keyring.resolve(dir, folder, now).map_err(failed)?;
         let ciphertext = crate::write::encrypt(&keys, text.as_slice()).map_err(failed)?;
-        swaps.insert(*old, repo.blob(&ciphertext).map_err(git_err)?);
+        swaps.insert((path.clone(), *old), repo.blob(&ciphertext).map_err(git_err)?);
     }
     drop(opened);
-    let Some(first) = local.commits.iter().position(|c| {
-        matches!(&c.change, Change::Write { blob, .. } | Change::Rename { blob, .. } if swaps.contains_key(&blob.0))
+    let Some(first) = local.commits.iter().position(|c| match &c.change {
+        Change::Write { path, blob } | Change::Rename { to: path, blob, .. } => {
+            swaps.contains_key(&(path.clone(), blob.0))
+        }
+        Change::Delete { .. } => false,
     }) else {
         return Err(changed());
     };
     check_not_being_sent(&held, &store, &repo, &local.branch, local.commits[first].commit.id())?;
-    // Every path a waiting change writes: where an old ciphertext can be.
-    let paths: Vec<&str> = local.commits[first..]
-        .iter()
-        .filter_map(|c| match &c.change {
-            Change::Write { path, .. } | Change::Rename { to: path, .. } => Some(path.as_str()),
-            Change::Delete { .. } => None,
-        })
-        .collect();
     let mut tip = local.commits[first].commit.parent_id(0).map_err(git_err)?;
     for commit in &local.commits[first..] {
         let tree = commit.commit.tree().map_err(git_err)?;
         let mut index = git2::Index::new().map_err(git_err)?;
         index.read_tree(&tree).map_err(git_err)?;
-        for path in &paths {
+        for ((path, old), new) in &swaps {
             if let Ok(entry) = tree.get_path(Path::new(path))
-                && let Some(new) = swaps.get(&entry.id())
+                && entry.id() == *old
             {
                 index.add(&super::history::index_entry(path, *new, entry.filemode() as u32)).map_err(git_err)?;
             }
@@ -361,5 +360,5 @@ pub fn reencrypt_held_back(
         tip = repo.commit(None, &commit.commit.author(), &committer, &message, &tree, &[&parent]).map_err(git_err)?;
     }
     move_branch(&held, &repo, &local.branch, local.head, tip, None, "paw: re-encrypt waiting changes")?;
-    Ok(Reencrypted { reencrypted: swaps.len() as u32, not_accepted })
+    Ok(Reencrypted { reencrypted, not_accepted })
 }
