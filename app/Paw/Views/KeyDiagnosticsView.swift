@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 /// Settings › Key diagnostics on a set-up store: what the key session read
 /// when the key was plugged in, which asks for no PIN and sends nothing to
@@ -32,14 +33,14 @@ struct KeyDiagnosticsView: View {
                     let kdf = session.pinKdf()
                     Section {
                         row("Serial", spokenSerial(info.ident), identifier: "diagnostics-serial")
-                        row("Decryption key", info.decryptionFingerprint.map(fingerprintEnding).map { "ends \($0)" } ?? "None",
+                        row("Opening key", info.decryptionFingerprint.map(fingerprintEnding).map { "ends \($0)" } ?? "None",
                             identifier: "diagnostics-decryption")
                         row("SSH key", info.authenticationFingerprint.map(fingerprintEnding).map { "ends \($0)" } ?? "None",
                             identifier: "diagnostics-ssh")
                         row("PIN tries left", "\(info.pinTriesLeft)", identifier: "diagnostics-tries")
                         row("Touch to open", Self.words(info.decryptionTouch), identifier: "diagnostics-touch-open")
                         row("Touch to sign in", Self.words(info.authenticationTouch), identifier: "diagnostics-touch-ssh")
-                        row("PIN setting (KDF)", kdf.enabled ? (kdf.supported ? "On" : "On, not supported") : "Off",
+                        row("PIN hashing", kdf.enabled ? (kdf.supported ? "On" : "On, not supported") : "Off",
                             identifier: "diagnostics-kdf")
                     } header: {
                         PawSectionHeader("Plugged in")
@@ -69,7 +70,7 @@ struct KeyDiagnosticsView: View {
                     }
                 }
                 Section {
-                    row("Readers", KeyConnection.readerNames.isEmpty ? "None" : KeyConnection.readerNames.joined(separator: ", "),
+                    row("Connected", KeyConnection.readerNames.isEmpty ? "None" : KeyConnection.readerNames.joined(separator: ", "),
                         identifier: "diagnostics-readers")
                 }
                 reportSection
@@ -94,11 +95,12 @@ struct KeyDiagnosticsView: View {
 
     @ViewBuilder private var reportSection: some View {
         Section {
-            Button(copiedReport == nil ? "Copy diagnostics" : "Diagnostics copied", action: copyReport)
+            Button("Copy diagnostics", action: copyReport)
                 .foregroundStyle(PawColor.label)
                 .disabled(assembling)
                 .accessibilityIdentifier("diagnostics-copy")
             if let copiedReport {
+                CopiedLine(identifier: "diagnostics-copied")
                 Text(copiedReport)
                     .font(PawFont.caption.monospaced())
                     .foregroundStyle(PawColor.labelSecondary)
@@ -108,7 +110,7 @@ struct KeyDiagnosticsView: View {
                     .accessibilityIdentifier("diagnostics-report")
             }
         } footer: {
-            Text("App, store and key facts, and the key log. No names, addresses, fingerprints or tokens.")
+            Text("No names, addresses or fingerprints.")
                 .font(PawFont.footnote)
                 .foregroundStyle(PawColor.labelSecondary)
         }
@@ -135,8 +137,7 @@ struct KeyDiagnosticsView: View {
                 diagnosticsText(facts: facts, stateDir: stateDir, port: port, github: github, copies: copies)
             }.value
             assembling = false
-            // Plain pasteboard, as Copy log: it is pasted on a desktop.
-            UIPasteboard.general.string = text
+            Self.copyForDesktop(text)
             copiedReport = text
         }
     }
@@ -186,10 +187,14 @@ struct KeyDiagnosticsView: View {
                     .foregroundStyle(PawColor.labelSecondary)
                     .accessibilityIdentifier("key-log-empty")
             } else {
-                Button(logCopied ? "Log copied" : "Copy log", action: copyLog)
+                Button("Copy log", action: copyLog)
                     .foregroundStyle(PawColor.label)
                     .accessibilityIdentifier("key-log-copy")
+                if logCopied {
+                    CopiedLine(identifier: "key-log-copied")
+                }
                 Button("Clear", role: .destructive, action: clearLog)
+                    .foregroundStyle(PawColor.danger)
                     .accessibilityIdentifier("key-log-clear")
                 ForEach(Array(logLines.suffix(Self.shownLines).reversed().enumerated()), id: \.offset) { _, line in
                     Text("\(line.time) \(line.process) \(line.text)")
@@ -203,7 +208,7 @@ struct KeyDiagnosticsView: View {
         } header: {
             PawSectionHeader("Key log")
         } footer: {
-            Text("What paw and your key said, in this app and in AutoFill. No PIN, passwords or names.")
+            Text("No PIN, passwords or names.")
                 .font(PawFont.footnote)
                 .foregroundStyle(PawColor.labelSecondary)
         }
@@ -224,14 +229,24 @@ struct KeyDiagnosticsView: View {
 
     private func copyLog() {
         guard let logDir else { return }
-        // Plain pasteboard, not `Clipboard`: the owner pastes this on a
-        // desktop, so it is not limited to this device or to 45 seconds.
         // The key log holds no secrets: instruction bytes, status words,
         // timings, stages and error names only; never command or response
         // data, the PIN or its length, entry or host names
         // (core/src/key/keylog.rs, checked by core/tests/key_log.rs).
-        UIPasteboard.general.string = keyLogText(stateDir: logDir, utcOffsetSecs: utcOffset)
+        Self.copyForDesktop(keyLogText(stateDir: logDir, utcOffsetSecs: utcOffset))
         logCopied = true
+    }
+
+    /// How long a copied report or log stays on the pasteboard.
+    static let copyLifetime: TimeInterval = 10 * 60
+
+    /// Not `Clipboard`: the owner pastes these on a desktop, so they may go
+    /// to other devices by Universal Clipboard (principles 6 notes the
+    /// exception), but they still expire, after 10 minutes, not 45 seconds.
+    private static func copyForDesktop(_ text: String) {
+        UIPasteboard.general.setItems(
+            [[UTType.utf8PlainText.identifier: text]],
+            options: [.expirationDate: Date().addingTimeInterval(copyLifetime)])
     }
 
     private func clearLog() {
@@ -266,5 +281,17 @@ struct KeyDiagnosticsView: View {
         case .cached: "Once per 15 seconds"
         case .unknown: "Unknown"
         }
+    }
+}
+
+/// "Copied. Clears in 10 minutes.", under a Copy button.
+private struct CopiedLine: View {
+    let identifier: String
+
+    var body: some View {
+        Text("Copied. Clears in \(Int(KeyDiagnosticsView.copyLifetime / 60)) minutes.")
+            .font(PawFont.footnote)
+            .foregroundStyle(PawColor.labelSecondary)
+            .accessibilityIdentifier(identifier)
     }
 }

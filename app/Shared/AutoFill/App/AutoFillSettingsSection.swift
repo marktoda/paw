@@ -6,6 +6,9 @@ import SwiftUI
 struct AutoFillSettingsSection: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var enabled: Bool?
+    /// iOS's own prompt was refused (or not shown): the button then opens
+    /// paw's page in Settings instead of asking again.
+    @State private var declined = false
 
     var body: some View {
         Section {
@@ -18,20 +21,19 @@ struct AutoFillSettingsSection: View {
             }
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("settings-autofill")
-            // Shown until AutoFill is known to be on, so the rows below
-            // don't move when the state arrives a moment after Settings opens.
-            if enabled != true {
-                Button("Turn on AutoFill") { turnOn() }
+            // "Turn on" until AutoFill is known to be on, so the row doesn't
+            // change when the state arrives a moment after Settings opens.
+            if enabled != true && !declined {
+                Button("Turn on") { turnOn() }
                     .foregroundStyle(PawColor.label)
                     .accessibilityIdentifier("settings-autofill-turn-on")
+            } else {
+                Button("Open Settings") { openSettings() }
+                    .foregroundStyle(PawColor.label)
+                    .accessibilityIdentifier("settings-autofill-open")
             }
-            Button("Open AutoFill settings") { openSettings() }
-                .foregroundStyle(PawColor.label)
-                .accessibilityIdentifier("settings-autofill-open")
-        } header: {
-            PawSectionHeader("AutoFill")
         } footer: {
-            Text("Fills passwords in Safari and apps. Turn it on in Settings \u{203A} General \u{203A} AutoFill & Passwords.")
+            Text("In Safari and apps.")
                 .font(PawFont.footnote)
                 .foregroundStyle(PawColor.labelSecondary)
         }
@@ -65,6 +67,8 @@ struct AutoFillSettingsSection: View {
             let accepted = await ASSettingsHelper.requestToTurnOnCredentialProviderExtension()
             if accepted {
                 await readState()
+            } else {
+                declined = true
             }
         }
     }

@@ -91,7 +91,7 @@ struct KeySheetContent: View {
     private var content: some View {
         VStack(spacing: PawMetrics.Spacing.l) {
             Group {
-                Text(purpose)
+                Text(Device.words(purpose))
                     .font(PawFont.sectionHeader)
                     .foregroundStyle(PawColor.labelSecondary)
                     .accessibilityIdentifier("key-sheet-purpose")
@@ -104,7 +104,7 @@ struct KeySheetContent: View {
                     KeyStepPills(current: currentStep)
                 }
                 if let note, stage == .touch {
-                    Text(note)
+                    Text(Device.words(note))
                         .font(PawFont.footnote)
                         .foregroundStyle(PawColor.labelSecondary)
                         .multilineTextAlignment(.center)
@@ -156,7 +156,7 @@ struct KeySheetContent: View {
 
     private var words: some View {
         VStack(spacing: 6) {
-            Text(headline)
+            Text(Device.words(headline))
                 .font(PawFont.title)
                 .foregroundStyle(PawColor.label)
                 .multilineTextAlignment(.center)
@@ -172,7 +172,7 @@ struct KeySheetContent: View {
                     .accessibilityIdentifier("pin-tries-left")
             }
             if let explanation {
-                Text(explanation)
+                Text(Device.words(explanation))
                     .font(PawFont.subheadline)
                     .foregroundStyle(PawColor.labelSecondary)
                     .multilineTextAlignment(.center)
@@ -349,8 +349,8 @@ struct KeySheetContent: View {
     }
 
     private var announcement: String {
-        [headline, triesLine, explanation].compactMap { $0 }.joined(separator: ". ")
-            .replacingOccurrences(of: ".. ", with: ". ")
+        Device.words([headline, triesLine, explanation].compactMap { $0 }.joined(separator: ". ")
+            .replacingOccurrences(of: ".. ", with: ". "))
     }
 
     // MARK: State

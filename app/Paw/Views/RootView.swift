@@ -132,13 +132,13 @@ private struct ClosedEntryScreen: View {
             VStack(spacing: PawMetrics.Spacing.l) {
                 EmptyState(symbol: PawSymbol.entry, title: title(closed), message: "")
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel(title(closed))
+                    .accessibilityLabel(Device.words(title(closed)))
                     .accessibilityIdentifier("entry-closed")
                 Button {
                     model.reopen(id)
                 } label: {
                     if model.liveCopy(closed.ref.path) != nil {
-                        Text("Open with Face ID")
+                        Text(Device.words("Open with Face ID"))
                     } else {
                         KeyButtonLabel(title: "Open with your key")
                     }

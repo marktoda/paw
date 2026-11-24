@@ -140,6 +140,9 @@ final class AppModel {
     private(set) var copiesProblem: String?
     var toast: String?
     var showsSettings = false
+    /// An entry's large type is up (a full-screen cover on iPad), so the
+    /// keyboard shortcuts stay off.
+    var largeTypeUp = false
     /// The entry Face ID is being asked for, to ignore a second tap.
     private(set) var faceIdOpening: String?
     /// Tells AutoFill's suggestions about the store; set for a set-up store only.

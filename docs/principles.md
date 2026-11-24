@@ -42,6 +42,8 @@ Most people keep the defaults, so the defaults should be the settings we would d
 
 *So we will* require a touch for each decrypt, expire what we put on the clipboard and keep it off other devices, and make no network request other than to the git remote. Fetching website icons is off by default, because it tells the network which sites are in the vault.
 
+One exception: Copy diagnostics and Copy log in Key diagnostics may reach other devices by Universal Clipboard, so they can be pasted on a computer; they hold no secrets and expire after 10 minutes.
+
 ### 7. Make setup finishable
 
 The existing tools lose people at keys and sync. A newcomer with a new YubiKey should reach a working, backed-up vault without a laptop or a guide open in another tab.

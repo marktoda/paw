@@ -15,7 +15,7 @@ struct SitesUsedSettingsSection: View {
                 }
                 .accessibilityIdentifier("settings-sites-used")
             } footer: {
-                Text("Where AutoFill filled a password whose name has no web address.")
+                Text("Sites you confirmed by hand.")
                     .font(PawFont.footnote)
                     .foregroundStyle(PawColor.labelSecondary)
             }

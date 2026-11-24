@@ -24,11 +24,11 @@ struct UnpushedBanner: View {
             HStack(spacing: 14) {
                 mark
                 VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
-                    Text(title)
+                    Text(Device.words(title))
                         .font(PawFont.headline)
                         .foregroundStyle(reason == .waitingForKey ? PawColor.onPanel : PawColor.label)
                     if !detail.isEmpty {
-                        Text(detail)
+                        Text(Device.words(detail))
                             .font(PawFont.footnote)
                             .foregroundStyle(
                                 reason == .waitingForKey ? PawColor.onPanelSecondary : PawColor.labelSecondary)
@@ -88,7 +88,7 @@ struct UnpushedBanner: View {
 
     private var spokenLabel: String {
         let words = detail.isEmpty ? "\(title)." : "\(title). \(detail)"
-        return reason == .waitingForKey ? "\(words) Needs your key." : words
+        return Device.words(reason == .waitingForKey ? "\(words) Needs your key." : words)
     }
 }
 
@@ -119,7 +119,7 @@ struct FaceIDWindowBar: View {
                     .font(PawFont.subheadline)
                     .foregroundStyle(PawColor.label)
                     .accessibilityHidden(true)
-                Text(text)
+                Text(Device.words(text))
                     .font(PawFont.subheadline)
                     .foregroundStyle(PawColor.label)
                     .fixedSize(horizontal: false, vertical: true)

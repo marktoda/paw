@@ -21,8 +21,12 @@ struct SplitPath {
             switch route {
             case .folder(let folder):
                 // Only the sidebar shows top-level folders: picking one
-                // starts the middle column again.
+                // starts the middle column again, and picking another
+                // closes the open entry, whose row is no longer shown.
                 if !folder.contains("/") {
+                    if folders.first != route {
+                        details.removeAll { $0.showsEntry }
+                    }
                     folders = []
                 }
                 folders.append(route)

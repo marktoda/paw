@@ -126,12 +126,15 @@ private struct AutoFillList: View {
         if model.matches.isEmpty && model.maybe.isEmpty {
             Section {
                 VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
-                    Text(model.site.map { "Nothing here matches \($0)." } ?? "paw can't tell which site this is.")
+                    Text(model.site == nil ? "paw can't tell which site this is." : "No password for this site.")
                         .font(PawFont.body)
                         .foregroundStyle(PawColor.label)
-                    Text("Search for it by name.")
-                        .font(PawFont.footnote)
-                        .foregroundStyle(PawColor.labelSecondary)
+                    if let site = model.site {
+                        // As iOS gave it, `xn--` and all: a lookalike shows here.
+                        Text(site)
+                            .font(PawFont.footnote.monospaced())
+                            .foregroundStyle(PawColor.labelSecondary)
+                    }
                 }
                 .padding(.vertical, PawMetrics.Spacing.s)
                 .accessibilityElement(children: .combine)
@@ -233,20 +236,39 @@ private struct AutoFillList: View {
 /// An entry that is not this site's, or is this site's by name only and
 /// has not filled on this domain, was picked: say so before Face ID or the
 /// key, inline. Or it was opened and its `url:` line names another site:
-/// say so before it fills. Not filling is the primary action.
+/// say so before it fills. One layout for every case: a headline, one
+/// line, the full address, then Cancel (the primary action) and Fill.
 private struct AutoFillConfirm: View {
     let model: AutoFillModel
     let entry: EntryRef
     let reason: AutoFillConfirmReason
 
+    private enum Tone {
+        /// A question: the first fill of a name match.
+        case neutral
+        /// Not this site's password, found by search.
+        case warning
+        /// The entry says it belongs to another site.
+        case danger
+    }
+
+    private var tone: Tone {
+        switch reason {
+        case .firstTime: .neutral
+        case .otherSite: .warning
+        case .lookalike, .urlDiffers: .danger
+        }
+    }
+
     private var headline: String {
         switch reason {
         case .otherSite:
-            model.site.map { "Fill \(entry.name)'s password on \($0)?" } ?? "Fill \(entry.name)'s password?"
+            // The address below names the site.
+            model.site == nil ? "Fill \(entry.name)'s password?" : "Fill \(entry.name)'s password here?"
         case .firstTime(let site), .lookalike(let site, _):
             "Use \(entry.name) on \(site)?"
-        case .urlDiffers(let url, _):
-            "This password's url is \(url)"
+        case .urlDiffers(let url, let site):
+            "Saved for \(url), not \(site)"
         }
     }
 
@@ -256,86 +278,100 @@ private struct AutoFillConfirm: View {
             model.site == nil ? "paw can't tell which site this is." : "This password isn't saved for this site."
         case .firstTime:
             "First time on this site. Check the address is right."
-        case .lookalike(let site, let known):
-            "You've used this on \(ListFormatter.localizedString(byJoining: known)). This is \(site)."
-        case .urlDiffers(_, let site):
-            "This is \(site)."
+        case .lookalike(_, let known):
+            "Used before on \(ListFormatter.localizedString(byJoining: known))."
+        case .urlDiffers:
+            // Without a Face ID copy to fill from, Fill opens it again.
+            model.opensWithKey(entry) ? "Fill needs your key again." : ""
         }
     }
 
-    /// Red: the entry says it belongs to another site.
-    private var isError: Bool {
-        switch reason {
-        case .lookalike, .urlDiffers: true
-        case .otherSite, .firstTime: false
+    private var symbol: String? {
+        switch tone {
+        case .neutral: nil
+        case .warning: PawSymbol.warning
+        case .danger: PawSymbol.error
         }
     }
 
-    /// "Fill anyway" rather than "Use it here": paw knows this is another
-    /// site's password.
-    private var fillsAnyway: Bool {
-        switch reason {
-        case .otherSite, .urlDiffers: true
-        case .firstTime, .lookalike: false
+    private var toneColor: Color {
+        switch tone {
+        case .neutral: PawColor.label
+        case .warning: PawColor.warning
+        case .danger: PawColor.danger
         }
     }
 
-    /// The full address, for a name match: the registrable domain is in
-    /// the headline, and here the host as iOS gave it when it differs.
-    private var address: String? {
-        switch reason {
-        case .otherSite: nil
-        case .firstTime(let site), .lookalike(let site, _), .urlDiffers(_, let site):
-            model.site.flatMap { $0 == site ? nil : $0 }
+    private var spoken: String {
+        let prefix = switch tone {
+        case .neutral: ""
+        case .warning, .danger: "Warning: "
         }
-    }
-
-    private var isFirstTime: Bool {
-        if case .firstTime = reason { return true }
-        return false
+        let ends = headline.last.map { ".?!".contains($0) } ?? true
+        return prefix + (ends ? headline : headline + ".") + (line.isEmpty ? "" : " " + line)
     }
 
     var body: some View {
         VStack(spacing: PawMetrics.Spacing.l) {
-            if isFirstTime {
-                // The common case for a store named without domains: a
-                // question, not a warning (warning colour is for what must
-                // be read before going on).
-                VStack(spacing: PawMetrics.Spacing.xs) {
-                    Text(headline)
-                        .font(PawFont.columnTitle)
-                        .foregroundStyle(PawColor.label)
+            VStack(spacing: PawMetrics.Spacing.s) {
+                if let symbol {
+                    Image(systemName: symbol)
+                        .font(.title2)
+                        .foregroundStyle(toneColor)
+                        .accessibilityHidden(true)
+                }
+                Text(headline)
+                    .font(PawFont.columnTitle)
+                    .foregroundStyle(tone == .danger ? PawColor.danger : PawColor.label)
+                if !line.isEmpty {
                     Text(line)
-                        .font(PawFont.footnote)
+                        .font(PawFont.subheadline)
                         .foregroundStyle(PawColor.labelSecondary)
                 }
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("autofill-confirm-question")
-            } else {
-                ErrorRow(kind: isError ? .error : .warning, problem: headline, nextStep: line, isBanner: true)
             }
-            if let address {
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(spoken)
+            .accessibilityIdentifier("autofill-confirm-question")
+            if let address = model.site {
+                // The host as iOS gave it, in full: the thing to check.
                 Text(address)
                     .font(PawFont.headline.monospaced())
                     .foregroundStyle(PawColor.label)
                     .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, PawMetrics.Spacing.m)
+                    .padding(.horizontal, PawMetrics.Spacing.l)
+                    .background(
+                        tone == .danger ? PawColor.dangerFill : PawColor.surface,
+                        in: RoundedRectangle(cornerRadius: PawMetrics.cardRadius, style: .continuous))
                     .accessibilityLabel("Address \(address)")
                     .accessibilityIdentifier("autofill-confirm-address")
             }
             Button("Cancel") { model.backToList() }
                 .buttonStyle(.pawPrimary)
                 .accessibilityIdentifier("autofill-confirm-cancel")
-            Button(fillsAnyway ? "Fill anyway" : "Use it here") { model.fillAnyway() }
+            Button("Fill") { model.fillAnyway() }
                 .buttonStyle(.pawSecondary)
-                .accessibilityIdentifier(fillsAnyway ? "autofill-fill-anyway" : "autofill-use-here")
+                .accessibilityIdentifier(isFirstFill ? "autofill-use-here" : "autofill-fill-anyway")
             Spacer(minLength: 0)
         }
         .padMaxWidth(PadLayout.sheetColumn)
         .padding(PawMetrics.Spacing.l)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(PawColor.bg.ignoresSafeArea())
+    }
+
+    /// A name match, filled here for the first time or on a lookalike: the
+    /// identifier the UI tests know as "Use it here".
+    private var isFirstFill: Bool {
+        switch reason {
+        case .firstTime, .lookalike: true
+        case .otherSite, .urlDiffers: false
+        }
     }
 }
 
@@ -374,7 +410,7 @@ private struct AutoFillKeySheet: View {
             stage: model.keyStage,
             pin: $model.pinEntry,
             note: model.keepsCopies
-                ? "Then it fills with Face ID for \(AutoFillModel.faceIdWindowSecs / 3600) hours." : nil,
+                ? Device.words("Then it fills with Face ID for \(AutoFillModel.faceIdWindowSecs / 3600) hours.") : nil,
             onContinue: { model.continueWithPin() },
             onCancel: { model.cancelKey() },
             onRetry: { model.retry() },

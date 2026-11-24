@@ -26,8 +26,7 @@ final class AutoFillRestTests: PawUITestCase {
         tap(row(Self.tailspin))
         enterPin(Self.pin)
         touchTheKey()
-        expectLabel("error-row", contains: "This password's url is tailspin.test")
-        expectLabel("error-row", contains: "This is tailspin.example.")
+        expectLabel("autofill-confirm-question", contains: "Saved for tailspin.test, not tailspin.example")
         expectLabel("autofill-confirm-address", contains: "www.tailspin.example")
         expectLabel("autofill-confirm-cancel", contains: "Cancel")
     }
@@ -64,7 +63,7 @@ final class AutoFillRestTests: PawUITestCase {
     func testACyrillicLookalikeShowsInAsciiAndIsNotOffered() {
         // `fаbrikam.example` with a Cyrillic а.
         launchProvider(["-pawHostProvider", "https://xn--fbrikam-2fg.example"])
-        expectLabel("autofill-no-match", contains: "Nothing here matches xn--fbrikam-2fg.example")
+        expectLabel("autofill-no-match", contains: "xn--fbrikam-2fg.example")
         expectAbsent(row("web/fabrikam.example"), "A lookalike must not be offered fabrikam.example")
     }
 }

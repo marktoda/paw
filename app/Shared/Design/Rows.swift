@@ -94,7 +94,7 @@ struct EntryRow: View {
     private var spokenLabel: String {
         let words = subtitle.isEmpty ? name : "\(name), \(subtitle)"
         switch access {
-        case .faceID: return "\(words), opens with Face ID"
+        case .faceID: return "\(words), opens with \(Device.biometrics)"
         case .needsKey: return "\(words), needs your key"
         case .anotherKey: return words
         }
@@ -143,7 +143,7 @@ struct PawSectionHeader: View {
     }
 
     var body: some View {
-        Text(title)
+        Text(Device.words(title))
             .font(PawFont.sectionHeader)
             .foregroundStyle(PawColor.labelSecondary)
             .textCase(nil)

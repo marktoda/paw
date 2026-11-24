@@ -1,17 +1,15 @@
 import SwiftUI
 
-/// Settings › Licences: one row that opens the list.
-struct LicencesSettingsSection: View {
+/// Settings › About › Licences: one row that opens the list.
+struct LicencesRow: View {
     var body: some View {
-        Section {
-            NavigationLink {
-                LicencesView()
-            } label: {
-                Text("Licences")
-                    .foregroundStyle(PawColor.label)
-            }
-            .accessibilityIdentifier("settings-licences")
+        NavigationLink {
+            LicencesView()
+        } label: {
+            Text("Licences")
+                .foregroundStyle(PawColor.label)
         }
+        .accessibilityIdentifier("settings-licences")
     }
 }
 
@@ -107,7 +105,7 @@ struct LicenceTextView: View {
                         .textSelection(.enabled)
                 }
                 ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
-                    PawSectionHeader(block.title)
+                    PawSectionHeader(Self.plainTitle(block.title))
                         .padding(.top, PawMetrics.Spacing.l)
                         .accessibilityIdentifier("licence-text-\(index)")
                     ForEach(Array(block.paragraphs.enumerated()), id: \.offset) { _, paragraph in
@@ -129,24 +127,70 @@ struct LicenceTextView: View {
     }
 
     /// Splits a text at blank lines and joins each paragraph's hard-wrapped
-    /// lines. Lines that start indented, with a list mark or with
-    /// "Copyright" keep their break.
+    /// lines, indented ones included, so the text reflows to the screen.
+    /// A line that starts a list item ("-", "1.", "(a)") or "Copyright"
+    /// keeps its break.
     static func paragraphs(_ body: String) -> [String] {
         body.components(separatedBy: "\n\n").compactMap { (chunk: String) -> String? in
             var out = ""
-            for line in chunk.split(separator: "\n", omittingEmptySubsequences: false) {
-                let keepsBreak = line.hasPrefix("Copyright")
-                    || (line.first.map { " \t-*•(".contains($0) || $0.isNumber } ?? true)
+            for raw in chunk.split(separator: "\n", omittingEmptySubsequences: false) {
+                let line = raw.trimmingCharacters(in: .whitespaces)
+                guard !line.isEmpty else { continue }
+                let keepsBreak = line.hasPrefix("Copyright") || Self.startsListItem(line)
                 if out.isEmpty {
-                    out = String(line)
+                    out = line
                 } else {
                     out += keepsBreak ? "\n" : " "
-                    out.append(contentsOf: line)
+                    out += line
                 }
             }
             let trimmed = out.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : trimmed
         }
+    }
+
+    /// "- ", "* ", "• ", "1. ", "2) ", "(a) ", "(iv) ".
+    private static func startsListItem(_ line: String) -> Bool {
+        if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("\u{2022}") { return true }
+        let head = line.prefix(6)
+        if let first = head.first, first.isNumber {
+            let digits = head.prefix { $0.isNumber }
+            let after = head.dropFirst(digits.count)
+            return after.hasPrefix(". ") || after.hasPrefix(") ")
+        }
+        if head.hasPrefix("("), let close = head.firstIndex(of: ")") {
+            let inside = head[head.index(after: head.startIndex)..<close]
+            return !inside.isEmpty && inside.allSatisfy { $0.isLetter || $0.isNumber }
+                && line[line.index(after: close)...].hasPrefix(" ")
+        }
+        return false
+    }
+
+    /// "MIT licence" from "LICENSE-MIT.txt", "Apache 2.0 licence" from
+    /// "Apache-2.0 (standard text)", "Licence" from "LICENSE" or "COPYING".
+    static func plainTitle(_ file: String) -> String {
+        var name = file.split(separator: "/").last.map(String.init) ?? file
+        for suffix in [" (standard text)", ".txt", ".md"] where name.hasSuffix(suffix) {
+            name = String(name.dropLast(suffix.count))
+        }
+        switch name.uppercased() {
+        case "LICENSE", "LICENCE", "COPYING": return "Licence"
+        case "COPYRIGHT": return "Copyright"
+        case "UNLICENSE": return "The Unlicense"
+        default: break
+        }
+        if name.uppercased().hasPrefix("LICENSE-") {
+            name = String(name.dropFirst("LICENSE-".count))
+        }
+        let known = ["APACHE": "Apache", "ZLIB": "zlib", "UNICODE": "Unicode", "other-bits": "Other"]
+        if let word = known[name] {
+            name = word
+        }
+        if name == "Other" { return "Other terms" }
+        name = name.replacingOccurrences(of: "_WITH_", with: " with ")
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+        return "\(name) licence"
     }
 }
 

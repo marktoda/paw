@@ -6,7 +6,8 @@ import SwiftUI
 struct HomeScreen: View {
     let model: AppModel
     /// The iPad split view's sidebar: search and results are in the middle
-    /// column, Add is at the top.
+    /// column, Add is at the top (the only one: it adds to the folder the
+    /// middle column shows, as ⌘N does).
     var inSidebar = false
     @State private var query = ""
 
@@ -44,7 +45,7 @@ struct HomeScreen: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        model.startAdd(folder: "")
+                        model.startAdd(folder: model.splitFolder)
                     } label: {
                         Label("Add a password", systemImage: PawSymbol.add)
                     }

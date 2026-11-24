@@ -164,7 +164,7 @@ struct SyncSummarySection: View {
             model: model, entry: entry, subtitle: "From your other device",
             identifier: "sync-kept-both-remote-\(entry.name)")
         EntryRowFor(
-            model: model, entry: copy, subtitle: "From this iPhone",
+            model: model, entry: copy, subtitle: Device.words("From this iPhone"),
             identifier: "sync-kept-both-local-\(entry.name)")
     }
 
@@ -410,6 +410,17 @@ private struct SyncStatusSheet: View {
         model.edits?.unpushed.count ?? 0
     }
 
+    /// The last background run: its result, with its time only when that
+    /// differs from "Last checked" above, so "Just now" is said once.
+    private func backgroundValue(now: Date) -> String {
+        guard let run = syncing.backgroundRun else { return "Not yet" }
+        let when = syncAgo(run.at, now: now)
+        if let checked = syncing.lastChecked, syncAgo(checked, now: now) == when {
+            return run.result
+        }
+        return "\(when.capitalizedFirst) \u{00B7} \(run.result)"
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -430,9 +441,7 @@ private struct SyncStatusSheet: View {
                     if syncing.checksWithSignIn {
                         LabeledContent {
                             TimelineView(.periodic(from: .now, by: 30)) { context in
-                                Text(syncing.backgroundRun.map {
-                                    "\(syncAgo($0.at, now: context.date).capitalizedFirst) \u{00B7} \($0.result)"
-                                } ?? "Not yet")
+                                Text(backgroundValue(now: context.date))
                                     .foregroundStyle(PawColor.labelSecondary)
                                     .multilineTextAlignment(.trailing)
                             }

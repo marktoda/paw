@@ -18,7 +18,7 @@ struct EmptyState: View {
     var body: some View {
         ContentUnavailableView {
             Label {
-                Text(title)
+                Text(Device.words(title))
                     .font(PawFont.columnTitle)
                     .foregroundStyle(PawColor.label)
             } icon: {
@@ -28,7 +28,7 @@ struct EmptyState: View {
         } description: {
             // The title often says it all: no second line then.
             if !message.isEmpty {
-                Text(message)
+                Text(Device.words(message))
                     .font(PawFont.subheadline)
                     .foregroundStyle(PawColor.labelSecondary)
             }

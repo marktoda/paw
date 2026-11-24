@@ -73,20 +73,63 @@ enum CredentialIdentities {
     /// AutoFill is turned on.
     @MainActor private(set) static var current: PassStore?
 
+    /// What iOS should end up with: this store's identities, or none.
+    private enum Request: @unchecked Sendable {
+        case replace(PassStore)
+        case clear
+    }
+
+    /// The newest request not yet started. A newer one replaces it, so
+    /// requests made while a write runs collapse into one: the last.
+    @MainActor private static var pending: Request?
+    /// The one writer, while it runs. Writes never overlap, so an older
+    /// list can never land after a newer one (two quick removes in Sites
+    /// used must leave the second's list, not the first's).
+    @MainActor private static var writer: Task<Void, Never>?
+
+    /// Queues `request` and returns the writer that will carry it out.
+    @MainActor
+    private static func submit(_ request: Request) -> Task<Void, Never> {
+        pending = request
+        if let writer { return writer }
+        let task = Task.detached(priority: .utility) { await drain() }
+        writer = task
+        return task
+    }
+
+    /// Carries out the newest request until none is left. Taking a request
+    /// and ending the writer happen together on the main actor, so a
+    /// request is never left behind.
+    private static func drain() async {
+        while true {
+            let next: Request? = await MainActor.run {
+                let taken = pending
+                pending = nil
+                if taken == nil { writer = nil }
+                return taken
+            }
+            guard let next else { return }
+            switch next {
+            case .replace(let store): await replace(with: store)
+            case .clear: await removeAll()
+            }
+        }
+    }
+
     /// Replaces every identity with this store's, off the main thread.
     /// Does nothing while AutoFill is off for paw (iOS refuses the write).
     @MainActor
     static func publish(_ store: PassStore) {
         current = store
-        Task.detached(priority: .utility) { await replace(with: store) }
+        _ = submit(.replace(store))
     }
 
-    /// `publish`, returning once iOS has the new identities: a background
-    /// task must not end before.
+    /// `publish`, returning once iOS has the new identities (or newer
+    /// ones): a background task must not end before.
     @MainActor
     static func publishAndWait(_ store: PassStore) async {
         current = store
-        await Task.detached(priority: .utility) { await replace(with: store) }.value
+        await submit(.replace(store)).value
     }
 
     private static func replace(with store: PassStore) async {
@@ -108,10 +151,12 @@ enum CredentialIdentities {
     @MainActor
     static func clear() {
         current = nil
+        _ = submit(.clear)
+    }
+
+    private static func removeAll() async {
         #if !targetEnvironment(simulator)
-        Task.detached(priority: .utility) {
-            try? await ASCredentialIdentityStore.shared.removeAllCredentialIdentities()
-        }
+        try? await ASCredentialIdentityStore.shared.removeAllCredentialIdentities()
         #endif
     }
 }

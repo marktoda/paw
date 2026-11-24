@@ -198,20 +198,37 @@ struct SetupWorkingLine: View {
 }
 
 /// A fingerprint broken into groups of four so it can be read aloud and
-/// compared: "SHA256:" then "uNiV ztFv …".
+/// compared: "SHA256:" then "uNiV ztFv …", on fixed lines.
 struct GroupedFingerprint: View {
     let fingerprint: String
 
     var body: some View {
-        Text(Self.grouped(fingerprint))
-            .font(PawFont.password)
-            .foregroundStyle(PawColor.label)
-            .textSelection(.enabled)
+        FingerprintText(fingerprint: fingerprint, font: PawFont.password, color: PawColor.label)
+    }
+}
+
+/// A fingerprint or key ID to compare by eye: monospace, in groups of four,
+/// four groups a line, with "SHA256:" on a line of its own. Never cut short
+/// or shrunk: at a large text size a line wraps between groups, and the
+/// view grows. A person is never asked to trust what they can't read.
+struct FingerprintText: View {
+    let fingerprint: String
+    var font: Font = PawFont.footnote.monospaced()
+    var color: Color = PawColor.labelSecondary
+
+    var body: some View {
+        Text(Self.lines(fingerprint))
+            .font(font)
+            .foregroundStyle(color)
+            .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
+            .textSelection(.enabled)
             .accessibilityLabel(fingerprint)
     }
 
-    static func grouped(_ fingerprint: String) -> String {
+    /// "SHA256:\nuNiV ztFv 8Wq2 0oYq\n…": a prefix up to a colon on its own
+    /// line, then the rest in groups of four, `perLine` groups a line.
+    static func lines(_ fingerprint: String, perLine: Int = 4) -> String {
         var prefix = ""
         var hash = Substring(fingerprint)
         if let colon = fingerprint.firstIndex(of: ":") {
@@ -223,7 +240,10 @@ struct GroupedFingerprint: View {
             let end = hash.index(start, offsetBy: 4, limitedBy: hash.endIndex) ?? hash.endIndex
             return String(hash[start..<end])
         }
-        return prefix + groups.joined(separator: " ")
+        let rows = stride(from: 0, to: groups.count, by: perLine).map { first in
+            groups[first..<min(first + perLine, groups.count)].joined(separator: " ")
+        }
+        return prefix + rows.joined(separator: "\n")
     }
 }
 

@@ -186,7 +186,7 @@ private struct GitHubCodeView: View {
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("github-waiting")
-                Text("paw asks only to read the repository you choose. It never sends changes this way.")
+                Text("Reads the store you choose. Never sends changes.")
                     .font(PawFont.footnote)
                     .foregroundStyle(PawColor.labelSecondary)
                     .multilineTextAlignment(.center)

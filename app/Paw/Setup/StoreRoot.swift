@@ -34,6 +34,10 @@ final class StoreRootModel {
         /// The store on this iPhone could not be opened: the raw error for
         /// "Details", and the changes that setting up again would lose.
         case failed(detail: String, unpushed: Int)
+        /// The store could not be read while the iPhone is locked: iOS
+        /// launched paw in the background, or the phone locked mid-open.
+        /// Nothing is wrong; it opens again once the phone is unlocked.
+        case waitingForUnlock
     }
 
     private(set) var phase: Phase = .failed(detail: "", unpushed: 0)
@@ -73,6 +77,12 @@ final class StoreRootModel {
         keyPort.setKeyLog(stateDir: location.stateDir.path, process: "app")
         gitHub = GitHubRefresh.access(stateDir: location.stateDir)
         route()
+        // The model lives as long as the app, so the observer is never removed.
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.retryAfterUnlock() }
+        }
         #if DEBUG && targetEnvironment(simulator)
         if LegacyStore.plantsInstead {
             LegacyStore.plant { [weak self] left in self?.legacyFolder = left ? "present" : "gone" }
@@ -86,10 +96,22 @@ final class StoreRootModel {
         LegacyStore.remove { [weak self] left in self?.legacyFolder = left ? "present" : "gone" }
     }
 
+    /// Opens the store again if it could not be read before: after the
+    /// phone is unlocked, or when paw comes to the front.
+    func retryAfterUnlock() {
+        switch phase {
+        case .failed, .waitingForUnlock: route()
+        case .setup, .home: break
+        }
+    }
+
     /// Setup if it is not done, else Home.
     func route() {
         gitHub?.reload()
         do {
+            #if DEBUG && targetEnvironment(simulator)
+            if SimLockedLaunch.isLocked { throw SimLockedLaunch.Unreadable() }
+            #endif
             let setup = try Setup.open(stateDir: location.stateDir.path)
             if case .done = setup.state() {
                 openHome()
@@ -102,6 +124,12 @@ final class StoreRootModel {
     }
 
     private func fail(_ error: Error) {
+        // While the phone is locked the protected files can't be read, so
+        // the failure says nothing about the store: wait for the unlock.
+        guard ProtectedData.isAvailable else {
+            phase = .waitingForUnlock
+            return
+        }
         let unpushed = (try? StoreSync.open(stateDir: location.stateDir.path).unpushed().count) ?? 0
         phase = .failed(detail: String(describing: error), unpushed: unpushed)
     }
@@ -234,11 +262,16 @@ final class StoreRootModel {
 struct StoreRoot: View {
     @State private var root: StoreRootModel?
     @State private var problem: String?
+    /// paw's folder could not be read while the phone was locked.
+    @State private var waitingForUnlock = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
             if let root {
                 StoreRootContent(root: root)
+            } else if waitingForUnlock {
+                WaitingForUnlockView()
             } else if let problem {
                 StoreProblemView(
                     detail: problem, unpushed: Self.unpushedOnDisk(), retry: { build() },
@@ -252,14 +285,32 @@ struct StoreRoot: View {
             guard root == nil, problem == nil else { return }
             build()
         }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataDidBecomeAvailableNotification)) { _ in
+            if root == nil { build() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            if root == nil, problem != nil || waitingForUnlock {
+                build()
+            } else {
+                root?.retryAfterUnlock()
+            }
+        }
     }
 
     private func build() {
         do {
             root = try StoreRootModel()
             problem = nil
+            waitingForUnlock = false
         } catch {
-            problem = String(describing: error)
+            if ProtectedData.isAvailable {
+                problem = String(describing: error)
+                waitingForUnlock = false
+            } else {
+                problem = nil
+                waitingForUnlock = true
+            }
         }
     }
 
@@ -308,6 +359,8 @@ private struct StoreRootContent: View {
             case .failed(let detail, let unpushed):
                 StoreProblemView(
                     detail: detail, unpushed: unpushed, retry: { root.route() }, startOver: { root.startOver() })
+            case .waitingForUnlock:
+                WaitingForUnlockView()
             }
         }
         .environment(\.gitHubAccess, root.gitHub)
@@ -327,7 +380,62 @@ private struct StoreRootContent: View {
     }
 }
 
+/// Whether files protected with `NSFileProtectionComplete` can be read now.
+enum ProtectedData {
+    @MainActor static var isAvailable: Bool {
+        #if DEBUG && targetEnvironment(simulator)
+        if SimLockedLaunch.isLocked { return false }
+        #endif
+        return UIApplication.shared.isProtectedDataAvailable
+    }
+
+    /// Whether `detail` reads like a file paw was not allowed to read, as
+    /// protected files are while the phone is locked. Such an error never
+    /// offers to delete the store: the store is probably fine.
+    static func mayBeLocked(_ detail: String) -> Bool {
+        let signs = [
+            "Operation not permitted", "os error 1)", "Permission denied", "os error 13)",
+            "NSFileReadNoPermissionError", "NSFileWriteNoPermissionError", "Code=257", "Code=513",
+        ]
+        return signs.contains { detail.localizedCaseInsensitiveContains($0) }
+    }
+}
+
+/// Nothing to show yet: the phone is locked and the store unreadable. paw
+/// opens it as soon as the phone is unlocked.
+private struct WaitingForUnlockView: View {
+    var body: some View {
+        PawColor.bg
+            .ignoresSafeArea()
+            .accessibilityIdentifier("store-waiting-for-unlock")
+            #if DEBUG && targetEnvironment(simulator)
+            .overlay(alignment: .bottom) {
+                SimulatorStrip(actions: [
+                    SimulatorAction(title: "unlock the iPhone", identifier: "sim-unlock") { SimLockedLaunch.unlock() }
+                ])
+                .padding(PawMetrics.Spacing.l)
+            }
+            #endif
+    }
+}
+
 #if DEBUG && targetEnvironment(simulator)
+/// `-pawSimLockedLaunch 1`: launch as iOS does in the background while the
+/// phone is locked, with the store's files unreadable, until the debug
+/// "unlock" control posts the system's own unlock notification.
+enum SimLockedLaunch {
+    struct Unreadable: Error, CustomStringConvertible {
+        var description: String { "Operation not permitted (os error 1) (simulated lock)" }
+    }
+
+    @MainActor static var isLocked = LaunchArguments.bool("pawSimLockedLaunch")
+
+    @MainActor static func unlock() {
+        isLocked = false
+        NotificationCenter.default.post(name: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil)
+    }
+}
+
 extension StoreRootModel {
     /// "copies 0 · keychain resets 1 · pin none · pasteboard empty · legacy gone".
     func debugState() -> String {
@@ -388,8 +496,10 @@ private struct StoreProblemView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: PawMetrics.Spacing.l) {
                 ErrorRow(
-                    kind: .error, problem: "Couldn't open the store on this iPhone",
-                    nextStep: "Try again, or set it up again from your server.",
+                    kind: .error, problem: Device.words("Couldn't open the store on this iPhone"),
+                    nextStep: ProtectedData.mayBeLocked(detail)
+                        ? Device.words("Unlock your iPhone, then try again.")
+                        : "Try again, or set it up again from your server.",
                     isBanner: true)
                 if !detail.isEmpty {
                     Text("Details: \(detail)")
@@ -402,23 +512,10 @@ private struct StoreProblemView: View {
                 Button("Try again", action: retry)
                     .buttonStyle(.pawPrimary)
                     .accessibilityIdentifier("store-retry")
-                if confirming {
-                    Text(warning)
-                        .font(PawFont.subheadline)
-                        .foregroundStyle(PawColor.label)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("store-start-over-warning")
-                    Button("Delete and set up again", action: startOver)
-                        .buttonStyle(.pawSecondary)
-                        .foregroundStyle(PawColor.danger)
-                        .accessibilityIdentifier("store-start-over-confirm")
-                    Button("Keep it") { confirming = false }
-                        .buttonStyle(.pawSecondary)
-                        .accessibilityIdentifier("store-start-over-cancel")
-                } else {
-                    Button("Set up again\u{2026}") { confirming = true }
-                        .buttonStyle(.pawSecondary)
-                        .accessibilityIdentifier("store-start-over")
+                // An error that may only mean the phone was locked never
+                // offers to delete the store: it is probably fine.
+                if !ProtectedData.mayBeLocked(detail) {
+                    startOverControls
                 }
             }
             .padding(PawMetrics.Spacing.l)
@@ -428,8 +525,30 @@ private struct StoreProblemView: View {
         .accessibilityIdentifier("store-problem")
     }
 
+    @ViewBuilder
+    private var startOverControls: some View {
+        if confirming {
+            Text(warning)
+                .font(PawFont.subheadline)
+                .foregroundStyle(PawColor.label)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("store-start-over-warning")
+            Button("Delete and set up again", action: startOver)
+                .buttonStyle(.pawSecondary)
+                .foregroundStyle(PawColor.danger)
+                .accessibilityIdentifier("store-start-over-confirm")
+            Button("Keep it") { confirming = false }
+                .buttonStyle(.pawSecondary)
+                .accessibilityIdentifier("store-start-over-cancel")
+        } else {
+            Button("Set up again\u{2026}") { confirming = true }
+                .buttonStyle(.pawSecondary)
+                .accessibilityIdentifier("store-start-over")
+        }
+    }
+
     private var warning: String {
-        var text = "Deletes the store, its Face ID copies and your key's record from this iPhone. "
+        var text = Device.words("Deletes the store, its Face ID copies and your key's record from this iPhone. ")
             + "The store on the server is not touched."
         if unpushed == 1 {
             text += " 1 change not sent yet will be lost."

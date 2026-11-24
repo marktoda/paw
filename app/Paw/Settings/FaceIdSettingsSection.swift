@@ -14,15 +14,15 @@ struct FaceIdSettingsSection: View {
         if let copies = model.copies {
             Section {
                 Toggle(isOn: binding(copies)) {
-                    Text("Open with Face ID")
+                    Text(Device.words("Open with Face ID"))
                         .foregroundStyle(PawColor.label)
                 }
                 .accessibilityIdentifier("settings-face-id")
                 if let problem {
-                    ErrorRow(kind: .error, problem: "Face ID wasn't changed", nextStep: problem)
+                    ErrorRow(kind: .error, problem: Device.words("Face ID wasn't changed"), nextStep: Device.words(problem))
                 }
             } header: {
-                PawSectionHeader("Face ID")
+                PawSectionHeader(Device.biometrics)
             } footer: {
                 Text(isOn(copies)
                      ? "For \(AppModel.faceIdWindowSecs / 3600) hours after you open a password with your key."

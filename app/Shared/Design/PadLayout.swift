@@ -27,12 +27,14 @@ extension View {
         }
     }
 
-    /// A hardware-keyboard shortcut, on iPad only. It runs the button's own
+    /// A hardware-keyboard shortcut, on iPad only, and only while `enabled`
+    /// (off while a sheet covers the button). It runs the button's own
     /// action, so it can do nothing the button can't.
     @MainActor @ViewBuilder
-    func padShortcut(_ shortcut: KeyboardShortcut) -> some View {
+    func padShortcut(_ shortcut: KeyboardShortcut, enabled: Bool = true) -> some View {
         if PadLayout.isPad {
-            keyboardShortcut(shortcut)
+            let active: KeyboardShortcut? = enabled ? shortcut : nil
+            keyboardShortcut(active)
         } else {
             self
         }
@@ -75,7 +77,12 @@ private struct PadReadableWidth: ViewModifier {
     func body(content: Content) -> some View {
         if PadLayout.isPad {
             content
-                .contentMargins(.horizontal, max(0, (width - PawMetrics.readableWidth) / 2), for: .scrollContent)
+                // Never less than the screen margin: in a narrow column (the
+                // split view's right) the rows keep clear of the divider and
+                // the edge instead of running into them.
+                .contentMargins(
+                    .horizontal, max(PawMetrics.screenMargin, (width - PawMetrics.readableWidth) / 2),
+                    for: .scrollContent)
                 .onGeometryChange(for: CGFloat.self) { proxy in
                     proxy.size.width
                 } action: { newWidth in

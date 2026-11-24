@@ -60,8 +60,9 @@ struct EntryScreen: View {
                     VStack(spacing: PawMetrics.Spacing.s) {
                         Button("Copy password") { copy(session.entry.password(), what: "Password") }
                             .buttonStyle(.pawPrimary)
-                            // ⌘C on iPad: this button, so only once the entry is open.
-                            .padShortcut(KeyboardShortcut("c", modifiers: .command))
+                            // ⌘C on iPad: this button, so only once the entry is
+                            // open, and never while a sheet covers it.
+                            .padShortcut(KeyboardShortcut("c", modifiers: .command), enabled: !model.sheetIsUp)
                             .accessibilityIdentifier("copy-password")
                         Button(passwordRevealed ? "Hide password" : "Show password") {
                             passwordRevealed.toggle()
@@ -122,6 +123,16 @@ struct EntryScreen: View {
             LargeTypeSheet(item: item) { largeType = nil }
         }
         .onAppear { load() }
+        .onDisappear {
+            // The entry closed (another was opened, or its folder left):
+            // its large type goes with it.
+            largeType = nil
+            model.largeTypeUp = false
+        }
+        .onChange(of: largeType == nil) { model.largeTypeUp = largeType != nil }
+        .onChange(of: model.session(opened.id) == nil) {
+            if model.session(opened.id) == nil { largeType = nil }
+        }
         .onChange(of: ObjectIdentifier(session.entry)) { load() }
         .entryEditing(model, session: session)
         .onChange(of: scenePhase) {
