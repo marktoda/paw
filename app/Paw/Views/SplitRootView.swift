@@ -58,7 +58,7 @@ struct SplitRootView: View {
                 FolderScreen(model: model, path: path)
                     .id(path)
             } else {
-                EmptyState(symbol: PawSymbol.folder, title: "Choose a folder", message: "")
+                EmptyState(symbol: PawSymbol.folder, title: "Choose a folder or password", message: "")
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("split-no-folder")
             }
@@ -134,9 +134,10 @@ struct SplitRootView: View {
 }
 
 extension AppModel {
-    /// The key sheet, the editor, the sync sheet or Settings is up.
+    /// The key sheet, the editor, the sync sheet, Settings or an entry's
+    /// large type is up.
     var sheetIsUp: Bool {
-        keyRequest != nil || showsSettings || edits?.form != nil || edits?.syncing?.sheet != nil
+        keyRequest != nil || showsSettings || largeTypeUp || edits?.form != nil || edits?.syncing?.sheet != nil
     }
 }
 
@@ -146,7 +147,8 @@ extension View {
     @ViewBuilder
     func splitSelected(_ selected: Bool) -> some View {
         if selected {
-            listRowBackground(PawColor.fill)
+            // Stronger than `fill`: the sidebar's rows are already grey.
+            listRowBackground(PawColor.action.opacity(0.12))
                 .accessibilityAddTraits(.isSelected)
         } else {
             self

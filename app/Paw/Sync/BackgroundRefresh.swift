@@ -108,14 +108,22 @@ enum BackgroundRefresh {
     private static func start(stop: BackgroundStop, done: @escaping @MainActor (BackgroundRun) -> Void) {
         // The store is unreadable while the iPhone is locked: skip, and say so.
         let readable = UIApplication.shared.isProtectedDataAvailable
+        // The phone may lock mid-run, and then the files go unreadable
+        // under the core: stop it at its next step, as iOS's expiry does.
+        let locking = NotificationCenter.default.addObserver(
+            forName: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil, queue: .main
+        ) { _ in stop.stop() }
         queue.async {
             let run = readable ? runNow(stop: stop) : skipped("iPhone was locked")
-            let store = run.changed ? openStore() : nil
+            let store = run.changed && !stop.isStopped() ? openStore() : nil
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
+                    NotificationCenter.default.removeObserver(locking)
                     record(run)
                     Task { @MainActor in
-                        if let store {
+                        // Stopped (time is up, or the phone locked): end the
+                        // task now. The next open publishes the suggestions.
+                        if let store, !stop.isStopped() {
                             await CredentialIdentities.publishAndWait(store)
                         }
                         NotificationCenter.default.post(name: finished, object: nil)
@@ -169,11 +177,11 @@ enum BackgroundRefresh {
         }
         switch report.outcome {
         case .notSignedIn: return run("Not signed in to GitHub", true)
-        case .notLinked: return run("No GitHub repository chosen", true)
+        case .notLinked: return run("No store chosen", true)
         case .upToDate: return run("Up to date", true)
         case .updated: return run("Brought in changes", true)
         case .needsDecision:
-            if needsLook { return run("Paused \u{00B7} needs you", true) }
+            if needsLook { return run("Paused", true) }
             return run(changed ? "Brought in changes" : "Up to date", true)
         case .signedOut: return run("GitHub sign-in ended", true)
         case .offline: return run("Couldn't reach GitHub", false)

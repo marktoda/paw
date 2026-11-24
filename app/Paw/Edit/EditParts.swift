@@ -100,7 +100,7 @@ struct RecipientsFooter: View {
                         Text(Self.sentence(recipients.lines))
                             .font(PawFont.subheadline)
                             .foregroundStyle(PawColor.label)
-                        Text("Saving needs no key. It stays on this iPhone until you send it.")
+                        Text(Device.words("Saving needs no key. It stays on this iPhone until you send it."))
                             .font(PawFont.footnote)
                             .foregroundStyle(PawColor.labelSecondary)
                     }
@@ -142,7 +142,7 @@ extension RecipientLine {
     var statusWords: String {
         switch status {
         case .ready(_, .card, _): return "Your key"
-        case .ready: return "A key saved on this iPhone"
+        case .ready: return Device.words("A key saved on this iPhone")
         case .missing: return "paw doesn't have this key"
         case .ambiguous: return "Matches more than one saved key"
         case .expired: return "This key has expired"
@@ -385,7 +385,8 @@ extension View {
     /// An Add button at the bottom of a folder, starting in that folder.
     func addEntryButton(_ model: AppModel, folder: String) -> some View {
         toolbar {
-            if model.edits != nil {
+            // In the split view the sidebar's Add is the one Add.
+            if model.edits != nil, !model.usesSplitView {
                 ToolbarSpacer(.flexible, placement: .bottomBar)
                 ToolbarItem(placement: .bottomBar) {
                     Button {

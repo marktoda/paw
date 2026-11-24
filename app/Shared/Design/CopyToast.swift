@@ -9,7 +9,7 @@ struct CopyToast: View {
         HStack(spacing: PawMetrics.Spacing.s) {
             Image(systemName: PawSymbol.synced)
                 .font(PawFont.subheadline)
-            Text(message)
+            Text(Device.words(message))
                 .font(PawFont.subheadline.weight(.semibold))
                 .multilineTextAlignment(.leading)
         }
@@ -19,7 +19,7 @@ struct CopyToast: View {
         .frame(minHeight: PawMetrics.tapMin)
         .background(PawColor.panel, in: Capsule())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(message)
+        .accessibilityLabel(Device.words(message))
         .accessibilityIdentifier("copy-toast")
     }
 }
@@ -48,7 +48,7 @@ private struct CopyToastModifier: ViewModifier {
             }
             .task(id: message) {
                 guard let shown = message else { return }
-                AccessibilityNotification.Announcement(shown).post()
+                AccessibilityNotification.Announcement(Device.words(shown)).post()
                 try? await Task.sleep(for: .seconds(seconds))
                 if !Task.isCancelled {
                     message = nil

@@ -21,7 +21,7 @@ struct ErrorRow: View {
     /// The problem is a headline with no full stop; spoken, it gets one.
     private var spoken: String {
         let ends = problem.last.map { ".?!:".contains($0) } ?? true
-        return (ends ? problem : problem + ".") + (nextStep.isEmpty ? "" : " " + nextStep)
+        return Device.words((ends ? problem : problem + ".") + (nextStep.isEmpty ? "" : " " + nextStep))
     }
 
     var body: some View {
@@ -32,11 +32,11 @@ struct ErrorRow: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
                 VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
-                    Text(problem)
+                    Text(Device.words(problem))
                         .font(PawFont.body)
                         .foregroundStyle(PawColor.label)
                     if !nextStep.isEmpty {
-                        Text(nextStep)
+                        Text(Device.words(nextStep))
                             .font(PawFont.footnote)
                             .foregroundStyle(PawColor.labelSecondary)
                     }
