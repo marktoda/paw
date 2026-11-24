@@ -1,13 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="t">
-  <title id="t">paw icon candidate B: a paw print made of discs, the large pad is the gold key disc</title>
-  <!-- Full-bleed square: iOS applies the corner mask. -->
+  <title id="t">paw app icon: a paw print made of discs, the large pad is the gold key disc</title>
+  <!-- Full-bleed square: iOS applies the corner mask. Source of the app icon;
+       render with docs/design/render-icon.py. -->
   <rect width="1024" height="1024" fill="#1B1A2B"/>
-  <!-- Toes sit on a 345-unit arc around the pad centre, 20 and 60 degrees either side of vertical. -->
+  <!-- Toes sit on a 360-unit arc around the pad centre, 20 and 60 degrees
+       either side of vertical. Every gap is 46 to 72 units, about 1.5 px at
+       29 px. Centred between the bounding box and the area centroid. -->
   <g fill="#EDEBFA">
-    <circle cx="213" cy="438" r="78"/>
-    <circle cx="394" cy="286" r="90"/>
-    <circle cx="630" cy="286" r="90"/>
-    <circle cx="811" cy="438" r="78"/>
+    <circle cx="200" cy="450" r="88"/>
+    <circle cx="389" cy="292" r="100"/>
+    <circle cx="635" cy="292" r="100"/>
+    <circle cx="824" cy="450" r="88"/>
   </g>
-  <circle cx="512" cy="610" r="200" fill="#F5B301" stroke="#B26A00" stroke-width="24"/>
+  <circle cx="512" cy="630" r="196" fill="#F5B301" stroke="#B26A00" stroke-width="24"/>
 </svg>

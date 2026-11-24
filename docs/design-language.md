@@ -259,9 +259,9 @@ Wordmark, for the README and the About screen, never the icon (Apple: include te
 
 It is drawn from circles and round-capped strokes, not set in SF Rounded, because Apple's font licence does not cover logos. The bowl of the p is the key disc.
 
-**Recommendation: B**, with A as the fallback. B is the only candidate that is friendly, specific to this app and still itself in monochrome, and it reuses the one object the app teaches: the gold disc. It avoids the padlock and shield entirely.
+**Decided 2026-11-24: B, the paw.** The final geometry differs from the candidate drawing: toes on a 360-unit arc (was 345), toes 100 and 88 units (were 90 and 78), pad 196 plus a 24-unit rim (was 200), so every gap is 46 to 72 units, about 1.5 px at 29 px. The mark is centred halfway between its bounding box and its area centroid. Checked rendered at 180, 120, 87, 60, 58, 40 and 29 px on light and dark grounds. Gold toes were tried and dropped: their rims read as rings at 60 px, and gold is the key's alone.
 
-**Shipping it without a Mac.** Icon Composer is Mac-only and its `.icon` format is undocumented, but Apple still accepts plain 1024 px PNGs in the asset catalog (default, dark and tinted) and generates the glass and clear variants itself. Render the SVGs to PNG in CI.
+**Shipped icon.** `app/Paw/Assets.xcassets/AppIcon.appiconset` holds three 1024 px PNGs: default (ink `#1B1A2B`, no alpha), dark (transparent: iOS draws its own dark ground) and tinted (grey on black: iOS adds the tint). iOS masks the corners and makes the glass and clear modes from these. Sources are `design/icon-paw.svg`, `design/icon-paw-dark.svg` and `design/icon-paw-mono.svg`; `uv run docs/design/render-icon.py` renders them (resvg, pinned) and `--check` fails if a PNG is stale. Icon Composer's `.icon` format is not used: it is Mac-only and undocumented.
 
 ## 10. SwiftUI token sketch
 

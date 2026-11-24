@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="t">
+  <title id="t">paw app icon, dark appearance</title>
+  <!-- No background: iOS draws its own dark one behind a dark icon. -->
+  <g fill="#EDEBFA">
+    <circle cx="200" cy="450" r="88"/>
+    <circle cx="389" cy="292" r="100"/>
+    <circle cx="635" cy="292" r="100"/>
+    <circle cx="824" cy="450" r="88"/>
+  </g>
+  <circle cx="512" cy="630" r="196" fill="#F5B301" stroke="#B26A00" stroke-width="24"/>
+</svg>
