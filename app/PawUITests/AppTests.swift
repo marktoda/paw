@@ -217,10 +217,20 @@ final class AppTests: PawUITestCase {
 
     // MARK: Face ID
 
+    /// The largest size before the bar stacks: "Lock" stays beside the time.
+    func testTheFaceIdBarAtTheLargestStandardTextSize() {
+        launch(extra: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryXXXL"])
+        openGitHubWithKey()
+        expectLabel("face-id-window-text", contains: "Opens with Face ID until")
+        snapshot("entry-face-id-xxxl")
+    }
+
     func testAnEntryOpenedWithTheKeyThenOpensWithFaceId() {
         launch()
         openGitHubWithKey()
         expectLabel("face-id-window-text", contains: "Opens with Face ID until")
+        expectLabel("lock-now", contains: "Lock this password")
+        snapshot("entry-face-id")
         goBack()
         goBack()
         expectLabel("face-id-github.com", contains: "opens with Face ID")

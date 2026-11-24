@@ -97,8 +97,11 @@ struct UnpushedBanner: View {
 struct FaceIDWindowBar: View {
     /// e.g. "Opens with Face ID until 6:40 PM"
     let text: String
-    /// What the button does, e.g. "Lock this password".
+    /// The button, e.g. "Lock".
     var lockTitle = "Lock now"
+    /// What VoiceOver says for it when the title is shorter, e.g. "Lock
+    /// this password".
+    var lockLabel: String? = nil
     var onLock: () -> Void = {}
 
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -131,6 +134,7 @@ struct FaceIDWindowBar: View {
             .font(PawFont.subheadline.weight(.semibold))
             .foregroundStyle(PawColor.label)
             .frame(minHeight: PawMetrics.tapMin)
+            .accessibilityLabel(lockLabel ?? lockTitle)
             .accessibilityIdentifier("lock-now")
         }
         .padding(.vertical, typeSize.isAccessibilitySize ? PawMetrics.Spacing.s : 0)

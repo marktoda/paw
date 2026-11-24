@@ -44,7 +44,8 @@ struct EntryScreen: View {
                         // This entry's copy only; Lock now in Settings ends them all.
                         FaceIDWindowBar(
                             text: "Opens with Face ID until \(clockTime(ms: copy.untilMs))",
-                            lockTitle: "Lock this password"
+                            lockTitle: "Lock",
+                            lockLabel: "Lock this password"
                         ) {
                             model.lockEntry(session)
                         }
