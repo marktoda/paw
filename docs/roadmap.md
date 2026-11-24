@@ -94,7 +94,7 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 | Item | Status |
 |---|---|
 | Settings, "Who can open these passwords", replace key, diagnostics export, remove store | later |
-| Copy and UX polish passes: shorter, plainer text everywhere; fix the janky spots the owner saw on the phone | first pass in progress (`polish`) |
+| Copy and UX polish passes: shorter, plainer text everywhere; fix the janky spots the owner saw on the phone | first pass merged 2026-11-23 (about a third fewer words; Voice rules in design-language.md); second pass after the owner sees it on the phone |
 | App icon (paw built from discs) and wordmark rework | later |
 | Licence notices for bundled libraries | later |
 
