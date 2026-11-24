@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Runs the UI tests in a simulator and leaves a compact report in
-# app/build/report/: errors.txt, summary.json, tests.json, screenshots/.
+# Runs the UI tests and the unit tests (app/PawTests) in a simulator and
+# leaves a compact report in app/build/report/: errors.txt, summary.json,
+# tests.json, screenshots/.
 # Usage: ci-test.sh iPhone|iPad
 set -uo pipefail
 family="${1:-iPhone}"
@@ -19,12 +20,25 @@ fi
 xcrun simctl list devices available | grep "$udid" | tee "$report/device.txt"
 
 # PAW_ONLY narrows the run to the tests being worked on, e.g.
-# "GalleryTests KeyTests/testReadKeyShowsIdentityWithoutAPin".
+# "GalleryTests KeyTests/testReadKeyShowsIdentityWithoutAPin". A unit test
+# class is named the same way: each lives in app/PawTests/<Class>.swift.
+# "PawTests" names them all. With PAW_ONLY set, PAW_UNIT=1 adds every unit
+# test (they take seconds). Without PAW_ONLY every test runs, the unit
+# tests too, less what PAW_SKIP leaves out.
 only=()
 for name in ${PAW_ONLY:-}; do
-  only+=("-only-testing:PawUITests/$name")
+  if [ "$name" = PawTests ]; then
+    only+=("-only-testing:PawTests")
+  elif [ -f "PawTests/${name%%/*}.swift" ]; then
+    only+=("-only-testing:PawTests/$name")
+  else
+    only+=("-only-testing:PawUITests/$name")
+  fi
 done
-# PAW_SKIP leaves classes out, for a run split across machines.
+if [ -n "${PAW_ONLY:-}" ] && [ "${PAW_UNIT:-}" = 1 ]; then
+  only+=("-only-testing:PawTests")
+fi
+# PAW_SKIP leaves UI test classes out, for a run split across machines.
 for name in ${PAW_SKIP:-}; do
   only+=("-skip-testing:PawUITests/$name")
 done

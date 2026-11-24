@@ -130,9 +130,9 @@ private struct ClosedEntryScreen: View {
     var body: some View {
         if let closed {
             VStack(spacing: PawMetrics.Spacing.l) {
-                EmptyState(symbol: PawSymbol.entry, title: title(closed), message: "")
+                EmptyState(symbol: PawSymbol.entry, title: closed.reason.title, message: "")
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel(Device.words(title(closed)))
+                    .accessibilityLabel(Device.words(closed.reason.title))
                     .accessibilityIdentifier("entry-closed")
                 Button {
                     model.reopen(id)
@@ -157,9 +157,12 @@ private struct ClosedEntryScreen: View {
                 message: "Open it again from the list.")
         }
     }
+}
 
-    private func title(_ closed: ClosedEntry) -> String {
-        switch closed.reason {
+extension ClosedEntry.Reason {
+    /// What the closed entry's screen says.
+    var title: String {
+        switch self {
         case .away: "Closed after 2 minutes away"
         case .deviceLocked: "Closed when your iPhone locked"
         case .copyEnded: "Its Face ID time ended"
