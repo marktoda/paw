@@ -16,8 +16,8 @@ struct KeySheetHost: View {
             purpose: "Open \(model.keyRequest?.entry.name ?? "")",
             stage: stage,
             pin: $model.pinEntry,
-            note: model.copies == nil
-                ? nil : "Then it opens with Face ID for \(AppModel.faceIdWindowSecs / 3600) hours.",
+            note: model.copies?.copiesEnabled() == true
+                ? "Then it opens with Face ID for \(AppModel.faceIdWindowSecs / 3600) hours." : nil,
             onContinue: { model.continueWithPin() },
             onCancel: { model.cancelKeyTask() },
             onRetry: { model.retry() },
