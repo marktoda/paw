@@ -142,18 +142,31 @@ private struct ClosedEntryScreen: View {
 private struct PrivacyCover: ViewModifier {
     @Environment(\.scenePhase) private var scenePhase
 
+    #if DEBUG && targetEnvironment(simulator)
+    /// `-pawSimPrivacyCover 1`: the cover stays up, so a test can see it.
+    private static let held = LaunchArguments.bool("pawSimPrivacyCover")
+    #else
+    private static let held = false
+    #endif
+
     func body(content: Content) -> some View {
         content.overlay {
-            // Names are sensitive too: the app switcher sees a blank window.
-            if scenePhase != .active {
-                PawColor.bg
-                    .ignoresSafeArea()
-                    .accessibilityElement()
-                    .accessibilityLabel("paw is hidden")
-                    .accessibilityIdentifier("privacy-cover")
-                    #if DEBUG && targetEnvironment(simulator)
-                    .onAppear { PrivacyCoverLog.shared.shown += 1 }
-                    #endif
+            // Names are sensitive too: the app switcher sees only the name
+            // on an opaque background.
+            if scenePhase != .active || Self.held {
+                ZStack {
+                    PawColor.bg
+                    Text(verbatim: "paw")
+                        .font(PawFont.homeTitle)
+                        .foregroundStyle(PawColor.label)
+                }
+                .ignoresSafeArea()
+                .accessibilityElement()
+                .accessibilityLabel("paw is hidden")
+                .accessibilityIdentifier("privacy-cover")
+                #if DEBUG && targetEnvironment(simulator)
+                .onAppear { PrivacyCoverLog.shared.shown += 1 }
+                #endif
             }
         }
     }

@@ -388,6 +388,16 @@ final class AppTests: PawUITestCase {
         expectLabel("entry-title", contains: "github.com")
     }
 
+    /// The cover is up only while paw is away; `-pawSimPrivacyCover` holds
+    /// it up to take its picture.
+    func testThePrivacyCoverShowsOnlyTheName() {
+        for appearance in ["light", "dark"] {
+            launch(appearance: appearance, extra: ["-pawSimPrivacyCover", "1"])
+            expectLabel("privacy-cover", contains: "paw is hidden")
+            snapshot("privacy-cover-\(appearance)")
+        }
+    }
+
     func testARevealedPasswordHidesWhenPawLeavesTheScreen() {
         launch()
         openGitHubWithKey()
