@@ -268,24 +268,22 @@ final class AutoFillModel {
 
     private static func faceIdNotice(_ error: Error, entry: EntryRef) -> AutoFillNotice {
         if isStoreBusy(message: String(describing: error)) {
-            return AutoFillNotice(problem: "The store is busy.", nextStep: "Tap \(entry.name) again.")
+            return AutoFillNotice(problem: "The store is busy", nextStep: "Tap \(entry.name) again.")
         }
         switch error as? PawError {
         case .FaceIdCancelled?:
-            return AutoFillNotice(problem: "Face ID was cancelled.", nextStep: "Tap \(entry.name) to try again.",
+            return AutoFillNotice(problem: "Face ID was cancelled", nextStep: "Tap \(entry.name) to try again.",
                                   keyEntry: entry)
         case .FaceIdNotRecognised?:
-            return AutoFillNotice(problem: "Face ID didn't recognise you.", nextStep: "Tap \(entry.name) to try again.",
+            return AutoFillNotice(problem: "Face ID didn't recognise you", nextStep: "Tap \(entry.name) to try again.",
                                   keyEntry: entry)
         case .FaceIdLockedOut?:
-            return AutoFillNotice(problem: "Face ID is locked.", nextStep: "Lock and unlock your iPhone, then try again.",
+            return AutoFillNotice(problem: "Face ID is locked", nextStep: "Lock and unlock your iPhone, then try again.",
                                   keyEntry: entry)
         case .FaceIdChanged?:
-            return AutoFillNotice(problem: "Face ID changed, so saved copies were removed.",
-                                  nextStep: "Use your key.", keyEntry: entry)
+            return AutoFillNotice(problem: "Face ID changed on this iPhone", nextStep: "", keyEntry: entry)
         default:
-            return AutoFillNotice(problem: "Face ID didn't open \(entry.name).", nextStep: "Use your key.",
-                                  keyEntry: entry)
+            return AutoFillNotice(problem: "Face ID didn't open \(entry.name)", nextStep: "", keyEntry: entry)
         }
     }
 
@@ -403,13 +401,13 @@ final class AutoFillModel {
         case .failed(.NotForThisKey) where task.keyMismatch() != nil:
             keyStage = .failed(
                 problem: "This isn't your store's key",
-                nextStep: "Plug in the key you set paw up with. No PIN was sent.")
+                nextStep: "Plug in the key you set paw up with.")
         case .failed(.PinBlocked):
             keyStage = .locked
         case .failed(.Cancelled), .cancelled:
             break
         case .failed(let error) where isStoreBusy(message: String(describing: error)):
-            keyStage = .failed(problem: "The store is busy", nextStep: "Nothing was opened. Try again.")
+            keyStage = .failed(problem: "The store is busy", nextStep: "Try again in a moment.")
         case .failed(let error):
             if case .KeyRemoved = error {
                 readKey()

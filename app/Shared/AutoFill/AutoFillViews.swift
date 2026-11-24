@@ -45,12 +45,12 @@ struct AutoFillRootView: View {
         case .noStore:
             EmptyState(
                 symbol: PawSymbol.entry, title: "Set up paw first",
-                message: "Open paw and set up your store. Then try again here.",
+                message: "Open paw, then come back here.",
                 primary: EmptyState.Action(title: "Close", identifier: "autofill-close") { model.cancel() })
                 .background(PawColor.bg.ignoresSafeArea())
         case .busy:
             VStack(spacing: PawMetrics.Spacing.l) {
-                ErrorRow(kind: .warning, problem: "The store is busy.", nextStep: "paw is saving or downloading.",
+                ErrorRow(kind: .warning, problem: "The store is busy", nextStep: "paw is using it. Try again in a moment.",
                          isBanner: true)
                 Button("Try again") { model.reopen() }
                     .buttonStyle(.pawPrimary)
@@ -210,7 +210,7 @@ private struct AutoFillKeySheet: View {
             stage: model.keyStage,
             pin: $model.pinEntry,
             note: model.keepsCopies
-                ? "Afterwards it fills with Face ID for \(AutoFillModel.faceIdWindowSecs / 3600) hours." : nil,
+                ? "Then it fills with Face ID for \(AutoFillModel.faceIdWindowSecs / 3600) hours." : nil,
             onContinue: { model.continueWithPin() },
             onCancel: { model.cancelKey() },
             onRetry: { model.retry() },

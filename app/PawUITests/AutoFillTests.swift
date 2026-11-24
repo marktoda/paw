@@ -104,7 +104,7 @@ final class AutoFillTests: PawUITestCase {
         tap("harness-again")
         expectLabel(row("web/github.com"), contains: "opens with Face ID")
         tap(row("web/github.com"))
-        expectLabel("warning-row", contains: "Face ID was cancelled.")
+        expectLabel("warning-row", contains: "Face ID was cancelled")
         tap("error-action")
         expectLabel("key-sheet-purpose", contains: "Fill github.com")
         enterPin(Self.pin)
@@ -139,7 +139,7 @@ final class AutoFillTests: PawUITestCase {
 
     func testBusyStoreTriesAgain() {
         launchProvider(["-pawHostProvider", "https://github.com", "-pawHostProviderStore", "busy"])
-        expectLabel("warning-row", contains: "The store is busy.")
+        expectLabel("warning-row", contains: "The store is busy")
         tap("autofill-retry")
         expect(row("web/github.com"))
     }
