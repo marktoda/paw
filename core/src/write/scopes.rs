@@ -8,7 +8,8 @@
 //! names a key ID that none of its folder's keys has. That is certain only
 //! when paw knows every key of the folder: a line paw has no key for may
 //! name a certificate whose encryption subkey is the one in the packet, so
-//! such entries are counted as `unsure`, not listed.
+//! such entries are counted as `unsure`, not listed. So are entries with a
+//! hidden recipient (key ID zero) or a passphrase packet.
 //!
 //! Entry names are returned for the screen only. Nothing here logs them.
 
@@ -53,8 +54,9 @@ pub struct RecipientScope {
     /// Entries it governs that are encrypted for a key it does not name.
     /// For the screen only; never log these.
     pub other_key_entries: Vec<String>,
-    /// Entries naming a key paw cannot place, because a line of this
-    /// `.gpg-id` has no key on this device.
+    /// Entries that may be for another key: they name a key paw cannot
+    /// place (a line of this `.gpg-id` has no key on this device), a hidden
+    /// recipient, or a passphrase.
     pub unsure_entries: u32,
 }
 
@@ -168,10 +170,13 @@ pub fn recipient_scopes(keyring: &Keyring, root: &Path, now: u32) -> Result<Vec<
                 .iter()
                 .filter_map(packet_key_id)
                 .any(|id| !known.contains(&id));
-            if !stranger {
+            // A hidden recipient may be any key, and a passphrase opens it
+            // without one: neither is certain to be for another key.
+            let maybe = found.passphrase || found.keys.contains(&Recipient::Hidden);
+            if !stranger && !maybe {
                 continue;
             }
-            if complete {
+            if stranger && complete {
                 other_key_entries.push(entry.clone());
             } else {
                 unsure_entries += 1;

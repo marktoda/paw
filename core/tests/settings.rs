@@ -132,6 +132,49 @@ fn scopes_list_each_gpg_id_and_entries_for_other_keys() {
     assert_eq!(archive.unsure_entries, 1);
 }
 
+/// A made-up entry: the given packets, then the start of encrypted data
+/// (never read).
+fn invented_entry(packets: &[(u8, Vec<u8>)]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for (tag, body) in packets {
+        out.extend([0xC0 | tag, body.len() as u8]);
+        out.extend(body);
+    }
+    out.extend([0xC0 | 18, 0xE0, 0x01]);
+    out
+}
+
+/// A version 3 public-key session packet for key ID `id` (16 hex digits).
+fn for_key_id(id: &str) -> (u8, Vec<u8>) {
+    let mut body = vec![3];
+    body.extend((0..8).map(|i| u8::from_str_radix(&id[2 * i..2 * i + 2], 16).unwrap()));
+    body.extend([1, 0xAA, 0xBB]);
+    (1, body)
+}
+
+#[test]
+fn entries_with_a_hidden_recipient_or_a_passphrase_are_unsure() {
+    let fpr = card().fingerprint_hex();
+    let card_id = &fpr[24..];
+    let hidden = for_key_id("0000000000000000");
+    let passphrase = (3, vec![4, 9, 0, 2]);
+    let store = store_with(&[
+        (".gpg-id", format!("{fpr}\n").as_bytes()),
+        ("card.gpg", &invented_entry(&[for_key_id(card_id)])),
+        ("hidden.gpg", &invented_entry(&[hidden.clone()])),
+        ("card-and-hidden.gpg", &invented_entry(&[for_key_id(card_id), hidden])),
+        ("card-and-passphrase.gpg", &invented_entry(&[passphrase.clone(), for_key_id(card_id)])),
+        ("passphrase.gpg", &invented_entry(&[passphrase])),
+    ]);
+
+    let scopes = StoreWriter::open(store.state()).recipient_scopes().unwrap();
+
+    assert_eq!(scopes.len(), 1, "{scopes:?}");
+    assert_eq!(scopes[0].entry_count, 5);
+    assert!(scopes[0].other_key_entries.is_empty(), "{scopes:?}");
+    assert_eq!(scopes[0].unsure_entries, 4, "{scopes:?}");
+}
+
 // MARK: Face ID copies on and off
 
 fn copies_in(dir: &std::path::Path, keystore: &Arc<SimKeystore>, clock: &Arc<SimClock>) -> Arc<CopyCache> {
