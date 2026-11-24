@@ -389,6 +389,15 @@ impl StoreWriter {
         self.store.folder_recipients(&folder)
     }
 
+    /// "Who can open these passwords": every `.gpg-id` in the store, top
+    /// first, with its keys and the entries under it encrypted for a key
+    /// it does not name. Reads headers only; decrypts nothing.
+    pub fn recipient_scopes(&self) -> Result<Vec<crate::write::RecipientScope>, WriteError> {
+        let _reading = self.store.lock().shared()?;
+        let keyring = self.store.keyring()?;
+        crate::write::scopes::recipient_scopes(&keyring, self.store.repo(), core::now_secs())
+    }
+
     /// Whether paw can save in `folder` now.
     pub fn can_save_in(&self, folder: String) -> bool {
         let Ok(_reading) = self.store.lock().shared() else {

@@ -14,6 +14,7 @@ pub mod entry;
 pub mod ffi;
 pub mod path;
 pub mod recipients;
+pub mod report;
 #[cfg(feature = "sim")]
 pub mod sim;
 pub mod ssh;

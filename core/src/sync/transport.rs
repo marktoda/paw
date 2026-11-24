@@ -159,6 +159,12 @@ impl HostKeyPin {
         self.0.iter().map(fingerprint_of).collect()
     }
 
+    /// Each pinned key's type as people know it ("Ed25519", "ECDSA",
+    /// "RSA") and its `SHA256:...` fingerprint, preferred first.
+    pub fn described(&self) -> Vec<(String, String)> {
+        self.0.iter().map(|key| (key_type_words(&key.algorithm().to_string()), fingerprint_of(key))).collect()
+    }
+
     /// The pinned keys as public key lines, preferred first.
     pub fn lines(&self) -> Vec<String> {
         self.0
@@ -184,6 +190,18 @@ impl HostKeyPin {
 
     fn accepts(&self, presented: &PublicKey) -> bool {
         self.0.iter().any(|pinned| pinned.key_data() == presented.key_data())
+    }
+}
+
+/// An SSH algorithm name in the words a server's documentation uses.
+pub fn key_type_words(algorithm: &str) -> String {
+    match algorithm {
+        "ssh-ed25519" => "Ed25519".into(),
+        "ecdsa-sha2-nistp256" => "ECDSA P-256".into(),
+        "ecdsa-sha2-nistp384" => "ECDSA P-384".into(),
+        "ecdsa-sha2-nistp521" => "ECDSA P-521".into(),
+        "ssh-rsa" | "rsa-sha2-256" | "rsa-sha2-512" => "RSA".into(),
+        other => other.to_owned(),
     }
 }
 
