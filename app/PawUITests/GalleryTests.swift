@@ -2,16 +2,9 @@ import XCTest
 
 /// Opens each page of the component gallery in light and in dark, checks
 /// that the components are there and behave, and leaves pictures of them.
-final class GalleryTests: XCTestCase {
-    private var app: XCUIApplication!
-
+final class GalleryTests: PawUITestCase {
     private static let appearances = ["light", "dark"]
     private static let samplePassword = "Xk7#mO0l1-pT9&wq"
-
-    override func setUp() {
-        continueAfterFailure = false
-        app = XCUIApplication()
-    }
 
     // MARK: Helpers
 
@@ -24,32 +17,14 @@ final class GalleryTests: XCTestCase {
         app.launch()
     }
 
-    private func snapshot(_ name: String) {
-        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        attachment.name = "\(self.name.split(separator: " ").last?.dropLast() ?? "test")-\(name)"
-        attachment.lifetime = .keepAlways
-        add(attachment)
-    }
-
-    /// The first element with this identifier, whatever its type.
-    private func element(_ identifier: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
-    }
-
-    /// Waits for an element and fails with its identifier otherwise.
-    @discardableResult
-    private func expect(_ identifier: String, timeout: TimeInterval = 10,
-                        file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
-        let found = element(identifier)
-        XCTAssertTrue(found.waitForExistence(timeout: timeout),
-                      "\"\(identifier)\" should be on screen", file: file, line: line)
-        return found
-    }
-
+    /// Waits until the label is exactly `label`.
     private func expectLabel(_ identifier: String, _ label: String,
                              file: StaticString = #filePath, line: UInt = #line) {
         let found = expect(identifier, file: file, line: line)
-        XCTAssertEqual(found.label, label, "label of \"\(identifier)\"", file: file, line: line)
+        if !waitUntil(timeout: Self.patience, { found.label == label }) {
+            XCTFail("label of \"\(identifier)\" should be \"\(label)\", it was \"\(found.label)\"",
+                    file: file, line: line)
+        }
     }
 
     // MARK: Tokens
@@ -114,7 +89,7 @@ final class GalleryTests: XCTestCase {
             XCTAssertTrue(app.buttons["entry-Fastmail"].exists, "An entry row should be a button")
             snapshot(appearance)
 
-            app.buttons["entry-GitHub"].tap()
+            tapWhenHittable(app.buttons["entry-GitHub"], "The GitHub row")
             expectLabel("rows-last-tapped", "Tapped GitHub")
 
             app.swipeUp()
@@ -154,7 +129,7 @@ final class GalleryTests: XCTestCase {
         for appearance in Self.appearances {
             launch(page: "sheet", appearance: appearance)
             for (stage, headline) in headlines {
-                expect("stage-\(stage)").tap()
+                tapWhenHittable(element("stage-\(stage)"), "The \(stage) stage")
                 expectLabel("key-sheet-headline", headline)
                 switch stage {
                 case "pinLastTry":
@@ -174,53 +149,53 @@ final class GalleryTests: XCTestCase {
                 }
                 snapshot("\(appearance)-\(stage)")
                 let cancel = app.buttons["key-sheet-cancel"]
-                cancel.tap()
-                XCTAssertTrue(cancel.waitForNonExistence(timeout: 10),
-                              "Cancel should close the sheet at \(stage)")
+                tapWhenHittable(cancel, "Cancel at \(stage)")
+                expectGone(cancel, "Cancel should close the sheet at \(stage)")
             }
 
             // Done has no button: it closes itself.
-            expect("stage-done").tap()
+            tapWhenHittable(element("stage-done"), "The done stage")
             let done = app.staticTexts["key-sheet-headline"]
-            XCTAssertTrue(done.waitForExistence(timeout: 3), "Done should show before the sheet closes")
+            // The gallery closes it after 4 seconds.
+            XCTAssertTrue(waitToExist(done, timeout: 3), "Done should show before the sheet closes")
             snapshot("\(appearance)-done")
-            XCTAssertTrue(done.waitForNonExistence(timeout: 10),
-                          "The sheet should close itself after Done")
+            expectGone(done, "The sheet should close itself after Done")
         }
     }
 
     func testPinStageNeedsSixCharactersThenAsksForATouch() {
         launch(page: "sheet", appearance: "light")
-        expect("stage-pin").tap()
+        tapWhenHittable(element("stage-pin"), "The PIN stage")
 
         let field = app.secureTextFields["pin-field"]
-        XCTAssertTrue(field.waitForExistence(timeout: 10), "The PIN field should be a secure field")
+        XCTAssertTrue(waitToExist(field, timeout: Self.patience), "The PIN field should be a secure field")
         let button = app.buttons["pin-continue"]
         XCTAssertFalse(button.isEnabled, "Continue should be off with no PIN")
 
-        field.tap()
+        focus(field)
         field.typeText("12345")
         XCTAssertFalse(button.isEnabled, "Continue should stay off at 5 characters")
         field.typeText("6")
-        XCTAssertTrue(button.isEnabled, "Continue should turn on at 6 characters")
+        wait(for: "enabled == true", on: button, timeout: Self.patience, "Continue should turn on at 6 characters")
         snapshot("six-characters")
 
-        app.buttons["pin-show"].tap()
+        tapWhenHittable(app.buttons["pin-show"], "Show")
         // Shown over the field, which stays secure: a plain field would let
         // a third-party keyboard in.
         let shown = app.descendants(matching: .any)["pin-shown"]
-        XCTAssertTrue(shown.waitForExistence(timeout: 5), "Show should show the PIN")
-        XCTAssertEqual(shown.label, "123456")
+        XCTAssertTrue(waitToExist(shown, timeout: Self.patience), "Show should show the PIN")
+        XCTAssertTrue(waitUntil(timeout: Self.patience) { shown.label == "123456" },
+                      "Show should show the PIN typed, it showed \"\(shown.label)\"")
         XCTAssertTrue(app.secureTextFields["pin-field"].exists, "The PIN field should stay a secure field")
         XCTAssertFalse(app.textFields["pin-field"].exists, "Show must not swap in a plain text field")
         snapshot("pin-shown")
 
-        button.tap()
+        tapWhenHittable(button, "Continue")
         expect("touch-prompt")
         expectLabel("key-sheet-headline", "Touch your key")
-        XCTAssertFalse(app.buttons["pin-continue"].exists, "The PIN controls should be gone at Touch")
+        expectGone(app.buttons["pin-continue"], "The PIN controls should be gone at Touch")
 
-        element("touch-prompt").tap()
+        tapWhenHittable(element("touch-prompt"), "The touch prompt")
         expectLabel("touch-hint", "Touch the key itself, not the screen.")
         snapshot("touch-after-pin")
     }
@@ -234,30 +209,29 @@ final class GalleryTests: XCTestCase {
             XCTAssertEqual(value.value as? String, "hidden", "The password should start hidden")
             snapshot("\(appearance)-hidden")
 
-            app.buttons["password-reveal"].tap()
-            XCTAssertEqual(element("password-value").value as? String, Self.samplePassword,
-                           "Reveal should show the password")
+            tapWhenHittable(app.buttons["password-reveal"], "The eye")
+            expectValue("password-value", Self.samplePassword)
             snapshot("\(appearance)-revealed")
 
-            app.buttons["password-large-type"].tap()
+            tapWhenHittable(app.buttons["password-large-type"], "Large type")
             expectLabel("large-type-cell-1", "Capital X, 1 of 16")
             expectLabel("large-type-cell-4", "Hash, 4 of 16")
             expectLabel("large-type-cell-7", "0, 7 of 16")
             snapshot("\(appearance)-large-type")
+            // Once, and only when it can take the tap: a tap that lands
+            // while the sheet is still coming up is not a press of Done.
             let done = app.buttons["large-type-done"]
-            done.tap()
-            XCTAssertTrue(done.waitForNonExistence(timeout: 10), "Done should close the large-type view")
+            tapWhenHittable(done, "Done")
+            expectGone(done, "Done should close the large-type view")
 
-            app.buttons["password-copy"].tap()
+            tapWhenHittable(app.buttons["password-copy"], "Copy")
             snapshot("\(appearance)-copied")
 
-            app.buttons["password-reveal"].tap()
-            XCTAssertEqual(element("password-value").value as? String, "hidden",
-                           "The eye should hide the password again")
+            tapWhenHittable(app.buttons["password-reveal"], "The eye")
+            expectValue("password-value", "hidden")
 
-            app.buttons["lock-now"].tap()
-            XCTAssertTrue(element("face-id-window-text").waitForNonExistence(timeout: 5),
-                          "Lock now should remove the Face ID window bar")
+            tapWhenHittable(app.buttons["lock-now"], "Lock now")
+            expectGone(element("face-id-window-text"), "Lock now should remove the Face ID window bar")
         }
     }
 
@@ -280,10 +254,10 @@ final class GalleryTests: XCTestCase {
     func testEmptyStatesPage() {
         for appearance in Self.appearances {
             launch(page: "empty", appearance: appearance)
-            XCTAssertTrue(app.staticTexts["No passwords yet"].waitForExistence(timeout: 10))
+            XCTAssertTrue(waitToExist(app.staticTexts["No passwords yet"], timeout: Self.patience))
             XCTAssertTrue(app.staticTexts["No matches"].exists)
             snapshot(appearance)
-            app.buttons["empty-add"].tap()
+            tapWhenHittable(app.buttons["empty-add"], "Add a password")
             expectLabel("empty-last-tapped", "Tapped Add a password")
             app.swipeUp()
             snapshot("\(appearance)-more")
@@ -305,13 +279,13 @@ final class GalleryTests: XCTestCase {
             snapshot(appearance)
 
             let search = app.searchFields.firstMatch
-            XCTAssertTrue(search.waitForExistence(timeout: 5), "Home should have a search field")
-            search.tap()
+            XCTAssertTrue(waitToExist(search, timeout: Self.patience), "Home should have a search field")
+            focus(search)
             snapshot("\(appearance)-search-empty")
             search.typeText("fast")
             expectLabel("search-count", "4 matches")
             expect("entry-Breakfast delivery club")
-            XCTAssertFalse(app.buttons["entry-GitHub"].exists, "GitHub does not match \"fast\"")
+            expectGone(app.buttons["entry-GitHub"], "GitHub does not match \"fast\"")
             snapshot("\(appearance)-search")
         }
     }

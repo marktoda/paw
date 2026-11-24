@@ -5,139 +5,75 @@ import XCTest
 /// has another computer change the host before paw fetches; the sync
 /// sheet's simulator section changes it by hand. The hidden element
 /// `sim-remote-summary` says the host's tip and how many logins it saw.
-final class SyncTests: XCTestCase {
-    private var app: XCUIApplication!
-
-    private static let pin = "123456"
-
-    override func setUp() {
-        continueAfterFailure = false
-        app = XCUIApplication()
-    }
-
-    override func tearDown() {
-        snapshot("end")
-    }
-
+final class SyncTests: PawUITestCase {
     // MARK: Helpers
 
     private func launch(appearance: String = "light", extra: [String] = []) {
-        app.launchArguments = [
-            "-pawFixture", "1",
-            "-pawAppearance", appearance,
-            "-pawSimPin", Self.pin,
-            "-pawSimTouch", "1",
-            "-pawSimTouchTimeoutMs", "15000",
-        ] + extra
-        app.launch()
-        expect("home-title", timeout: 30)
-        expect("sync-pill", timeout: 30)
+        launchFixture(appearance: appearance, extra: extra)
+        expect("sync-pill")
     }
 
-    private func snapshot(_ name: String) {
-        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        attachment.name = "\(self.name.split(separator: " ").last?.dropLast() ?? "test")-\(name)"
-        attachment.lifetime = .keepAlways
-        add(attachment)
-    }
-
-    private func element(_ identifier: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
-    }
-
-    @discardableResult
-    private func expect(_ identifier: String, timeout: TimeInterval = 30,
-                        file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
-        let found = element(identifier)
-        XCTAssertTrue(found.waitForExistence(timeout: timeout),
-                      "\"\(identifier)\" should be on screen", file: file, line: line)
-        return found
-    }
-
-    private func expectGone(_ identifier: String, timeout: TimeInterval = 30,
-                            file: StaticString = #filePath, line: UInt = #line) {
-        let gone = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: element(identifier))
-        if XCTWaiter().wait(for: [gone], timeout: timeout) != .completed {
-            XCTFail("\"\(identifier)\" should have gone", file: file, line: line)
-        }
-    }
-
-    private func expectLabel(_ identifier: String, contains text: String, timeout: TimeInterval = 30,
-                             file: StaticString = #filePath, line: UInt = #line) {
-        let found = expect(identifier, timeout: timeout, file: file, line: line)
-        let matches = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label CONTAINS %@", text), object: found)
-        if XCTWaiter().wait(for: [matches], timeout: timeout) != .completed {
-            XCTFail("\"\(identifier)\" should say \"\(text)\", it said \"\(found.label)\"",
-                    file: file, line: line)
-        }
-    }
-
-    /// Scrolls until the element can be tapped.
-    @discardableResult
-    private func scrollTo(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
-        let found = element(identifier)
-        _ = found.waitForExistence(timeout: 20)
+    /// As everywhere, and clear of the sync sheet's Send and Check, which
+    /// stay pinned under its list: a row scrolled beneath them would give
+    /// them its tap.
+    override func tap(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {
+        let found = scrollTo(identifier, file: file, line: line)
         var swipes = 0
-        while !(found.exists && found.isHittable && !underKeyboard(found) && !underSyncActions(found, identifier))
-                && swipes < 6 {
+        while swipes < 4 && underSyncActions(found, identifier) {
             app.swipeUp()
             swipes += 1
+            waitUntilStill(found)
         }
-        XCTAssertTrue(found.exists, "\"\(identifier)\" should be on screen", file: file, line: line)
-        return found
+        found.tap()
     }
 
-    /// The sync sheet pins Send and Check under its list. A row that has
-    /// scrolled beneath them would take a tap meant for it to them.
+    /// Whether the element is under the sync sheet's pinned buttons. One
+    /// look when the sheet is not up.
     private func underSyncActions(_ found: XCUIElement, _ identifier: String) -> Bool {
-        for pinned in ["sync-send", "sync-check"] where pinned != identifier {
-            let button = app.buttons[pinned]
-            if button.exists && found.frame.maxY > button.frame.minY {
-                return true
-            }
+        if identifier == "sync-send" || identifier == "sync-check" { return false }
+        let buttons = app.buttons.matching(
+            NSPredicate(format: "identifier == %@ OR identifier == %@", "sync-send", "sync-check"))
+        let count = buttons.count
+        guard count > 0 else { return false }
+        let bottom = found.frame.maxY
+        for index in 0..<count where bottom > buttons.element(boundBy: index).frame.minY {
+            return true
         }
         return false
-    }
-
-    private func underKeyboard(_ found: XCUIElement) -> Bool {
-        let keyboard = app.keyboards.firstMatch
-        return keyboard.exists && found.frame.maxY > keyboard.frame.minY
-    }
-
-    private func tap(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {
-        scrollTo(identifier, file: file, line: line).tap()
     }
 
     /// The action button of the inline row `container` (an `ErrorRow`).
     private func tapAction(in container: String, file: StaticString = #filePath, line: UInt = #line) {
         let button = expect(container, file: file, line: line).buttons["error-action"].firstMatch
-        XCTAssertTrue(button.waitForExistence(timeout: 20), "\"\(container)\" should offer its action",
-                      file: file, line: line)
-        button.tap()
+        tapWhenHittable(button, "\"\(container)\"'s action", file: file, line: line)
     }
 
-    private func goBack() {
-        let back = app.navigationBars.buttons["BackButton"]
-        if back.exists {
-            back.tap()
-        } else {
-            app.navigationBars.buttons.element(boundBy: 0).tap()
-        }
-    }
-
-    private func type(_ text: String, into identifier: String) {
-        let field = scrollTo(identifier)
-        field.tap()
+    /// Types into a form field, replacing what is there.
+    private func type(_ text: String, into identifier: String, file: StaticString = #filePath, line: UInt = #line) {
+        let field = scrollTo(identifier, file: file, line: line)
+        focus(field, file: file, line: line)
         let current = (field.value as? String) ?? ""
         let placeholder = field.placeholderValue ?? ""
         if !current.isEmpty && current != placeholder {
             field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
         }
         if !text.isEmpty {
+            // The form can redraw and take the keyboard away between the tap
+            // and the typing; typing then fails outright, so take it back.
+            if !hasFocus(field) { focus(field, file: file, line: line) }
             field.typeText(text)
         }
+    }
+
+    private func chooseFolder(_ folder: String) {
+        // The first tap on the menu can be spent on putting the keyboard away.
+        let item = app.buttons[folder].firstMatch
+        for _ in 0..<3 where !item.exists {
+            tap("form-folder")
+            if waitUntil(timeout: 5, { item.exists }) { break }
+        }
+        tapWhenHittable(item, "The folder menu's \(folder)")
+        expectValue("form-folder", folder)
     }
 
     /// From Home: a new entry with a typed password, saved. No key.
@@ -146,12 +82,10 @@ final class SyncTests: XCTestCase {
         expect("form-name")
         type(name, into: "form-name")
         if !folder.isEmpty {
-            tap("form-folder")
-            let item = app.buttons[folder].firstMatch
-            XCTAssertTrue(item.waitForExistence(timeout: 20), "The folder menu should list \(folder)")
-            item.tap()
+            chooseFolder(folder)
         }
         type("Typed-pass-42", into: "form-password")
+        expectEnabled("form-save", true)
         tap("form-save")
         expectGone("form-save")
         expectLabel("sim-last-app-toast", contains: "Saved. Not sent yet.")
@@ -160,8 +94,16 @@ final class SyncTests: XCTestCase {
     /// The tip and logins of the simulated host, as the debug element says.
     private var remote: String {
         let found = element("sim-remote-summary")
-        _ = found.waitForExistence(timeout: 20)
+        _ = waitToExist(found, timeout: Self.patience)
         return found.label
+    }
+
+    /// Waits until the simulated host's tip and logins are no longer `before`.
+    private func expectRemoteMoved(from before: String, _ message: String,
+                                   file: StaticString = #filePath, line: UInt = #line) {
+        if !waitUntil(timeout: Self.patience, { remote != before }) {
+            XCTFail("\(message): it still says \"\(before)\"", file: file, line: line)
+        }
     }
 
     /// The key sheet for a sync is up: types the PIN if asked for, touches
@@ -170,9 +112,7 @@ final class SyncTests: XCTestCase {
     private func passKeySheet(purpose: String, pin: Bool, file: StaticString = #filePath, line: UInt = #line) {
         expectLabel("key-sheet-purpose", contains: purpose, file: file, line: line)
         if pin {
-            let field = expect("pin-field", file: file, line: line)
-            field.tap()
-            field.typeText(Self.pin + "\n")
+            enterPin(Self.pin, file: file, line: line)
             expectGone("pin-field", file: file, line: line)
         }
         touchIfAsked(file: file, line: line)
@@ -183,30 +123,48 @@ final class SyncTests: XCTestCase {
     private func touchIfAsked(file: StaticString = #filePath, line: UInt = #line) {
         let touch = element("touch-prompt")
         let purpose = element("key-sheet-purpose")
-        let pinField = element("pin-field")
-        let deadline = Date().addingTimeInterval(45)
-        while Date() < deadline {
+        let field = element("pin-field")
+        var asked = "nothing"
+        let settled = waitUntil(timeout: 45) {
             if touch.exists {
-                app.buttons["simulated-touch"].firstMatch.tap()
-                expectGone("touch-prompt", file: file, line: line)
-                return
+                asked = "touch"
+            } else if !purpose.exists {
+                asked = "finished"
+            } else if field.exists {
+                asked = "pin"
             }
-            if !purpose.exists {
-                return
-            }
-            if pinField.exists {
-                XCTFail("The PIN should not be asked for again", file: file, line: line)
-                return
-            }
-            _ = touch.waitForExistence(timeout: 0.5)
+            return asked != "nothing"
         }
-        XCTFail("The key sheet neither asked for a touch nor finished", file: file, line: line)
+        guard settled else {
+            XCTFail("The key sheet neither asked for a touch nor finished", file: file, line: line)
+            return
+        }
+        switch asked {
+        case "touch":
+            tapSimulated("simulated-touch", file: file, line: line)
+            expectGone("touch-prompt", file: file, line: line)
+        case "pin":
+            XCTFail("The PIN should not be asked for again", file: file, line: line)
+        default:
+            break
+        }
     }
 
     /// Home's pill, then the sync sheet.
     private func openSyncSheet() {
         tap("sync-pill")
         expect("sync-sheet-done")
+    }
+
+    /// Opens the sync sheet's Simulator row: its controls are closed until
+    /// it is tapped. A tap while the list is still settling can miss.
+    private func showSyncSimulatorControls(file: StaticString = #filePath, line: UInt = #line) {
+        let row = scrollTo("sim-controls", file: file, line: line)
+        for _ in 0..<3 where (row.value as? String) != "shown" {
+            tap("sim-controls", file: file, line: line)
+            if waitUntil(timeout: 2, { (row.value as? String) == "shown" }) { break }
+        }
+        XCTAssertEqual(row.value as? String, "shown", "The simulator controls should open", file: file, line: line)
     }
 
     // MARK: Sending
@@ -232,7 +190,7 @@ final class SyncTests: XCTestCase {
         snapshot("unpushed-after-send-light")
         goBack()
         expectLabel("sync-pill", contains: "Up to date")
-        XCTAssertNotEqual(remote, before, "The simulated host's tip should have moved")
+        expectRemoteMoved(from: before, "The simulated host's tip should have moved")
         snapshot("pill-up-to-date-light")
 
         // A second send in the same run: the PIN is still held.
@@ -245,8 +203,8 @@ final class SyncTests: XCTestCase {
         passKeySheet(purpose: "Send 1 change", pin: false)
         expectGone("key-sheet-purpose")
         expectLabel("sync-pill", contains: "Up to date")
-        XCTAssertNotEqual(remote, middle, "The second send should have moved the tip again")
-        XCTAssertFalse(element("unpushed-banner").exists, "Nothing should be waiting")
+        expectRemoteMoved(from: middle, "The second send should have moved the tip again")
+        expectGone(element("unpushed-banner"), "Nothing should be waiting")
     }
 
     func testThePillAndTheSyncSheetInDark() {
@@ -278,8 +236,8 @@ final class SyncTests: XCTestCase {
         expectGone("key-sheet-purpose")
         expectLabel("sim-last-app-toast", contains: "Sent")
         expectLabel("sync-pill", contains: "Up to date")
-        XCTAssertFalse(element("unpushed-banner").exists, "Nothing should be waiting")
-        XCTAssertNotEqual(remote, before)
+        expectGone(element("unpushed-banner"), "Nothing should be waiting")
+        expectRemoteMoved(from: before, "The send should have moved the tip")
         // What the other computer added came in on the way.
         expect("sync-added-forum.example")
         snapshot("moved-summary")
@@ -292,9 +250,7 @@ final class SyncTests: XCTestCase {
         tap("unpushed-banner")
         tap("unpushed-send")
         expectLabel("key-sheet-purpose", contains: "Send 1 change")
-        let field = expect("pin-field")
-        field.tap()
-        field.typeText(Self.pin + "\n")
+        enterPin(Self.pin)
         expect("touch-prompt")
         tap("key-sheet-cancel")
         expectGone("key-sheet-purpose")
@@ -402,7 +358,8 @@ final class SyncTests: XCTestCase {
         expect("entry-example.com")
         let copies = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "entry-example.com (from this iPhone"))
-        XCTAssertTrue(copies.firstMatch.waitForExistence(timeout: 20), "This iPhone's version should be listed beside it")
+        XCTAssertTrue(waitToExist(copies.firstMatch, timeout: Self.patience),
+                      "This iPhone's version should be listed beside it")
     }
 
     // MARK: What a sync can't do by itself
@@ -468,7 +425,7 @@ final class SyncTests: XCTestCase {
         passKeySheet(purpose: "Send 1 change", pin: false)
         expectGone("key-sheet-purpose")
         expectLabel("sync-pill", contains: "Up to date")
-        XCTAssertNotEqual(remote, before)
+        expectRemoteMoved(from: before, "The send should have moved the tip")
     }
 
     func testReplacedHistoryDiscardsTheChangesOnlyAfterAConfirm() {
@@ -491,7 +448,7 @@ final class SyncTests: XCTestCase {
         launch(extra: ["-pawSimRemoteChange", "rewrite"])
         addEntry("waiting.example", folder: "web")
         openSyncSheet()
-        tap("sim-controls")
+        showSyncSimulatorControls()
         tap("sim-remote-rewrite")
         expectLabel("sim-remote-status", contains: "Replaced the history.")
         tap("sync-sheet-done")
@@ -505,10 +462,5 @@ final class SyncTests: XCTestCase {
         tapAction(in: "sync-replaced")
         expect("replaced-intro")
         expectLabel("replaced-unpushed", contains: "Your 1 change not sent yet")
-    }
-
-    private func expectAbsent(_ identifier: String, _ why: String,
-                              file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertFalse(element(identifier).exists, why, file: file, line: line)
     }
 }

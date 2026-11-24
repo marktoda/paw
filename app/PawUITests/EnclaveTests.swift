@@ -5,36 +5,18 @@ import XCTest
 /// match, so this proves the keychain plumbing and the clocks; what the
 /// simulator says about the Secure Enclave itself is recorded, not
 /// required. Face ID outcomes stay with `SimKeystore`.
-final class EnclaveTests: XCTestCase {
-    private var app: XCUIApplication!
-
+final class EnclaveTests: PawUITestCase {
     override func setUp() {
+        super.setUp()
+        // Every row is recorded and checked, whatever an earlier one said.
         continueAfterFailure = true
-        app = XCUIApplication()
         app.launchArguments = ["-pawEnclaveCheck", "1"]
         app.launch()
     }
 
-    override func tearDown() {
-        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        attachment.name = "\(name.split(separator: " ").last?.dropLast() ?? "test")-end"
-        attachment.lifetime = .keepAlways
-        add(attachment)
-    }
-
-    private func element(_ identifier: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
-    }
-
     /// The row's text, after waiting for it (scrolling down if need be).
     private func text(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) -> String {
-        let found = element(identifier)
-        var tries = 0
-        while !found.waitForExistence(timeout: 2) && tries < 6 {
-            app.swipeUp()
-            tries += 1
-        }
-        XCTAssertTrue(found.exists, "\"\(identifier)\" should be on screen", file: file, line: line)
+        let found = scrollTo(identifier, file: file, line: line)
         return found.exists ? found.label : ""
     }
 
@@ -46,17 +28,23 @@ final class EnclaveTests: XCTestCase {
         print("EnclaveTests \(name): \(value)")
     }
 
+    /// Runs the storage checks and waits for them to finish.
+    private func runStorageChecks(file: StaticString = #filePath, line: UInt = #line) {
+        tap("enclave-run-storage", file: file, line: line)
+        // Every row appears at once when the checks finish.
+        expect("enclave-probe", file: file, line: line)
+    }
+
+    /// The storage checks and the clocks, then the boot id across a
+    /// relaunch: copies survive a relaunch until the phone restarts. One
+    /// launch serves both; nothing stops at a failed row.
     func testStorageAndClocks() {
         record("faceid-state", text("enclave-faceid-state"))
         record("passcode-state", text("enclave-passcode-state"))
         let accessGroup = text("enclave-access-group")
         record("access-group", accessGroup)
 
-        let run = element("enclave-run-storage")
-        XCTAssertTrue(run.waitForExistence(timeout: 10))
-        run.tap()
-        // Every row appears at once when the checks finish.
-        XCTAssertTrue(element("enclave-probe").waitForExistence(timeout: 30), "the checks should finish")
+        runStorageChecks()
 
         // Recorded: whether the simulator has a Secure Enclave and can make
         // a Face ID-bound key depends on the runtime and its Face ID setting.
@@ -88,34 +76,21 @@ final class EnclaveTests: XCTestCase {
             XCTAssertTrue(value.contains(": pass"), "\(row): \(value)")
         }
         XCTAssertEqual(text("enclave-done"), "Storage checks: done")
-    }
 
-    /// Runs the storage checks and returns the boot id line.
-    private func shownBootId() -> String {
-        let run = element("enclave-run-storage")
-        XCTAssertTrue(run.waitForExistence(timeout: 10))
-        run.tap()
-        XCTAssertTrue(element("enclave-probe").waitForExistence(timeout: 30), "the checks should finish")
-        return text("enclave-boot-shown")
-    }
-
-    /// The boot id must outlive the process: copies survive a relaunch
-    /// until the phone restarts.
-    func testBootIdSurvivesRelaunch() {
-        let before = shownBootId()
+        // The boot id must outlive the process.
+        let before = text("enclave-boot-shown")
         record("boot-before", before)
         XCTAssertTrue(before.hasPrefix("Boot id ") && !before.contains("unknown-"), before)
         app.terminate()
         app.launch()
-        let after = shownBootId()
+        runStorageChecks()
+        let after = text("enclave-boot-shown")
         record("boot-after", after)
         XCTAssertEqual(after, before, "the boot id should be the same after a relaunch")
     }
 
     func testFaceIdCheckAnswersWithoutHanging() {
-        let check = element("enclave-check-faceid")
-        XCTAssertTrue(check.waitForExistence(timeout: 10))
-        check.tap()
+        tap("enclave-check-faceid")
         // With no enrolled face the seal step refuses before any prompt.
         let seal = text("enclave-faceid-seal")
         record("faceid-seal", seal)
@@ -124,7 +99,7 @@ final class EnclaveTests: XCTestCase {
             // An enrolled simulator face is asked; nobody answers here, so
             // only record whatever the unseal row says if it appears.
             let unseal = element("enclave-faceid-unseal")
-            if unseal.waitForExistence(timeout: 5) { record("faceid-unseal", unseal.label) }
+            if waitToExist(unseal, timeout: 5) { record("faceid-unseal", unseal.label) }
         }
     }
 }

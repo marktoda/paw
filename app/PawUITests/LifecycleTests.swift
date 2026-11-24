@@ -13,7 +13,7 @@ final class LifecycleTests: PawUITestCase {
         // Each trip to the background moves the simulated clock 1 minute on.
         launchFixture(extra: ["-pawSimAwayMs", String(60 * 1000)])
         openGitHubWithKey()
-        app.buttons["password-reveal"].tap()
+        tapWhenHittable(app.buttons["password-reveal"], "The eye")
         expectValue("password-value", Self.githubPassword)
         backgroundAndReturn()
         expectLabel("entry-title", contains: "github.com")
@@ -109,7 +109,7 @@ final class LifecycleTests: PawUITestCase {
         // test spends freely; paw's own runs on the simulated clock.
         launchFixture(extra: ["-pawSimPasteboardSecs", "3600"])
         openGitHubWithKey()
-        app.buttons["copy-password"].tap()
+        tapWhenHittable(app.buttons["copy-password"], "Copy password")
         expectLabel("sim-last-toast", contains: "Password copied")
         goBack()
         goBack()
@@ -122,7 +122,7 @@ final class LifecycleTests: PawUITestCase {
 
         // Copied again, then 45 seconds pass on the simulated clock.
         openGitHubWithKey()
-        app.buttons["copy-password"].tap()
+        tapWhenHittable(app.buttons["copy-password"], "Copy password")
         expectLabel("sim-last-toast", contains: "Password copied")
         goBack()
         goBack()
