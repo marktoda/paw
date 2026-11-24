@@ -491,7 +491,7 @@ final class AutoFillModel {
             case .WrongPin(let left)?:
                 keyStage = .wrongPin(triesLeft: Int(left))
             case let error?:
-                let words = KeyErrorWords(error, entry: entry.name)
+                let words = KeyErrorWords(pinAskedAgain: error, entry: entry.name)
                 keyStage = .pinAgain(triesLeft: tries, problem: words.problem, nextStep: words.nextStep)
             }
         case .busy:
