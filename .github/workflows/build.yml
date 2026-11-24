@@ -94,9 +94,10 @@ jobs:
           [ -n "$TREE" ] || exit 0
           for id in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?status=success&per_page=50" \
               -q ".workflow_runs[] | select(.head_commit.tree_id == \"$TREE\" and .id != $GITHUB_RUN_ID) | .id"); do
-            # Only a full run counts: one split as "full", every part passed.
+            # Only a full run counts: one split as "full" with its iPad part,
+            # every part passed.
             full=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" \
-              -q '[.jobs[] | select(.name | startswith("ui (full"))] | length > 0 and all(.conclusion == "success")')
+              -q '[.jobs[] | select((.name | startswith("ui (full")) or .name == "ui (ipad)")] | any(.name == "ui (ipad)") and any(.name | startswith("ui (full")) and all(.conclusion == "success")')
             if [ "$full" = "true" ]; then
               echo "Run $id already passed every UI test on this tree; skipping them."
               echo "run=$id" >> "$GITHUB_OUTPUT"
@@ -135,12 +136,16 @@ jobs:
               groups = {}
               for name in only:
                   groups.setdefault(name.split("/")[0], []).append(name)
+              # The iPad tests get their own part, on an iPad; the rest never do.
+              pad = groups.pop("IPadTests", None)
               load = lambda names: sum(w(n.split("/")[0]) * (1 if "/" in n else len(tests.get(n, [1]))) for n in names)
               bins = [[] for _ in range(min(4, len(groups)))]
               for cls in sorted(groups, key=lambda c: -load(groups[c])):
                   min(bins, key=load).extend(groups[cls])
               n = len(bins)
               parts = [{"name": f"only-{i + 1}-of-{n}", "only": " ".join(b), "skip": ""} for i, b in enumerate(bins)]
+              if pad:
+                  parts.append({"name": "ipad", "only": " ".join(pad), "skip": "", "family": "iPad"})
           else:
               # Tests in class order, cut into 5 parts of about equal time.
               # The last part runs whatever the others do not name, so a test

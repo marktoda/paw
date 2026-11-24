@@ -79,6 +79,13 @@ needles=(
 # in app/): launch arguments, and the types that run them.
 app_needles=(
   'pawFixture'
+  # Every `-pawSim…` launch argument, then the named ones below it.
+  'pawSim'
+  'pawAppearance'
+  'pawSetup'
+  'pawPlantLegacy'
+  'pawMatchTable'
+  'pawHarnessDismiss'
   'pawSimPin'
   'pawNoAnimations'
   'pawGallery'
