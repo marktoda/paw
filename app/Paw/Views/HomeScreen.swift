@@ -5,9 +5,20 @@ import SwiftUI
 /// the bottom search field swaps the list for ranked results.
 struct HomeScreen: View {
     let model: AppModel
+    /// The iPad split view's sidebar: search and results are in the middle
+    /// column, Add is at the top.
+    var inSidebar = false
     @State private var query = ""
 
     var body: some View {
+        if inSidebar {
+            sidebar
+        } else {
+            stackRoot
+        }
+    }
+
+    private var stackRoot: some View {
         Group {
             if trimmedQuery.isEmpty {
                 home
@@ -21,15 +32,39 @@ struct HomeScreen: View {
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    model.showsSettings = true
-                } label: {
-                    Label("Settings", systemImage: PawSymbol.settings)
-                }
-                .accessibilityIdentifier("settings-button")
+                settingsButton
             }
         }
         .onAppear { model.refreshCopies() }
+    }
+
+    private var sidebar: some View {
+        home
+            .environment(\.defaultMinListRowHeight, PawMetrics.tapMin)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        model.startAdd(folder: "")
+                    } label: {
+                        Label("Add a password", systemImage: PawSymbol.add)
+                    }
+                    .disabled(model.edits == nil)
+                    .accessibilityIdentifier("add-button")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    settingsButton
+                }
+            }
+            .onAppear { model.refreshCopies() }
+    }
+
+    private var settingsButton: some View {
+        Button {
+            model.showsSettings = true
+        } label: {
+            Label("Settings", systemImage: PawSymbol.settings)
+        }
+        .accessibilityIdentifier("settings-button")
     }
 
     private static func faceIdSubtitle(_ entry: EntryRef, untilMs: Int64) -> String {
@@ -103,6 +138,7 @@ struct HomeScreen: View {
                             model.path.append(.folder(folder.path))
                         }
                         .pawListRow()
+                        .splitSelected(inSidebar && SplitPath(model.path).folders.first == .folder(folder.path))
                     }
                 } header: {
                     PawSectionHeader("Folders")
@@ -155,6 +191,7 @@ struct EntryRowFor: View {
             model.open(entry)
         }
         .pawListRow()
+        .splitSelected(model.splitShownPath == entry.path)
     }
 }
 
@@ -181,7 +218,7 @@ struct NoticeSection: View {
 }
 
 /// Ranked results from the core, with what matched drawn semibold.
-private struct SearchResults: View {
+struct SearchResults: View {
     let model: AppModel
     let query: String
 

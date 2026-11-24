@@ -34,6 +34,9 @@ private struct PawButtonBody: View {
             .frame(maxWidth: .infinity, minHeight: PawMetrics.control)
             .background(ground, in: Capsule())
             .contentShape(Capsule())
+            // The pointer on iPad; nothing on iPhone.
+            .contentShape(.hoverEffect, Capsule())
+            .hoverEffect(.highlight)
             .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
     }
 

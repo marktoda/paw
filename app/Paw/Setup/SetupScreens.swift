@@ -717,6 +717,7 @@ private struct SetupKeySheet: View {
             .presentationDetents([.height(PawMetrics.keySheetHeight), .large], selection: $detent)
             .presentationDragIndicator(.visible)
             .pawSheetBackground()
+            .padFormSheet()
             .onChange(of: stage, initial: true) {
                 detent = Self.needsKeyboard(stage) ? .large : .height(PawMetrics.keySheetHeight)
             }

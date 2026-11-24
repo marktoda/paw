@@ -44,7 +44,8 @@ struct SetupPage<Content: View, Buttons: View>: View {
                 content
             }
             .frame(maxWidth: PawMetrics.setupTextWidth, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // On iPad the column sits in the middle of the screen.
+            .frame(maxWidth: .infinity, alignment: PadLayout.isPad ? .center : .leading)
             .padding(.horizontal, PawMetrics.screenMargin)
             .padding(.top, PawMetrics.Spacing.s)
             .padding(.bottom, PawMetrics.Spacing.xl)
@@ -61,7 +62,7 @@ struct SetupPage<Content: View, Buttons: View>: View {
             .padding(.top, PawMetrics.Spacing.s)
             .padding(.bottom, PawMetrics.Spacing.l)
             // On the text's column, not centred beside it.
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: PadLayout.isPad ? .center : .leading)
             .background(PawColor.bg)
         }
         .background(PawColor.bg.ignoresSafeArea())

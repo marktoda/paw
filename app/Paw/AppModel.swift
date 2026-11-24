@@ -101,6 +101,8 @@ final class AppModel {
     let clock: Clock
 
     var path: [Route] = []
+    /// iPad in regular width: `path` is shown as columns (`SplitPath`).
+    var usesSplitView = false
     private(set) var home: FolderListing
     private(set) var entryCount: Int
     /// Adding, editing and deleting, and the unpushed changes; `nil` where
@@ -407,6 +409,11 @@ final class AppModel {
     /// A tap on an entry row.
     func open(_ entry: EntryRef) {
         notice = nil
+        if usesSplitView {
+            // Already open on the right: nothing to do.
+            if splitShownEntry?.ref.path == entry.path { return }
+            closeSplitEntryForNextOpen()
+        }
         if liveCopy(entry.path) != nil {
             openWithFaceId(entry)
         } else {
@@ -419,6 +426,7 @@ final class AppModel {
     func openWithKey(_ entry: EntryRef) {
         notice = nil
         guard keyRequest == nil else { return }
+        closeSplitEntryForNextOpen()
         if keyPort.session() != nil, case .notForThisKey = accessByPath[entry.path] {
             path.append(.anotherKey(entry.path))
             return
@@ -789,6 +797,11 @@ final class AppModel {
 
     /// Closes every opened entry that is no longer on the navigation stack.
     func pathChanged() {
+        if usesSplitView {
+            // Arrives as appended to the stack; the columns want it in order.
+            let columns = SplitPath(path).path
+            if columns != path { path = columns }
+        }
         let shown = Set(path.compactMap { route -> UUID? in
             if case .entry(let id) = route { return id }
             return nil

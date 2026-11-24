@@ -115,6 +115,7 @@ private struct AutoFillList: View {
             }
         }
         .listStyle(.insetGrouped)
+        .padReadableWidth()
         .scrollContentBackground(.hidden)
         .background(PawColor.bg.ignoresSafeArea())
         .searchable(text: $model.query, prompt: Text("Search"))
@@ -331,6 +332,7 @@ private struct AutoFillConfirm: View {
                 .accessibilityIdentifier(fillsAnyway ? "autofill-fill-anyway" : "autofill-use-here")
             Spacer(minLength: 0)
         }
+        .padMaxWidth(PadLayout.sheetColumn)
         .padding(PawMetrics.Spacing.l)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(PawColor.bg.ignoresSafeArea())

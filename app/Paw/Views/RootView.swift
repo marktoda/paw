@@ -1,10 +1,17 @@
 import SwiftUI
 
-/// The navigation stack with Home at its root, the one key sheet, the
-/// settings sheet and the app-switcher cover.
+/// The navigation stack with Home at its root (on iPad in regular width,
+/// the split view), the one key sheet, the settings sheet and the
+/// app-switcher cover.
 struct RootView: View {
     @Bindable var model: AppModel
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    /// iPad with room for columns. An iPhone always gets the stack.
+    private var splitView: Bool {
+        PadLayout.isPad && sizeClass == .regular
+    }
 
     /// Swiping the key sheet down is Cancel: the core task stops too.
     private var keySheet: Binding<KeyRequest?> {
@@ -16,63 +23,84 @@ struct RootView: View {
     }
 
     var body: some View {
-        NavigationStack(path: $model.path) {
-            HomeScreen(model: model)
-                .navigationDestination(for: Route.self) { route in
-                    switch route {
-                    case .folder(let path):
-                        FolderScreen(model: model, path: path)
-                    case .entry(let id):
-                        EntryRoute(model: model, id: id)
-                    case .anotherKey(let path):
-                        AnotherKeyScreen(model: model, entry: EntryRef(path: path))
-                    case .unpushed:
-                        UnpushedScreen(model: model)
-                    case .sync(let route):
-                        SyncRouteScreen(model: model, route: route)
-                    }
+        navigation
+            .copyToast($model.toast)
+            .pawEditing(model)
+            .pawSync(model)
+            .sheet(item: keySheet, onDismiss: { model.keySheetDismissed() }) { _ in
+                KeySheetHost(model: model)
+            }
+            .sheet(isPresented: $model.showsSettings) {
+                SettingsSheet(model: model)
+            }
+            .onChange(of: model.path) {
+                model.pathChanged()
+            }
+            .onChange(of: splitView, initial: true) {
+                model.setSplitView(splitView)
+            }
+            .onChange(of: scenePhase) {
+                model.scenePhaseChanged(scenePhase)
+            }
+            .task {
+                // Copies end with time, not only with taps: look again now and then.
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(30))
+                    model.refreshCopies()
+                    Clipboard.clearIfExpired()
                 }
-        }
-        .copyToast($model.toast)
-        .pawEditing(model)
-        .pawSync(model)
-        .sheet(item: keySheet, onDismiss: { model.keySheetDismissed() }) { _ in
-            KeySheetHost(model: model)
-        }
-        .sheet(isPresented: $model.showsSettings) {
-            SettingsSheet(model: model)
-        }
-        .onChange(of: model.path) {
-            model.pathChanged()
-        }
-        .onChange(of: scenePhase) {
-            model.scenePhaseChanged(scenePhase)
-        }
-        .task {
-            // Copies end with time, not only with taps: look again now and then.
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(30))
-                model.refreshCopies()
-                Clipboard.clearIfExpired()
+            }
+            .privacyCover()
+            #if DEBUG && targetEnvironment(simulator)
+            .background(alignment: .topLeading) {
+                // For the UI tests: how many key tasks have not ended, so a
+                // test can wait for "0" instead of sleeping before it checks
+                // that a cancelled open left nothing.
+                KeyTasksSignal(tasks: model.pendingKeyTasks)
+                // And how many times the privacy cover has been drawn.
+                Text(verbatim: "\(PrivacyCoverLog.shared.shown)")
+                    .font(.caption2)
+                    .frame(width: 1, height: 1)
+                    .opacity(0.02)
+                    .accessibilityLabel("Privacy cover drawn")
+                    .accessibilityValue("\(PrivacyCoverLog.shared.shown)")
+                    .accessibilityIdentifier("sim-privacy-cover-shown")
+            }
+            #endif
+    }
+
+    @ViewBuilder private var navigation: some View {
+        if splitView {
+            SplitRootView(model: model)
+        } else {
+            NavigationStack(path: $model.path) {
+                HomeScreen(model: model)
+                    .navigationDestination(for: Route.self) { route in
+                        RouteScreen(model: model, route: route)
+                    }
             }
         }
-        .privacyCover()
-        #if DEBUG && targetEnvironment(simulator)
-        .background(alignment: .topLeading) {
-            // For the UI tests: how many key tasks have not ended, so a
-            // test can wait for "0" instead of sleeping before it checks
-            // that a cancelled open left nothing.
-            KeyTasksSignal(tasks: model.pendingKeyTasks)
-            // And how many times the privacy cover has been drawn.
-            Text(verbatim: "\(PrivacyCoverLog.shared.shown)")
-                .font(.caption2)
-                .frame(width: 1, height: 1)
-                .opacity(0.02)
-                .accessibilityLabel("Privacy cover drawn")
-                .accessibilityValue("\(PrivacyCoverLog.shared.shown)")
-                .accessibilityIdentifier("sim-privacy-cover-shown")
+    }
+}
+
+/// The screen for a route: pushed on the stack, or in an iPad column.
+struct RouteScreen: View {
+    let model: AppModel
+    let route: Route
+
+    var body: some View {
+        switch route {
+        case .folder(let path):
+            FolderScreen(model: model, path: path)
+        case .entry(let id):
+            EntryRoute(model: model, id: id)
+        case .anotherKey(let path):
+            AnotherKeyScreen(model: model, entry: EntryRef(path: path))
+        case .unpushed:
+            UnpushedScreen(model: model)
+        case .sync(let route):
+            SyncRouteScreen(model: model, route: route)
         }
-        #endif
     }
 }
 

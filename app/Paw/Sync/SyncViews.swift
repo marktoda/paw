@@ -355,6 +355,7 @@ private struct SyncSheetHost: View {
         .presentationDetents([.height(PawMetrics.keySheetHeight), .large], selection: $detent)
         .presentationDragIndicator(.visible)
         .pawSheetBackground()
+        .padFormSheet()
         .onChange(of: needsKeyboard, initial: true) {
             detent = needsKeyboard ? .large : .height(PawMetrics.keySheetHeight)
         }

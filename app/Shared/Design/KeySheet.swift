@@ -62,6 +62,7 @@ struct KeySheetContent: View {
         GeometryReader { proxy in
             ScrollView {
                 content
+                    .padMaxWidth(PadLayout.sheetColumn - 2 * PawMetrics.screenMargin)
                     .padding(.horizontal, PawMetrics.screenMargin)
                     .padding(.top, PawMetrics.Spacing.xl)
                     .padding(.bottom, PawMetrics.Spacing.s)
@@ -274,6 +275,7 @@ struct KeySheetContent: View {
     private func cancelButton(_ title: String) -> some View {
         Button(title, action: onCancel)
             .buttonStyle(.pawSecondary)
+            .padShortcut(.cancelAction)
             .accessibilityIdentifier("key-sheet-cancel")
     }
 
