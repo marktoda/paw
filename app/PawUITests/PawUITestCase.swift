@@ -188,7 +188,9 @@ class PawUITestCase: XCTestCase {
         var exists = waitToExist(found, timeout: 5)
         var swipes = 0
         while !(exists && found.isHittable && !underKeyboard(found)) && swipes < 8 {
-            if exists && found.frame.maxY < app.frame.height * 0.2 {
+            // A coasting list can drop a lazy row between two looks: read
+            // its frame from a snapshot, which says "gone" instead of failing.
+            if exists, let top = (try? found.snapshot())?.frame.maxY, top < app.frame.height * 0.2 {
                 app.swipeDown()
             } else {
                 app.swipeUp()
