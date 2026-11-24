@@ -27,6 +27,7 @@ struct KeySheetHost: View {
             .presentationDetents([.height(PawMetrics.keySheetHeight), .large], selection: $detent)
             .presentationDragIndicator(.visible)
             .pawSheetBackground()
+            .padFormSheet()
             .onChange(of: stage, initial: true) {
                 detent = Self.needsKeyboard(stage) ? .large : .height(PawMetrics.keySheetHeight)
             }
@@ -134,6 +135,7 @@ struct SettingsSheet: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
+                        .padShortcut(.cancelAction)
                         .accessibilityIdentifier("settings-done")
                 }
             }
@@ -141,6 +143,7 @@ struct SettingsSheet: View {
         // Tall from the start: Remove is the last row and must not open
         // below the fold.
         .presentationDetents([.large])
+        .padFormSheet()
         .privacyCover()
     }
 }

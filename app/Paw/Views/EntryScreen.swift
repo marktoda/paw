@@ -60,6 +60,8 @@ struct EntryScreen: View {
                     VStack(spacing: PawMetrics.Spacing.s) {
                         Button("Copy password") { copy(session.entry.password(), what: "Password") }
                             .buttonStyle(.pawPrimary)
+                            // ⌘C on iPad: this button, so only once the entry is open.
+                            .padShortcut(KeyboardShortcut("c", modifiers: .command))
                             .accessibilityIdentifier("copy-password")
                         Button(passwordRevealed ? "Hide password" : "Show password") {
                             passwordRevealed.toggle()
@@ -116,7 +118,7 @@ struct EntryScreen: View {
         .environment(\.defaultMinListRowHeight, PawMetrics.tapMin)
         .navigationBarTitleDisplayMode(.inline)
         .copyToast($toast)
-        .sheet(item: $largeType) { item in
+        .sheetOrPadCover(item: $largeType) { item in
             LargeTypeSheet(item: item) { largeType = nil }
         }
         .onAppear { load() }
@@ -334,6 +336,7 @@ private struct LargeTypeSheet: View {
                         .font(PawFont.headline)
                         .foregroundStyle(PawColor.label)
                         .frame(minWidth: PawMetrics.tapMin, minHeight: PawMetrics.tapMin)
+                        .padShortcut(.cancelAction)
                         .accessibilityIdentifier("large-type-done")
                 }
             }

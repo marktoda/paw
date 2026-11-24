@@ -102,7 +102,8 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 
 | Item | Status |
 |---|---|
-| Three-column layout, form sheets, keyboard shortcuts; Developer Mode on the iPad | later |
+| Three-column layout, form sheets, keyboard shortcuts; Developer Mode on the iPad | in progress on branch `ipad`: split view in regular width (Home, folder or search, open entry) read from the same route list as the iPhone stack; form sheets; ⌘F ⌘N ⌘R ⌘L ⌘, and ⌘C on the open entry; Esc cancels sheets; all orientations and multitasking; `IPadTests` skip on iPhone. Never built: needs a CI run on an iPad simulator, then the device checks below |
+| Device words on iPad ("iPhone", "Face ID" on a Touch ID iPad) | later |
 
 ### After the first version
 
@@ -138,6 +139,11 @@ Merged 2026-11-24: plain repository list in the picker; per-process Face ID enro
 | Face ID fill in AutoFill after the per-process enrolment fix (2026-11-24): no "Face ID changed", and the copy survives | waiting |
 | Name matches (entry `name` on `name.com`): first-time confirm, then no confirm, then a keyboard suggestion | waiting |
 | Settings › Key diagnostics › Key log shows the app's and AutoFill's lines; what the key answers after a touch timeout and to the PIN check after it | waiting |
+| iPad: the key opens an entry over USB-C, and AutoFill fills with it | waiting on the `ipad` branch |
+| iPad: three columns in landscape, the right column first in portrait; Slide Over and a narrow window fall back to the iPhone layout without losing the open folder or entry | waiting on the `ipad` branch |
+| iPad: opening a second entry closes the first (nothing of it left in the right column); auto-close after locking and after 2 minutes away; the app-switcher cover | waiting on the `ipad` branch |
+| iPad with a keyboard: ⌘F, ⌘N, ⌘R, ⌘L, ⌘, and ⌘C (open entry only) listed when ⌘ is held; Esc cancels the key sheet; return sends the PIN; none of them opens anything without the key or Face ID | waiting on the `ipad` branch |
+| iPad: key sheet, editor, sync and Settings as centred form sheets; large type fills the screen | waiting on the `ipad` branch |
 
 ## Open decisions for the owner
 

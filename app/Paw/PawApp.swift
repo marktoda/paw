@@ -19,6 +19,8 @@ struct PawApp: App {
             LaunchRoot()
             #endif
         }
+        // iPad keyboard shortcuts; off until the split view publishes them.
+        .commands { PawCommands() }
     }
 }
 

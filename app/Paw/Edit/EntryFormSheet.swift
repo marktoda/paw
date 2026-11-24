@@ -25,6 +25,7 @@ struct EntryFormSheet: View {
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
                             Button("Close") { edits.form = nil }
+                                .padShortcut(.cancelAction)
                                 .accessibilityIdentifier("form-cancel")
                         }
                     }
@@ -34,6 +35,7 @@ struct EntryFormSheet: View {
             }
         }
         .interactiveDismissDisabled(form?.hasChanges ?? false)
+        .padFormSheet()
         .onAppear(perform: makeForm)
         .onDisappear {
             form?.clear()
@@ -107,6 +109,7 @@ private struct EntryFormView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", action: cancel)
+                        .padShortcut(.cancelAction)
                         .accessibilityIdentifier("form-cancel")
                 }
                 ToolbarItem(placement: .confirmationAction) {

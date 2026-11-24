@@ -50,6 +50,13 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+        # iPad: every orientation, and no UIRequiresFullScreen, so Split
+        # View, Slide Over and windows work (Paw/Views/SplitRootView.swift).
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         ITSAppUsesNonExemptEncryption: false
         # Settings › About › Build (Paw/BuildStamp.swift).
         PawCommit: $(PAW_COMMIT)
