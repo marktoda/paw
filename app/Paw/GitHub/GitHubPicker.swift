@@ -232,9 +232,8 @@ final class GitHubPicker: Identifiable {
         }
     }
 
-    /// Repositories that look like a password store first, then the rest
-    /// in the core's order.
+    /// The core's order: most recently pushed first.
     static func ordered(_ repositories: [GitHubRepository]) -> [GitHubRepository] {
-        repositories.filter { $0.looksLikeStore == true } + repositories.filter { $0.looksLikeStore != true }
+        repositories
     }
 }

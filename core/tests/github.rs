@@ -10,7 +10,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use paw_core::github::repos::MAX_STORE_PROBES;
 use paw_core::github::{
     BackgroundOutcome, GitHubAccount, GitHubError, RefreshDecision, RefreshStep, RepositoryList, SignInState,
 };
@@ -382,14 +381,12 @@ fn the_picker_lists_every_granted_repository_across_pages_with_the_store_first()
     assert!(store.private);
     assert_eq!(store.default_branch, "main");
     assert_eq!(store.pushed_at.as_deref(), Some("2026-11-20T09:12:00Z"));
-    assert_eq!(store.looks_like_store, Some(true));
     assert_eq!(store.ssh_address, w.remote.address());
-    // Three pages of repositories, at most twenty `.gpg-id` checks.
+    // Three pages of repositories, and nothing read from inside any of them.
     let pages = w.github.requests().iter().filter(|r| r.path.ends_with("/repositories")).count();
     assert_eq!(pages, 3);
-    assert_eq!(w.github.store_probes(), MAX_STORE_PROBES as u64);
-    assert_eq!(repositories.iter().filter(|r| r.looks_like_store == Some(false)).count(), MAX_STORE_PROBES - 1);
-    assert_eq!(repositories.iter().filter(|r| r.looks_like_store.is_none()).count(), 251 - MAX_STORE_PROBES);
+    assert_eq!(w.github.store_probes(), 0);
+    assert!(!w.github.requests().iter().any(|r| r.path.contains("/contents/")));
 }
 
 #[test]

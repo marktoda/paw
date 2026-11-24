@@ -7,20 +7,15 @@
 //! page) to the end, within caps. Choosing one gives the SSH address setup
 //! already takes; the token is never used to push.
 //!
-//! Whether a repository looks like a pass store: one
-//! `GET /repos/{owner}/{repo}/contents/.gpg-id` each (on the default
-//! branch), for at most [`MAX_STORE_PROBES`] repositories, most recently
-//! pushed first. It needs no permission beyond the read access to contents
-//! the fetch already needs, and a 404 costs GitHub nothing. Past the cap
-//! the answer is "not checked" (`None`), not "no".
+//! The list is what the person granted, most recently pushed first. paw
+//! does not look inside a repository to guess whether it is a pass store:
+//! the person picks, and setup's own checks say if it is not one.
 
 use serde::Deserialize;
 
 use super::http::Http;
 use super::{Endpoints, GitHubError, Secret};
 
-/// The most repositories checked for a `.gpg-id`: one request each.
-pub const MAX_STORE_PROBES: usize = 20;
 /// One page of a list.
 const PER_PAGE: u32 = 100;
 /// The most installation pages read.
@@ -45,9 +40,6 @@ pub struct GitHubRepository {
     /// When something was last pushed, as GitHub writes it
     /// (`2026-11-20T09:12:00Z`), if ever.
     pub pushed_at: Option<String>,
-    /// `Some(true)` if it has a `.gpg-id` at the top of its default
-    /// branch, `Some(false)` if not, `None` if not checked.
-    pub looks_like_store: Option<bool>,
     /// The installation it was granted through.
     pub installation_id: u64,
 }
@@ -193,7 +185,6 @@ pub(crate) fn list(http: &Http, token: &Secret) -> Result<RepositoryList, GitHub
                     default_branch: plausible_branch(repository.default_branch),
                     ssh_address,
                     pushed_at: plausible_date(repository.pushed_at),
-                    looks_like_store: None,
                     installation_id: installation.id,
                 });
             }
@@ -208,25 +199,5 @@ pub(crate) fn list(http: &Http, token: &Secret) -> Result<RepositoryList, GitHub
     }
 
     repositories.sort_by(|a, b| b.pushed_at.cmp(&a.pushed_at).then_with(|| a.full_name.cmp(&b.full_name)));
-    for repository in repositories.iter_mut().take(MAX_STORE_PROBES) {
-        repository.looks_like_store = probe_store(http, token, &repository.full_name)?;
-    }
-    // Likely stores first; the order within each group stays.
-    repositories.sort_by_key(|r| match r.looks_like_store {
-        Some(true) => 0,
-        None => 1,
-        Some(false) => 2,
-    });
     Ok(RepositoryList::Repositories { repositories, install_url })
-}
-
-/// Whether `full_name` has a `.gpg-id` at the top of its default branch.
-fn probe_store(http: &Http, token: &Secret, full_name: &str) -> Result<Option<bool>, GitHubError> {
-    let answer = http.api_get(&format!("/repos/{full_name}/contents/.gpg-id"), token)?;
-    Ok(match answer.status {
-        200 => Some(true),
-        404 => Some(false),
-        401 => return Err(unauthorised()),
-        _ => None,
-    })
 }

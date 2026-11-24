@@ -100,7 +100,6 @@ final class GitHubTests: PawUITestCase {
         expectText("github-copied", contains: "Code copied")
         snapshot("code-copied")
         authorise()
-        expectText(Self.store, contains: "looks like a password store")
         expectText(Self.store, contains: "private")
         snapshot("list")
         tap(Self.store)

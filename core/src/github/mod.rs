@@ -27,9 +27,8 @@
 //! - signing in: the app's public client id, then the device code while
 //!   waiting for the person;
 //! - refreshing the token: the client id and the refresh token;
-//! - listing: the access token, to `/user/installations`,
-//!   `/user/installations/{id}/repositories`, and at most
-//!   [`repos::MAX_STORE_PROBES`] `/repos/{owner}/{repo}/contents/.gpg-id`;
+//! - listing: the access token, to `/user/installations` and
+//!   `/user/installations/{id}/repositories`;
 //! - fetching: the access token, to `github.com/<owner>/<repo>.git` only;
 //! - signing out, if the person asks for the tokens to be revoked: both
 //!   tokens, unauthenticated, to `/credentials/revoke`.

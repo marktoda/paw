@@ -338,11 +338,6 @@ private struct GitHubRepositoryRow: View {
                 Text(repository.owner)
                     .font(PawFont.footnote)
                     .foregroundStyle(PawColor.labelSecondary)
-                if repository.looksLikeStore == true {
-                    Text("Looks like a password store")
-                        .font(PawFont.footnote.weight(.semibold))
-                        .foregroundStyle(PawColor.label)
-                }
             }
             Spacer(minLength: PawMetrics.Spacing.s)
             if repository.private {
@@ -360,7 +355,6 @@ private struct GitHubRepositoryRow: View {
     private var label: String {
         var words = "\(repository.name), \(repository.owner)"
         if repository.private { words += ", private" }
-        if repository.looksLikeStore == true { words += ", looks like a password store" }
         return words
     }
 }
