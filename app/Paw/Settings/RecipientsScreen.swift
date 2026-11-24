@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Settings › Store › Who can open these passwords: each `.gpg-id` in the
+/// Settings › Store › Who can open: each `.gpg-id` in the
 /// store (the top, and any folder with its own), the keys it names, which
 /// one is this key, and the passwords under it that are encrypted for a key
 /// it no longer names. Read-only; nothing is decrypted. The names of those
@@ -13,7 +13,7 @@ struct RecipientsScreen: View {
     var body: some View {
         List {
             if let problem {
-                ErrorRow(kind: .error, problem: "Couldn't read who can open them", nextStep: problem)
+                ErrorRow(kind: .error, problem: "Couldn't read who can open", nextStep: problem)
             } else if let scopes {
                 ForEach(scopes, id: \.gpgId) { scope in
                     RecipientScopeSection(scope: scope, only: scopes.count == 1)
@@ -24,7 +24,7 @@ struct RecipientsScreen: View {
             }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle("Who can open them")
+        .navigationTitle("Who can open")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
     }
@@ -52,7 +52,7 @@ private struct RecipientScopeSection: View {
     @State private var namesShown = false
 
     private var title: String {
-        if scope.folder.isEmpty { return only ? "All passwords" : "Top of the store" }
+        if scope.folder.isEmpty { return only ? "All passwords" : "Not in a folder" }
         return scope.folder
     }
 
@@ -144,10 +144,7 @@ private struct RecipientKeyRow: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let id = key.shortId {
-                Text(KeyIdWords.grouped(id))
-                    .font(PawFont.footnote.monospaced())
-                    .foregroundStyle(PawColor.labelSecondary)
-                    .textSelection(.enabled)
+                FingerprintText(fingerprint: id)
             }
         }
         .padding(.vertical, PawMetrics.Spacing.xxs)
@@ -158,7 +155,8 @@ private struct RecipientKeyRow: View {
     private var title: String {
         if key.thisKey { return "This key" }
         if let email = key.emails.first { return email }
-        if let id = key.shortId { return "Key ending \(KeyIdWords.ending(id))" }
+        // The whole ID is the line below: no "Key ending …" above it.
+        if key.shortId != nil { return "Another key" }
         return key.line
     }
 
@@ -168,9 +166,9 @@ private struct RecipientKeyRow: View {
         case .ready:
             return nil
         case .missing:
-            return "Not on this iPhone. Saving here needs it."
+            return "paw doesn't have this key. Can't save here."
         case .ambiguous(let fingerprints):
-            return "Matches \(fingerprints.count) keys on this iPhone."
+            return Device.words("Matches \(fingerprints.count) keys on this iPhone.")
         case .expired:
             return "Expired. Saving here needs a renewed key."
         case .refused(_, _, let reason):

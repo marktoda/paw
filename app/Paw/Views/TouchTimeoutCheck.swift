@@ -86,10 +86,6 @@ struct TouchTimeoutSection: View {
             }
         } header: {
             PawSectionHeader("Touch timeout")
-        } footer: {
-            Text("Your key signs once. Don't touch it: the check is what it says when nobody does.")
-                .font(PawFont.footnote)
-                .foregroundStyle(PawColor.labelSecondary)
         }
         .onChange(of: check.running) { _, running in
             if !running { finished() }
@@ -122,7 +118,7 @@ struct TouchTimeoutSection: View {
         case .busy?:
             line("Your key is finishing something else.")
         case .touch?:
-            line("Don't touch your key. It gives up after about 15 seconds.")
+            line("Don't touch your key. It should give up after 15 seconds.")
                 .accessibilityIdentifier("touch-timeout-waiting")
         default:
             line("Checking\u{2026}")
@@ -132,9 +128,9 @@ struct TouchTimeoutSection: View {
     @ViewBuilder private func result(_ state: KeyTaskState) -> some View {
         switch state {
         case .failed(.TouchTimeout):
-            outcome("Your key gave up waiting for a touch. The key log below has what it answered.")
+            outcome("Your key gave up waiting for a touch.")
         case .done:
-            outcome("Your key signed, so it was touched or it doesn't ask for a touch to sign in.")
+            outcome("Your key signed. It was touched, or it doesn't need a touch to sign in.")
         case .failed(.NotForThisKey):
             outcome("This isn't the key this store was set up with. No PIN was sent.")
         case .failed(.Cancelled), .cancelled:

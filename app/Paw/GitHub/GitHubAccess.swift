@@ -121,11 +121,11 @@ enum GitHubWords {
         case .NotSignedIn, .SignedOut:
             return "Your GitHub sign-in ended. Sign in again."
         case .Vault:
-            return "paw couldn't keep the sign-in on this iPhone. Try again."
+            return Device.words("paw couldn't keep the sign-in on this iPhone. Try again.")
         case .Refused(let message), .Failed(let message):
             return "GitHub didn't allow it: \(message). Try again."
         case .NotLinked:
-            return "No repository is chosen yet. Choose one."
+            return "No store chosen yet. Choose one."
         case .WrongRepository(let store, _):
             return "This sign-in isn't for \(store)."
         }

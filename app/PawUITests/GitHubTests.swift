@@ -197,7 +197,7 @@ final class GitHubTests: PawUITestCase {
         tap("address-connect")
         finishSetup()
         openSettings()
-        inSettingsList("settings-github-status", contains: "Not signed in")
+        inSettingsList("settings-github-sign-in", contains: "Sign in to GitHub")
         closeSettings()
     }
 
@@ -238,7 +238,7 @@ final class GitHubTests: PawUITestCase {
         tapSimulated("simulated-touch")
         expectLabel("sync-summary-title", contains: "1 password changed")
         openSettings()
-        inSettingsList("settings-github-status", contains: "Not signed in")
+        inSettingsList("settings-github-sign-in", contains: "Sign in to GitHub")
         closeSettings()
     }
 
@@ -252,8 +252,8 @@ final class GitHubTests: PawUITestCase {
         scrollTo("settings-github-sign-out-warning")
         scrollTo("settings-github-sign-out-revoke")
         tap("settings-github-sign-out-confirm")
-        inSettingsList("settings-github-signed-out", contains: "settings/apps/authorizations")
-        inSettingsList("settings-github-status", contains: "Not signed in")
+        inSettingsList("settings-github-signed-out", contains: "Signed out")
+        inSettingsList("settings-github-sign-in", contains: "Sign in to GitHub")
         snapshot("settings-signed-out")
         closeSettings()
         let pill = expect("sync-pill")

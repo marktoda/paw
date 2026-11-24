@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Settings › GitHub: whether paw is signed in and to which repository,
+/// Settings › GitHub: whether paw is signed in and to which store,
 /// signing in and out. Shown for a store on GitHub, or once signed in.
 struct GitHubSettingsSection: View {
     @Environment(\.gitHubAccess) private var gitHub
@@ -16,8 +16,8 @@ struct GitHubSettingsSection: View {
     var body: some View {
         if let gitHub, let controls, shows(gitHub, address: controls.address) {
             Section {
-                status(gitHub)
                 if gitHub.signedIn {
+                    status(gitHub)
                     signOut(gitHub)
                 } else {
                     Button("Sign in to GitHub") {
@@ -37,21 +37,32 @@ struct GitHubSettingsSection: View {
                 if let problem {
                     ErrorRow(kind: .error, problem: "You're still signed in", nextStep: problem)
                 }
-                #if targetEnvironment(simulator)
-                Button("Simulator: remove paw on GitHub") { SimGitHubLaunch.shared.revoke() }
-                    .font(PawFont.footnote)
-                    .foregroundStyle(PawColor.labelSecondary)
-                    .accessibilityIdentifier("sim-github-revoke")
-                #endif
             } header: {
                 PawSectionHeader("GitHub")
             } footer: {
-                Text(gitHub.signedIn
-                     ? "The sign-in can read this one repository, to check for changes without your key. It never sends changes."
-                     : "Sign in to check for changes without your key. Sending changes always needs your key.")
+                Text("Reads this store only. Sending still needs your key.")
                     .font(PawFont.footnote)
                     .foregroundStyle(PawColor.labelSecondary)
+                    // Here, not on the button: signing in swaps the button
+                    // for the status row while the sheet is still choosing.
+                    .sheet(item: $picker) { picker in
+                        GitHubPickerSheet(picker: picker)
+                    }
             }
+            #if DEBUG && targetEnvironment(simulator)
+            // Debug only, in its own section so no screenshot reads it as
+            // part of the card.
+            Section {
+                Button {
+                    SimGitHubLaunch.shared.revoke()
+                } label: {
+                    Label("Simulator: remove paw on GitHub", systemImage: "hammer")
+                        .font(PawFont.footnote)
+                        .foregroundStyle(PawColor.labelSecondary)
+                }
+                .accessibilityIdentifier("sim-github-revoke")
+            }
+            #endif
         }
     }
 
@@ -65,18 +76,15 @@ struct GitHubSettingsSection: View {
 
     private func status(_ gitHub: GitHubAccess) -> some View {
         LabeledContent {
-            Text(gitHub.signedIn ? (gitHub.link?.fullName ?? "No repository chosen") : "Not signed in")
+            Text(gitHub.link?.fullName ?? "No store chosen")
                 .foregroundStyle(PawColor.labelSecondary)
                 .multilineTextAlignment(.trailing)
         } label: {
-            Text(gitHub.signedIn ? "Signed in" : "Sign-in")
+            Text("Signed in")
                 .foregroundStyle(PawColor.label)
         }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("settings-github-status")
-        .sheet(item: $picker) { picker in
-            GitHubPickerSheet(picker: picker)
-        }
     }
 
     @ViewBuilder private func signOut(_ gitHub: GitHubAccess) -> some View {
@@ -90,7 +98,7 @@ struct GitHubSettingsSection: View {
                 .foregroundStyle(PawColor.danger)
                 .disabled(signingOut)
                 .accessibilityIdentifier("settings-github-sign-out-confirm")
-            Button("Sign out and revoke on GitHub") { perform(gitHub, revoke: true) }
+            Button("Sign out and end it on GitHub") { perform(gitHub, revoke: true) }
                 .foregroundStyle(PawColor.danger)
                 .disabled(signingOut)
                 .accessibilityIdentifier("settings-github-sign-out-revoke")
@@ -125,20 +133,15 @@ struct GitHubSettingsSection: View {
     }
 
     @ViewBuilder private func signedOut(_ report: SignOutReport) -> some View {
-        VStack(alignment: .leading, spacing: PawMetrics.Spacing.xs) {
-            Text(revokeAsked && !report.revoked
-                 ? "Signed out. GitHub didn't confirm the revoke."
-                 : "Signed out.")
-                .font(PawFont.subheadline)
-                .foregroundStyle(PawColor.label)
-            Text("To remove paw from your GitHub account, open \(report.manageUrl).")
-                .font(PawFont.footnote)
-                .foregroundStyle(PawColor.labelSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("settings-github-signed-out")
-        Button("Open GitHub settings") {
+        Text(report.revoked
+             ? "Signed out. GitHub ended the sign-in."
+             : revokeAsked ? "Signed out. GitHub didn't confirm it ended the sign-in." : "Signed out.")
+            .font(PawFont.subheadline)
+            .foregroundStyle(PawColor.label)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("settings-github-signed-out")
+        // Ending the sign-in leaves paw listed on the account.
+        Button("Remove paw on GitHub") {
             if let url = URL(string: report.manageUrl) { openURL(url) }
         }
         .foregroundStyle(PawColor.label)

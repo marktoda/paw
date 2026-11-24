@@ -146,8 +146,8 @@ private struct PlugInScreen: View {
             }
             if model.noSmartCards {
                 ErrorRow(
-                    kind: .error, problem: "This iPhone can't use USB keys",
-                    nextStep: "paw needs an iPhone that can read a YubiKey over USB-C.", isBanner: true)
+                    kind: .error, problem: Device.words("This iPhone can't use USB keys"),
+                    nextStep: Device.words("paw needs an iPhone that can read a YubiKey over USB-C."), isBanner: true)
             } else if let attachProblem = model.attachProblem {
                 ErrorRow(kind: .error, problem: "paw couldn't read your key", nextStep: attachProblem, isBanner: true)
             }
@@ -204,7 +204,7 @@ private struct YourKeyScreen: View {
                     .accessibilityIdentifier("key-serial")
                 Divider()
                 slot(
-                    name: "Decryption key", ending: fingerprintEnding(key.decryptionFingerprint),
+                    name: "Opening key", ending: fingerprintEnding(key.decryptionFingerprint),
                     touch: key.decryptionTouch, identifier: "key-decryption")
                 Divider()
                 slot(
@@ -255,7 +255,7 @@ private struct YourKeyScreen: View {
         if touches.contains(.off) {
             found.append(Warning(
                 problem: "This key works without a touch",
-                nextStep: "Anyone with this iPhone, your key and its PIN could read everything."))
+                nextStep: Device.words("Anyone with this iPhone, your key and its PIN could read everything.")))
         }
         if touches.contains(.cached) {
             found.append(Warning(
@@ -409,7 +409,7 @@ private struct ConfirmHostScreen: View {
     var body: some View {
         SetupPage(
             step: 2, title: "First time connecting to \(host)",
-            message: "Compare this fingerprint with the one from your server's admin.",
+            message: "Compare with the fingerprint your server publishes.",
             identifier: "setup-confirm-host"
         ) {
             SetupCard {
@@ -430,7 +430,7 @@ private struct ConfirmHostScreen: View {
                 SetupProblemView(problem: problem, act: { model.performProblemAction() }, offer: { model.performOffer() })
             }
         } buttons: {
-            Button("Trust this server") { model.trustHost(fingerprint: fingerprint) }
+            Button("Trust this key") { model.trustHost(fingerprint: fingerprint) }
                 .buttonStyle(.pawPrimary)
                 .disabled(model.working != nil)
                 .accessibilityIdentifier("host-trust")

@@ -15,7 +15,7 @@ final class SettingsRestTests: PawUITestCase {
         // archive/ has its own `.gpg-id`, for a key paw has no copy of.
         scrollTo("recipients-archive-footer")
         expectText("recipients-archive-footer", contains: "2 passwords")
-        expectLabel("recipients-key", contains: "Not on this iPhone")
+        expectLabel("recipients-key", contains: "paw doesn't have this key")
         snapshot("who-can-open")
     }
 
@@ -99,7 +99,7 @@ final class SettingsRestTests: PawUITestCase {
         openSettings()
         tap("settings-key-diagnostics")
         tap("diagnostics-copy")
-        expectLabel("diagnostics-copy", contains: "Diagnostics copied")
+        expectLabel("diagnostics-copied", contains: "Clears in 10 minutes")
         let report = expect("diagnostics-report")
         expectLabel("diagnostics-report", contains: "Store: set up")
         expectLabel("diagnostics-report", contains: "Key: plugged in")

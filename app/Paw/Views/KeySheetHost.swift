@@ -107,22 +107,25 @@ struct SettingsSheet: View {
                 SitesUsedSettingsSection(model: model)
                 FaceIdSettingsSection(model: model)
                 StoreSettingsSections(model: model)
-                LicencesSettingsSection()
                 Section {
                     LabeledContent {
-                        Text(BuildStamp.words)
-                            .font(PawFont.footnote.monospaced())
-                            .foregroundStyle(PawColor.labelSecondary)
-                            .textSelection(.enabled)
+                        if let build = BuildStamp.words {
+                            Text(build)
+                                .font(PawFont.footnote.monospaced())
+                                .foregroundStyle(PawColor.labelSecondary)
+                                .textSelection(.enabled)
+                        }
                     } label: {
                         Text("Build")
                             .foregroundStyle(PawColor.label)
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("settings-build")
+                    LicencesRow()
                 } header: {
                     PawSectionHeader("About")
                 }
+                RemoveStoreSection()
                 #if DEBUG && targetEnvironment(simulator)
                 if model.simulator != nil {
                     SimulatorSettingsSection(model: model)

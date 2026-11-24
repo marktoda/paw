@@ -480,7 +480,7 @@ final class AppTests: PawUITestCase {
         // Copy before looking down the list: once scrolled, the button can
         // sit under the navigation bar, where a tap lands on the bar.
         tap("key-log-copy")
-        expectLabel("key-log-copy", contains: "Log copied")
+        expectLabel("key-log-copied", contains: "Clears in 10 minutes")
         XCTAssertTrue(keyLogLine(containing: "PSO:DECIPHER: 9000 ok").exists, "The log should show the decryption")
         XCTAssertTrue(keyLogLine(containing: "VERIFY 00 82 (with PIN): 9000 ok").exists,
                       "The log should show the PIN being checked, without the PIN")
