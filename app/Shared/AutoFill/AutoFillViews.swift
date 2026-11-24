@@ -38,8 +38,8 @@ struct AutoFillRootView: View {
             PawColor.bg.ignoresSafeArea()
         case .list:
             AutoFillList(model: model)
-        case .confirm(let entry):
-            AutoFillConfirm(model: model, entry: entry)
+        case .confirm(let entry, let reason):
+            AutoFillConfirm(model: model, entry: entry, reason: reason)
         case .faceId(let entry):
             AutoFillFaceIdView(purpose: model.purpose(entry))
         case .key:
@@ -83,6 +83,14 @@ struct AutoFillRootView: View {
     }
 }
 
+/// A row under "Might be for this site", with what search highlighted.
+private struct MaybeRow: Identifiable {
+    let entry: EntryRef
+    var names: [NSRange] = []
+    var folders: [NSRange] = []
+    var id: String { entry.path }
+}
+
 /// The site's entries first, then search over everything.
 private struct AutoFillList: View {
     @Bindable var model: AutoFillModel
@@ -114,7 +122,7 @@ private struct AutoFillList: View {
     }
 
     @ViewBuilder private var siteSection: some View {
-        if model.matches.isEmpty {
+        if model.matches.isEmpty && model.maybe.isEmpty {
             Section {
                 VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
                     Text(model.site.map { "Nothing here matches \($0)." } ?? "paw can't tell which site this is.")
@@ -129,13 +137,31 @@ private struct AutoFillList: View {
                 .accessibilityIdentifier("autofill-no-match")
             }
         } else {
+            if !model.matches.isEmpty {
+                Section {
+                    ForEach(model.matches, id: \.path) { entry in
+                        row(entry)
+                    }
+                } header: {
+                    PawSectionHeader(model.site.map { "For \($0)" } ?? "Suggested")
+                        .accessibilityIdentifier("autofill-site-section")
+                }
+            }
+            maybeSection(model.maybe.map { MaybeRow(entry: $0) })
+        }
+    }
+
+    /// Named like the site, never filled on it: apart, below the site's
+    /// own, and each asks first.
+    @ViewBuilder private func maybeSection(_ rows: [MaybeRow]) -> some View {
+        if !rows.isEmpty {
             Section {
-                ForEach(model.matches, id: \.path) { entry in
-                    row(entry)
+                ForEach(rows) { item in
+                    row(item.entry, nameHighlights: item.names, folderHighlights: item.folders)
                 }
             } header: {
-                PawSectionHeader(model.site.map { "For \($0)" } ?? "Suggested")
-                    .accessibilityIdentifier("autofill-site-section")
+                PawSectionHeader("Might be for this site")
+                    .accessibilityIdentifier("autofill-maybe-section")
             }
         }
     }
@@ -152,7 +178,8 @@ private struct AutoFillList: View {
             // The site's own entries keep their header; everything else is
             // set apart, and filling one asks first.
             let ours = model.hits.filter { model.isMatch($0.entry) }
-            let others = model.hits.filter { !model.isMatch($0.entry) }
+            let maybe = model.hits.filter { model.isMaybe($0.entry) }
+            let others = model.hits.filter { !model.isMatch($0.entry) && !model.isMaybe($0.entry) }
             if !ours.isEmpty {
                 Section {
                     ForEach(ours, id: \.entry.path, content: hitRow)
@@ -161,6 +188,9 @@ private struct AutoFillList: View {
                         .accessibilityIdentifier("autofill-site-section")
                 }
             }
+            maybeSection(maybe.map {
+                MaybeRow(entry: $0.entry, names: $0.nameRanges.map(Self.range), folders: $0.folderRanges.map(Self.range))
+            })
             if !others.isEmpty {
                 Section {
                     ForEach(others, id: \.entry.path, content: hitRow)
@@ -199,29 +229,69 @@ private struct AutoFillList: View {
     }
 }
 
-/// An entry that is not this site's was picked: say so before Face ID or
-/// the key, inline. Not filling is the primary action.
+/// An entry that is not this site's, or is this site's by name only and
+/// has not filled on this domain, was picked: say so before Face ID or the
+/// key, inline. Not filling is the primary action.
 private struct AutoFillConfirm: View {
     let model: AutoFillModel
     let entry: EntryRef
+    let reason: AutoFillConfirmReason
 
     private var headline: String {
-        model.site.map { "Fill \(entry.name)'s password on \($0)?" } ?? "Fill \(entry.name)'s password?"
+        switch reason {
+        case .otherSite:
+            model.site.map { "Fill \(entry.name)'s password on \($0)?" } ?? "Fill \(entry.name)'s password?"
+        case .firstTime(let site), .lookalike(let site, _):
+            "Use \(entry.name) on \(site)?"
+        }
+    }
+
+    private var line: String {
+        switch reason {
+        case .otherSite:
+            model.site == nil ? "paw can't tell which site this is." : "This password isn't saved for this site."
+        case .firstTime:
+            "First time on this site. Check the address is right."
+        case .lookalike(let site, let known):
+            "You've used this on \(ListFormatter.localizedString(byJoining: known)). This is \(site)."
+        }
+    }
+
+    private var isLookalike: Bool {
+        if case .lookalike = reason { return true }
+        return false
+    }
+
+    private var isOtherSite: Bool {
+        reason == .otherSite
+    }
+
+    /// The full address, for a name match: the registrable domain is in
+    /// the headline, and here the host as iOS gave it when it differs.
+    private var address: String? {
+        switch reason {
+        case .otherSite: nil
+        case .firstTime(let site), .lookalike(let site, _): model.site.flatMap { $0 == site ? nil : $0 }
+        }
     }
 
     var body: some View {
         VStack(spacing: PawMetrics.Spacing.l) {
-            ErrorRow(
-                kind: .warning, problem: headline,
-                nextStep: model.site == nil
-                    ? "paw can't tell which site this is." : "This password isn't saved for this site.",
-                isBanner: true)
+            ErrorRow(kind: isLookalike ? .error : .warning, problem: headline, nextStep: line, isBanner: true)
+            if let address {
+                Text(address)
+                    .font(PawFont.headline.monospaced())
+                    .foregroundStyle(PawColor.label)
+                    .multilineTextAlignment(.center)
+                    .accessibilityLabel("Address \(address)")
+                    .accessibilityIdentifier("autofill-confirm-address")
+            }
             Button("Cancel") { model.backToList() }
                 .buttonStyle(.pawPrimary)
                 .accessibilityIdentifier("autofill-confirm-cancel")
-            Button("Fill anyway") { model.fillAnyway() }
+            Button(isOtherSite ? "Fill anyway" : "Use it here") { model.fillAnyway() }
                 .buttonStyle(.pawSecondary)
-                .accessibilityIdentifier("autofill-fill-anyway")
+                .accessibilityIdentifier(isOtherSite ? "autofill-fill-anyway" : "autofill-use-here")
             Spacer(minLength: 0)
         }
         .padding(PawMetrics.Spacing.l)

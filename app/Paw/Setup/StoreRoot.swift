@@ -216,6 +216,8 @@ final class StoreRootModel {
         keyPort.session()?.forgetPin()
         keyPort.setEnrolledKey(key: nil)
         CredentialIdentities.clear()
+        // Gone with the folder below too; cleared first in case that fails.
+        try? SitePairings.open(stateDir: location.stateDir.path).clearPairings(entry: nil)
         do {
             try location.removeAll()
             try location.prepare()

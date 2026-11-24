@@ -137,6 +137,101 @@ final class AutoFillTests: PawUITestCase {
                       "Every matching case should pass: \(summary.value ?? "")")
     }
 
+    // MARK: Entries named without a domain
+
+    /// The harness's `finance/northwind`, named like www.northwind.example.
+    private static let northwind = "finance/northwind"
+
+    /// From the list: northwind, confirmed, with PIN and touch.
+    private func useNorthwindHere() {
+        tap(row(Self.northwind))
+        tap("autofill-use-here")
+        expectLabel("key-sheet-purpose", contains: "Fill northwind on www.northwind.example")
+        enterPin(Self.pin)
+        touchTheKey()
+        expectResult("filled user=you@example.com")
+        expectValue("harness-pairings", "\(Self.northwind)=northwind.example")
+        waitForKeyTasksToEnd()
+    }
+
+    func testANameMatchIsListedApartAndAsksFirst() {
+        launchProvider(["-pawHostProvider", "https://www.northwind.example/login"])
+        expectLabel("autofill-maybe-section", contains: "Might be for this site")
+        expect(row(Self.northwind))
+        expectAbsent("autofill-site-section", "A name match is not one of the site's own")
+        snapshot("light-maybe-list")
+        tap(row(Self.northwind))
+        expectLabel("warning-row", contains: "Use northwind on northwind.example?")
+        expectLabel("warning-row", contains: "First time on this site. Check the address is right.")
+        expectLabel("autofill-confirm-address", contains: "www.northwind.example")
+        expectLabel("autofill-confirm-cancel", contains: "Cancel")
+        expect("autofill-use-here")
+        expectAbsent("pin-field", "Nothing should be opened before the confirm")
+        snapshot("light-first-time")
+    }
+
+    func testCancelOnAFirstTimeMatchFillsAndRecordsNothing() {
+        launchProvider(["-pawHostProvider", "https://www.northwind.example"])
+        tap(row(Self.northwind))
+        tap("autofill-confirm-cancel")
+        expect(row(Self.northwind))
+        waitForKeyTasksToEnd()
+        tap("autofill-cancel")
+        expectResult("ended userCanceled")
+        expectValue("harness-pairings", "none")
+        // Still a stranger: it asks again.
+        tap("harness-again")
+        expectLabel("autofill-maybe-section", contains: "Might be for this site")
+        tap(row(Self.northwind))
+        expect("autofill-use-here")
+    }
+
+    func testUseItHereFillsThenTheSiteFillsWithoutAsking() {
+        launchProvider(["-pawHostProvider", "https://www.northwind.example"])
+        useNorthwindHere()
+
+        tap("harness-again")
+        expectLabel("autofill-site-section", contains: "For www.northwind.example")
+        expectAbsent("autofill-maybe-section", "A paired name match is the site's own")
+        expectLabel(row(Self.northwind), contains: "opens with Face ID")
+        tap(row(Self.northwind))
+        expectResult("filled user=you@example.com")
+        expectAbsent("autofill-use-here", "A paired name match should not ask again")
+    }
+
+    func testALookalikeOfAPairedSiteIsNotOfferedAndWarns() {
+        launchProvider(["-pawHostProvider", "https://www.northwind.example,https://login.northwind.test"])
+        useNorthwindHere()
+
+        tap("harness-again")
+        expectLabel("autofill-no-match", contains: "Nothing here matches login.northwind.test")
+        expectAbsent(row(Self.northwind), "A lookalike must not be offered northwind")
+        search("northwind")
+        expectLabel("autofill-other-section", contains: "Other passwords")
+        tap(row(Self.northwind))
+        expectLabel("error-row", contains: "Use northwind on northwind.test?")
+        expectLabel("error-row", contains: "You've used this on northwind.example. This is northwind.test.")
+        expectLabel("autofill-confirm-address", contains: "login.northwind.test")
+        expectAbsent("pin-field", "Nothing should be opened before the confirm")
+        snapshot("light-lookalike")
+        tap("autofill-confirm-cancel")
+        expect(row(Self.northwind))
+        waitForKeyTasksToEnd()
+        tap("autofill-cancel")
+        expectValue("harness-pairings", "\(Self.northwind)=northwind.example")
+    }
+
+    func testAPasswordFromSearchForAnotherSiteIsNeverPaired() {
+        launchProvider(["-pawHostProvider", "https://www.northwind.example"])
+        search("fastm")
+        tap(row("email/fastmail"))
+        tap("autofill-fill-anyway")
+        enterPin(Self.pin)
+        touchTheKey()
+        expectResult("filled user=you@example.com")
+        expectValue("harness-pairings", "none")
+    }
+
     // MARK: Filling
 
     func testKeyFillLeavesAFaceIdCopy() {

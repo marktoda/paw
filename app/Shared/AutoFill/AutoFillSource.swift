@@ -8,6 +8,9 @@ struct AutoFillSource: @unchecked Sendable {
     let copies: CopyCache?
     let keyPort: KeyPort
     let connect: @Sendable () throws -> CardConnection
+    /// The sites each name-only entry has filled on. `nil` keeps none:
+    /// every name match then asks.
+    var pairings: SitePairings? = nil
 }
 
 /// The store as the extension finds it.
@@ -33,7 +36,9 @@ enum AutoFillEnd: String, Sendable {
 }
 
 /// Opens the store paw set up, for the extension. Reads only: no `Setup`
-/// (which creates folders), no sync, no GitHub, no network. What the core
+/// (which creates folders), no sync, no GitHub, no network. The one file
+/// it writes besides a Face ID copy is `site-pairings.json`, after a
+/// confirmed fill by name (written by rename, safe for two processes). What the core
 /// loads: one walk of the store's folder names (`PassStore`), the enrolled
 /// key's identity (`enrolled-key`, a few lines), and, only when a list is
 /// shown, the copies' small metadata files. Nothing is decrypted.
@@ -55,7 +60,8 @@ enum StoreForAutoFill {
             #endif
             return .ready(AutoFillSource(
                 store: store, copies: copies, keyPort: keyPort,
-                connect: { try KeyConnection.openForSession() }))
+                connect: { try KeyConnection.openForSession() },
+                pairings: SitePairings.open(stateDir: location.stateDir.path)))
         } catch {
             let detail = String(describing: error)
             return isStoreBusy(message: detail) ? .busy : .unreadable(detail)

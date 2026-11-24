@@ -7,7 +7,9 @@ import SwiftUI
 /// builds only.
 ///
 /// - `-pawHostProvider https://github.com`: the list for that site; `app`:
-///   an app with no site.
+///   an app with no site. Several sites, comma-separated: one per run
+///   ("Run again" moves to the next and stays on the last), sharing the
+///   copies and the site pairings.
 /// - `-pawHostProviderEntry web/github.com`: a tapped suggestion above the
 ///   keyboard, after what `provideCredentialWithoutUserInteraction` answers.
 /// - `-pawHostProviderStore none`: no store set up; `busy`: the store is
@@ -24,11 +26,12 @@ enum AutoFillHarnessLaunch {
             || LaunchArguments.bool("pawMatchTable")
     }
 
-    static var request: AutoFillRequest {
+    static func request(run: Int) -> AutoFillRequest {
         if let path = LaunchArguments.string("pawHostProviderEntry") {
             return .entry(path: path)
         }
-        let site = LaunchArguments.string("pawHostProvider") ?? ""
+        let sites = (LaunchArguments.string("pawHostProvider") ?? "").split(separator: ",").map(String.init)
+        let site = sites.isEmpty ? "" : sites[min(run, sites.count - 1)]
         // `app`: an app iOS gives no site for.
         return .list(services: site == "app" ? [] : [site])
     }
@@ -61,6 +64,8 @@ private final class HarnessWorld: @unchecked Sendable {
     let opening: AutoFillOpening
     /// The key port behind `opening`, to read whether a PIN is held.
     private(set) var keyPort: KeyPort?
+    /// The site pairings behind `opening`, to show what was recorded.
+    private(set) var pairings: SitePairings?
     private let lock = NSLock()
     private var busyOnce = LaunchArguments.string("pawHostProviderStore") == "busy"
 
@@ -85,8 +90,14 @@ private final class HarnessWorld: @unchecked Sendable {
                 .appendingPathComponent("paw-autofill-\(UUID().uuidString)", isDirectory: true)
             let storeDir = root.appendingPathComponent("store", isDirectory: true)
             let copiesDir = root.appendingPathComponent("window", isDirectory: true)
+            let stateDir = root.appendingPathComponent("state", isDirectory: true)
             try FileManager.default.createDirectory(at: copiesDir, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true)
             try writeFixtureStore(dir: storeDir.path)
+            // `finance/northwind` and `contoso/alice`: named without a domain.
+            try writeNameMatchEntries(dir: storeDir.path)
+            let pairings = SitePairings.open(stateDir: stateDir.path)
+            self.pairings = pairings
             let keystore = SimKeystore()
             switch LaunchArguments.string("pawSimFaceId") {
             case "cancel": keystore.setFaceId(answer: .cancel)
@@ -100,7 +111,8 @@ private final class HarnessWorld: @unchecked Sendable {
                 store: try PassStore(dir: storeDir.path),
                 copies: CopyCache(dir: copiesDir.path, keystore: keystore.asKeystore(), clock: clock),
                 keyPort: port,
-                connect: { try KeyConnection.openForSession() }))
+                connect: { try KeyConnection.openForSession() },
+                pairings: pairings))
         } catch {
             opening = .unreadable(String(describing: error))
         }
@@ -112,11 +124,15 @@ private final class HarnessRun: AutoFillCompletion {
     private(set) var model: AutoFillModel?
     private(set) var result = "none"
     private(set) var quickType: String?
+    /// What `SitePairings` holds: "entry=site …", or "none".
+    private(set) var pairings = "none"
     @ObservationIgnored private let world = HarnessWorld()
+    @ObservationIgnored private var runs = 0
 
     func run() {
         result = "running"
-        let request = AutoFillHarnessLaunch.request
+        let request = AutoFillHarnessLaunch.request(run: runs)
+        runs += 1
         if case .entry = request {
             quickType = StoreForAutoFill.answerWithoutScreen.rawValue
         }
@@ -129,11 +145,18 @@ private final class HarnessRun: AutoFillCompletion {
         result = "filled user=\(user) password-length=\(password.count) password-sha=\(digest.prefix(12))"
         model?.shutDown()
         model = nil
+        readPairings()
     }
 
     func end(_ reason: AutoFillEnd) {
         result = "ended \(reason.rawValue)"
         model = nil
+        readPairings()
+    }
+
+    private func readPairings() {
+        let all = (world.pairings?.pairings() ?? []).flatMap { p in p.sites.map { "\(p.entry)=\($0)" } }
+        pairings = all.isEmpty ? "none" : all.joined(separator: " ")
     }
 
     /// What the extension's controller does when its view goes away
@@ -178,6 +201,10 @@ private struct AutoFillHarnessView: View {
                     Text(run.result)
                         .font(PawFont.footnote.monospaced())
                         .accessibilityIdentifier("autofill-result")
+                    Text(verbatim: "pairings: \(run.pairings)")
+                        .font(PawFont.footnote.monospaced())
+                        .accessibilityValue(run.pairings)
+                        .accessibilityIdentifier("harness-pairings")
                     Button("Touch the simulated key") { KeyConnection.simulateTouch() }
                         .buttonStyle(.pawSecondary)
                         .accessibilityIdentifier("harness-touch-key")
@@ -269,6 +296,8 @@ enum MatchTable {
         "web/alice.github.io", "web/github.io",
         "web/192.168.1.1",
         "web/xn--exmple-cua.com", "web/ex\u{00E4}mple.com",
+        // Named without a domain.
+        "bank/bankofamerica", "bank/chase", "alaskaair", "travel/alaska", "northwind/alice",
     ]
 
     /// Site as iOS might report it, and exactly what must be offered, in order.
@@ -303,6 +332,29 @@ enum MatchTable {
         ("", []),
     ]
 
+    /// The pairing made before the name cases run: `alaskaair` has filled
+    /// on alaskaair.com.
+    static let paired = (entry: "alaskaair", service: "https://www.alaskaair.com")
+
+    /// Name matches: what must be offered by name, in order, as
+    /// "path kind" (paired, unpaired, elsewhere). Host matches are left out.
+    static let nameCases: [(service: String, expected: [String])] = [
+        ("https://www.bankofamerica.com/login", ["bank/bankofamerica unpaired"]),
+        ("https://bankofamerica.co", ["bank/bankofamerica unpaired"]),
+        ("https://bankofamerica.evil.example", []),
+        ("https://bank.com", []),
+        ("https://chase.com", ["bank/chase unpaired"]),
+        ("https://www.alaskaair.com", ["alaskaair paired"]),
+        ("https://alaskaair.co", ["alaskaair elsewhere"]),
+        ("https://alaska.com", ["travel/alaska unpaired"]),
+        ("https://www.northwind.example", ["northwind/alice unpaired"]),
+        ("https://github.com", ["web/GitHub unpaired"]),
+        ("https://alice.github.io", ["northwind/alice unpaired"]),
+        ("https://github.io", []),
+        ("http://github/", []),
+        ("https://g\u{0456}thub.com", []),
+    ]
+
     /// The suggestion each entry gives above the keyboard: domain and user
     /// string, or nil for none.
     static let identities: [(path: String, expected: String?)] = [
@@ -316,12 +368,17 @@ enum MatchTable {
         ("web/github.io", nil),
         ("sites/example.co.uk", "example.co.uk example.co.uk"),
         ("web/xn--exmple-cua.com", "xn--exmple-cua.com xn--exmple-cua.com"),
+        // A name match only once paired, and only for that domain.
+        ("alaskaair", "alaskaair.com alaskaair"),
+        ("bank/bankofamerica", nil),
+        ("travel/alaska", nil),
     ]
 
     static func run() -> (summary: String, failures: [String]) {
-        let root = FileManager.default.temporaryDirectory
+        let base = FileManager.default.temporaryDirectory
             .appendingPathComponent("paw-match-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
+        let root = base.appendingPathComponent("repo", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
         let store: PassStore
         do {
             for entry in entries {
@@ -335,21 +392,39 @@ enum MatchTable {
         } catch {
             return ("could not make the store: \(error)", [])
         }
+        let pairings = SitePairings.open(stateDir: base.path)
         var failures: [String] = []
         for test in cases {
-            let got = SiteMatch.entries(in: store, for: [test.service]).map(\.path)
+            let got = SiteMatch.entries(in: store, for: [test.service], pairings: nil)
+                .filter { SiteMatch.rank($0.kind) <= 1 }.map(\.entry.path)
             if got != test.expected {
                 failures.append("\(test.service.debugDescription): got \(got), want \(test.expected)")
             }
         }
-        let made = CredentialIdentities.make(from: store)
+        if (try? pairings.recordPairing(store: store, entry: paired.entry, service: paired.service)) != true {
+            failures.append("could not pair \(paired.entry)")
+        }
+        for test in nameCases {
+            let got = SiteMatch.entries(in: store, for: [test.service], pairings: pairings).compactMap { match -> String? in
+                switch match.kind {
+                case .exactHost, .sameDomain: nil
+                case .name(.paired): "\(match.entry.path) paired"
+                case .name(.unpaired): "\(match.entry.path) unpaired"
+                case .name(.pairedElsewhere): "\(match.entry.path) elsewhere"
+                }
+            }
+            if got != test.expected {
+                failures.append("name \(test.service.debugDescription): got \(got), want \(test.expected)")
+            }
+        }
+        let made = CredentialIdentities.make(from: store, pairings: pairings)
         for test in identities {
             let got = made.first { $0.path == test.path }.map { "\($0.domain) \($0.user)" }
             if got != test.expected {
                 failures.append("identity \(test.path): got \(got ?? "none"), want \(test.expected ?? "none")")
             }
         }
-        let total = cases.count + identities.count
+        let total = cases.count + nameCases.count + identities.count
         let summary = failures.isEmpty ? "all \(total) passed" : "\(failures.count) of \(total) failed"
         return (summary, failures)
     }

@@ -21,6 +21,18 @@ protocol AutoFillCompletion: AnyObject {
     func end(_ reason: AutoFillEnd)
 }
 
+/// Why a picked entry asks before it fills.
+enum AutoFillConfirmReason: Equatable, Sendable {
+    /// Not one of this site's entries (found by search).
+    case otherSite
+    /// Named like the site (`bankofamerica` on `bankofamerica.com`) and
+    /// never filled on this domain.
+    case firstTime(site: String)
+    /// Named like the site, but filled only on other domains of that name:
+    /// `known` is `bankofamerica.com`, this is `bankofamerica.co`.
+    case lookalike(site: String, known: [String])
+}
+
 /// A Face ID problem from the last tap, said at the top of the list.
 struct AutoFillNotice: Equatable {
     let problem: String
@@ -60,8 +72,9 @@ final class AutoFillModel {
     enum Screen: Equatable {
         case loading
         case list
-        /// The entry is not one of this site's: fill it anyway, or not.
-        case confirm(EntryRef)
+        /// The entry is not one of this site's, or is by name only and not
+        /// yet filled here: fill it anyway, or not.
+        case confirm(EntryRef, AutoFillConfirmReason)
         /// Face ID is up for this entry.
         case faceId(EntryRef)
         /// The key sheet, for `keyEntry`.
@@ -85,7 +98,19 @@ final class AutoFillModel {
     /// The site the list is for, e.g. `github.com`. `nil` for an app iOS
     /// gives no site for.
     private(set) var site: String?
+    /// The site's own entries, under "For <site>": by host, or by a name
+    /// already filled on this domain. These fill without asking.
     private(set) var matches: [EntryRef] = []
+    /// Named like the site but never filled on this domain, listed apart
+    /// under "Might be for this site"; each asks first. A name match
+    /// paired only with other domains (a lookalike) is in neither list and
+    /// is found by search only.
+    private(set) var maybe: [EntryRef] = []
+    /// Every match for the site by path, lookalikes included, with why.
+    @ObservationIgnored private var found: [String: MatchedEntry] = [:]
+    /// The name match the person confirmed for this domain, recorded once
+    /// it has filled: (entry path, registrable domain).
+    @ObservationIgnored private var pairing: (path: String, site: String)?
     var query = "" {
         didSet { search() }
     }
@@ -142,18 +167,24 @@ final class AutoFillModel {
             let opening = open()
             var live: [String] = []
             var matches: [EntryRef] = []
+            var maybe: [EntryRef] = []
+            var found: [MatchedEntry] = []
             if case .ready(let source) = opening {
                 live = ((try? source.copies?.list()) ?? []).map(\.entry)
                 switch request {
                 case .list(let services):
-                    matches = SiteMatch.entries(in: source.store, for: services)
+                    found = SiteMatch.entries(in: source.store, for: services, pairings: source.pairings)
+                    matches = found.filter { SiteMatch.isTrusted($0.kind) }.map(\.entry)
+                    maybe = found.filter { $0.kind == .name(pairing: .unpaired) }.map(\.entry)
                 case .entry(let path):
                     matches = SiteMatch.entry(path, in: source.store).map { [$0] } ?? []
                 }
             }
-            let carried = Carry(value: (opening, live, matches))
+            let carried = Carry(value: (opening, live, matches, found, maybe))
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { [weak self] in
+                    self?.found = Dictionary(carried.value.3.map { ($0.entry.path, $0) }) { first, _ in first }
+                    self?.maybe = carried.value.4
                     self?.opened(carried.value.0, live: carried.value.1, matches: carried.value.2)
                 }
             }
@@ -220,6 +251,11 @@ final class AutoFillModel {
         isSuggestion || matches.contains { $0.path == entry.path }
     }
 
+    /// Whether the entry is named like the site but not yet filled here.
+    func isMaybe(_ entry: EntryRef) -> Bool {
+        !isSuggestion && maybe.contains { $0.path == entry.path }
+    }
+
     /// What a fill says it does: "Fill github.com", or with the site when
     /// the entry's name does not already say it, "Fill fastmail on
     /// example.com". The key sheet and the Face ID prompt both say this.
@@ -230,20 +266,42 @@ final class AutoFillModel {
 
     /// A tap on an entry. One that is not this site's asks first (design
     /// 2.10): a search on a lookalike site must not hand over the real
-    /// site's password with a single Face ID glance.
+    /// site's password with a single Face ID glance. So does one that
+    /// matches by name only, until it has filled on this domain.
     func pick(_ entry: EntryRef) {
         guard screen == .list else { return }
         notice = nil
-        if isMatch(entry) {
+        pairing = nil
+        if isSuggestion {
             open(entry)
-        } else {
-            screen = .confirm(entry)
+            return
+        }
+        guard let match = found[entry.path] else {
+            screen = .confirm(entry, .otherSite)
+            return
+        }
+        switch match.kind {
+        case .exactHost, .sameDomain, .name(.paired):
+            open(entry)
+        case .name(.unpaired):
+            screen = .confirm(entry, .firstTime(site: match.site))
+        case .name(.pairedElsewhere(let known)):
+            screen = .confirm(entry, .lookalike(site: match.site, known: known))
         }
     }
 
-    /// "Fill anyway" on the confirm step.
+    /// "Fill anyway" or "Use it here" on the confirm step. A name match
+    /// confirmed here is paired with the domain once it fills; a password
+    /// from search for another site never is, so one mistaken "Fill
+    /// anyway" does not make a site trusted.
     func fillAnyway() {
-        guard case .confirm(let entry) = screen else { return }
+        guard case .confirm(let entry, let reason) = screen else { return }
+        switch reason {
+        case .firstTime(let site), .lookalike(let site, _):
+            pairing = (entry.path, site)
+        case .otherSite:
+            pairing = nil
+        }
         screen = .list
         open(entry)
     }
@@ -251,6 +309,7 @@ final class AutoFillModel {
     /// Cancel on the confirm step, or "Back to the list" after a problem:
     /// the list again, nothing filled.
     func backToList() {
+        pairing = nil
         switch screen {
         case .confirm, .problem(_, _, backToList: true): screen = .list
         default: break
@@ -588,7 +647,18 @@ final class AutoFillModel {
         guard !finished else { return }
         finished = true
         screen = .filled
+        recordPairing(entry)
         completion?.fill(user: user, password: password)
+    }
+
+    /// After a fill the person confirmed by name: next time this domain
+    /// fills without asking. A small file, written before iOS takes the
+    /// password and may end the extension. A failure only means asking
+    /// again.
+    private func recordPairing(_ entry: EntryRef) {
+        defer { pairing = nil }
+        guard let pairing, pairing.path == entry.path, let source, let pairings = source.pairings else { return }
+        _ = try? pairings.recordPairing(store: source.store, entry: entry.path, service: pairing.site)
     }
 
     private func end(_ reason: AutoFillEnd) {

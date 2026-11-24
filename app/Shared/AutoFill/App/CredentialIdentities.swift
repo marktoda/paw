@@ -6,7 +6,10 @@ import Foundation
 ///
 /// One identity per entry whose path names a site (`web/github.com`,
 /// `github.com/alice`): the site as a domain, the entry's name as the user
-/// string, the path as the record. Nothing learned by decrypting is used
+/// string, the path as the record. An entry named without a domain
+/// (`bankofamerica`) gets one only for each domain it has filled on after
+/// the person confirmed it (`SitePairings`): never for a domain merely
+/// named like it. Nothing learned by decrypting is used
 /// (design.md 5.6 rule 6). The list is replaced whole after setup, on each
 /// launch, after a save, rename, delete or refresh; removing the store
 /// clears it. App target only (not compiled into the extension).
@@ -23,7 +26,7 @@ enum CredentialIdentities {
     /// Every entry with a site in its path, sorted by path. A site that is
     /// itself a public suffix (`co.uk`, `github.io`) gives none: iOS might
     /// offer it on every site under that suffix.
-    static func make(from store: PassStore) -> [Identity] {
+    static func make(from store: PassStore, pairings: SitePairings? = nil) -> [Identity] {
         var identities: [Identity] = []
         var registrable: [String: Bool] = [:]
         var folders = [store.home()]
@@ -41,7 +44,18 @@ enum CredentialIdentities {
                 }
             }
         }
-        return Array(identities.sorted { $0.path < $1.path }.prefix(limit))
+        var seen = Set(identities.map { "\($0.domain) \($0.path)" })
+        for paired in pairings?.pairedSites(store: store) ?? [] where identities.count < limit {
+            guard seen.insert("\(paired.site) \(paired.entry)").inserted else { continue }
+            identities.append(Identity(
+                domain: paired.site, user: EntrySite.suggestionUser(forPath: paired.entry), path: paired.entry))
+        }
+        return Array(identities.sorted { ($0.path, $0.domain) < ($1.path, $1.domain) }.prefix(limit))
+    }
+
+    /// The pairings of the store paw set up, if there is one.
+    static func standardPairings() -> SitePairings? {
+        (try? StoreLocation.standard()).map { SitePairings.open(stateDir: $0.stateDir.path) }
     }
 
     /// Whether `domain` is a registrable domain or a name under one, by the
@@ -65,7 +79,7 @@ enum CredentialIdentities {
     static func publish(_ store: PassStore) {
         current = store
         Task.detached(priority: .utility) {
-            let identities = make(from: store).map { identity -> ASCredentialIdentity in
+            let identities = make(from: store, pairings: standardPairings()).map { identity -> ASCredentialIdentity in
                 ASPasswordCredentialIdentity(
                     serviceIdentifier: ASCredentialServiceIdentifier(identifier: identity.domain, type: .domain),
                     user: identity.user, recordIdentifier: identity.path)

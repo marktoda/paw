@@ -3,12 +3,19 @@ import Foundation
 /// Which entries AutoFill offers for a site, from names alone: nothing is
 /// decrypted to build a list or a suggestion (design.md 5.6 rule 6).
 ///
-/// The core does the matching (`PassStore.matchService`,
+/// The core does the matching (`PassStore.matchSite`,
 /// core/src/store/service.rs): an entry is offered when one part of its
 /// path is the site's host exactly, or a host with the same registrable
 /// domain by the Public Suffix List. Never a piece of a name, so
 /// `evil-example.com`, `example.com.evil.net` and `bob.github.io` are not
 /// `example.com`, `example.com` and `alice.github.io`.
+///
+/// An entry named without a domain (`bankofamerica`, `alaskaair/alice`)
+/// matches by name: a whole part of its path is the first label of the
+/// site's registrable domain. A name fits lookalikes too
+/// (`bankofamerica.co`), so the first fill on each domain asks, and the
+/// domains it has filled on are kept (`SitePairings`). One paired only
+/// with other domains of the same name is not offered at all.
 ///
 /// On top of that, paw offers nothing automatically for a site whose
 /// address is not plain ASCII. iOS reports internationalised names in
@@ -44,22 +51,38 @@ enum SiteMatch {
         return host(of: service)?.contains(".") == true
     }
 
-    /// The entries to offer first for these services, best first: exact
-    /// hosts, then the same registrable domain, each without repeats.
-    static func entries(in store: PassStore, for services: [String]) -> [EntryRef] {
-        var seen = Set<String>()
-        var exact: [EntryRef] = []
-        var sameDomain: [EntryRef] = []
+    /// Every entry that matches these services, best first: exact hosts,
+    /// the same registrable domain, then name matches paired here, not yet
+    /// paired and paired only elsewhere. Each entry once, as its best match.
+    static func entries(in store: PassStore, for services: [String], pairings: SitePairings?) -> [MatchedEntry] {
+        var best: [String: (order: Int, match: MatchedEntry)] = [:]
+        var order = 0
         for service in services where isPlain(service) {
-            for match in store.matchService(service: service) where seen.insert(match.entry.path).inserted {
-                if match.exact {
-                    exact.append(match.entry)
-                } else {
-                    sameDomain.append(match.entry)
-                }
+            for match in store.matchSite(service: service, pairings: pairings) {
+                order += 1
+                if let known = best[match.entry.path], rank(known.match.kind) <= rank(match.kind) { continue }
+                best[match.entry.path] = (order, match)
             }
         }
-        return exact + sameDomain
+        return best.values
+            .sorted { (rank($0.match.kind), $0.order) < (rank($1.match.kind), $1.order) }
+            .map(\.match)
+    }
+
+    static func rank(_ kind: MatchKind) -> Int {
+        switch kind {
+        case .exactHost: 0
+        case .sameDomain: 1
+        case .name(.paired): 2
+        case .name(.unpaired): 3
+        case .name(.pairedElsewhere): 4
+        }
+    }
+
+    /// Whether a match fills without asking: by host, or by a name already
+    /// filled on this domain.
+    static func isTrusted(_ kind: MatchKind) -> Bool {
+        rank(kind) <= 2
     }
 
     /// The entry at `path`, if the store has it.

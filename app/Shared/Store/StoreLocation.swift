@@ -6,8 +6,9 @@ import Foundation
 /// backups ("Moving to a new iPhone", design.md 2.12).
 ///
 /// The app writes here. The extension only reads the store (see
-/// `StoreForAutoFill`); the one thing it writes is a Face ID copy in
-/// `copiesDir`, which the copy cache makes safe for two processes.
+/// `StoreForAutoFill`); what it writes is a Face ID copy in `copiesDir`
+/// and `site-pairings.json` in `stateDir`, each written by rename so two
+/// processes are safe.
 struct StoreLocation {
     /// The App Group both targets are signed with.
     static let appGroup = "group.com.marktoda.paw"
