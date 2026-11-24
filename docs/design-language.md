@@ -354,8 +354,8 @@ enum PawMetrics {
 
 ## 11. Open questions for the owner
 
-1. **Accent.** Stay with ink and no accent, or add an indigo accent for buttons and links? *Default: ink, so gold stays the only brand colour.*
-2. **Icon and name.** Paw of discs, or the plain disc? An app named "Paw" already exists on the App Store, so the listing needs a qualified name. *Default: the paw, listed as "paw for pass".*
+1. **Accent.** Stay with ink and no accent, or add an indigo accent for buttons and links? *Decided 2026-11-24: ink, so gold stays the only brand colour.*
+2. **Icon and name.** Paw of discs, or the plain disc? An app named "Paw" already exists on the App Store, so the listing needs a qualified name. *Decided 2026-11-24: the paw. Listing name still "paw for pass" by default.*
 3. **Tint assignment.** Hash only, or let people choose a folder's tint? A choice would have to live on the device, since the store takes no paw-only files. *Default: hash only for now.*
 4. **Cocoa and olive.** They are the tints closest to gold in dark mode (15 and 11 units; the rest are 20 or more). Keep eight tints or drop to six? *Default: keep eight; look at them on a device first.*
 5. **Entry glyphs.** Match a glyph from a bundled name table, or give every entry its folder's glyph? *Default: the table, about forty names, no network.*
