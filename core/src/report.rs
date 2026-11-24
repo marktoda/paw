@@ -15,7 +15,8 @@
 //!
 //! Never in it: entry, folder, host, repository or user names, the store's
 //! address, any fingerprint or key ID, the key's serial number, a PIN, a
-//! token or anything decrypted. `core/tests/report.rs` checks that.
+//! token or anything decrypted. `diagnostics_say_what_they_should_and_name_nothing`
+//! in `core/tests/settings.rs` checks that.
 
 use std::path::Path;
 use std::sync::Arc;
