@@ -143,6 +143,8 @@ jobs:
               # The last part runs whatever the others do not name, so a test
               # this misses still runs.
               k = 5
+              # The iPad tests run once, on an iPad simulator, as their own part.
+              pad = tests.pop("IPadTests", None)
               items = [(cls, t) for cls in sorted(tests) for t in tests[cls]]
               total = sum(w(c) for c, _ in items) or 1
               bins = [[] for _ in range(k)]
@@ -157,9 +159,13 @@ jobs:
                   names.append(whole + [f"{c}/{t}" for c, t in b if c not in whole])
               named = [n for b in names[:-1] for n in b]
               parts = [{"name": f"full-{i + 1}-of-{k}", "only": " ".join(b), "skip": ""} for i, b in enumerate(names[:-1]) if b]
-              parts.append({"name": f"full-{k}-of-{k}", "only": "", "skip": " ".join(named)})
+              parts.append({"name": f"full-{k}-of-{k}", "only": "", "skip": " ".join(named + (["IPadTests"] if pad else []))})
+              if pad:
+                  parts.append({"name": "ipad", "only": "IPadTests", "skip": "", "family": "iPad"})
           for p in parts:
-              print(p["name"], "only:", p["only"] or "-", "skip:", p["skip"] or "-", file=sys.stderr)
+              # A part that names the iPad tests runs on an iPad.
+              p.setdefault("family", "iPad" if "IPadTests" in p["only"] else "iPhone")
+              print(p["name"], p["family"], "only:", p["only"] or "-", "skip:", p["skip"] or "-", file=sys.stderr)
           print("parts=" + json.dumps({"include": parts}))
           PY
 
@@ -176,7 +182,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Start the simulator booting
         run: |
-          udid=$(scripts/ci-sim.sh iPhone)
+          udid=$(scripts/ci-sim.sh ${{ matrix.family }})
           echo "PAW_SIM=$udid" >> "$GITHUB_ENV"
           nohup xcrun simctl boot "$udid" > /dev/null 2>&1 &
       - uses: actions/download-artifact@v4
@@ -194,7 +200,7 @@ jobs:
         env:
           PAW_ONLY: ${{ matrix.only }}
           PAW_SKIP: ${{ matrix.skip }}
-        run: scripts/ci-test.sh iPhone
+        run: scripts/ci-test.sh ${{ matrix.family }}
       # Keeps the device job's scan honest: every pattern it looks for must
       # be found in this Debug simulator build, which has all of it. (A Debug
       # build may put the code in a `.debug.dylib` beside the executable.)
@@ -207,7 +213,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: report-iPhone-${{ matrix.name }}
+          name: report-${{ matrix.family }}-${{ matrix.name }}
           path: app/build/report
           retention-days: 7
 
