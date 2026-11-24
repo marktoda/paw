@@ -60,6 +60,8 @@ final class AutoFillModel {
     enum Screen: Equatable {
         case loading
         case list
+        /// The entry is not one of this site's: fill it anyway, or not.
+        case confirm(EntryRef)
         /// Face ID is up for this entry.
         case faceId(EntryRef)
         /// The key sheet, for `keyEntry`.
@@ -69,8 +71,9 @@ final class AutoFillModel {
         case noStore
         /// paw is using the store; Try again opens it again.
         case busy
-        /// One short line, one next step; the only action is Close.
-        case problem(String, String)
+        /// One short line and one next step, with Close; and "Back to the
+        /// list" when the list is where the next step is.
+        case problem(String, String, backToList: Bool)
     }
 
     /// How long an entry filled with the key stays available to Face ID,
@@ -79,7 +82,8 @@ final class AutoFillModel {
 
     let request: AutoFillRequest
     private(set) var screen: Screen = .loading
-    /// The site the list is for, e.g. `github.com`.
+    /// The site the list is for, e.g. `github.com`. `nil` for an app iOS
+    /// gives no site for.
     private(set) var site: String?
     private(set) var matches: [EntryRef] = []
     var query = "" {
@@ -163,7 +167,7 @@ final class AutoFillModel {
         case .busy:
             screen = .busy
         case .unreadable:
-            screen = .problem("paw couldn't read your store", "Open paw to fix it.")
+            screen = .problem("paw couldn't read your store", "Open paw to fix it.", backToList: false)
         case .ready(let source):
             self.source = source
             keepsCopies = source.copies != nil
@@ -209,10 +213,52 @@ final class AutoFillModel {
         !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// A tap on an entry: Face ID if it has a live copy, else the key.
+    /// Whether the entry is one of the site's, as matched by name. A
+    /// suggestion above the keyboard is one by construction: iOS offers it
+    /// only for the site it was published for.
+    func isMatch(_ entry: EntryRef) -> Bool {
+        isSuggestion || matches.contains { $0.path == entry.path }
+    }
+
+    /// What a fill says it does: "Fill github.com", or with the site when
+    /// the entry's name does not already say it, "Fill fastmail on
+    /// example.com". The key sheet and the Face ID prompt both say this.
+    func purpose(_ entry: EntryRef) -> String {
+        guard let site, site != entry.name.lowercased() else { return "Fill \(entry.name)" }
+        return "Fill \(entry.name) on \(site)"
+    }
+
+    /// A tap on an entry. One that is not this site's asks first (design
+    /// 2.10): a search on a lookalike site must not hand over the real
+    /// site's password with a single Face ID glance.
     func pick(_ entry: EntryRef) {
         guard screen == .list else { return }
         notice = nil
+        if isMatch(entry) {
+            open(entry)
+        } else {
+            screen = .confirm(entry)
+        }
+    }
+
+    /// "Fill anyway" on the confirm step.
+    func fillAnyway() {
+        guard case .confirm(let entry) = screen else { return }
+        screen = .list
+        open(entry)
+    }
+
+    /// Cancel on the confirm step, or "Back to the list" after a problem:
+    /// the list again, nothing filled.
+    func backToList() {
+        switch screen {
+        case .confirm, .problem(_, _, backToList: true): screen = .list
+        default: break
+        }
+    }
+
+    /// Face ID if the entry has a live copy, else the key.
+    private func open(_ entry: EntryRef) {
         if live.contains(entry.path), source?.copies != nil {
             openWithFaceId(entry)
         } else {
@@ -231,9 +277,10 @@ final class AutoFillModel {
         guard let source, let copies = source.copies else { return }
         screen = .faceId(entry)
         let store = source.store
+        let reason = purpose(entry)
         work.async {
             let result = Result {
-                try store.openEntryWithFaceId(copies: copies, entry: entry.path, reason: "Fill \(entry.name)")
+                try store.openEntryWithFaceId(copies: copies, entry: entry.path, reason: reason)
             }
             let carried = Carry(value: result)
             DispatchQueue.main.async {
@@ -533,7 +580,9 @@ final class AutoFillModel {
         opened.close()
         source?.keyPort.session()?.forgetPin()
         guard let password, !password.isEmpty else {
-            screen = .problem("\(entry.name) has no password", "Pick another entry.")
+            screen = isSuggestion
+                ? .problem("\(entry.name) has no password", "Add one in paw, then try again.", backToList: false)
+                : .problem("\(entry.name) has no password", "Pick another entry.", backToList: true)
             return
         }
         guard !finished else { return }
@@ -549,8 +598,10 @@ final class AutoFillModel {
     }
 
     /// The provider's view went away without a fill or a cancel from
-    /// paw: swiped down, or closed by iOS. Every key task is cancelled and
-    /// the PIN forgotten. A Face ID prompt under way is left to answer
+    /// paw: swiped down, or closed by iOS. The request ends as cancelled,
+    /// every key task with it, and the PIN is forgotten: a view iOS hid
+    /// without ending the request would otherwise leave a sheet whose
+    /// buttons do nothing. A Face ID prompt under way is left to answer
     /// (no PIN or key task is involved, and the entry it opens is wiped
     /// at once), in case the system prompt itself hid the view.
     func viewWentAway() {
@@ -558,6 +609,7 @@ final class AutoFillModel {
             source?.keyPort.session()?.forgetPin()
             return
         }
+        end(.userCanceled)
         shutDown()
     }
 

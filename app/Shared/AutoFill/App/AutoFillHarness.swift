@@ -6,10 +6,10 @@ import SwiftUI
 /// cannot run a real AutoFill session from another app. Debug simulator
 /// builds only.
 ///
-/// - `-pawHostProvider https://github.com`: the list for that site.
+/// - `-pawHostProvider https://github.com`: the list for that site; `app`:
+///   an app with no site.
 /// - `-pawHostProviderEntry web/github.com`: a tapped suggestion above the
-///   keyboard, which first asks what `provideCredentialWithoutUserInteraction`
-///   would answer.
+///   keyboard, after what `provideCredentialWithoutUserInteraction` answers.
 /// - `-pawHostProviderStore none`: no store set up; `busy`: the store is
 ///   busy the first time it is opened.
 /// - `-pawMatchTable 1`: the site-matching table (`MatchTableView`).
@@ -28,7 +28,9 @@ enum AutoFillHarnessLaunch {
         if let path = LaunchArguments.string("pawHostProviderEntry") {
             return .entry(path: path)
         }
-        return .list(services: [LaunchArguments.string("pawHostProvider") ?? ""])
+        let site = LaunchArguments.string("pawHostProvider") ?? ""
+        // `app`: an app iOS gives no site for.
+        return .list(services: site == "app" ? [] : [site])
     }
 
     static var colorScheme: ColorScheme? {
@@ -115,13 +117,8 @@ private final class HarnessRun: AutoFillCompletion {
     func run() {
         result = "running"
         let request = AutoFillHarnessLaunch.request
-        if case .entry(let path) = request {
-            let answer = StoreForAutoFill.quickTypeAnswer(world.opening, path: path)
-            quickType = answer.rawValue
-            guard answer == .userInteractionRequired else {
-                end(answer)
-                return
-            }
+        if case .entry = request {
+            quickType = StoreForAutoFill.answerWithoutScreen.rawValue
         }
         let world = world
         model = AutoFillModel(request: request, completion: self, open: { world.open() })
@@ -140,11 +137,14 @@ private final class HarnessRun: AutoFillCompletion {
     }
 
     /// What the extension's controller does when its view goes away
-    /// without paw ending the request (a swipe down).
+    /// without paw ending the request (a swipe down): the model ends the
+    /// request, except under a Face ID prompt.
     func dismiss() {
         model?.viewWentAway()
-        model = nil
-        result = "dismissed"
+        if model != nil {
+            model = nil
+            result = "dismissed"
+        }
     }
 
     var holdsPin: Bool {

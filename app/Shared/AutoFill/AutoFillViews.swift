@@ -38,8 +38,10 @@ struct AutoFillRootView: View {
             PawColor.bg.ignoresSafeArea()
         case .list:
             AutoFillList(model: model)
+        case .confirm(let entry):
+            AutoFillConfirm(model: model, entry: entry)
         case .faceId(let entry):
-            AutoFillFaceIdView(entry: entry)
+            AutoFillFaceIdView(purpose: model.purpose(entry))
         case .key:
             AutoFillKeySheet(model: model)
         case .noStore:
@@ -60,9 +62,14 @@ struct AutoFillRootView: View {
             .padding(PawMetrics.Spacing.l)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(PawColor.bg.ignoresSafeArea())
-        case .problem(let problem, let nextStep):
+        case .problem(let problem, let nextStep, let backToList):
             VStack(spacing: PawMetrics.Spacing.l) {
                 ErrorRow(kind: .error, problem: problem, nextStep: nextStep, isBanner: true)
+                if backToList {
+                    Button("Back to the list") { model.backToList() }
+                        .buttonStyle(.pawPrimary)
+                        .accessibilityIdentifier("autofill-back")
+                }
                 Button("Close") { model.cancel() }
                     .buttonStyle(.pawSecondary)
                     .accessibilityIdentifier("autofill-close")
@@ -110,7 +117,7 @@ private struct AutoFillList: View {
         if model.matches.isEmpty {
             Section {
                 VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
-                    Text(model.site.map { "Nothing here matches \($0)." } ?? "Nothing here matches this site.")
+                    Text(model.site.map { "Nothing here matches \($0)." } ?? "paw can't tell which site this is.")
                         .font(PawFont.body)
                         .foregroundStyle(PawColor.label)
                     Text("Search for it by name.")
@@ -142,16 +149,33 @@ private struct AutoFillList: View {
                     .accessibilityIdentifier("autofill-no-hits")
             }
         } else {
-            Section {
-                ForEach(model.hits, id: \.entry.path) { hit in
-                    row(hit.entry,
-                        nameHighlights: hit.nameRanges.map(Self.range),
-                        folderHighlights: hit.folderRanges.map(Self.range))
+            // The site's own entries keep their header; everything else is
+            // set apart, and filling one asks first.
+            let ours = model.hits.filter { model.isMatch($0.entry) }
+            let others = model.hits.filter { !model.isMatch($0.entry) }
+            if !ours.isEmpty {
+                Section {
+                    ForEach(ours, id: \.entry.path, content: hitRow)
+                } header: {
+                    PawSectionHeader(model.site.map { "For \($0)" } ?? "Suggested")
+                        .accessibilityIdentifier("autofill-site-section")
                 }
-            } header: {
-                PawSectionHeader(model.hits.count == 1 ? "1 match" : "\(model.hits.count) matches")
+            }
+            if !others.isEmpty {
+                Section {
+                    ForEach(others, id: \.entry.path, content: hitRow)
+                } header: {
+                    PawSectionHeader("Other passwords")
+                        .accessibilityIdentifier("autofill-other-section")
+                }
             }
         }
+    }
+
+    private func hitRow(_ hit: SearchHit) -> some View {
+        row(hit.entry,
+            nameHighlights: hit.nameRanges.map(Self.range),
+            folderHighlights: hit.folderRanges.map(Self.range))
     }
 
     private func row(_ entry: EntryRef, nameHighlights: [NSRange] = [], folderHighlights: [NSRange] = []) -> some View {
@@ -175,9 +199,40 @@ private struct AutoFillList: View {
     }
 }
 
-/// Behind the system's Face ID prompt: which entry is being filled.
-private struct AutoFillFaceIdView: View {
+/// An entry that is not this site's was picked: say so before Face ID or
+/// the key, inline. Not filling is the primary action.
+private struct AutoFillConfirm: View {
+    let model: AutoFillModel
     let entry: EntryRef
+
+    private var headline: String {
+        model.site.map { "Fill \(entry.name)'s password on \($0)?" } ?? "Fill \(entry.name)'s password?"
+    }
+
+    var body: some View {
+        VStack(spacing: PawMetrics.Spacing.l) {
+            ErrorRow(
+                kind: .warning, problem: headline,
+                nextStep: model.site == nil
+                    ? "paw can't tell which site this is." : "This password isn't saved for this site.",
+                isBanner: true)
+            Button("Cancel") { model.backToList() }
+                .buttonStyle(.pawPrimary)
+                .accessibilityIdentifier("autofill-confirm-cancel")
+            Button("Fill anyway") { model.fillAnyway() }
+                .buttonStyle(.pawSecondary)
+                .accessibilityIdentifier("autofill-fill-anyway")
+            Spacer(minLength: 0)
+        }
+        .padding(PawMetrics.Spacing.l)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(PawColor.bg.ignoresSafeArea())
+    }
+}
+
+/// Behind the system's Face ID prompt: what is being filled, and where.
+private struct AutoFillFaceIdView: View {
+    let purpose: String
 
     var body: some View {
         VStack(spacing: PawMetrics.Spacing.l) {
@@ -186,7 +241,7 @@ private struct AutoFillFaceIdView: View {
                 .font(.system(size: PawMetrics.discHero * 0.6))
                 .foregroundStyle(PawColor.labelSecondary)
                 .accessibilityHidden(true)
-            Text("Fill \(entry.name)")
+            Text(purpose)
                 .font(PawFont.title)
                 .foregroundStyle(PawColor.label)
                 .multilineTextAlignment(.center)
@@ -206,7 +261,7 @@ private struct AutoFillKeySheet: View {
 
     var body: some View {
         KeySheetContent(
-            purpose: "Fill \(model.keyEntry?.name ?? "")",
+            purpose: model.keyEntry.map(model.purpose) ?? "",
             stage: model.keyStage,
             pin: $model.pinEntry,
             note: model.keepsCopies

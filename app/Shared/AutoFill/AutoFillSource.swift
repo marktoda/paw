@@ -62,15 +62,8 @@ enum StoreForAutoFill {
         }
     }
 
-    /// What `provideCredentialWithoutUserInteraction` answers. Every copy
-    /// is sealed behind Face ID, which needs a screen, so there is never a
-    /// fill without one: the entry is there (ask for the screen) or not.
-    static func quickTypeAnswer(_ opening: AutoFillOpening, path: String) -> AutoFillEnd {
-        // Busy: the screen says so, with Try again.
-        if case .busy = opening { return .userInteractionRequired }
-        guard case .ready(let source) = opening, SiteMatch.entry(path, in: source.store) != nil else {
-            return .credentialIdentityNotFound
-        }
-        return .userInteractionRequired
-    }
+    /// What `provideCredentialWithoutUserInteraction` answers: always a
+    /// screen. Every copy is sealed behind Face ID, which needs one, so a
+    /// fill without one is never possible.
+    static let answerWithoutScreen = AutoFillEnd.userInteractionRequired
 }

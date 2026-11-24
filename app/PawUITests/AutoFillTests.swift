@@ -65,14 +65,66 @@ final class AutoFillTests: PawUITestCase {
         expectAbsent(row("web/github.com"), "A lookalike site must not be offered github.com")
     }
 
-    func testSearchFindsAnyEntry() {
-        launchProvider(["-pawHostProvider", "https://nothing.example"])
-        expect("autofill-no-match")
+    private func search(_ text: String) {
         let search = app.searchFields.firstMatch
         XCTAssertTrue(search.waitForExistence(timeout: Self.patience), "The list should have a search field")
         search.tap()
-        search.typeText("fastm")
+        search.typeText(text)
+    }
+
+    func testSearchFindsAnyEntry() {
+        launchProvider(["-pawHostProvider", "https://nothing.example"])
+        expect("autofill-no-match")
+        search("fastm")
         expect(row("email/fastmail"))
+        expectLabel("autofill-other-section", contains: "Other passwords")
+    }
+
+    // MARK: Another site's password
+
+    func testAnotherSitesPasswordAsksFirstAndCancelFillsNothing() {
+        launchProvider(["-pawHostProvider", "https://paypa1.example"])
+        search("fastm")
+        tap(row("email/fastmail"))
+        expectLabel("warning-row", contains: "Fill fastmail's password on paypa1.example?")
+        expectLabel("warning-row", contains: "This password isn't saved for this site.")
+        expectAbsent("pin-field", "Nothing should be opened before the confirm")
+        snapshot("light-confirm")
+        tap("autofill-confirm-cancel")
+        expect(row("email/fastmail"))
+        waitForKeyTasksToEnd()
+        tap("autofill-cancel")
+        expectResult("ended userCanceled")
+    }
+
+    func testFillAnywayFillsWithTheKeyNamingTheSite() {
+        launchProvider(["-pawHostProvider", "https://paypa1.example"])
+        search("fastm")
+        tap(row("email/fastmail"))
+        tap("autofill-fill-anyway")
+        expectLabel("key-sheet-purpose", contains: "Fill fastmail on paypa1.example")
+        enterPin(Self.pin)
+        touchTheKey()
+        expectResult("filled user=you@example.com")
+    }
+
+    func testTheSitesOwnPasswordFoundBySearchDoesNotAsk() {
+        launchProvider(["-pawHostProvider", "https://github.com"])
+        search("github")
+        expectLabel("autofill-site-section", contains: "For github.com")
+        tap(row("web/github.com"))
+        expectLabel("key-sheet-purpose", contains: "Fill github.com")
+        expectAbsent("autofill-fill-anyway", "The site's own password should not ask first")
+    }
+
+    func testAnAppWithNoSiteAsksFirst() {
+        launchProvider(["-pawHostProvider", "app"])
+        expectLabel("autofill-no-match", contains: "paw can't tell which site this is.")
+        search("fastm")
+        tap(row("email/fastmail"))
+        expectLabel("warning-row", contains: "Fill fastmail's password?")
+        tap("autofill-fill-anyway")
+        expectLabel("key-sheet-purpose", contains: "Fill fastmail")
     }
 
     func testMatchingTable() {
@@ -146,11 +198,9 @@ final class AutoFillTests: PawUITestCase {
 
     func testAnotherKeysEntrySaysSoBeforeThePin() {
         launchProvider(["-pawHostProvider", "https://nothing.example"])
-        let search = app.searchFields.firstMatch
-        XCTAssertTrue(search.waitForExistence(timeout: Self.patience), "The list should have a search field")
-        search.tap()
-        search.typeText("old-forum")
+        search("old-forum")
         tap(row("archive/old-forum"))
+        tap("autofill-fill-anyway")
         expectLabel("key-sheet-headline", contains: "This key can't open old-forum")
         expectAbsent("pin-field", "No PIN should be asked for an entry this key can't open")
         tap("key-sheet-cancel")
@@ -174,7 +224,7 @@ final class AutoFillTests: PawUITestCase {
         tap(row("web/github.com"))
         enterPin(Self.pin, send: false)
         tapSimulated("harness-dismiss")
-        expectResult("dismissed")
+        expectResult("ended userCanceled")
         waitForKeyTasksToEnd()
         expectValue("harness-pin", "none")
     }
@@ -186,7 +236,7 @@ final class AutoFillTests: PawUITestCase {
         expect("touch-prompt")
         expectValue("harness-pin", "held")
         tapSimulated("harness-dismiss")
-        expectResult("dismissed")
+        expectResult("ended userCanceled")
         // A touch after the sheet went away fills nothing.
         tap("harness-touch-key")
         waitForKeyTasksToEnd()
@@ -222,7 +272,7 @@ final class AutoFillTests: PawUITestCase {
 
     func testSuggestionForAMissingEntry() {
         launchProvider(["-pawHostProviderEntry", "web/gone.example"])
-        expectValue("autofill-quicktype", "credentialIdentityNotFound")
+        expectValue("autofill-quicktype", "userInteractionRequired")
         expectResult("ended credentialIdentityNotFound")
     }
 

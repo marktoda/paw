@@ -16,19 +16,11 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     }
 
     /// A suggestion above the keyboard. Every copy is sealed behind Face
-    /// ID, which needs a screen, so this never fills by itself.
+    /// ID, which needs a screen, so this never fills by itself and answers
+    /// at once, without opening the store (which could wait on paw's lock).
+    /// A missing entry is found out on the screen that follows.
     override func provideCredentialWithoutUserInteraction(for credentialRequest: ASCredentialRequest) {
-        guard let path = Self.path(of: credentialRequest) else {
-            end(.credentialIdentityNotFound)
-            return
-        }
-        // Off the main thread: opening the store walks its folders.
-        DispatchQueue.global(qos: .userInitiated).async {
-            let answer = StoreForAutoFill.quickTypeAnswer(StoreForAutoFill.open(), path: path)
-            DispatchQueue.main.async { [weak self] in
-                self?.end(answer)
-            }
-        }
+        end(Self.path(of: credentialRequest) == nil ? .credentialIdentityNotFound : StoreForAutoFill.answerWithoutScreen)
     }
 
     /// After `userInteractionRequired`: Face ID or the key sheet for that
