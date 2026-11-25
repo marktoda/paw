@@ -181,6 +181,8 @@ impl BackgroundRefreshReport {
 pub(crate) enum FetchError {
     GitHub(GitHubError),
     Paw(PawError),
+    /// GitHub did not accept the token (401).
+    Unauthorised,
 }
 
 impl From<GitHubError> for FetchError {
@@ -195,7 +197,15 @@ impl From<FetchError> for SyncError {
             FetchError::Paw(e) => e.into(),
             FetchError::GitHub(GitHubError::Network { message }) => SyncError::Network { message },
             FetchError::GitHub(other) => SyncError::Failed { message: other.to_string() },
+            FetchError::Unauthorised => SyncError::Failed { message: still_refused().to_string() },
         }
+    }
+}
+
+/// A token GitHub refused even after it was refreshed.
+fn still_refused() -> GitHubError {
+    GitHubError::Refused {
+        message: "GitHub did not let paw's sign-in read this repository; is paw still installed on it?".into(),
     }
 }
 
@@ -222,22 +232,21 @@ impl GitHubAccount {
         token: Secret,
         fetch_wait: Duration,
         progress: Option<crate::sync::TransferCallback<'_>>,
-    ) -> Result<Fetching, Result<FetchError, ()>> {
-        let repo = crate::sync::guard::open(&self.repo_dir()).map_err(|e| Ok(FetchError::Paw(e)))?;
+    ) -> Result<Fetching, FetchError> {
+        let repo = crate::sync::guard::open(&self.repo_dir()).map_err(FetchError::Paw)?;
         // The transfer runs without the store lock, under the fetch lock,
         // into private refs; [`Self::publish`] moves them.
-        let fetching =
-            crate::sync::begin_fetch_within(&self.store_lock(), &repo, fetch_wait).map_err(|e| Ok(FetchError::Paw(e)))?;
+        let fetching = crate::sync::begin_fetch_within(&self.store_lock(), &repo, fetch_wait).map_err(FetchError::Paw)?;
         let limit = *self.download_limit.lock().unwrap_or_else(|p| p.into_inner());
         let remote = HttpsRemote::new(http.clone(), &link.full_name, token, limit);
         match remote.with_remote(&repo, |r| crate::sync::fetch_connected(r, progress)) {
             Ok(_) => Ok(fetching),
-            Err((error, failure)) => match explain(error, failure) {
-                Ok(paw) => Err(Ok(FetchError::Paw(paw))),
-                Err(Failure::Unauthorised) => Err(Err(())),
-                Err(Failure::GitHub(e)) => Err(Ok(FetchError::GitHub(e))),
-                Err(Failure::TooBig(_)) => Err(Ok(FetchError::Paw(PawError::Git("the git host sent too much".into())))),
-            },
+            Err((error, failure)) => Err(match explain(error, failure) {
+                Ok(paw) => FetchError::Paw(paw),
+                Err(Failure::Unauthorised) => FetchError::Unauthorised,
+                Err(Failure::GitHub(e)) => FetchError::GitHub(e),
+                Err(Failure::TooBig(_)) => FetchError::Paw(PawError::Git("the git host sent too much".into())),
+            }),
         }
     }
 
@@ -264,30 +273,13 @@ impl GitHubAccount {
         fetch_wait: Duration,
         mut progress: Option<crate::sync::TransferCallback<'_>>,
     ) -> Result<Fetching, FetchError> {
-        let token = self.keeper.access_token(http, None)?;
-        let refused = token.clone();
-        let first = self.fetch_once(
-            http,
-            link,
-            token,
-            fetch_wait,
-            progress.as_mut().map(|p| &mut **p as crate::sync::TransferCallback<'_>),
-        );
-        match first {
-            Ok(fetching) => Ok(fetching),
-            Err(Ok(error)) => Err(error),
-            // Refused with a token paw thought was fine: refresh, try once more.
-            Err(Err(())) => {
-                let token = self.keeper.access_token(http, Some(&refused))?;
-                drop(refused);
-                match self.fetch_once(http, link, token, fetch_wait, progress) {
-                    Ok(fetching) => Ok(fetching),
-                    Err(Ok(error)) => Err(error),
-                    Err(Err(())) => Err(FetchError::GitHub(GitHubError::Refused {
-                        message: "GitHub did not let paw's sign-in read this repository; is paw still installed on it?".into(),
-                    })),
-                }
-            }
+        let fetch = |token| {
+            let progress = progress.as_mut().map(|p| &mut **p as crate::sync::TransferCallback<'_>);
+            self.fetch_once(http, link, token, fetch_wait, progress)
+        };
+        match self.with_token(http, fetch, |e| matches!(e, FetchError::Unauthorised)) {
+            Err(FetchError::Unauthorised) => Err(FetchError::GitHub(still_refused())),
+            other => other,
         }
     }
 
@@ -296,20 +288,12 @@ impl GitHubAccount {
     /// anything is sent if there is no sign-in, no chosen repository, or
     /// the store's remote is another repository.
     pub fn refresh_with_token(&self) -> Result<SyncReport, SyncError> {
-        self.refresh_with_token_progress(None)
-    }
-
-    /// [`Self::refresh_with_token`], reporting how far the fetch has got.
-    pub fn refresh_with_token_progress(
-        &self,
-        progress: Option<crate::sync::TransferCallback<'_>>,
-    ) -> Result<SyncReport, SyncError> {
         if !self.keeper.signed_in().map_err(FetchError::GitHub)? {
             return Err(FetchError::GitHub(GitHubError::NotSignedIn).into());
         }
         let link = self.checked_link().map_err(FetchError::GitHub)?;
         let http = Http::new(&self.endpoints, None);
-        let fetching = self.fetch_with_token(&http, &link, crate::lock::FETCH_WAIT, progress)?;
+        let fetching = self.fetch_with_token(&http, &link, crate::lock::FETCH_WAIT, None)?;
         let held = self.publish(fetching, crate::lock::DEFAULT_WAIT)?;
         crate::sync::operation::integrate_fetched(&held, &self.repo_dir())
     }
@@ -375,6 +359,7 @@ impl GitHubAccount {
                 return BackgroundRefreshReport::ended(BackgroundOutcome::Offline { message });
             }
             Err(FetchError::Paw(e)) => return failed(&e),
+            Err(FetchError::Unauthorised) => return failed(&still_refused()),
         };
         // From here to the end, local work only, with the store lock held:
         // published, checked and integrated as one step.
@@ -403,8 +388,14 @@ impl GitHubAccount {
             Ok(_) => {}
             Err(e) => return failed(&e),
         }
-        let held_back = crate::sync::queue::held_back(&dir, &self.state_dir).map(|h| h.len() as u32).unwrap_or(0);
-        let unpushed = crate::sync::queue::unpushed(&dir).map(|q| q.len() as u32).unwrap_or(0);
+        let held_back = match crate::sync::queue::held_back(&dir, &self.state_dir) {
+            Ok(held) => held.len() as u32,
+            Err(e) => return failed(&e),
+        };
+        let unpushed = match crate::sync::queue::unpushed(&dir) {
+            Ok(queue) => queue.len() as u32,
+            Err(e) => return failed(&e),
+        };
         if held_back > 0 {
             decisions.push(RefreshDecision::HeldBack { count: held_back });
         }

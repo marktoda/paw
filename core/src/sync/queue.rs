@@ -8,23 +8,9 @@ use std::path::Path;
 
 use git2::{Oid, Repository};
 
-use super::history::{
-    Change, ChangeKind, PawCommit, Replay, ensure_clean, last_seen_ref, move_branch, paw_commits,
-};
-use super::{SyncError, current_branch, git_err};
+use super::history::{ChangeKind, PawCommit, Replay, ensure_clean, move_branch, paw_commits};
+use super::{SyncError, check_not_being_sent, current_branch, git_err, refs};
 use crate::lock::{Exclusive, StoreLock};
-
-/// [`super::check_not_being_sent`] for the branch `refs/heads/<short>`.
-fn check_not_being_sent(
-    held: &Exclusive,
-    store: &StoreLock,
-    repo: &Repository,
-    branch: &str,
-    removed: Oid,
-) -> Result<(), SyncError> {
-    let short = branch.strip_prefix("refs/heads/").unwrap_or(branch);
-    super::check_not_being_sent(held, store, repo, short, removed)
-}
 
 /// One unpushed change.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -41,24 +27,32 @@ pub struct QueueItem {
     pub when: i64,
 }
 
-struct Local<'r> {
+/// The changes waiting to be sent, on the current branch.
+pub(crate) struct Waiting<'r> {
     branch: String,
+    short: String,
     head: Oid,
-    commits: Vec<PawCommit<'r>>,
+    /// Oldest first.
+    pub(crate) commits: Vec<PawCommit<'r>>,
 }
 
-fn local(repo: &Repository) -> Result<Local<'_>, SyncError> {
+/// The changes waiting to be sent: this device's commits that neither the
+/// remote's fetched tip nor the tip paw last saw of it contains. Each is
+/// one change paw made; a commit another tool made is refused
+/// ([`SyncError::NotPawHistory`]). A store with no remote has none. This is
+/// what the queue lists, a send pushes and every count of waiting changes
+/// counts.
+pub(crate) fn waiting(repo: &Repository) -> Result<Waiting<'_>, SyncError> {
     let (branch, short) = current_branch(repo)?;
     let head = repo.refname_to_id(&branch).map_err(git_err)?;
     let mut pushed = Vec::new();
-    for name in [format!("refs/remotes/origin/{short}"), last_seen_ref(&short)] {
+    for name in [refs::remote_tracking(&short), refs::last_seen(&short)] {
         if let Ok(id) = repo.refname_to_id(&name) {
             pushed.push(id);
         }
     }
-    // A store with no remote has nothing it could push.
     let commits = if pushed.is_empty() { Vec::new() } else { paw_commits(repo, head, &pushed)? };
-    Ok(Local { branch, head, commits })
+    Ok(Waiting { branch, short, head, commits })
 }
 
 fn item(commit: &PawCommit<'_>) -> QueueItem {
@@ -75,7 +69,7 @@ fn item(commit: &PawCommit<'_>) -> QueueItem {
 pub fn unpushed(dir: &Path) -> Result<Vec<QueueItem>, SyncError> {
     let _reading = StoreLock::for_repo(dir).shared()?;
     let repo = super::guard::open(dir)?;
-    let local = local(&repo)?;
+    let local = waiting(&repo)?;
     Ok(local.commits.iter().rev().map(item).collect())
 }
 
@@ -89,11 +83,11 @@ pub fn discard(dir: &Path, id: &str) -> Result<Vec<QueueItem>, SyncError> {
 
 fn discard_locked(held: &Exclusive, dir: &Path, id: &str) -> Result<(), SyncError> {
     let repo = super::guard::open(dir)?;
-    let local = local(&repo)?;
+    let local = waiting(&repo)?;
     let Some(position) = local.commits.iter().position(|c| c.commit.id().to_string() == id) else {
         return Err(SyncError::Failed { message: format!("{id} is not an unpushed change") });
     };
-    check_not_being_sent(held, &StoreLock::for_repo(dir), &repo, &local.branch, local.commits[position].commit.id())?;
+    check_not_being_sent(held, &StoreLock::for_repo(dir), &repo, &local.short, local.commits[position].commit.id())?;
     ensure_clean(&repo)?;
     let base = local.commits[position].commit.parent_id(0).map_err(git_err)?;
     let mut replay = Replay::onto(&repo, base)?;
@@ -120,11 +114,11 @@ pub fn undo_last(dir: &Path) -> Result<Vec<QueueItem>, SyncError> {
 pub fn discard_all(dir: &Path) -> Result<(), SyncError> {
     let held = StoreLock::for_repo(dir).exclusive()?;
     let repo = super::guard::open(dir)?;
-    let local = local(&repo)?;
+    let local = waiting(&repo)?;
     let Some(oldest) = local.commits.first() else {
         return Ok(());
     };
-    check_not_being_sent(&held, &StoreLock::for_repo(dir), &repo, &local.branch, oldest.commit.id())?;
+    check_not_being_sent(&held, &StoreLock::for_repo(dir), &repo, &local.short, oldest.commit.id())?;
     ensure_clean(&repo)?;
     let base = oldest.commit.parent_id(0).map_err(git_err)?;
     move_branch(&held, &repo, &local.branch, local.head, base, None, "paw: discard all changes")
@@ -182,14 +176,11 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
     let _reading = StoreLock::for_repo(dir).shared()?;
     let keyring = crate::write::Keyring::open(state_dir).map_err(failed)?;
     let repo = super::guard::open(dir)?;
-    let local = local(&repo)?;
+    let local = waiting(&repo)?;
     let now = crate::write::now_secs();
     let mut held = Vec::new();
     for commit in &local.commits {
-        let (path, blob) = match &commit.change {
-            Change::Write { path, blob } | Change::Rename { to: path, blob, .. } => (path, blob.0),
-            Change::Delete { .. } => continue,
-        };
+        let Some((path, blob)) = commit.change.ciphertext() else { continue };
         if !crate::path::is_entry_file(path) {
             continue;
         }
@@ -235,103 +226,6 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
     Ok(held)
 }
 
-/// Gives the text of a held-back change from its waiting ciphertext (with
-/// the key, or a Face ID copy), for [`reencrypt_held_back`].
-pub type OpenWaiting<'a> = dyn FnMut(&HeldBack, &[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>, SyncError> + 'a;
-
-/// What [`reencrypt_held_back`] did.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Reencrypted {
-    /// Waiting changes now encrypted for exactly their entry's recipients:
-    /// no longer held back.
-    pub reencrypted: u32,
-    /// Still held back: their folder's new recipients are not accepted on
-    /// this device yet, so paw cannot encrypt to them.
-    pub not_accepted: u32,
-}
-
-/// Encrypts every held-back change whose new recipients the person has
-/// accepted again, for exactly those recipients, in place in the queue:
-/// the same changes in the same order, with the same messages and times,
-/// so the old ciphertext never reaches the remote. Needs each entry's
-/// text, which `open` gives for the held-back change and its waiting
-/// ciphertext (with the key, or a Face ID copy): never call it in the
-/// background.
-///
-/// The store lock is never held while `open` runs (a card decrypt waits
-/// for a touch). The ciphertext is read under the shared lock; the queue
-/// is rewritten under the exclusive lock, and only if it is still exactly
-/// what was read: a save or a send in between ends this with an error and
-/// changes nothing. One branch move: either every one is re-encrypted, or
-/// none is. Nothing is sent.
-pub fn reencrypt_held_back(
-    dir: &Path,
-    state_dir: &Path,
-    open: &mut OpenWaiting<'_>,
-) -> Result<Reencrypted, SyncError> {
-    let failed = |e: crate::write::WriteError| SyncError::Failed { message: e.to_string() };
-    let held = held_back(dir, state_dir)?;
-    let not_accepted = held.iter().filter(|h| !h.accepted).count() as u32;
-    let ready: Vec<HeldBack> = held.into_iter().filter(|h| h.accepted).collect();
-    if ready.is_empty() {
-        return Ok(Reencrypted { reencrypted: 0, not_accepted });
-    }
-    let changed = || SyncError::Failed {
-        message: "the waiting changes changed while paw was opening them; try again".into(),
-    };
-
-    // 1. The waiting ciphertext, read under the shared lock.
-    let (head, waiting) = {
-        let _reading = StoreLock::for_repo(dir).shared()?;
-        let repo = super::guard::open(dir)?;
-        let local = local(&repo)?;
-        let mut waiting = Vec::new();
-        for item in &ready {
-            let commit = local.commits.iter().find(|c| c.commit.id().to_string() == item.id).ok_or_else(changed)?;
-            let (path, blob) = match &commit.change {
-                Change::Write { path, blob } | Change::Rename { to: path, blob, .. } => (path.clone(), blob.0),
-                Change::Delete { .. } => return Err(changed()),
-            };
-            let bytes = repo.find_blob(blob).map_err(git_err)?.content().to_vec();
-            waiting.push((item, path, blob, bytes));
-        }
-        (local.head, waiting)
-    };
-
-    // 2. Opened with no lock held.
-    let mut opened = Vec::with_capacity(waiting.len());
-    for (item, path, blob, bytes) in waiting {
-        let text = open(item, &bytes)?;
-        opened.push((path, blob, text));
-    }
-
-    // 3. Encrypted again and the queue rebuilt, under the exclusive lock.
-    let store = StoreLock::for_repo(dir);
-    let held = store.exclusive()?;
-    let repo = super::guard::open(dir)?;
-    let local = local(&repo)?;
-    if local.head != head {
-        return Err(changed());
-    }
-    ensure_clean(&repo)?;
-    let keyring = crate::write::Keyring::open(state_dir).map_err(failed)?;
-    let now = crate::write::now_secs();
-    // Keyed by path and blob: a rename that kept the blob puts the same
-    // ciphertext at another path, whose folder may have other recipients,
-    // and each path gets the ciphertext its own folder needs.
-    let mut swaps: std::collections::HashMap<(String, Oid), Oid> = std::collections::HashMap::new();
-    let reencrypted = opened.len() as u32;
-    for (path, old, text) in &opened {
-        let folder = crate::path::folder_of(path);
-        let keys = keyring.resolve(dir, folder, now).map_err(failed)?;
-        let ciphertext = crate::write::encrypt(&keys, text.as_slice()).map_err(failed)?;
-        swaps.insert((path.clone(), *old), repo.blob(&ciphertext).map_err(git_err)?);
-    }
-    drop(opened);
-    rewrite_with(&held, &store, &repo, &local, &swaps)?.ok_or_else(changed)?;
-    Ok(Reencrypted { reencrypted, not_accepted })
-}
-
 /// Rebuilds the queue from the first change that holds one of `swaps`'
 /// (path, old blob) pairs, with the new blob there and wherever a later
 /// change still has that old blob at that path, and moves the branch once.
@@ -340,18 +234,15 @@ fn rewrite_with(
     held: &Exclusive,
     store: &StoreLock,
     repo: &Repository,
-    local: &Local<'_>,
+    local: &Waiting<'_>,
     swaps: &std::collections::HashMap<(String, Oid), Oid>,
 ) -> Result<Option<()>, SyncError> {
-    let Some(first) = local.commits.iter().position(|c| match &c.change {
-        Change::Write { path, blob } | Change::Rename { to: path, blob, .. } => {
-            swaps.contains_key(&(path.clone(), blob.0))
-        }
-        Change::Delete { .. } => false,
+    let Some(first) = local.commits.iter().position(|c| {
+        c.change.ciphertext().is_some_and(|(path, blob)| swaps.contains_key(&(path.to_owned(), blob)))
     }) else {
         return Ok(None);
     };
-    check_not_being_sent(held, store, repo, &local.branch, local.commits[first].commit.id())?;
+    check_not_being_sent(held, store, repo, &local.short, local.commits[first].commit.id())?;
     let mut tip = local.commits[first].commit.parent_id(0).map_err(git_err)?;
     for commit in &local.commits[first..] {
         let tree = commit.commit.tree().map_err(git_err)?;
@@ -444,16 +335,14 @@ enum Look {
 
 fn look(
     item: &HeldBack,
-    local: &Local<'_>,
+    local: &Waiting<'_>,
     keyring: &crate::write::Keyring,
     dir: &Path,
     now: u32,
 ) -> Option<Look> {
     let commit = local.commits.iter().find(|c| c.commit.id().to_string() == item.id)?;
-    let (path, blob) = match &commit.change {
-        Change::Write { path, blob } | Change::Rename { to: path, blob, .. } => (path.clone(), blob.0),
-        Change::Delete { .. } => return None,
-    };
+    let (path, blob) = commit.change.ciphertext()?;
+    let path = path.to_owned();
     if item.gpg_id.is_empty() {
         return Some(Look::Left(LeftReason::NoList));
     }
@@ -484,7 +373,7 @@ fn looked(
     let _reading = StoreLock::for_repo(dir).shared()?;
     let keyring = crate::write::Keyring::open(state_dir).map_err(failed)?;
     let repo = super::guard::open(dir)?;
-    let local = local(&repo)?;
+    let local = waiting(&repo)?;
     let now = crate::write::now_secs();
     let mut check = ReencryptCheck { ready: 0, left: Vec::new() };
     for item in &held {
@@ -548,7 +437,7 @@ pub fn reencrypt_each(
             let _reading = StoreLock::for_repo(dir).shared()?;
             let keyring = crate::write::Keyring::open(state_dir).map_err(failed)?;
             let repo = super::guard::open(dir)?;
-            let local = local(&repo)?;
+            let local = waiting(&repo)?;
             let now = crate::write::now_secs();
             let mut next = None;
             for item in held {
@@ -590,7 +479,7 @@ pub fn reencrypt_each(
         let store = StoreLock::for_repo(dir);
         let held = store.exclusive()?;
         let repo = super::guard::open(dir)?;
-        let local = local(&repo)?;
+        let local = waiting(&repo)?;
         if local.head != head {
             // A save or a discard in between: look again (the text is kept).
             moved += 1;

@@ -1083,3 +1083,62 @@ async fn receive_pack(shared: &Shared, input: &mut Input, out: &mut (impl AsyncW
     }
     Ok(Ended::Done)
 }
+
+/// The git steps of a sync one at a time, for tests that look at each:
+/// test support, not how the app syncs (it runs whole syncs as key tasks,
+/// `StoreSync.send_with_key`). Not in device builds.
+pub mod steps {
+    use std::path::Path;
+
+    use crate::PawError;
+    use crate::lock::{FETCH_WAIT, StoreLock};
+    use crate::ssh::SshSigner;
+    use crate::sync::operation::{self, SyncReport};
+    use crate::sync::{self, Cloned, Connection, Remote, SyncError, git_err, refs};
+
+    /// Clones the remote's default branch into `dir`, which must be empty
+    /// or not exist yet. An empty repository, or one holding what paw will
+    /// not check out, is an error.
+    pub fn clone(connection: &Connection, remote: &Remote, dir: &Path) -> Result<(), PawError> {
+        match sync::clone_with_transfer(connection, remote, dir, None)? {
+            Cloned::Store => Ok(()),
+            Cloned::Empty => Err(PawError::Git("the remote repository is empty".into())),
+            Cloned::Refused(paths) => Err(sync::Refused(paths).into()),
+        }
+    }
+
+    /// Updates `origin/*` from the remote and returns the new tip of the
+    /// current branch's remote counterpart. The working copy is not changed.
+    pub fn fetch(connection: &Connection, dir: &Path) -> Result<String, PawError> {
+        let store = StoreLock::for_repo(dir);
+        let repo = sync::guard::open(dir)?;
+        let (_, _held) = sync::fetch_branches(connection, &store, &repo, None)?;
+        let (_, short) = sync::current_branch(&repo)?;
+        repo.refname_to_id(&refs::remote_tracking(&short)).map(|id| id.to_string()).map_err(git_err)
+    }
+
+    /// Pushes the current branch to the branch of the same name, as a
+    /// fast-forward only, as a send does.
+    pub fn push(connection: &Connection, dir: &Path) -> Result<(), PawError> {
+        let store = StoreLock::for_repo(dir);
+        let pushing = store.pushing(FETCH_WAIT)?;
+        let repo = sync::guard::open(dir)?;
+        let held = store.exclusive()?;
+        let (branch, _) = sync::current_branch(&repo)?;
+        let tip = repo.refname_to_id(&branch).map_err(git_err)?;
+        sync::push_tip(connection, &store, &repo, &branch, tip, held, &pushing)
+    }
+
+    /// A whole sync of the store at `dir` (state in `state_dir`) on one
+    /// login, as `StoreSync`'s key tasks run it: a send if `send`, else a
+    /// refresh.
+    pub fn sync(
+        remote: &Remote,
+        signer: &dyn SshSigner,
+        dir: &Path,
+        state_dir: &Path,
+        send: bool,
+    ) -> Result<SyncReport, SyncError> {
+        operation::run_until(remote, signer, dir, state_dir, send, &|| false, None)
+    }
+}

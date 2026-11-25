@@ -8,9 +8,10 @@ mod key_common;
 use std::sync::Arc;
 
 use key_common::{PIN, signer};
+use paw_core::sim::remote::steps;
 use paw_core::sim::SimulatedKey;
 use paw_core::sim::remote::SimRemote;
-use paw_core::sync::{self, Connection};
+use paw_core::sync::Connection;
 
 fn key() -> Arc<SimulatedKey> {
     SimulatedKey::new(PIN.into(), false, 1000)
@@ -27,7 +28,7 @@ fn clone_tip(host: &SimRemote, key: &Arc<SimulatedKey>) -> String {
     let remote = host.remote().unwrap();
     let connection = Connection::open(&remote, &signer).unwrap();
     let dir = tempfile::tempdir().unwrap();
-    sync::clone(&connection, &remote, &dir.path().join("repo")).unwrap();
+    steps::clone(&connection, &remote, &dir.path().join("repo")).unwrap();
     git2::Repository::open(dir.path().join("repo")).unwrap().head().unwrap().target().unwrap().to_string()
 }
 

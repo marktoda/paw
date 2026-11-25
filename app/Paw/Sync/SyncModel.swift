@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import Observation
 import SwiftUI
@@ -74,33 +73,6 @@ enum SyncPillState: Equatable {
     }
 }
 
-/// Entry paths and a hash of each one's file, to say what a sync changed.
-/// The core's `IntegrateReport` names only the entries both sides changed
-/// (core request: added, changed and removed entries in the report).
-struct StoreSnapshot: Sendable {
-    let hashes: [String: Data]
-
-    /// Reads every entry's file. Call off the main thread.
-    static func take(store: PassStore, repoDir: String) -> StoreSnapshot {
-        let root = URL(fileURLWithPath: repoDir, isDirectory: true)
-        var hashes: [String: Data] = [:]
-        var pending = [store.home()]
-        while let listing = pending.popLast() {
-            for entry in listing.entries {
-                if let data = try? Data(contentsOf: root.appendingPathComponent(entry.path + ".gpg")) {
-                    hashes[entry.path] = Data(SHA256.hash(data: data))
-                }
-            }
-            for folder in listing.folders {
-                if let inner = try? store.folder(path: folder.path) {
-                    pending.append(inner)
-                }
-            }
-        }
-        return StoreSnapshot(hashes: hashes)
-    }
-}
-
 /// What a sync brought in, for the dismissible card on Home.
 struct SyncSummary: Identifiable, Equatable {
     enum Origin: Equatable {
@@ -122,7 +94,7 @@ struct SyncSummary: Identifiable, Equatable {
     /// Entries whose Face ID copy ended because their text changed.
     var endedCopies: [String] = []
 
-    init(origin: Origin, report: IntegrateReport, before: StoreSnapshot?, after: StoreSnapshot?) {
+    init(origin: Origin, report: IntegrateReport) {
         self.origin = origin
         keptBoth = report.keptBoth
         keptLocal = report.keptLocal
@@ -131,7 +103,6 @@ struct SyncSummary: Identifiable, Equatable {
             let folder = change.path.split(separator: "/").dropLast().joined(separator: "/")
             return folder
         }
-        guard let before, let after else { return }
         // Entries the report already explains are said there instead.
         var explained = Set(keptLocal + droppedDeletes)
         for pair in keptBoth {
@@ -141,12 +112,9 @@ struct SyncSummary: Identifiable, Equatable {
         let sorted = { (paths: [String]) in
             paths.filter { !explained.contains($0) }.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
         }
-        added = sorted(after.hashes.keys.filter { before.hashes[$0] == nil })
-        removed = sorted(before.hashes.keys.filter { after.hashes[$0] == nil })
-        changed = sorted(after.hashes.compactMap { path, hash in
-            guard let old = before.hashes[path], old != hash else { return nil }
-            return path
-        })
+        added = sorted(report.added)
+        changed = sorted(report.changed)
+        removed = sorted(report.removed)
     }
 
     var entryCount: Int {
@@ -249,7 +217,6 @@ final class SyncModel {
 
     @ObservationIgnored private weak var app: AppModel?
     @ObservationIgnored private var tasks: [UUID: KeyTask] = [:]
-    @ObservationIgnored private var before: StoreSnapshot?
     /// The key task has had its touch: "Connecting" is over.
     @ObservationIgnored private var signedIn = false
     /// Where to go once the sheet has gone.
@@ -388,8 +355,7 @@ final class SyncModel {
     // MARK: Running a send or a check
 
     /// "Send N changes" or "Check for changes": the key sheet, then the
-    /// core's sign-in task. What the store holds is read first, off the main
-    /// thread, to say afterwards what changed.
+    /// core's sign-in task.
     func start(_ kind: SyncKind, app: AppModel) {
         guard running == nil, !accepting else { return }
         self.app = app
@@ -408,22 +374,10 @@ final class SyncModel {
         } else {
             sheet?.mode = mode
         }
-        let store = app.store
-        let repoDir = repoDir
-        workQueue.async { [weak self] in
-            let snapshot = SyncHandoff(value: StoreSnapshot.take(store: store, repoDir: repoDir))
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    self?.launch(kind, taskID: taskID, before: snapshot.value)
-                }
-            }
-        }
+        launch(kind, taskID: taskID, app: app)
     }
 
-    private func launch(_ kind: SyncKind, taskID: UUID, before: StoreSnapshot) {
-        // Cancelled while the store was being read.
-        guard case .key(_, let current, _)? = sheet?.mode, current == taskID, let app else { return }
-        self.before = before
+    private func launch(_ kind: SyncKind, taskID: UUID, app: AppModel) {
         let listener = SyncTaskListener { [weak self] in
             MainActor.assumeIsolated {
                 self?.taskChanged(taskID)
@@ -767,30 +721,26 @@ final class SyncModel {
         running = .refresh
         progress = nil
         keyPathNote = nil
-        let store = app.store
-        let repoDir = repoDir
         let core = gitHub.core
         let time = BackgroundTime.begin("Sync")
         workQueue.async { [weak self] in
-            let snapshot = StoreSnapshot.take(store: store, repoDir: repoDir)
             let result = Result { try core.refreshStore() }
             let stillSignedIn = (try? core.isSignedIn()) ?? false
-            let handoff = SyncHandoff(value: (snapshot, result, stillSignedIn))
+            let handoff = SyncHandoff(value: (result, stillSignedIn))
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     time.end()
-                    self?.checkedWithSignIn(before: handoff.value.0, handoff.value.1, stillSignedIn: handoff.value.2)
+                    self?.checkedWithSignIn(handoff.value.0, stillSignedIn: handoff.value.1)
                 }
             }
         }
     }
 
-    private func checkedWithSignIn(before: StoreSnapshot, _ result: Result<SyncReport, Error>, stillSignedIn: Bool) {
+    private func checkedWithSignIn(_ result: Result<SyncReport, Error>, stillSignedIn: Bool) {
         running = nil
         gitHub?.reload()
         switch result {
         case .success(let report):
-            self.before = before
             if absorb(report, kind: .refresh) {
                 recomputeLocal()
                 if sheet == nil {
@@ -821,14 +771,11 @@ final class SyncModel {
     /// of entries whose text changed end (the core finds them), and the
     /// card on Home says what changed.
     private func integrated(_ report: IntegrateReport, origin: SyncSummary.Origin) {
-        let before = before
-        self.before = nil
         let repoDir = repoDir
         let copies = app?.copies
         workQueue.async { [weak self] in
             let store = try? PassStore(dir: repoDir)
-            let after = store.map { StoreSnapshot.take(store: $0, repoDir: repoDir) }
-            var summary = SyncSummary(origin: origin, report: report, before: before, after: after)
+            var summary = SyncSummary(origin: origin, report: report)
             if let copies, let store {
                 for copy in (try? copies.list()) ?? [] {
                     if case .stale? = try? store.faceIdStatus(copies: copies, entry: copy.entry) {
@@ -861,29 +808,24 @@ final class SyncModel {
         accepting = true
         acceptProblem = nil
         let sync = sync
-        let store = app.store
-        let repoDir = repoDir
         let time = BackgroundTime.begin("Sync")
         workQueue.async { [weak self] in
-            let snapshot = StoreSnapshot.take(store: store, repoDir: repoDir)
-            let result = Result { try sync.acceptReplacedRemote(keepChanges: keepChanges) }
-            let handoff = SyncHandoff(value: (snapshot, result))
+            let result = SyncHandoff(value: Result { try sync.acceptReplacedRemote(keepChanges: keepChanges) })
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     time.end()
-                    self?.accepted(handoff.value.0, handoff.value.1, keepChanges: keepChanges)
+                    self?.accepted(result.value, keepChanges: keepChanges)
                 }
             }
         }
     }
 
-    private func accepted(_ snapshot: StoreSnapshot, _ result: Result<IntegrateReport, Error>, keepChanges: Bool) {
+    private func accepted(_ result: Result<IntegrateReport, Error>, keepChanges: Bool) {
         accepting = false
         switch result {
         case .success(let report):
             replaced = nil
             failure = nil
-            before = snapshot
             integrated(report, origin: .replaced)
             if let app {
                 app.path.removeAll { $0 == .sync(.replaced) }

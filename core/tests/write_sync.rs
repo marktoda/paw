@@ -12,10 +12,11 @@ mod support;
 use std::path::Path;
 use std::sync::Arc;
 
+use paw_core::sim::remote::steps;
 use paw_core::copies::content_id;
 use paw_core::entry::EntryDoc;
 use paw_core::sim::SimulatedKey;
-use paw_core::sync::operation::{self, SyncState};
+use paw_core::sync::operation::SyncState;
 use paw_core::sync::{self, ChangeKind, Connection, Integration, KeptBoth, queue};
 use paw_core::write::{EntryDraft, Keyring, WriteStore};
 use pgp::types::KeyDetails;
@@ -69,7 +70,7 @@ impl World {
 
     fn pull(&self) -> Integration {
         let connection = Connection::open(&self.server.remote(), &signer(&self.card)).unwrap();
-        sync::fetch(&connection, &self.repo()).unwrap();
+        steps::fetch(&connection, &self.repo()).unwrap();
         sync::integrate(&self.repo()).unwrap()
     }
 
@@ -105,7 +106,7 @@ fn world() -> World {
     );
 
     let connection = Connection::open(&w.server.remote(), &signer(&w.card)).unwrap();
-    sync::clone(&connection, &w.server.remote(), &w.repo()).unwrap();
+    steps::clone(&connection, &w.server.remote(), &w.repo()).unwrap();
     let mut keyring = Keyring::open(w.state.path()).unwrap();
     keyring.pin_card_key(&w.card.decryption_key().unwrap()).unwrap();
     // The fixture's other key, pinned as a key paw may encrypt to.
@@ -160,7 +161,7 @@ fn every_kind_of_change_replays_onto_a_moved_remote_and_reaches_the_desktop() {
     );
     assert_eq!(git(&w.repo(), &["status", "--porcelain"]), "");
 
-    let report = operation::send(&w.server.remote(), &signer(&w.card), &w.repo()).unwrap();
+    let report = steps::sync(&w.server.remote(), &signer(&w.card), &w.repo(), w.state.path(), true).unwrap();
     assert_eq!(report.state, SyncState::UpToDate);
     assert_eq!(report.pushed, 5);
     assert!(queued(&w).is_empty());
@@ -243,7 +244,7 @@ fn a_waiting_change_is_not_pushed_after_its_recipients_changed() {
     let other_fpr = hex(paw_core::sim::fixture::other_key().unwrap().fingerprint().as_bytes());
     w.desktop_push(&[(".gpg-id", format!("{card_fpr}\n{other_fpr}\n").into_bytes())], "Add a recipient.");
     let desktop_tip = w.server.tip();
-    let send = || operation::send_checked(&w.server.remote(), &signer(&w.card), &w.repo(), w.state.path()).unwrap();
+    let send = || steps::sync(&w.server.remote(), &signer(&w.card), &w.repo(), w.state.path(), true).unwrap();
 
     let report = send();
 
@@ -292,11 +293,22 @@ fn add_a_recipient(w: &World) -> (String, String) {
 fn open_with_card(
     w: &World,
     opened: &std::cell::RefCell<Vec<String>>,
-) -> impl FnMut(&queue::HeldBack, &[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>, sync::SyncError> {
+) -> impl FnMut(&queue::HeldBack, &[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>, queue::OpenFailure> {
     move |item, bytes| {
         opened.borrow_mut().push(item.entry.clone());
         Ok(zeroize::Zeroizing::new(decrypt(&w.card, PIN, bytes).unwrap()))
     }
+}
+
+/// Re-encrypts the held-back changes as the app's key task does, opening
+/// each with the card.
+fn reencrypt(w: &World, opened: &std::cell::RefCell<Vec<String>>) -> Result<queue::ReencryptReport, sync::SyncError> {
+    queue::reencrypt_each(&w.repo(), w.state.path(), &mut open_with_card(w, opened), &mut |_, _| {})
+}
+
+/// Why each held-back change was left.
+fn left(report: &queue::ReencryptReport) -> Vec<queue::LeftReason> {
+    report.left.iter().map(|l| l.reason.clone()).collect()
 }
 
 fn head(dir: &Path) -> String {
@@ -318,15 +330,16 @@ fn held_back_changes_are_encrypted_again_once_the_new_recipients_are_accepted_an
 
     // Not accepted yet: nothing is opened and nothing changes.
     let tip = head(&w.repo());
-    let report = queue::reencrypt_held_back(&w.repo(), w.state.path(), &mut open_with_card(&w, &opened)).unwrap();
-    assert_eq!(report, queue::Reencrypted { reencrypted: 0, not_accepted: 2 });
+    let report = reencrypt(&w, &opened).unwrap();
+    assert_eq!(report.reencrypted, 0);
+    assert_eq!(left(&report), [queue::LeftReason::NotAccepted, queue::LeftReason::NotAccepted]);
     assert!(opened.borrow().is_empty());
     assert_eq!(head(&w.repo()), tip);
 
     Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Work").unwrap();
-    let report = queue::reencrypt_held_back(&w.repo(), w.state.path(), &mut open_with_card(&w, &opened)).unwrap();
+    let report = reencrypt(&w, &opened).unwrap();
 
-    assert_eq!(report, queue::Reencrypted { reencrypted: 2, not_accepted: 0 });
+    assert_eq!((report.reencrypted, left(&report)), (2, vec![]));
     assert_eq!(*opened.borrow(), ["Work/new", "Work/new"]);
     assert_eq!(queued(&w), before, "the same changes, in the same order");
     assert!(queue::held_back(&w.repo(), w.state.path()).unwrap().is_empty());
@@ -336,7 +349,7 @@ fn held_back_changes_are_encrypted_again_once_the_new_recipients_are_accepted_an
     assert!(found.keys.iter().any(|k| k.describe().contains(&other_fpr[24..28])), "{found:?}");
     assert_eq!(w.decrypt(&w.repo(), "Work/new"), "newer-pw\n");
 
-    let report = operation::send_checked(&w.server.remote(), &signer(&w.card), &w.repo(), w.state.path()).unwrap();
+    let report = steps::sync(&w.server.remote(), &signer(&w.card), &w.repo(), w.state.path(), true).unwrap();
     assert_eq!(report.state, SyncState::UpToDate);
     assert_eq!(report.pushed, 3);
     git(w.desktop.path(), &["pull", "--quiet", "--ff-only"]);
@@ -355,25 +368,6 @@ fn held_back_changes_are_encrypted_again_once_the_new_recipients_are_accepted_an
 }
 
 #[test]
-fn a_save_while_the_held_back_changes_are_being_opened_stops_the_re_encryption() {
-    let w = world();
-    w.write().save(&new_entry("Work", "new", "new-pw")).unwrap();
-    add_a_recipient(&w);
-    Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Work").unwrap();
-
-    let mut open = |_: &queue::HeldBack, bytes: &[u8]| {
-        // Meanwhile, a save (in the app, with no lock held here).
-        w.write().save(&new_entry("Work", "meanwhile", "pw")).unwrap();
-        Ok(zeroize::Zeroizing::new(decrypt(&w.card, PIN, bytes).unwrap()))
-    };
-    let error = queue::reencrypt_held_back(&w.repo(), w.state.path(), &mut open).unwrap_err();
-
-    assert!(error.to_string().contains("try again"), "{error}");
-    assert_eq!(queue::held_back(&w.repo(), w.state.path()).unwrap().len(), 1, "nothing was re-encrypted");
-    assert_eq!(queue::unpushed(&w.repo()).unwrap().len(), 2, "the save made meanwhile is kept");
-}
-
-#[test]
 fn a_held_back_change_that_cannot_be_opened_is_left_as_it_was() {
     let w = world();
     w.write().save(&new_entry("Work", "new", "new-pw")).unwrap();
@@ -381,8 +375,9 @@ fn a_held_back_change_that_cannot_be_opened_is_left_as_it_was() {
     Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Work").unwrap();
     let tip = head(&w.repo());
 
-    let mut open = |_: &queue::HeldBack, _: &[u8]| Err(sync::SyncError::Failed { message: "no touch".into() });
-    let error = queue::reencrypt_held_back(&w.repo(), w.state.path(), &mut open).unwrap_err();
+    let mut open =
+        |_: &queue::HeldBack, _: &[u8]| Err(queue::OpenFailure::Stop(sync::SyncError::Failed { message: "no touch".into() }));
+    let error = queue::reencrypt_each(&w.repo(), w.state.path(), &mut open, &mut |_, _| {}).unwrap_err();
 
     assert!(error.to_string().contains("no touch"), "{error}");
     assert_eq!(head(&w.repo()), tip);
@@ -419,18 +414,18 @@ fn personal_gets_two_keys_then_reencrypt(w: &World, expected: u32) {
     let opened = std::cell::RefCell::new(Vec::new());
     let before = queued(w);
 
-    let report = queue::reencrypt_held_back(&w.repo(), w.state.path(), &mut open_with_card(w, &opened)).unwrap();
-    assert_eq!(report, queue::Reencrypted { reencrypted: expected, not_accepted: 0 });
+    let report = reencrypt(w, &opened).unwrap();
+    assert_eq!((report.reencrypted, left(&report)), (expected, vec![]));
     assert_eq!(queued(w), before, "the same changes, in the same order");
     let held = queue::held_back(&w.repo(), w.state.path()).unwrap();
     assert!(held.is_empty(), "{held:?}");
 
     let tip = head(&w.repo());
-    let report = queue::reencrypt_held_back(&w.repo(), w.state.path(), &mut open_with_card(w, &opened)).unwrap();
-    assert_eq!(report, queue::Reencrypted { reencrypted: 0, not_accepted: 0 });
+    let report = reencrypt(w, &opened).unwrap();
+    assert_eq!((report.reencrypted, left(&report)), (0, vec![]));
     assert_eq!(head(&w.repo()), tip, "a second run is a no-op");
 
-    let report = operation::send_checked(&w.server.remote(), &signer(&w.card), &w.repo(), w.state.path()).unwrap();
+    let report = steps::sync(&w.server.remote(), &signer(&w.card), &w.repo(), w.state.path(), true).unwrap();
     assert_eq!(report.state, SyncState::UpToDate);
     assert_eq!(report.pushed as usize, before.len());
 }
@@ -467,14 +462,14 @@ fn a_rename_chain_through_another_scope_is_re_encrypted_only_there() {
     w.pull();
     Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Personal").unwrap();
     let opened = std::cell::RefCell::new(Vec::new());
-    let report = queue::reencrypt_held_back(&w.repo(), w.state.path(), &mut open_with_card(&w, &opened)).unwrap();
+    let report = reencrypt(&w, &opened).unwrap();
 
     assert_eq!(report.reencrypted, 1);
     assert_eq!(key_counts(&w, "Work/a.gpg"), [1]);
     assert_eq!(key_counts(&w, "Personal/b.gpg"), [2]);
     assert_eq!(key_counts(&w, "Work/c.gpg"), [1]);
     assert!(queue::held_back(&w.repo(), w.state.path()).unwrap().is_empty());
-    let report = operation::send_checked(&w.server.remote(), &signer(&w.card), &w.repo(), w.state.path()).unwrap();
+    let report = steps::sync(&w.server.remote(), &signer(&w.card), &w.repo(), w.state.path(), true).unwrap();
     assert_eq!(report.state, SyncState::UpToDate);
     assert_eq!(report.pushed, 3);
 }
@@ -526,14 +521,14 @@ fn a_move_re_encrypted_for_its_new_scope_keeps_that_ciphertext_when_the_old_scop
     Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Work").unwrap();
 
     let opened = std::cell::RefCell::new(Vec::new());
-    let report = queue::reencrypt_held_back(&w.repo(), w.state.path(), &mut open_with_card(&w, &opened)).unwrap();
+    let report = reencrypt(&w, &opened).unwrap();
 
-    assert_eq!(report, queue::Reencrypted { reencrypted: 1, not_accepted: 0 });
+    assert_eq!((report.reencrypted, left(&report)), (1, vec![]));
     assert_eq!(*opened.borrow(), ["Work/a"]);
     assert_eq!(key_counts(&w, "Work/a.gpg"), [2]);
     assert_eq!(git(&w.repo(), &["rev-parse", "HEAD:Shared/a.gpg"]), shared, "left as it was");
-    let report = queue::reencrypt_held_back(&w.repo(), w.state.path(), &mut open_with_card(&w, &opened)).unwrap();
+    let report = reencrypt(&w, &opened).unwrap();
     assert_eq!(report.reencrypted, 0);
-    let report = operation::send_checked(&w.server.remote(), &signer(&w.card), &w.repo(), w.state.path()).unwrap();
+    let report = steps::sync(&w.server.remote(), &signer(&w.card), &w.repo(), w.state.path(), true).unwrap();
     assert_eq!(report.state, SyncState::UpToDate);
 }

@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use paw_core::sim::remote::steps;
 use paw_core::github::{
     BackgroundOutcome, GitHubAccount, GitHubError, RefreshDecision, RefreshStep, RepositoryList, SignInState,
 };
@@ -196,13 +197,13 @@ fn ssh_twin(w: &World) -> tempfile::TempDir {
     let remote = w.remote.remote().unwrap();
     let signer = signer_with(&w.key, PIN);
     let connection = sync::Connection::open(&remote, &signer).unwrap();
-    sync::clone(&connection, &remote, &twin.path().join("repo")).unwrap();
+    steps::clone(&connection, &remote, &twin.path().join("repo")).unwrap();
     twin
 }
 
 fn ssh_refresh(w: &World, twin: &Path) -> Result<operation::SyncReport, SyncError> {
     let signer = signer_with(&w.key, PIN);
-    operation::refresh(&w.remote.remote().unwrap(), &signer, &twin.join("repo"))
+    steps::sync(&w.remote.remote().unwrap(), &signer, &twin.join("repo"), twin, false)
 }
 
 // --- the device flow ------------------------------------------------------------

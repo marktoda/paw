@@ -121,20 +121,19 @@ final class SyncWordsTests: XCTestCase {
 
     // MARK: What a sync brought in
 
-    private func report(keptBoth: [KeptBoth] = [], keptLocal: [String] = [], recipients: [String] = []) -> IntegrateReport {
+    private func report(
+        keptBoth: [KeptBoth] = [], keptLocal: [String] = [], recipients: [String] = [],
+        added: [String] = [], changed: [String] = [], removed: [String] = []
+    ) -> IntegrateReport {
         IntegrateReport(
             fastForwarded: 1, replayed: 0, keptBoth: keptBoth, keptLocal: keptLocal, droppedDeletes: [],
-            recipientsChanged: recipients.map { RecipientsChange(path: $0, before: [], after: ["ABCD"]) })
-    }
-
-    private func hash(_ byte: UInt8) -> Data {
-        Data([byte])
+            recipientsChanged: recipients.map { RecipientsChange(path: $0, before: [], after: ["ABCD"]) },
+            added: added, changed: changed, removed: removed)
     }
 
     func testTheSummaryCountsAddedChangedAndRemovedEntries() {
-        let before = StoreSnapshot(hashes: ["web/a": hash(1), "web/b": hash(2), "web/c": hash(3)])
-        let after = StoreSnapshot(hashes: ["web/a": hash(1), "web/b": hash(9), "web/d": hash(4)])
-        let summary = SyncSummary(origin: .sync, report: report(), before: before, after: after)
+        let summary = SyncSummary(
+            origin: .sync, report: report(added: ["web/d"], changed: ["web/b"], removed: ["web/c"]))
         XCTAssertEqual(summary.added, ["web/d"])
         XCTAssertEqual(summary.changed, ["web/b"])
         XCTAssertEqual(summary.removed, ["web/c"])
@@ -142,33 +141,28 @@ final class SyncWordsTests: XCTestCase {
         XCTAssertFalse(summary.needsALook)
         XCTAssertFalse(summary.isEmpty)
 
-        let one = SyncSummary(
-            origin: .replaced, report: report(), before: before,
-            after: StoreSnapshot(hashes: ["web/a": hash(1), "web/b": hash(2), "web/c": hash(3), "web/e": hash(5)]))
+        let one = SyncSummary(origin: .replaced, report: report(added: ["web/e"]))
         XCTAssertEqual(one.title, "1 password updated from the new store")
     }
 
     func testEntriesTheReportExplainsAreNotCountedAgain() {
-        let before = StoreSnapshot(hashes: ["web/example.com": hash(1)])
-        let after = StoreSnapshot(hashes: [
-            "web/example.com": hash(2), "web/example.com (from this iPhone)": hash(1),
-        ])
         let summary = SyncSummary(
             origin: .sync,
-            report: report(keptBoth: [KeptBoth(entry: "web/example.com", copy: "web/example.com (from this iPhone)")]),
-            before: before, after: after)
+            report: report(
+                keptBoth: [KeptBoth(entry: "web/example.com", copy: "web/example.com (from this iPhone)")],
+                added: ["web/example.com (from this iPhone)"], changed: ["web/example.com"]))
         XCTAssertEqual(summary.entryCount, 0)
         XCTAssertEqual(summary.title, "Two versions of example.com were kept")
         XCTAssertTrue(summary.needsALook)
     }
 
     func testChangedKeysAreSaidByFolder() {
-        let work = SyncSummary(origin: .sync, report: report(recipients: ["work/.gpg-id"]), before: nil, after: nil)
+        let work = SyncSummary(origin: .sync, report: report(recipients: ["work/.gpg-id"]))
         XCTAssertEqual(work.recipientsChanged, ["work"])
         XCTAssertEqual(work.title, "Who can open work changed")
-        let top = SyncSummary(origin: .sync, report: report(recipients: [".gpg-id"]), before: nil, after: nil)
+        let top = SyncSummary(origin: .sync, report: report(recipients: [".gpg-id"]))
         XCTAssertEqual(top.title, "Who can open your store changed")
-        let empty = SyncSummary(origin: .sync, report: report(), before: nil, after: nil)
+        let empty = SyncSummary(origin: .sync, report: report())
         XCTAssertTrue(empty.isEmpty)
         XCTAssertEqual(empty.title, "Your store was updated")
     }

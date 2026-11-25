@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use git2::{Oid, Repository, Signature};
+use paw_core::sim::remote::steps;
 use paw_core::PawError;
 use paw_core::sim::SimulatedKey;
 use paw_core::sync::{self, Author, Connection, SyncError, queue};
@@ -191,7 +192,7 @@ fn a_clone_of_a_hostile_tree_checks_out_nothing() {
         let state = tempfile::tempdir().unwrap();
         let dir = state.path().join("repo");
 
-        let result = sync::clone(&connect(&server, &card), &server.remote(), &dir);
+        let result = steps::clone(&connect(&server, &card), &server.remote(), &dir);
 
         let Err(PawError::UnsafePath(message)) = result else {
             panic!("{what}: the clone was not refused: {result:?}");
@@ -211,7 +212,7 @@ fn integrate_after(card: &Arc<SimulatedKey>, what: &str, extra: Vec<(&'static st
     let state = tempfile::tempdir().unwrap();
     let dir = state.path().join("repo");
     let connection = connect(&server, card);
-    sync::clone(&connection, &server.remote(), &dir).unwrap();
+    steps::clone(&connection, &server.remote(), &dir).unwrap();
     if queued {
         sync::commit(&dir, "web/new.gpg", b"local ciphertext", "Add given password for web/new to store.", &author())
             .unwrap();
@@ -221,7 +222,7 @@ fn integrate_after(card: &Arc<SimulatedKey>, what: &str, extra: Vec<(&'static st
     let queue = queue::unpushed(&dir).unwrap();
 
     host_commit(&server, &store(extra));
-    sync::fetch(&connection, &dir).unwrap();
+    steps::fetch(&connection, &dir).unwrap();
     let result = sync::integrate(&dir);
 
     let message = match result {
@@ -271,7 +272,7 @@ fn a_good_tree_passes_and_names_nothing() {
         ]),
     );
     let dir = tempfile::tempdir().unwrap();
-    sync::clone(&connect(&server, &card), &server.remote(), dir.path()).unwrap();
+    steps::clone(&connect(&server, &card), &server.remote(), dir.path()).unwrap();
     assert!(dir.path().join("web/caf\u{e9}.gpg").is_file());
     assert!(sync::refused_remote(dir.path()).unwrap().is_empty());
     assert_eq!(git(dir.path(), &["status", "--porcelain"]), "");
@@ -284,12 +285,12 @@ fn a_local_name_that_collides_with_a_remote_one_is_not_replayed() {
     host_commit(&server, &store(Vec::new()));
     let dir = tempfile::tempdir().unwrap();
     let connection = connect(&server, &card);
-    sync::clone(&connection, &server.remote(), dir.path()).unwrap();
+    steps::clone(&connection, &server.remote(), dir.path()).unwrap();
     // This device saves `Bank.gpg`; the desktop, meanwhile, `bank.gpg`.
     sync::commit(dir.path(), "web/Bank.gpg", b"mine", "Add given password for web/Bank to store.", &author()).unwrap();
     let head = git(dir.path(), &["rev-parse", "HEAD"]);
     host_commit(&server, &store(vec![("web", Folder(vec![("bank.gpg", File(b"theirs"))]))]));
-    sync::fetch(&connection, dir.path()).unwrap();
+    steps::fetch(&connection, dir.path()).unwrap();
 
     let result = sync::integrate(dir.path());
 
@@ -307,7 +308,7 @@ fn saving_a_name_that_collides_with_one_in_the_store_is_refused() {
     let server = server(&card);
     host_commit(&server, &store(Vec::new()));
     let dir = tempfile::tempdir().unwrap();
-    sync::clone(&connect(&server, &card), &server.remote(), dir.path()).unwrap();
+    steps::clone(&connect(&server, &card), &server.remote(), dir.path()).unwrap();
     let head = git(dir.path(), &["rev-parse", "HEAD"]);
 
     for path in ["Web/x.gpg", "web/Example.com.gpg", "WEB"] {
@@ -328,7 +329,7 @@ fn a_folder_turned_into_a_link_under_a_waiting_change_is_refused() {
     let state = tempfile::tempdir().unwrap();
     let dir = state.path().join("repo");
     let connection = connect(&server, &card);
-    sync::clone(&connection, &server.remote(), &dir).unwrap();
+    steps::clone(&connection, &server.remote(), &dir).unwrap();
     sync::commit(&dir, "web/new.gpg", b"mine", "Add given password for web/new to store.", &author()).unwrap();
 
     let repo = Repository::open_bare(server.bare()).unwrap();
@@ -340,7 +341,7 @@ fn a_folder_turned_into_a_link_under_a_waiting_change_is_refused() {
     let signature = Signature::now("Desktop", "desktop@example.com").unwrap();
     repo.commit(Some("refs/heads/main"), &signature, &signature, "Link.", &repo.find_tree(tree).unwrap(), &[&parent])
         .unwrap();
-    sync::fetch(&connection, &dir).unwrap();
+    steps::fetch(&connection, &dir).unwrap();
 
     let result = sync::integrate(&dir);
 
@@ -490,7 +491,7 @@ fn a_clone_on_a_casefold_file_system_writes_no_link() {
     let state = Path::new(&base).join("state");
     let dir = state.join("repo");
 
-    let result = sync::clone(&connect(&server, &card), &server.remote(), &dir);
+    let result = steps::clone(&connect(&server, &card), &server.remote(), &dir);
 
     assert!(matches!(&result, Err(PawError::UnsafePath(m)) if m.starts_with(REFUSED)), "{result:?}");
     assert!(!dir.join("caf\u{e9}").exists());

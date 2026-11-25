@@ -7,9 +7,10 @@ mod key_common;
 mod support;
 
 use key_common::*;
+use paw_core::sim::remote::steps;
 use paw_core::key::{KeyOutcome, KeyTaskState, LoginPurpose};
 use paw_core::sim::SimTouch;
-use paw_core::sync::{self, Connection};
+use paw_core::sync::Connection;
 use support::{GitServer, git};
 
 #[test]
@@ -26,7 +27,7 @@ fn a_clone_and_an_entry_open_take_one_pin_entry() {
     let signer = login.signer().unwrap();
     assert_eq!(rig.sim.verify_attempts(), 1);
     let connection = Connection::open(&server.remote(), &signer).unwrap();
-    sync::clone(&connection, &server.remote(), dir.path()).unwrap();
+    steps::clone(&connection, &server.remote(), dir.path()).unwrap();
     drop(connection);
     login.finish();
     assert!(matches!(finish(login.task()), KeyTaskState::Done { outcome: KeyOutcome::SignedIn }));

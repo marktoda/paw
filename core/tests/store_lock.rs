@@ -19,6 +19,7 @@ use std::sync::{Arc, Barrier, Mutex, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use key_common::{Driver, finish, port_with, signer_with};
+use paw_core::sim::remote::steps;
 use paw_core::ffi::sync::StoreSync;
 use paw_core::ffi::sync::Setup;
 use paw_core::key::{KeyOutcome, KeyTaskState};
@@ -196,7 +197,7 @@ impl World {
 
     fn send(&self) -> Result<operation::SyncReport, sync::SyncError> {
         let signer = signer_with(&self.key, PIN);
-        operation::send_checked(&self.remote.remote().unwrap(), &signer, &self.repo(), self.state())
+        steps::sync(&self.remote.remote().unwrap(), &signer, &self.repo(), self.state(), true)
     }
 
     /// The working copy matches the branch, nothing is half done, and no
@@ -857,7 +858,7 @@ fn every_mutating_entry_point_returns_even_when_its_thread_holds_the_lock() {
             note("sync.push", {
                 let signer = signer_with(&w.key, PIN);
                 let remote = w.remote.remote().unwrap();
-                sync::Connection::open(&remote, &signer).map_err(|e| text(&e)).and_then(|c| sync::push(&c, &repo).map_err(|e| text(&e)))
+                sync::Connection::open(&remote, &signer).map_err(|e| text(&e)).and_then(|c| steps::push(&c, &repo).map_err(|e| text(&e)))
             });
             note("refresh_with_token", w.account.refresh_with_token().map(drop).map_err(|e| text(&e)));
             let background = w.account.background_refresh(Duration::from_secs(25));
@@ -992,7 +993,7 @@ fn a_push_that_landed_is_success_even_if_recording_it_has_to_wait_too_long() {
     }
     let connection = connect(&w);
     let before = origin(&w);
-    let pushed = paw_core::lock::with_record_wait(Duration::from_millis(300), || sync::push(&connection, &w.repo()));
+    let pushed = paw_core::lock::with_record_wait(Duration::from_millis(300), || steps::push(&connection, &w.repo()));
     pushed.unwrap();
     assert!(w.remote_has("lock/landed"));
     assert_eq!(origin(&w), before, "not recorded: the lock was not to be had");
@@ -1025,7 +1026,7 @@ fn a_refused_push_reports_the_refusal_not_busy_while_the_store_is_held() {
         });
     }
     let connection = connect(&w);
-    let error = sync::push(&connection, &w.repo()).unwrap_err().to_string();
+    let error = steps::push(&connection, &w.repo()).unwrap_err().to_string();
     release.send(()).unwrap();
     assert!(!paw_core::ffi::is_store_busy(error.clone()), "{error}");
     assert!(!w.remote_has("lock/refused"));

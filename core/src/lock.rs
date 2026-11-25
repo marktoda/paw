@@ -490,7 +490,7 @@ pub fn remove_stale_git_locks(repo: &Path) -> Vec<PathBuf> {
             removed.push(path);
         }
     }
-    let skip = [git.join("refs/paw/fetch"), git.join("logs/refs/paw/fetch")];
+    let skip = crate::sync::refs::fetched_dirs(&git);
     for dir in [git.join("refs"), git.join("logs")] {
         remove_locks_under(&dir, &skip, 0, &mut removed);
     }
@@ -530,7 +530,7 @@ pub(crate) fn remove_stale_fetch_locks(repo: &Path) {
     let git = repo.join(".git");
     let _ = std::fs::remove_file(git.join(SHALLOW_LOCK));
     let mut removed = Vec::new();
-    for dir in [git.join("refs/paw/fetch"), git.join("logs/refs/paw/fetch")] {
+    for dir in crate::sync::refs::fetched_dirs(&git) {
         remove_locks_under(&dir, &[], 0, &mut removed);
     }
     if let Ok(packs) = std::fs::read_dir(git.join("objects/pack")) {

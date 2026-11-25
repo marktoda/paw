@@ -16,12 +16,10 @@ use std::path::Path;
 
 use git2::{Oid, Repository};
 
-use super::history::{
-    KeptBoth, Replay, ReplayNotes, commits_between, ensure_clean, last_seen_ref, move_branch,
-    paw_commits,
-};
 use super::guard::check_commit;
-use super::{SyncError, current_branch, git_err};
+use super::history::{KeptBoth, Replay, ReplayNotes, commits_between, ensure_clean, entry_name, move_branch, paw_commits};
+use super::queue::waiting;
+use super::{SyncError, current_branch, git_err, refs};
 use crate::store::gpg_id::parse_gpg_id;
 use crate::lock::{Exclusive, StoreLock};
 
@@ -37,7 +35,8 @@ pub struct RecipientsChange {
     pub after: Vec<String>,
 }
 
-/// What an integrate did. Entry names are for showing only.
+/// What an integrate did. Entry names are for showing only, never for a
+/// log.
 #[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
 pub struct IntegrateReport {
     /// Remote commits the local branch now includes.
@@ -51,6 +50,12 @@ pub struct IntegrateReport {
     /// Entries deleted here but changed on the remote: the delete was dropped.
     pub dropped_deletes: Vec<String>,
     pub recipients_changed: Vec<RecipientsChange>,
+    /// Entries the store has now and did not have before.
+    pub added: Vec<String>,
+    /// Entries whose file is different now.
+    pub changed: Vec<String>,
+    /// Entries the store no longer has.
+    pub removed: Vec<String>,
 }
 
 impl IntegrateReport {
@@ -69,7 +74,55 @@ impl IntegrateReport {
         self.kept_local.extend(later.kept_local);
         self.dropped_deletes.extend(later.dropped_deletes);
         self.recipients_changed.extend(later.recipients_changed);
+        for entry in later.added {
+            if take(&mut self.removed, &entry) {
+                self.changed.push(entry);
+            } else {
+                self.added.push(entry);
+            }
+        }
+        for entry in later.changed {
+            if !self.added.contains(&entry) && !self.changed.contains(&entry) {
+                self.changed.push(entry);
+            }
+        }
+        for entry in later.removed {
+            if !take(&mut self.added, &entry) {
+                take(&mut self.changed, &entry);
+                self.removed.push(entry);
+            }
+        }
     }
+
+    /// Notes which entries differ between the trees of `before` and
+    /// `after`.
+    fn note_entries(&mut self, repo: &Repository, before: Oid, after: Oid) -> Result<(), SyncError> {
+        if before == after {
+            return Ok(());
+        }
+        let tree = |id: Oid| repo.find_commit(id).and_then(|c| c.tree()).map_err(git_err);
+        let diff = repo.diff_tree_to_tree(Some(&tree(before)?), Some(&tree(after)?), None).map_err(git_err)?;
+        for delta in diff.deltas() {
+            let path = |file: git2::DiffFile<'_>| file.path().and_then(Path::to_str).map(str::to_owned);
+            let list = match delta.status() {
+                git2::Delta::Added => &mut self.added,
+                git2::Delta::Deleted => &mut self.removed,
+                _ => &mut self.changed,
+            };
+            let file = if delta.status() == git2::Delta::Deleted { delta.old_file() } else { delta.new_file() };
+            if let Some(path) = path(file).filter(|p| crate::path::is_entry_file(p)) {
+                list.push(entry_name(&path));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Removes `entry` from `list`; whether it was there.
+fn take(list: &mut Vec<String>, entry: &str) -> bool {
+    let before = list.len();
+    list.retain(|e| e != entry);
+    list.len() != before
 }
 
 /// The remote's history no longer contains the tip paw saw last.
@@ -99,10 +152,33 @@ struct Tips {
 fn tips(repo: &Repository) -> Result<Tips, SyncError> {
     let (branch, short) = current_branch(repo)?;
     let head = repo.refname_to_id(&branch).map_err(git_err)?;
-    let remote = repo.refname_to_id(&format!("refs/remotes/origin/{short}")).ok();
-    let seen_ref = last_seen_ref(&short);
+    let remote = repo.refname_to_id(&refs::remote_tracking(&short)).ok();
+    let seen_ref = refs::last_seen(&short);
     let seen = repo.refname_to_id(&seen_ref).ok();
     Ok(Tips { branch, seen_ref, head, remote, seen })
+}
+
+/// What a fetch brought, as an integrate reads it.
+struct Fetched {
+    remote: Oid,
+    /// The remote's tip paw saw last. A copy cloned before paw kept that
+    /// ref counts what it builds on as seen.
+    seen: Oid,
+    /// The remote's history no longer contains `seen`.
+    replaced: bool,
+}
+
+/// `None` when nothing was fetched.
+fn fetched(repo: &Repository, tips: &Tips) -> Result<Option<Fetched>, SyncError> {
+    let Some(remote) = tips.remote else {
+        return Ok(None);
+    };
+    let seen = match tips.seen {
+        Some(seen) => seen,
+        None => repo.merge_base(tips.head, remote).unwrap_or(remote),
+    };
+    let replaced = seen != remote && !repo.graph_descendant_of(remote, seen).map_err(git_err)?;
+    Ok(Some(Fetched { remote, seen, replaced }))
 }
 
 /// Integrates `origin/<branch>` into the current branch of the store at
@@ -121,22 +197,16 @@ pub fn integrate(dir: &Path) -> Result<Integration, SyncError> {
 pub(crate) fn integrate_locked(held: &Exclusive, dir: &Path) -> Result<Integration, SyncError> {
     let repo = super::guard::open(dir)?;
     let tips = tips(&repo)?;
-    let Some(remote) = tips.remote else {
+    let Some(Fetched { remote, seen, replaced }) = fetched(&repo, &tips)? else {
         return Ok(Integration::Integrated(IntegrateReport::default()));
     };
     // What was fetched is checked before anything else is done with it.
     check_commit(&repo, remote)?;
-    // A copy cloned before paw kept this ref: what it builds on counts as seen.
-    let seen = match tips.seen {
-        Some(seen) => seen,
-        None => repo.merge_base(tips.head, remote).unwrap_or(remote),
-    };
-    if seen != remote && !repo.graph_descendant_of(remote, seen).map_err(git_err)? {
-        let unpushed = commits_between(&repo, tips.head, &[seen])?.len() as u32;
+    if replaced {
         return Ok(Integration::RemoteReplaced(Replaced {
             last_seen: seen.to_string(),
             remote: remote.to_string(),
-            unpushed,
+            unpushed: waiting(&repo)?.commits.len() as u32,
         }));
     }
 
@@ -160,6 +230,7 @@ pub(crate) fn integrate_locked(held: &Exclusive, dir: &Path) -> Result<Integrati
         report.note(replay.notes);
         tip
     };
+    report.note_entries(&repo, tips.head, new_head)?;
     move_branch(held, &repo, &tips.branch, tips.head, new_head, Some((&tips.seen_ref, remote)), "paw: integrate")?;
     Ok(Integration::Integrated(report))
 }
@@ -176,7 +247,7 @@ pub fn accept_replaced_remote(dir: &Path, keep_changes: bool) -> Result<Integrat
     };
     check_commit(&repo, remote)?;
     let seen = tips.seen.unwrap_or(remote);
-    let local = if keep_changes { paw_commits(&repo, tips.head, &[seen, remote])? } else { Vec::new() };
+    let local = if keep_changes { waiting(&repo)?.commits } else { Vec::new() };
     ensure_clean(&repo)?;
     let mut report = IntegrateReport {
         recipients_changed: recipients_changes(&repo, seen, remote)?,
@@ -188,6 +259,7 @@ pub fn accept_replaced_remote(dir: &Path, keep_changes: bool) -> Result<Integrat
     }
     let tip = replay.tip();
     report.note(replay.notes);
+    report.note_entries(&repo, tips.head, tip)?;
     move_branch(&held, &repo, &tips.branch, tips.head, tip, Some((&tips.seen_ref, remote)), "paw: take replaced remote")?;
     Ok(report)
 }
@@ -200,18 +272,10 @@ pub fn accept_replaced_remote(dir: &Path, keep_changes: bool) -> Result<Integrat
 pub(crate) fn pending_recipients_changes(dir: &Path) -> Result<Vec<RecipientsChange>, SyncError> {
     let _reading = StoreLock::for_repo(dir).shared()?;
     let repo = super::guard::open(dir)?;
-    let tips = tips(&repo)?;
-    let Some(remote) = tips.remote else {
-        return Ok(Vec::new());
-    };
-    let seen = match tips.seen {
-        Some(seen) => seen,
-        None => repo.merge_base(tips.head, remote).unwrap_or(remote),
-    };
-    if seen != remote && !repo.graph_descendant_of(remote, seen).map_err(git_err)? {
-        return Ok(Vec::new());
+    match fetched(&repo, &tips(&repo)?)? {
+        Some(Fetched { remote, seen, replaced: false }) => recipients_changes(&repo, seen, remote),
+        _ => Ok(Vec::new()),
     }
-    recipients_changes(&repo, seen, remote)
 }
 
 /// Every `.gpg-id` that differs between `before` and `after`.

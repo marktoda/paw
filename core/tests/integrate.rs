@@ -13,8 +13,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use paw_core::sim::remote::steps;
 use paw_core::sim::SimulatedKey;
-use paw_core::sync::operation::{self, SyncState};
+use paw_core::sync::operation::SyncState;
 use paw_core::sync::queue;
 use paw_core::sync::{
     self, Author, ChangeKind, Connection, HostKeyPin, IntegrateReport, Integration, KeptBoth,
@@ -56,7 +57,7 @@ fn world() -> World {
     desktop_write(&w, "web/other.gpg", "other");
     desktop_write(&w, ".gpg-id", "AAAA1111\n");
     let connection = Connection::open(&w.server.remote(), &signer(&w.card)).unwrap();
-    sync::clone(&connection, &w.server.remote(), w.phone.path()).unwrap();
+    steps::clone(&connection, &w.server.remote(), w.phone.path()).unwrap();
     w
 }
 
@@ -111,7 +112,7 @@ fn desktop_rm(w: &World, path: &str) -> String {
 /// Fetch, then integrate.
 fn pull(w: &World) -> Result<Integration, SyncError> {
     let connection = Connection::open(&w.server.remote(), &signer(&w.card)).unwrap();
-    sync::fetch(&connection, phone(w)).unwrap();
+    steps::fetch(&connection, phone(w)).unwrap();
     sync::integrate(phone(w))
 }
 
@@ -193,6 +194,23 @@ fn nothing_local_fast_forwards_the_branch_and_the_working_copy() {
     assert_eq!(head(&w), tip);
     assert_eq!(read(&w, "web/example.com.gpg"), "v2 from the desktop");
     assert_eq!(read(&w, "bank/new.gpg"), "new");
+    clean(&w);
+}
+
+#[test]
+fn the_report_names_the_entries_the_remote_added_changed_and_removed() {
+    let w = world();
+    phone_write(&w, "web/mine.gpg", "mine");
+    desktop_write(&w, "bank/new.gpg", "new");
+    desktop_write(&w, "web/example.com.gpg", "v2 from the desktop");
+    desktop_write(&w, "notes.txt", "not an entry");
+    desktop_rm(&w, "web/other.gpg");
+
+    let report = integrated(&w);
+
+    assert_eq!(report.added, ["bank/new"]);
+    assert_eq!(report.changed, ["web/example.com"]);
+    assert_eq!(report.removed, ["web/other"]);
     clean(&w);
 }
 
@@ -381,7 +399,7 @@ fn a_local_commit_paw_did_not_make_is_refused_and_nothing_changes() {
     phone_git(&w, &["add", "a.gpg", "b.gpg"], "Two at once, by another tool.");
     desktop_write(&w, "web/theirs.gpg", "theirs");
     let connection = Connection::open(&w.server.remote(), &signer(&w.card)).unwrap();
-    sync::fetch(&connection, phone(&w)).unwrap();
+    steps::fetch(&connection, phone(&w)).unwrap();
     let before = snapshot(phone(&w));
 
     let error = sync::integrate(phone(&w)).unwrap_err();
@@ -412,7 +430,7 @@ fn a_failure_in_the_middle_of_a_replay_leaves_everything_as_it_was() {
     desktop_git(&w, &["rm", "-r", "--quiet", "web"]);
     desktop_write(&w, "web", "a file now");
     let connection = Connection::open(&w.server.remote(), &signer(&w.card)).unwrap();
-    sync::fetch(&connection, phone(&w)).unwrap();
+    steps::fetch(&connection, phone(&w)).unwrap();
     let before = snapshot(phone(&w));
 
     let error = sync::integrate(phone(&w)).unwrap_err();
@@ -429,7 +447,7 @@ fn a_failure_while_updating_the_working_copy_is_rolled_back_byte_for_byte() {
     desktop_write(&w, "web/example.com.gpg", "v2 from the desktop");
     desktop_write(&w, "locked/new.gpg", "cannot be written");
     let connection = Connection::open(&w.server.remote(), &signer(&w.card)).unwrap();
-    sync::fetch(&connection, phone(&w)).unwrap();
+    steps::fetch(&connection, phone(&w)).unwrap();
     // A folder the checkout cannot write into, as a full disk would.
     std::fs::create_dir(phone(&w).join("locked")).unwrap();
     std::fs::set_permissions(phone(&w).join("locked"), std::fs::Permissions::from_mode(0o500)).unwrap();
@@ -457,7 +475,7 @@ fn replaced_remote_history_is_not_integrated_until_the_person_decides() {
     desktop_git(&w, &["push", "--quiet", "--force", "origin", "HEAD:refs/heads/main"]);
     let new_tip = w.server.tip();
     let connection = Connection::open(&w.server.remote(), &signer(&w.card)).unwrap();
-    sync::fetch(&connection, phone(&w)).unwrap();
+    steps::fetch(&connection, phone(&w)).unwrap();
     let before = snapshot(phone(&w));
 
     let outcome = sync::integrate(phone(&w)).unwrap();
@@ -529,7 +547,7 @@ fn a_sync_fetches_replays_and_pushes_with_one_signature() {
     desktop_write(&w, "web/theirs.gpg", "theirs");
     let signatures = w.card.authentication_count();
 
-    let report = operation::send(&w.server.remote(), &signer(&w.card), phone(&w)).unwrap();
+    let report = steps::sync(&w.server.remote(), &signer(&w.card), phone(&w), w.state.path(), true).unwrap();
 
     assert_eq!(report.state, SyncState::UpToDate);
     assert_eq!((report.integration.replayed, report.pushed, report.retried), (2, 2, false));
@@ -548,7 +566,7 @@ fn a_sync_whose_push_meets_a_moved_remote_retries_on_the_same_login() {
     w.server.move_before_next_push("web/sneaky.gpg", "pushed in between");
     let logins = w.server.logins();
 
-    let report = operation::send(&w.server.remote(), &signer(&w.card), phone(&w)).unwrap();
+    let report = steps::sync(&w.server.remote(), &signer(&w.card), phone(&w), w.state.path(), true).unwrap();
 
     assert!(report.retried);
     assert_eq!(report.signatures, 1);
@@ -569,7 +587,7 @@ fn a_refresh_integrates_without_pushing() {
     phone_write(&w, "web/mine.gpg", "mine");
     let remote = desktop_write(&w, "web/theirs.gpg", "theirs");
 
-    let report = operation::refresh(&w.server.remote(), &signer(&w.card), phone(&w)).unwrap();
+    let report = steps::sync(&w.server.remote(), &signer(&w.card), phone(&w), w.state.path(), false).unwrap();
 
     assert_eq!(report.state, SyncState::Waiting { unpushed: 1 });
     assert_eq!((report.pushed, report.signatures), (0, 1));
@@ -583,7 +601,7 @@ fn a_sync_with_nothing_to_send_pushes_nothing() {
     let w = world();
     desktop_write(&w, "web/theirs.gpg", "theirs");
 
-    let report = operation::send(&w.server.remote(), &signer(&w.card), phone(&w)).unwrap();
+    let report = steps::sync(&w.server.remote(), &signer(&w.card), phone(&w), w.state.path(), true).unwrap();
 
     assert_eq!((report.state, report.pushed, report.signatures), (SyncState::UpToDate, 0, 1));
     assert_eq!(report.integration.fast_forwarded, 1);
@@ -598,7 +616,7 @@ fn a_sync_onto_replaced_history_stops_before_pushing() {
     desktop_git(&w, &["push", "--quiet", "--force", "origin", "HEAD:refs/heads/main"]);
     let remote = w.server.tip();
 
-    let report = operation::send(&w.server.remote(), &signer(&w.card), phone(&w)).unwrap();
+    let report = steps::sync(&w.server.remote(), &signer(&w.card), phone(&w), w.state.path(), true).unwrap();
 
     assert!(matches!(report.state, SyncState::RemoteReplaced { .. }), "{report:?}");
     assert_eq!(w.server.tip(), remote);
@@ -611,7 +629,7 @@ fn a_sync_with_a_key_the_host_does_not_know_stops_before_the_pin() {
     let stranger = paw_core::ssh::SshPublicKey::ed25519(&[3u8; 32]).authorized_key();
     let server = GitServer::start(&[stranger]);
 
-    let error = operation::send(&server.remote(), &signer(&w.card), phone(&w)).unwrap_err();
+    let error = steps::sync(&server.remote(), &signer(&w.card), phone(&w), w.state.path(), true).unwrap_err();
 
     assert!(matches!(error, SyncError::KeyRejected), "{error:?}");
     assert_eq!(w.card.authentication_count(), signatures);
@@ -626,7 +644,7 @@ fn a_sync_to_a_host_with_another_key_is_refused_with_both_fingerprints() {
     remote.host_key = HostKeyPin::parse(&support::some_other_host_key()).unwrap();
     let pinned = remote.host_key.fingerprint();
 
-    let error = operation::send(&remote, &signer(&w.card), phone(&w)).unwrap_err();
+    let error = steps::sync(&remote, &signer(&w.card), phone(&w), w.state.path(), true).unwrap_err();
 
     match error {
         SyncError::HostKeyChanged { expected, presented, .. } => {
@@ -680,7 +698,7 @@ fn a_pushed_change_leaves_the_queue() {
     let w = world();
     four_changes(&w);
 
-    operation::send(&w.server.remote(), &signer(&w.card), phone(&w)).unwrap();
+    steps::sync(&w.server.remote(), &signer(&w.card), phone(&w), w.state.path(), true).unwrap();
 
     assert!(queued(&w).is_empty());
 }

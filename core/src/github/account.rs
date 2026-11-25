@@ -88,14 +88,19 @@ impl GitHubAccount {
         DeviceSignIn::start(&self.endpoints, self.keeper.clone(), self.clock.clone())
     }
 
-    /// Runs `call` with an access token; if GitHub refuses it (401), once
-    /// more with a refreshed one.
-    pub(crate) fn with_token<T>(&self, http: &Http, call: impl Fn(&Secret) -> Result<T, GitHubError>) -> Result<T, GitHubError> {
+    /// Runs `call` with an access token; if GitHub refuses it (401, as
+    /// `unauthorised` reads `call`'s error), once more with a refreshed one.
+    pub(crate) fn with_token<T, E: From<GitHubError>>(
+        &self,
+        http: &Http,
+        mut call: impl FnMut(Secret) -> Result<T, E>,
+        unauthorised: impl Fn(&E) -> bool,
+    ) -> Result<T, E> {
         let token = self.keeper.access_token(http, None)?;
-        match call(&token) {
-            Err(e) if is_unauthorised(&e) => {
+        match call(token.clone()) {
+            Err(e) if unauthorised(&e) => {
                 let token = self.keeper.access_token(http, Some(&token))?;
-                call(&token)
+                call(token)
             }
             other => other,
         }
@@ -108,7 +113,7 @@ impl GitHubAccount {
             return Err(GitHubError::NotSignedIn);
         }
         let http = Http::new(&self.endpoints, None);
-        let list = self.with_token(&http, |token| repos::list(&http, token))?;
+        let list = self.with_token(&http, |token| repos::list(&http, &token), is_unauthorised)?;
         let shown = match &list {
             RepositoryList::Repositories { repositories, .. } => repositories.clone(),
             RepositoryList::NotInstalled { .. } => Vec::new(),

@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use key_common::{Driver, KeySigner, PIN, login, port_with};
+use paw_core::sim::remote::steps;
 use paw_core::key::LoginPurpose;
 use paw_core::sim::SimulatedKey;
 use paw_core::ssh::{SshPublicKey, SshSigner};
@@ -60,7 +61,7 @@ fn clones_commits_and_pushes_with_the_card() {
     let dir = tempfile::tempdir().unwrap();
 
     let connection = connect(&server, &card);
-    sync::clone(&connection, &server.remote(), dir.path()).unwrap();
+    steps::clone(&connection, &server.remote(), dir.path()).unwrap();
     drop(connection);
 
     assert_eq!(std::fs::read_to_string(dir.path().join("README")).unwrap(), "a password store\n");
@@ -77,7 +78,7 @@ fn clones_commits_and_pushes_with_the_card() {
     assert_ne!(server.tip(), commit);
 
     let connection = connect(&server, &card);
-    sync::push(&connection, dir.path()).unwrap();
+    steps::push(&connection, dir.path()).unwrap();
 
     assert_eq!(server.tip(), commit);
     assert_eq!(git(&server.bare(), &["show", &format!("main:{ENTRY}")]), "ciphertext");
@@ -90,13 +91,13 @@ fn fetch_and_push_share_one_login() {
     let card = card();
     let server = GitServer::start(&[authorised_line(&card)]);
     let dir = tempfile::tempdir().unwrap();
-    sync::clone(&connect(&server, &card), &server.remote(), dir.path()).unwrap();
+    steps::clone(&connect(&server, &card), &server.remote(), dir.path()).unwrap();
     let commit = commit_entry(dir.path());
     let touches_before = card.authentication_count();
 
     let connection = connect(&server, &card);
-    let remote_tip = sync::fetch(&connection, dir.path()).unwrap();
-    sync::push(&connection, dir.path()).unwrap();
+    let remote_tip = steps::fetch(&connection, dir.path()).unwrap();
+    steps::push(&connection, dir.path()).unwrap();
 
     assert_ne!(remote_tip, commit);
     assert_eq!(server.tip(), commit);
@@ -112,10 +113,10 @@ fn fetch_brings_in_what_the_desktop_pushed() {
     let server = GitServer::start(&[authorised_line(&card)]);
     let dir = tempfile::tempdir().unwrap();
     let connection = connect(&server, &card);
-    sync::clone(&connection, &server.remote(), dir.path()).unwrap();
+    steps::clone(&connection, &server.remote(), dir.path()).unwrap();
 
     let desktop = server.desktop_commit("desktop.gpg", "from the desktop");
-    let remote_tip = sync::fetch(&connection, dir.path()).unwrap();
+    let remote_tip = steps::fetch(&connection, dir.path()).unwrap();
 
     assert_eq!(remote_tip, desktop);
     assert_eq!(git(dir.path(), &["rev-parse", "origin/main"]), desktop);
@@ -131,16 +132,16 @@ fn a_push_onto_a_remote_that_moved_is_refused_and_changes_nothing() {
     let server = GitServer::start(&[authorised_line(&card)]);
     let dir = tempfile::tempdir().unwrap();
     let connection = connect(&server, &card);
-    sync::clone(&connection, &server.remote(), dir.path()).unwrap();
+    steps::clone(&connection, &server.remote(), dir.path()).unwrap();
 
     let desktop = server.desktop_commit("desktop.gpg", "from the desktop");
     commit_entry(dir.path());
 
     // Before fetching, the remote's new tip is unknown here.
-    assert!(matches!(sync::push(&connection, dir.path()), Err(PawError::NotFastForward)));
+    assert!(matches!(steps::push(&connection, dir.path()), Err(PawError::NotFastForward)));
     // After fetching it is known, and still not an ancestor of ours.
-    sync::fetch(&connection, dir.path()).unwrap();
-    assert!(matches!(sync::push(&connection, dir.path()), Err(PawError::NotFastForward)));
+    steps::fetch(&connection, dir.path()).unwrap();
+    assert!(matches!(steps::push(&connection, dir.path()), Err(PawError::NotFastForward)));
 
     assert_eq!(server.tip(), desktop);
 }
@@ -151,14 +152,14 @@ fn a_push_the_host_refuses_is_reported() {
     let server = GitServer::start(&[authorised_line(&card)]);
     let dir = tempfile::tempdir().unwrap();
     let connection = connect(&server, &card);
-    sync::clone(&connection, &server.remote(), dir.path()).unwrap();
+    steps::clone(&connection, &server.remote(), dir.path()).unwrap();
     let before = server.tip();
 
     // As a pre-receive hook that exits with an error would.
     server.sim.set_refuse_pushes(true);
     commit_entry(dir.path());
 
-    match sync::push(&connection, dir.path()) {
+    match steps::push(&connection, dir.path()) {
         Err(PawError::Git(why)) => assert!(why.contains("refused the push"), "{why}"),
         other => panic!("expected a refusal, got {other:?}"),
     }
@@ -261,7 +262,7 @@ fn a_login_for_a_short_user_name_fits_one_short_apdu() {
 /// A clone of a fresh server's store, for the tests that only commit.
 fn cloned(server: &GitServer, card: &Arc<SimulatedKey>) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    sync::clone(&connect(server, card), &server.remote(), dir.path()).unwrap();
+    steps::clone(&connect(server, card), &server.remote(), dir.path()).unwrap();
     dir
 }
 
@@ -337,7 +338,7 @@ fn a_clone_with_links_in_it_is_refused() {
     server.desktop_symlink("victim.gpg", &outside.path().join("victim.gpg"));
     let dir = tempfile::tempdir().unwrap();
 
-    let result = sync::clone(&connect(&server, &card), &server.remote(), dir.path());
+    let result = steps::clone(&connect(&server, &card), &server.remote(), dir.path());
 
     let Err(PawError::UnsafePath(said)) = result else { panic!("{result:?}") };
     assert!(said.contains("shared (it is a symbolic link)"), "{said}");
@@ -433,8 +434,8 @@ fn a_download_larger_than_the_limit_is_stopped() {
     let connection = connect(&server, &card);
     connection.set_download_limit(1 << 20);
     let dir = tempfile::tempdir().unwrap();
-    let cloning = sync::clone(&connection, &server.remote(), dir.path());
-    let fetching = sync::fetch(&connection, small.path());
+    let cloning = steps::clone(&connection, &server.remote(), dir.path());
+    let fetching = steps::fetch(&connection, small.path());
 
     for result in [cloning.map(|_| String::new()), fetching] {
         let Err(PawError::Git(message)) = result else { panic!("{result:?}") };
@@ -445,5 +446,5 @@ fn a_download_larger_than_the_limit_is_stopped() {
 
     // Under the default limit the same store comes in.
     let connection = connect(&server, &card);
-    assert_eq!(sync::fetch(&connection, small.path()).unwrap(), server.tip());
+    assert_eq!(steps::fetch(&connection, small.path()).unwrap(), server.tip());
 }

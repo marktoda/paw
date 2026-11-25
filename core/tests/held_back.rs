@@ -14,11 +14,12 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock, Weak};
 
 use key_common::{Driver, PIN, decrypt, finish, signer};
+use paw_core::sim::remote::steps;
 use paw_core::ffi::sync::StoreSync;
 use paw_core::key::{KeyError, KeyOutcome, KeyPort, KeyTask, KeyTaskListener, KeyTaskState, TaskProgress};
 use paw_core::sim::copies::SimClock;
 use paw_core::sim::{SimTouch, SimulatedKey};
-use paw_core::sync::operation::{self, SyncState};
+use paw_core::sync::operation::SyncState;
 use paw_core::sync::queue::{self, LeftHeldBack, LeftReason, ReencryptReport};
 use paw_core::sync::{self, ChangeKind, Connection};
 use paw_core::write::{EntryDraft, Keyring, WriteStore};
@@ -60,7 +61,7 @@ impl World {
 
     fn pull(&self) {
         let connection = Connection::open(&self.server.remote(), &self.signer()).unwrap();
-        sync::fetch(&connection, &self.repo()).unwrap();
+        steps::fetch(&connection, &self.repo()).unwrap();
         sync::integrate(&self.repo()).unwrap();
     }
 
@@ -124,7 +125,7 @@ fn world() -> World {
     let card_fpr = w.card.fingerprint_hex();
     w.desktop_push(&[(".gpg-id", format!("{card_fpr}\n").into_bytes())], "The store.");
     let connection = Connection::open(&w.server.remote(), &w.signer()).unwrap();
-    sync::clone(&connection, &w.server.remote(), &w.repo()).unwrap();
+    steps::clone(&connection, &w.server.remote(), &w.repo()).unwrap();
     let mut keyring = Keyring::open(w.state.path()).unwrap();
     keyring.pin_card_key(&w.card.decryption_key().unwrap()).unwrap();
     keyring.pin_card_key(&w.other.decryption_key().unwrap()).unwrap();
@@ -174,7 +175,7 @@ fn every_held_back_change_is_re_encrypted_for_the_new_list_with_a_touch_each_and
         assert_eq!(w.open_with(&w.card, entry).unwrap(), password);
     }
 
-    let report = operation::send_checked(&w.server.remote(), &w.signer(), &w.repo(), w.state.path()).unwrap();
+    let report = steps::sync(&w.server.remote(), &w.signer(), &w.repo(), w.state.path(), true).unwrap();
     assert_eq!(report.state, SyncState::UpToDate);
     assert_eq!(report.pushed, 3);
 }
@@ -214,7 +215,7 @@ fn a_cancel_part_way_keeps_what_was_done_and_a_second_run_does_only_the_rest() {
     assert_eq!(w.sync.last_reencrypt().unwrap(), None);
     // Nothing is sent while any is held back.
     let tip = w.server.tip();
-    let report = operation::send_checked(&w.server.remote(), &w.signer(), &w.repo(), w.state.path()).unwrap();
+    let report = steps::sync(&w.server.remote(), &w.signer(), &w.repo(), w.state.path(), true).unwrap();
     assert_eq!(report.state, SyncState::Waiting { unpushed: 3 });
     assert_eq!(w.server.tip(), tip);
 
@@ -284,7 +285,7 @@ fn changes_that_cannot_be_re_encrypted_stay_held_back_and_say_why() {
     assert!(w.open_with(&w.other, "Personal/x").is_err());
     assert_eq!(w.open_with(&w.card, "Personal/x").unwrap(), "x-pw\n");
     let tip = w.server.tip();
-    let report = operation::send_checked(&w.server.remote(), &w.signer(), &w.repo(), w.state.path()).unwrap();
+    let report = steps::sync(&w.server.remote(), &w.signer(), &w.repo(), w.state.path(), true).unwrap();
     assert!(matches!(report.state, SyncState::Waiting { .. }));
     assert_eq!(w.server.tip(), tip, "nothing sent while some are held back");
 }

@@ -1,13 +1,14 @@
 //! Keeping the local copy of the password store in step with the git host.
 //!
-//! This is the whole of paw's use of libgit2: [`clone`], [`fetch`],
-//! [`integrate`], [`commit`] and [`push`], plus the unpushed [`queue`]. The
-//! network ones take a [`Connection`], which the caller opens once and may
-//! use for several of them; see `transport` for why that matters.
-//! [`operation`] runs a whole sync on one connection, so one login.
+//! This is the whole of paw's use of libgit2: [`clone_with_transfer`], the
+//! fetch, [`integrate`], [`commit`] and the push, plus the unpushed
+//! [`queue`]. The network ones take a [`Connection`], which the caller
+//! opens once and may use for several of them; see `transport` for why
+//! that matters. [`operation`] runs a whole sync on one connection, so one
+//! login.
 //!
-//! A push only ever fast-forwards. If the remote has moved, [`push`] fails
-//! with [`PawError::NotFastForward`] and changes nothing.
+//! A push only ever fast-forwards. If the remote has moved, it fails with
+//! [`PawError::NotFastForward`] and changes nothing.
 
 pub mod address;
 pub(crate) mod guard;
@@ -16,6 +17,7 @@ pub mod hosts;
 pub mod integrate;
 pub mod operation;
 pub mod queue;
+pub(crate) mod refs;
 mod transport;
 
 use std::path::Path;
@@ -86,11 +88,8 @@ impl From<PawError> for SyncError {
     }
 }
 
-/// How far a clone or fetch has got, for a progress bar: objects received
-/// and expected. Return `false` to stop.
-pub type Progress<'a> = &'a mut dyn FnMut(u32, u32) -> bool;
-
-/// [`Progress`] with the bytes received too.
+/// How far a clone or fetch has got, for a progress bar. Return `false`
+/// to stop.
 pub type TransferCallback<'a> = &'a mut dyn FnMut(TransferProgress) -> bool;
 
 /// How far a clone or fetch has got.
@@ -191,14 +190,6 @@ pub enum Cloned {
     Refused(Vec<RefusedPath>),
 }
 
-/// Every branch of the remote is mirrored under `origin/`: first into a
-/// private namespace, without the store lock, then moved to
-/// `refs/remotes/origin/*` with it held ([`publish_fetched`]).
-const FETCH_REFSPEC: &str = "+refs/heads/*:refs/paw/fetch/*";
-
-/// Where a fetch puts the remote's branches until they are published.
-const FETCHED_PREFIX: &str = "refs/paw/fetch/";
-
 /// Who a commit made on this device is attributed to.
 pub struct Author {
     pub name: String,
@@ -237,7 +228,7 @@ fn fetched_refs(repo: &Repository) -> Result<Vec<(String, git2::Oid)>, PawError>
     for reference in repo.references().map_err(git_err)? {
         let reference = reference.map_err(git_err)?;
         if let (Some(name), Some(target)) = (reference.name().ok(), reference.target())
-            && name.starts_with(FETCHED_PREFIX)
+            && refs::fetched_branch(name).is_some()
         {
             found.push((name.to_owned(), target));
         }
@@ -253,8 +244,8 @@ pub(crate) fn publish_fetched(held: &Exclusive, repo: &Repository, fetching: Fet
     debug_assert!(repo.workdir().is_none_or(|dir| held.covers(dir)));
     let fetched = fetched_refs(repo)?;
     for (name, target) in &fetched {
-        let branch = &name[FETCHED_PREFIX.len()..];
-        repo.reference(&format!("refs/remotes/origin/{branch}"), *target, true, "fetch")
+        let branch = refs::fetched_branch(name).unwrap_or_default();
+        repo.reference(&refs::remote_tracking(branch), *target, true, "fetch")
             .map_err(git_err)?;
     }
     for (name, _) in &fetched {
@@ -293,6 +284,10 @@ pub(crate) fn fetch_branches(
     Ok((default, held))
 }
 
+/// Every branch of the remote is mirrored under `origin/`: first into a
+/// private namespace, without the store lock, then moved to
+/// `refs/remotes/origin/*` with it held ([`publish_fetched`]).
+///
 /// Fetches all branches through `remote`, whose transport the caller has
 /// chosen (SSH here, GitHub's HTTPS in `crate::github`), and returns the
 /// remote's default branch, if it has one. Both transports fetch exactly
@@ -319,7 +314,7 @@ pub(crate) fn fetch_connected(
     }
     connected
         .remote()
-        .fetch(&[FETCH_REFSPEC], Some(&mut options), None)?;
+        .fetch(&[refs::fetch_refspec()], Some(&mut options), None)?;
     Ok(default)
 }
 
@@ -328,39 +323,14 @@ pub(crate) fn current_branch(repo: &Repository) -> Result<(String, String), PawE
     let head = repo.find_reference("HEAD").map_err(git_err)?;
     let not_on_branch = || PawError::Git("HEAD is not on a branch".into());
     let full = head.symbolic_target().map_err(git_err)?.ok_or_else(not_on_branch)?;
-    let short = full.strip_prefix("refs/heads/").ok_or_else(not_on_branch)?;
+    let short = refs::short(full).ok_or_else(not_on_branch)?;
     Ok((full.to_owned(), short.to_owned()))
 }
 
 /// Clones the remote's default branch into `dir`, which must be empty or
-/// not exist yet.
-pub fn clone(connection: &Connection, remote: &Remote, dir: &Path) -> Result<(), PawError> {
-    match clone_with_progress(connection, remote, dir, None)? {
-        Cloned::Store => Ok(()),
-        Cloned::Empty => Err(PawError::Git("the remote repository is empty".into())),
-        Cloned::Refused(paths) => Err(guard::Refused(paths).into()),
-    }
-}
-
-/// [`clone`], reporting objects received and expected to `progress`, which
-/// returns `false` to stop. An empty repository is not an error here.
-/// Reports are throttled as [`ProgressThrottle`] says.
-pub fn clone_with_progress(
-    connection: &Connection,
-    remote: &Remote,
-    dir: &Path,
-    progress: Option<Progress<'_>>,
-) -> Result<Cloned, PawError> {
-    match progress {
-        Some(progress) => {
-            let mut report = |update: TransferProgress| progress(update.received_objects, update.total_objects);
-            clone_with_transfer(connection, remote, dir, Some(&mut report))
-        }
-        None => clone_with_transfer(connection, remote, dir, None),
-    }
-}
-
-/// [`clone_with_progress`], reporting bytes too.
+/// not exist yet, reporting how far it has got to `progress` (throttled as
+/// [`ProgressThrottle`] says), which returns `false` to stop. An empty
+/// repository is not an error here.
 pub fn clone_with_transfer(
     connection: &Connection,
     remote: &Remote,
@@ -383,12 +353,8 @@ pub fn clone_with_transfer(
     let Some(branch) = branch else {
         return Ok(Cloned::Empty);
     };
-    let short = branch
-        .strip_prefix("refs/heads/")
-        .ok_or_else(|| PawError::Git(format!("unexpected default branch {branch}")))?;
-    let tip = repo
-        .refname_to_id(&format!("refs/remotes/origin/{short}"))
-        .map_err(git_err)?;
+    let short = refs::short(&branch).ok_or_else(|| PawError::Git(format!("unexpected default branch {branch}")))?;
+    let tip = repo.refname_to_id(&refs::remote_tracking(short)).map_err(git_err)?;
     // Before anything is checked out, or the branch made.
     let tree = repo.find_commit(tip).map_err(git_err)?.tree_id();
     let refused = guard::check_tree(&repo, tree).map_err(git_err)?;
@@ -397,7 +363,7 @@ pub fn clone_with_transfer(
     }
 
     repo.reference(&branch, tip, false, "clone").map_err(git_err)?;
-    repo.reference(&history::last_seen_ref(short), tip, true, "clone")
+    repo.reference(&refs::last_seen(short), tip, true, "clone")
         .map_err(git_err)?;
     repo.set_head(&branch).map_err(git_err)?;
     repo.checkout_head(Some(&mut guard::checkout())).map_err(git_err)?;
@@ -414,33 +380,11 @@ pub fn refused_remote(dir: &Path) -> Result<Vec<RefusedPath>, SyncError> {
     let _reading = StoreLock::for_repo(dir).shared()?;
     let repo = guard::open(dir)?;
     let (_, short) = current_branch(&repo)?;
-    let Ok(tip) = repo.refname_to_id(&format!("refs/remotes/origin/{short}")) else {
+    let Ok(tip) = repo.refname_to_id(&refs::remote_tracking(&short)) else {
         return Ok(Vec::new());
     };
     let tree = repo.find_commit(tip).map_err(git_err)?.tree_id();
     Ok(guard::check_tree(&repo, tree).map_err(git_err)?)
-}
-
-/// Updates `origin/*` from the remote and returns the new tip of the current
-/// branch's remote counterpart. The working copy is not changed.
-pub fn fetch(connection: &Connection, dir: &Path) -> Result<String, PawError> {
-    fetch_with_transfer(connection, dir, None)
-}
-
-/// [`fetch`], reporting how far it has got to `progress` (throttled), which
-/// returns `false` to stop.
-pub fn fetch_with_transfer(
-    connection: &Connection,
-    dir: &Path,
-    progress: Option<TransferCallback<'_>>,
-) -> Result<String, PawError> {
-    let store = StoreLock::for_repo(dir);
-    let repo = guard::open(dir)?;
-    let (_, _held) = fetch_branches(connection, &store, &repo, progress)?;
-    let (_, short) = current_branch(&repo)?;
-    repo.refname_to_id(&format!("refs/remotes/origin/{short}"))
-        .map(|id| id.to_string())
-        .map_err(git_err)
 }
 
 /// Commits `contents` as the file `path` (relative to the store, `/`
@@ -589,39 +533,18 @@ pub(crate) fn commit_edits(
     Ok(id.to_string())
 }
 
-/// Pushes the current branch to the branch of the same name, as a
-/// fast-forward only.
-///
-/// The branch's tip is read with the store lock held, the push runs with
-/// no lock (a save made meanwhile is simply not in it), and the result is
-/// recorded with the lock held.
-pub fn push(connection: &Connection, dir: &Path) -> Result<(), PawError> {
-    let store = StoreLock::for_repo(dir);
-    let pushing = store.pushing(FETCH_WAIT)?;
-    let repo = guard::open(dir)?;
-    let held = store.exclusive()?;
-    let (branch, _) = current_branch(&repo)?;
-    let tip = repo.refname_to_id(&branch).map_err(git_err)?;
-    push_tip(connection, &store, &repo, &branch, tip, held, &pushing)
-}
-
 /// Every push record (`refs/paw/pushing/*`).
 fn pushing_refs(repo: &Repository) -> Result<Vec<String>, PawError> {
     let mut names = Vec::new();
     for reference in repo.references().map_err(git_err)? {
         let reference = reference.map_err(git_err)?;
         if let Ok(name) = reference.name()
-            && name.starts_with("refs/paw/pushing/")
+            && refs::is_pushing(name)
         {
             names.push(name.to_owned());
         }
     }
     Ok(names)
-}
-
-/// The ref naming the commit a push of `short` has on the network.
-fn pushing_ref(short: &str) -> String {
-    format!("refs/paw/pushing/{short}")
 }
 
 /// Before a change waiting to be sent is taken back: refused if a push
@@ -635,7 +558,7 @@ pub(crate) fn check_not_being_sent(
     short: &str,
     removed: git2::Oid,
 ) -> Result<(), SyncError> {
-    let name = pushing_ref(short);
+    let name = refs::pushing(short);
     let Ok(sending) = repo.refname_to_id(&name) else {
         return Ok(());
     };
@@ -667,10 +590,8 @@ pub(crate) fn push_tip(
     held: Exclusive,
     _pushing: &crate::lock::Pushing,
 ) -> Result<(), PawError> {
-    let short = branch
-        .strip_prefix("refs/heads/")
-        .ok_or_else(|| PawError::Git("HEAD is not on a branch".into()))?;
-    repo.reference(&pushing_ref(short), tip, true, "push").map_err(git_err)?;
+    let short = refs::short(branch).ok_or_else(|| PawError::Git("HEAD is not on a branch".into()))?;
+    repo.reference(&refs::pushing(short), tip, true, "push").map_err(git_err)?;
     drop(held);
 
     // The commit itself, not the branch: the branch may move while this
@@ -703,7 +624,7 @@ pub(crate) fn push_tip(
         (Ok(()), None) => Ok(()),
     };
     let clear_marker = || {
-        if let Ok(mut marker) = repo.find_reference(&pushing_ref(short)) {
+        if let Ok(mut marker) = repo.find_reference(&refs::pushing(short)) {
             let _ = marker.delete();
         }
     };
@@ -737,7 +658,7 @@ pub(crate) fn push_tip(
 /// `origin/<short>` and the last-seen ref to it, unless another sync has
 /// already moved them past it.
 fn record_push(_held: &Exclusive, repo: &Repository, short: &str, tip: git2::Oid) -> Result<(), PawError> {
-    for name in [format!("refs/remotes/origin/{short}"), history::last_seen_ref(short)] {
+    for name in [refs::remote_tracking(short), refs::last_seen(short)] {
         let current = repo.refname_to_id(&name).ok();
         let further = match current {
             Some(current) if current == tip => true,

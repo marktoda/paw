@@ -21,12 +21,6 @@ use super::{SyncError, git_err};
 use crate::PawError;
 use crate::path::{unsafe_path, unsafe_path_err};
 
-/// The tip of the remote branch as paw last accepted it, per branch. A
-/// remote tip that does not descend from it means the history was replaced.
-pub(crate) fn last_seen_ref(short: &str) -> String {
-    format!("refs/paw/last-seen/{short}")
-}
-
 /// What one paw commit did, as the queue screen names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum ChangeKind {
@@ -44,6 +38,17 @@ pub(crate) enum Change {
     Write { path: String, blob: Blob },
     Delete { path: String },
     Rename { from: String, to: String, blob: Blob },
+}
+
+impl Change {
+    /// The file this change leaves and its blob: the ciphertext it would
+    /// send. `None` for a delete.
+    pub(crate) fn ciphertext(&self) -> Option<(&str, Oid)> {
+        match self {
+            Self::Write { path, blob } | Self::Rename { to: path, blob, .. } => Some((path, blob.0)),
+            Self::Delete { .. } => None,
+        }
+    }
 }
 
 /// A local commit that paw made, read back.
