@@ -14,7 +14,7 @@ use std::io::Read;
 use std::path::Path;
 
 use crate::PawError;
-use crate::path::{unsafe_path, unsafe_path_err};
+use crate::path::{entry_file, has_hidden_part, unsafe_path, unsafe_path_err};
 
 /// No entry or `.gpg-id` comes close to this. A larger file is not read, so
 /// a hostile repository cannot make paw load something huge.
@@ -70,11 +70,6 @@ pub(crate) fn read_file(root: &Path, relative: &str) -> Result<Option<Vec<u8>>, 
     Ok(Some(bytes))
 }
 
-/// Whether `component` is hidden the way `pass` hides things: a leading dot.
-pub(crate) fn is_hidden(component: &str) -> bool {
-    component.starts_with('.')
-}
-
 /// Reads the encrypted bytes of the entry `entry` (its path without the
 /// `.gpg` extension, e.g. `web/github.com`).
 ///
@@ -87,9 +82,9 @@ pub fn read_entry(root: &Path, entry: &str) -> Result<Vec<u8>, PawError> {
     if let Some(why) = unsafe_path(entry) {
         return Err(unsafe_path_err(entry, why));
     }
-    if entry.split('/').any(is_hidden) {
+    if has_hidden_part(entry) {
         return Err(unsafe_path_err(entry, "hidden files are not entries"));
     }
-    read_file(root, &format!("{entry}.gpg"))?
+    read_file(root, &entry_file(entry))?
         .ok_or_else(|| PawError::Store(format!("there is no entry called {entry}")))
 }

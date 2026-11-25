@@ -9,9 +9,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use super::read::is_hidden;
 use crate::PawError;
-use crate::path::unsafe_path;
+use crate::path::{entry_of_file, is_hidden, join, unsafe_path};
 
 /// Deeper folders than this are left out. No real store comes close, and a
 /// hostile one cannot make the walk run out of stack.
@@ -53,10 +52,6 @@ pub struct StoreTree {
     listings: HashMap<String, FolderListing>,
     entries: Vec<EntryRef>,
     skipped: Vec<String>,
-}
-
-fn join(folder: &str, name: &str) -> String {
-    if folder.is_empty() { name.to_owned() } else { format!("{folder}/{name}") }
 }
 
 /// Orders names the way a person expects: `apple`, `Banana`, `cherry`.
@@ -117,7 +112,7 @@ impl StoreTree {
                     Err(_) => self.skipped.push(path),
                 }
             } else if kind.is_file()
-                && let Some(stem) = name.strip_suffix(".gpg").filter(|stem| !stem.is_empty())
+                && let Some(stem) = entry_of_file(&name)
             {
                 count += 1;
                 listing.entries.push(EntryRef {

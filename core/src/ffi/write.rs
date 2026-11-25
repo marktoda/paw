@@ -17,7 +17,7 @@ use crate::store::PassStore;
 use crate::store::pairings::PairingFile;
 use crate::store::tree::StoreTree;
 use crate::write::cert::{CertificateInfo, evaluate, read_certificates};
-use crate::write::draft::join;
+use crate::path::{folder_and_parents, join};
 use crate::write::keyring::certificate_named_by;
 use crate::write::{self as core, DraftProblem, FolderRecipients, GitIdentity, WriteError, WriteStore};
 
@@ -218,11 +218,7 @@ impl StoreWriter {
         let mut folders = vec![String::new()];
         if let Some(tree) = &tree {
             for entry in tree.entries() {
-                let mut folder = entry.folder.as_str();
-                while !folder.is_empty() {
-                    folders.push(folder.to_owned());
-                    folder = folder.rsplit_once('/').map_or("", |(parent, _)| parent);
-                }
+                folders.extend(folder_and_parents(&entry.folder).map(str::to_owned));
             }
         }
         folders.sort();

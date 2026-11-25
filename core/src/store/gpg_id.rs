@@ -9,6 +9,7 @@ use std::path::Path;
 
 use super::read::read_file;
 use crate::PawError;
+use crate::path::{folder_and_parents, gpg_id_in};
 
 /// The key names in a `.gpg-id` file. Like `pass`, this drops everything
 /// from a `#` to the end of a line, and lines that are then blank.
@@ -32,17 +33,10 @@ pub fn recipients_for(root: &Path, folder: &str) -> Result<Vec<String>, PawError
 /// The `.gpg-id` file that decides the recipients for entries in `folder`:
 /// its path in the store (e.g. `work/.gpg-id`) and its bytes.
 pub fn governing_gpg_id(root: &Path, folder: &str) -> Result<(String, Vec<u8>), PawError> {
-    let mut at = folder;
-    loop {
-        let file = if at.is_empty() { ".gpg-id".to_owned() } else { format!("{at}/.gpg-id") };
+    for file in folder_and_parents(folder).map(gpg_id_in) {
         if let Some(bytes) = read_file(root, &file)? {
             return Ok((file, bytes));
         }
-        if at.is_empty() {
-            return Err(PawError::Store(
-                "this store has no .gpg-id file, so it does not say which keys it is for".into(),
-            ));
-        }
-        at = at.rsplit_once('/').map_or("", |(parent, _)| parent);
     }
+    Err(PawError::Store("this store has no .gpg-id file, so it does not say which keys it is for".into()))
 }

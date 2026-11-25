@@ -18,6 +18,7 @@ use std::path::Path;
 
 use super::WriteError;
 use super::keyring::{KeySource, Keyring, LineStatus};
+use crate::path::folder_of_gpg_id;
 use crate::recipients::{Recipient, entry_recipients};
 use crate::store::gpg_id::{governing_gpg_id, parse_gpg_id};
 use crate::store::read::read_entry;
@@ -89,11 +90,6 @@ fn packet_key_id(recipient: &Recipient) -> Option<String> {
         Recipient::Fingerprint { fingerprint } => key_id(fingerprint),
         Recipient::Hidden => None,
     }
-}
-
-/// The folder a `.gpg-id` path is in.
-fn folder_of(gpg_id: &str) -> String {
-    gpg_id.strip_suffix(".gpg-id").unwrap_or(gpg_id).trim_end_matches('/').to_owned()
 }
 
 /// Every `.gpg-id` of the store at `root`, top first, with what it says.
@@ -184,7 +180,7 @@ pub fn recipient_scopes(keyring: &Keyring, root: &Path, now: u32) -> Result<Vec<
         }
         other_key_entries.sort();
         scopes.push(RecipientScope {
-            folder: folder_of(&gpg_id),
+            folder: folder_of_gpg_id(&gpg_id).to_owned(),
             gpg_id,
             keys,
             entry_count: entries.len() as u32,
@@ -210,12 +206,5 @@ mod tests {
         );
         assert_eq!(key_id("you@example.com"), None);
         assert_eq!(key_id("ABCD1234"), None);
-    }
-
-    #[test]
-    fn folders_of_gpg_ids() {
-        assert_eq!(folder_of(".gpg-id"), "");
-        assert_eq!(folder_of("work/.gpg-id"), "work");
-        assert_eq!(folder_of("a/b/.gpg-id"), "a/b");
     }
 }

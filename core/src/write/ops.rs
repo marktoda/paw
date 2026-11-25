@@ -17,7 +17,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::draft::{EntryDraft, collision, folder_problems, name_problems, split};
+use super::draft::{EntryDraft, collision, folder_problems, name_problems};
 use super::keyring::{FolderRecipients, Keyring};
 use super::{WriteError, author, encrypt, now_secs};
 use crate::copies::content_id;
@@ -26,6 +26,7 @@ use crate::store::gpg_id::recipients_for;
 use crate::store::read::read_file;
 use crate::store::tree::StoreTree;
 use crate::lock::{Exclusive, StoreLock};
+use crate::path::{entry_file as file, folder_of, split};
 use crate::sync::{TreeEdit, commit_edits};
 
 /// What a save did.
@@ -47,10 +48,6 @@ pub struct Saved {
 pub struct WriteStore {
     state_dir: PathBuf,
     repo: PathBuf,
-}
-
-fn file(entry: &str) -> String {
-    format!("{entry}.gpg")
 }
 
 /// Refuses a path the add form would refuse: hidden names (so `.gpg-id`
@@ -138,7 +135,7 @@ impl WriteStore {
         }
         let doc = draft.build().map_err(|problems| WriteError::Invalid { problems })?;
         let target = draft.path();
-        let (folder, _) = split(&target);
+        let folder = folder_of(&target);
         let author = author(&self.state_dir);
         let keyring = self.keyring()?;
         let now = now_secs();
@@ -166,7 +163,7 @@ impl WriteStore {
         let opened = draft.original_doc().ok_or_else(|| WriteError::NoSuchEntry { entry: original.to_owned() })?;
         let changed = *doc.to_bytes() != *opened.to_bytes();
         let moved = target != original;
-        let reencrypt = moved && !self.same_recipients(split(original).0, folder)?;
+        let reencrypt = moved && !self.same_recipients(folder_of(original), folder)?;
         // Everything that can be refused is asked before the first commit.
         let keys = if changed || reencrypt { Some(keyring.resolve(&self.repo, folder, now)?) } else { None };
 
@@ -244,8 +241,8 @@ impl WriteStore {
         if let Some(taken) = collision(&self.tree()?, to, Some(from)) {
             return Err(WriteError::Invalid { problems: vec![taken] });
         }
-        let to_folder = split(to).0;
-        let reencrypt = !self.same_recipients(split(from).0, to_folder)?;
+        let to_folder = folder_of(to);
+        let reencrypt = !self.same_recipients(folder_of(from), to_folder)?;
         let keys = match (reencrypt, open) {
             (false, _) => None,
             (true, None) => return Err(WriteError::NeedsOpenEntry { entry: from.to_owned() }),

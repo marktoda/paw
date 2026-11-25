@@ -51,6 +51,7 @@ use sha2::{Digest, Sha256};
 
 use super::WriteError;
 use super::cert::{CertificateInfo, email_in, fingerprint_of, hex};
+use crate::path::{folder_and_parents, folder_of, folder_of_gpg_id, gpg_id_in, governing};
 use crate::store::gpg_id::{governing_gpg_id, parse_gpg_id};
 
 const FILE: &str = "recipients";
@@ -222,22 +223,6 @@ struct Accepted {
     path: String,
     sha: String,
     text: String,
-}
-
-/// The `.gpg-id` that governs `folder` among `files` (paths in the store),
-/// the way `pass` finds it: in the folder, else the nearest above.
-fn governing_in<'a, T>(files: &'a [T], path_of: impl Fn(&T) -> &str, folder: &str) -> Option<&'a T> {
-    let mut at = folder;
-    loop {
-        let file = if at.is_empty() { ".gpg-id".to_owned() } else { format!("{at}/.gpg-id") };
-        if let Some(found) = files.iter().find(|f| path_of(f) == file) {
-            return Some(found);
-        }
-        if at.is_empty() {
-            return None;
-        }
-        at = at.rsplit_once('/').map_or("", |(parent, _)| parent);
-    }
 }
 
 /// Every `.gpg-id` committed in the store at `root` (its current branch),
@@ -541,7 +526,10 @@ impl Keyring {
         let (gpg_id, bytes) = governing_gpg_id(root, folder)?;
         let text = String::from_utf8(bytes.clone())
             .map_err(|_| WriteError::Failed { message: format!("{gpg_id} is not a text file") })?;
-        let accepted = self.accepted.as_deref().and_then(|all| governing_in(all, |a| a.path.as_str(), folder));
+        let accepted = self.accepted.as_deref().and_then(|all| {
+            let path = governing(folder, |file| all.iter().any(|a| a.path == file))?;
+            all.iter().find(|a| a.path == path)
+        });
         let changed = self.accepted.is_some()
             && accepted.is_none_or(|a| a.path != gpg_id || a.sha != sha256_hex(&bytes));
         let lines = parse_gpg_id(&text)
@@ -626,14 +614,12 @@ impl Keyring {
         let Some(accepted) = self.accepted.as_mut() else {
             return Err(WriteError::RecipientsNotConfirmed);
         };
-        let governing_dir = path.strip_suffix(".gpg-id").unwrap_or_default().trim_end_matches('/').to_owned();
+        let governing_dir = folder_of_gpg_id(&path);
         // `.gpg-id` files in the folder or above it, below the governing one:
         // they were removed, or the governing one would be among them.
-        let mut at = folder;
-        while at != governing_dir && !at.is_empty() {
-            let gone = format!("{at}/.gpg-id");
+        for at in folder_and_parents(folder).take_while(|at| *at != governing_dir && !at.is_empty()) {
+            let gone = gpg_id_in(at);
             accepted.retain(|a| a.path != gone);
-            at = at.rsplit_once('/').map_or("", |(parent, _)| parent);
         }
         accepted.retain(|a| a.path != path);
         accepted.push(Accepted { sha: sha256_hex(&bytes), text: String::from_utf8_lossy(&bytes).into_owned(), path });
@@ -674,7 +660,7 @@ impl Keyring {
         if !names_card {
             return Ok(Vec::new());
         }
-        let folder = entry.rsplit_once('/').map_or("", |(folder, _)| folder);
+        let folder = folder_of(entry);
         let recipients = self.folder_recipients(root, folder, now)?;
         self.bind_one_open_line(recipients, &card_fingerprint)
     }
