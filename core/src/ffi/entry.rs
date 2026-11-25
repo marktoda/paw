@@ -26,11 +26,29 @@ pub struct EntryView {
     pub has_password: bool,
     pub has_username: bool,
     pub has_url: bool,
-    /// The entry holds a one-time-code secret. paw does not show codes yet.
+    /// The entry has a one-time-code line; [`OpenedEntry::otp_code`] makes
+    /// its code, or [`OpenedEntry::otp_problem`] says why it can't.
     pub has_otp: bool,
     pub has_notes: bool,
     /// The remaining fields, in the order they were written.
     pub fields: Vec<FieldView>,
+}
+
+/// The current one-time code of an opened entry.
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
+pub struct OtpCode {
+    /// The digits, e.g. `"123456"`.
+    pub code: String,
+    /// Seconds until the next code: 1 to `period`.
+    pub seconds_left: u32,
+    /// Seconds each code lasts.
+    pub period: u32,
+}
+
+impl std::fmt::Debug for OtpCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "OtpCode {{ code withheld, seconds_left: {}, period: {} }}", self.seconds_left, self.period)
+    }
 }
 
 /// The decrypted text of one entry. [`Self::close`] wipes it; so does
@@ -113,6 +131,27 @@ impl OpenedEntry {
         let fields = doc.as_ref()?.other_fields();
         let field = fields.iter().find(|field| field.line as u32 == id)?;
         Some(field.value.to_owned())
+    }
+
+    /// The one-time code at `now_ms` (milliseconds since 1970, from the
+    /// app's clock). `None` once closed, if the entry has no one-time-code
+    /// line, or if the line can't make codes ([`Self::otp_problem`]).
+    pub fn otp_code(&self, now_ms: i64) -> Option<OtpCode> {
+        let doc = self.doc();
+        let totp = doc.as_ref()?.one_time_code()?.ok()?;
+        let secs = u64::try_from(now_ms).unwrap_or(0) / 1000;
+        Some(OtpCode {
+            code: totp.code_at(secs).as_str().to_owned(),
+            seconds_left: totp.seconds_left(secs),
+            period: totp.period(),
+        })
+    }
+
+    /// Why the entry's one-time-code line can't make codes, in a short
+    /// sentence; `None` if it can, if there is none, or once closed.
+    pub fn otp_problem(&self) -> Option<String> {
+        let doc = self.doc();
+        doc.as_ref()?.one_time_code()?.err().map(|why| why.reason().to_owned())
     }
 
     pub fn notes(&self) -> Option<String> {

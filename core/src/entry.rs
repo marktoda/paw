@@ -14,6 +14,7 @@
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::PawError;
+use crate::otp::{OtpProblem, Totp};
 
 /// Keys read as the user name, in order of preference.
 const USERNAME_KEYS: [&str; 4] = ["login", "username", "user", "email"];
@@ -200,6 +201,26 @@ impl EntryDoc {
         self.lines.iter().skip(1).any(|line| matches!(kind(&line.text), Kind::Otp))
     }
 
+    /// The first one-time-code line's address, from `otpauth://` on: a
+    /// line may also be written `otpauth: otpauth://...`.
+    fn otp_address(&self) -> Option<(usize, usize)> {
+        self.lines.iter().enumerate().skip(1).find_map(|(index, line)| {
+            matches!(kind(&line.text), Kind::Otp).then(|| {
+                let lower = line.text.to_ascii_lowercase();
+                // `kind` found the scheme, so this always matches.
+                let start = Zeroizing::new(lower).find(OTP_SCHEME).unwrap_or(0);
+                (index, start)
+            })
+        })
+    }
+
+    /// The code generator from the first one-time-code line: `None` if
+    /// there is no such line, the reason if it cannot make codes.
+    pub fn one_time_code(&self) -> Option<Result<Totp, OtpProblem>> {
+        let (index, start) = self.otp_address()?;
+        Some(Totp::from_address(&self.lines[index].text[start..]))
+    }
+
     /// The value of the first field called `key`, in any letter case.
     pub fn field(&self, key: &str) -> Option<&str> {
         self.all_fields().find(|field| same_key(field.key, key)).map(|field| field.value)
@@ -357,6 +378,44 @@ impl EntryDoc {
             self.remove_line(line);
         }
         found.is_some()
+    }
+
+    /// Puts `address` (an `otpauth://` address) in the first one-time-code
+    /// line, keeping whatever came before the address on that line, or adds
+    /// it as a new last line if there is none.
+    pub fn set_one_time_code(&mut self, address: &str) -> Result<(), PawError> {
+        no_line_break("a one-time-code address", address)?;
+        let address = address.trim();
+        if !is_otp(address) {
+            return Err(PawError::InvalidField("a one-time-code address starts with otpauth://".into()));
+        }
+        if let Some((index, start)) = self.otp_address() {
+            let line = &mut self.lines[index];
+            let mut text = Zeroizing::new(String::with_capacity(start + address.len()));
+            text.push_str(&line.text[..start]);
+            text.push_str(address);
+            line.text = text;
+            return Ok(());
+        }
+        let ending = self.usual_ending();
+        match self.lines.last_mut() {
+            None => self.lines.push(Line { text: Zeroizing::new(String::new()), ending }),
+            Some(last) if last.ending == Ending::None => last.ending = ending,
+            Some(_) => {}
+        }
+        self.lines.push(Line { text: Zeroizing::new(address.to_owned()), ending });
+        Ok(())
+    }
+
+    /// Removes every one-time-code line. Returns whether there was one.
+    pub fn remove_one_time_code(&mut self) -> bool {
+        let before = self.lines.len();
+        let mut index = 0;
+        self.lines.retain(|line| {
+            index += 1;
+            index == 1 || !matches!(kind(&line.text), Kind::Otp)
+        });
+        self.lines.len() != before
     }
 
     /// Replaces the notes (see [`Self::notes`]) with `notes`. Nothing

@@ -29,6 +29,8 @@ pub enum DraftField {
     /// One of the other `key: value` fields, by the key typed.
     Field { key: String },
     Notes,
+    /// The one-time-code setup key or address.
+    OneTimeCode,
 }
 
 /// Something that stops a save, worded for the person.
@@ -46,6 +48,14 @@ fn problem(field: DraftField, message: impl Into<String>) -> DraftProblem {
 enum FieldEdit {
     Set { key: String, value: Zeroizing<String> },
     Remove { key: String },
+}
+
+/// A change to the one-time-code line.
+enum OtpEdit {
+    /// What was typed or pasted: a base32 setup key or an `otpauth://`
+    /// address.
+    Set(Zeroizing<String>),
+    Remove,
 }
 
 /// The entry being edited, as it was opened.
@@ -69,6 +79,7 @@ pub struct EntryDraft {
     url: Option<Zeroizing<String>>,
     fields: Vec<FieldEdit>,
     notes: Option<Zeroizing<String>>,
+    otp: Option<OtpEdit>,
 }
 
 impl std::fmt::Debug for EntryDraft {
@@ -247,6 +258,7 @@ impl EntryDraft {
             url: None,
             fields: Vec::new(),
             notes: None,
+            otp: None,
         }
     }
 
@@ -338,6 +350,25 @@ impl EntryDraft {
         self.notes = Some(Zeroizing::new(notes.to_owned()));
     }
 
+    /// Sets the one-time code from a base32 setup key or a pasted
+    /// `otpauth://` address, replacing any the entry has. A key becomes the
+    /// line pass-otp writes, labelled with the entry's name. Blank text
+    /// undoes an earlier set or remove.
+    pub fn set_one_time_code(&mut self, setup: &str) {
+        self.otp = (!setup.trim().is_empty()).then(|| OtpEdit::Set(Zeroizing::new(setup.to_owned())));
+    }
+
+    /// Removes the entry's one-time-code lines.
+    pub fn remove_one_time_code(&mut self) {
+        self.otp = Some(OtpEdit::Remove);
+    }
+
+    /// The line a typed setup key or address would be saved as, or why it
+    /// can't be.
+    fn otp_line(&self, setup: &str) -> Result<Zeroizing<String>, DraftProblem> {
+        crate::otp::setup_line(setup, &self.name).map_err(|why| problem(DraftField::OneTimeCode, why.reason()))
+    }
+
     /// Replaces the whole text (the "Text" toggle). Changes made with the
     /// other setters before this are dropped; later ones apply on top.
     pub fn set_text(&mut self, text: &str) {
@@ -347,6 +378,7 @@ impl EntryDraft {
         self.url = None;
         self.fields.clear();
         self.notes = None;
+        self.otp = None;
     }
 
     /// Problems with the form's values, without looking at the store.
@@ -381,6 +413,11 @@ impl EntryDraft {
             && notes.replace("\r\n", "\n").contains('\r')
         {
             problems.push(problem(DraftField::Notes, "Notes can't contain a lone carriage return."));
+        }
+        if let Some(OtpEdit::Set(setup)) = &self.otp
+            && let Err(p) = self.otp_line(setup)
+        {
+            problems.push(p);
         }
         problems
     }
@@ -446,6 +483,16 @@ impl EntryDraft {
         }
         if let Some(notes) = &self.notes {
             doc.set_notes(&notes.replace("\r\n", "\n")).map_err(fail(DraftField::Notes))?;
+        }
+        match &self.otp {
+            Some(OtpEdit::Set(setup)) => {
+                let line = self.otp_line(setup).map_err(|p| vec![p])?;
+                doc.set_one_time_code(&line).map_err(fail(DraftField::OneTimeCode))?;
+            }
+            Some(OtpEdit::Remove) => {
+                doc.remove_one_time_code();
+            }
+            None => {}
         }
         Ok(doc)
     }

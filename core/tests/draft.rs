@@ -269,6 +269,78 @@ fn a_generated_password_is_marked_until_it_is_typed_over() {
     assert!(!draft.generated());
 }
 
+// --- one-time codes ---------------------------------------------------------
+
+const KEY_LINE: &str = "otpauth://totp/github.com?secret=JBSWY3DPEHPK3PXP";
+
+#[test]
+fn a_setup_key_adds_the_line_pass_otp_writes() {
+    let mut draft = edit("pw
+login: you
+note
+");
+    draft.set_one_time_code("jbsw y3dp ehpk 3pxp");
+    assert!(draft.problems(None).is_empty());
+    assert_eq!(saved(&draft), format!("pw\nlogin: you\nnote\n{KEY_LINE}\n"));
+
+    let mut draft = EntryDraft::new("Work");
+    draft.set_name("github.com");
+    draft.set_password("pw");
+    draft.set_one_time_code("JBSWY3DPEHPK3PXP");
+    assert_eq!(saved(&draft), format!("pw\n{KEY_LINE}\n"));
+}
+
+#[test]
+fn a_new_key_or_address_replaces_the_line_where_it_was() {
+    let pasted = "otpauth://totp/GitHub:you?secret=MZXW6YTBOI&issuer=GitHub";
+    let mut draft = edit(OPENED);
+    draft.set_one_time_code(pasted);
+    assert_eq!(saved(&draft), OPENED.replace("otpauth://totp/x?secret=A", pasted));
+
+    let mut draft = edit("pw\notpauth: otpauth://totp/x?secret=A\nend");
+    draft.set_one_time_code("JBSWY3DPEHPK3PXP");
+    assert_eq!(saved(&draft), format!("pw\notpauth: {KEY_LINE}\nend"));
+}
+
+#[test]
+fn removing_the_code_removes_only_its_lines() {
+    let mut draft = edit(OPENED);
+    draft.remove_one_time_code();
+    assert_eq!(saved(&draft), OPENED.replace("otpauth://totp/x?secret=A\r\n", ""));
+    let mut draft = edit("pw\nlogin: a\notpauth://totp/x?secret=A");
+    draft.remove_one_time_code();
+    assert_eq!(saved(&draft), "pw\nlogin: a\n");
+    // Blank text undoes the removal.
+    draft.set_one_time_code("  ");
+    assert_eq!(saved(&draft), "pw\nlogin: a\notpauth://totp/x?secret=A");
+}
+
+#[test]
+fn a_key_that_cannot_make_codes_is_refused_without_repeating_it() {
+    let cases = [
+        ("JBSWY3DP1EHPK", "The setup key isn't valid."),
+        ("otpauth://hotp/x?secret=JBSWY3DPEHPK3PXP&counter=0", "Counter-based codes aren't supported."),
+        ("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&digits=10", "Codes must have 6 to 8 digits."),
+        ("https://github.com/settings/2fa", "This isn't a setup key or an otpauth:// address."),
+    ];
+    for (typed, message) in cases {
+        let mut draft = edit("pw\n");
+        draft.set_one_time_code(typed);
+        let problems = draft.problems(None);
+        assert_eq!(problems, [DraftProblem { field: DraftField::OneTimeCode, message: message.into() }], "{typed}");
+        assert!(!problems[0].message.contains("JBSW"));
+        assert!(draft.build().is_err());
+    }
+}
+
+#[test]
+fn the_text_toggle_drops_a_typed_key() {
+    let mut draft = edit("pw\n");
+    draft.set_one_time_code("JBSWY3DPEHPK3PXP");
+    draft.set_text("typed\n");
+    assert_eq!(saved(&draft), "typed\n");
+}
+
 /// The lines of a file, each with its ending. A file with no bytes is one
 /// empty line, not none: an entry whose only line is an empty password
 /// (no newline) is written as an empty file.
@@ -335,6 +407,9 @@ enum Change {
     Username(String),
     Url(String),
     Field(String, String),
+    /// A base32 setup key typed into the form.
+    SetOtp(String),
+    RemoveOtp,
 }
 
 fn change() -> impl Strategy<Value = Change> {
@@ -343,6 +418,8 @@ fn change() -> impl Strategy<Value = Change> {
         "[a-z@.]{1,10}".prop_map(Change::Username),
         "https://[a-z]{1,8}\\.example".prop_map(Change::Url),
         ("(answer|port|pin)", "[a-z0-9]{1,8}").prop_map(|(k, v)| Change::Field(k, v)),
+        "[a-z2-7]{16}".prop_map(Change::SetOtp),
+        Just(Change::RemoveOtp),
     ]
 }
 
@@ -358,12 +435,23 @@ proptest! {
             Change::Username(v) => draft.set_username(v),
             Change::Url(v) => draft.set_url(v),
             Change::Field(k, v) => draft.set_field(k, v),
+            Change::SetOtp(key) => draft.set_one_time_code(key),
+            Change::RemoveOtp => draft.remove_one_time_code(),
         }
         let after = saved(&draft);
         let before_lines = lines(&entry);
         let after_lines = lines(&after);
 
-        if after_lines.len() == before_lines.len() {
+        if let Change::RemoveOtp = change {
+            // Exactly the one-time-code lines after the password go.
+            let otp = |line: &&str| line.trim_end_matches(['\r', '\n']) == "otpauth://totp/x?secret=A";
+            let kept: String = before_lines.iter().enumerate()
+                .filter(|(i, line)| *i == 0 || !otp(line))
+                .map(|(_, line)| *line)
+                .collect();
+            prop_assert_eq!(&after, &kept);
+            prop_assert!(!draft.build().unwrap().has_otp());
+        } else if after_lines.len() == before_lines.len() {
             let differing = before_lines.iter().zip(&after_lines).filter(|(a, b)| a != b).count();
             prop_assert!(differing <= 1, "{entry:?} -> {after:?}");
         } else {
@@ -384,6 +472,12 @@ proptest! {
             Change::Username(v) => prop_assert_eq!(doc.username(), Some(v.as_str())),
             Change::Url(v) => prop_assert_eq!(doc.url(), Some(v.as_str())),
             Change::Field(k, v) => prop_assert_eq!(doc.field(k), Some(v.as_str())),
+            Change::SetOtp(key) => {
+                let made = doc.one_time_code().unwrap().unwrap();
+                let typed = paw_core::otp::Totp::from_setup_key(key).unwrap();
+                prop_assert_eq!(made.code_at(1_700_000_000), typed.code_at(1_700_000_000));
+            }
+            Change::RemoveOtp => {}
         }
     }
 

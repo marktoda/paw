@@ -24,6 +24,8 @@ struct EntryScreen: View {
     @State private var notes: String?
     /// Values of the fields that are not secret, fetched to be shown.
     @State private var plainValues: [UInt32: String] = [:]
+    /// Why the one-time-code line can't make codes; `nil` if it can.
+    @State private var otpProblem: String?
     @State private var passwordRevealed = false
     /// Bumped to hide every revealed secret at once.
     @State private var hideToken = 0
@@ -218,19 +220,26 @@ struct EntryScreen: View {
                 }
             }
             if view.hasOtp {
-                VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
-                    Text("One-time code")
-                        .font(PawFont.footnote)
-                        .foregroundStyle(PawColor.labelSecondary)
-                    Text("Coming later")
-                        .font(PawFont.body)
-                        .foregroundStyle(PawColor.labelSecondary)
+                if let otpProblem {
+                    VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
+                        Text("One-time code")
+                            .font(PawFont.footnote)
+                            .foregroundStyle(PawColor.labelSecondary)
+                        Text(otpProblem)
+                            .font(PawFont.body)
+                            .foregroundStyle(PawColor.labelSecondary)
+                    }
+                    .padding(.vertical, PawMetrics.Spacing.s)
+                    .frame(maxWidth: .infinity, minHeight: PawMetrics.rowField, alignment: .leading)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("field-one-time-code")
+                    .pawListRow()
+                } else {
+                    OneTimeCodeRow(entry: session.entry, clock: model.clock) {
+                        copy($0, what: "One-time code")
+                    }
+                    .pawListRow()
                 }
-                .padding(.vertical, PawMetrics.Spacing.s)
-                .frame(maxWidth: .infinity, minHeight: PawMetrics.rowField, alignment: .leading)
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("field-one-time-code")
-                .pawListRow()
             }
         }
     }
@@ -251,6 +260,7 @@ struct EntryScreen: View {
             values[field.id] = session.entry.fieldValue(id: field.id)
         }
         plainValues = values
+        otpProblem = view.hasOtp ? session.entry.otpProblem() : nil
     }
 
     private func hideAll() {
@@ -268,6 +278,77 @@ struct EntryScreen: View {
     /// "security answer" reads as "Security answer".
     private static func label(_ key: String) -> String {
         key.prefix(1).uppercased() + key.dropFirst()
+    }
+}
+
+/// The entry's one-time code, worked out from the open entry every second:
+/// neither the code nor its secret is kept anywhere else, and it stops when
+/// the entry closes.
+private struct OneTimeCodeRow: View {
+    let entry: OpenedEntry
+    let clock: Clock
+    let onCopy: (String?) -> Void
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            if let code = entry.otpCode(nowMs: clock.wallMs()) {
+                let shown = Self.grouped(code.code)
+                HStack(spacing: PawMetrics.Spacing.xs) {
+                    VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
+                        Text("One-time code")
+                            .font(PawFont.footnote)
+                            .foregroundStyle(PawColor.labelSecondary)
+                        Text(shown)
+                            .font(PawFont.password)
+                            .foregroundStyle(PawColor.label)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("One-time code")
+                    .accessibilityValue(shown)
+                    .accessibilityIdentifier("field-one-time-code")
+                    CountdownRing(secondsLeft: code.secondsLeft, period: code.period)
+                    PawIconButton(
+                        symbol: PawSymbol.copy, label: "Copy one-time code",
+                        identifier: "copy-one-time-code"
+                    ) {
+                        // The code as it is at the tap, not as last drawn.
+                        onCopy(entry.otpCode(nowMs: clock.wallMs())?.code)
+                    }
+                }
+                .padding(.vertical, PawMetrics.Spacing.s)
+                .frame(minHeight: PawMetrics.rowField)
+            }
+        }
+    }
+
+    /// "123456" reads as "123 456", "12345678" as "1234 5678".
+    static func grouped(_ code: String) -> String {
+        let half = code.count / 2
+        return String(code.prefix(half)) + " " + String(code.dropFirst(half))
+    }
+}
+
+/// Seconds left on the code, as a thin ring that empties.
+private struct CountdownRing: View {
+    let secondsLeft: UInt32
+    let period: UInt32
+
+    @ScaledMetric private var size: CGFloat = 18
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(PawColor.fill, lineWidth: 2)
+            Circle()
+                .trim(from: 0, to: CGFloat(secondsLeft) / CGFloat(max(period, 1)))
+                .stroke(PawColor.labelSecondary, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: size, height: size)
+        .accessibilityElement()
+        .accessibilityLabel("\(secondsLeft) seconds left")
+        .accessibilityIdentifier("one-time-code-countdown")
     }
 }
 
