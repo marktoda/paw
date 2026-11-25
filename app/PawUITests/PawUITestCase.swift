@@ -244,6 +244,20 @@ class PawUITestCase: XCTestCase {
         scrollTo(identifier, file: file, line: line).tap()
     }
 
+    /// Taps a button that takes its own screen away, again if the screen
+    /// stays: a tap that lands while the screen before it is still going
+    /// (a search's keyboard leaving) can be lost, and the button is then
+    /// still there. A second tap can't do twice what one did: the button is
+    /// gone once the first counts.
+    func tapUntilGone(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {
+        let found = scrollTo(identifier, file: file, line: line)
+        for _ in 0..<3 {
+            found.tap()
+            if waitUntil(timeout: 5, { !found.exists }) { return }
+        }
+        XCTFail("\"\(identifier)\" should have gone once tapped", file: file, line: line)
+    }
+
     /// Taps an element found some other way than by identifier alone (a
     /// menu item, a button of a given type, one inside a row) once it is
     /// there and can be tapped. No scrolling.
