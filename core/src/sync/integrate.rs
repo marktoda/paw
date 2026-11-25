@@ -203,10 +203,13 @@ pub(crate) fn integrate_locked(held: &Exclusive, dir: &Path) -> Result<Integrati
     // What was fetched is checked before anything else is done with it.
     check_commit(&repo, remote)?;
     if replaced {
+        // Every local commit is counted, paw's or not: this decision is
+        // also the way out of a history paw would refuse to replay.
+        let unpushed = commits_between(&repo, tips.head, &[seen])?.len() as u32;
         return Ok(Integration::RemoteReplaced(Replaced {
             last_seen: seen.to_string(),
             remote: remote.to_string(),
-            unpushed: waiting(&repo)?.commits.len() as u32,
+            unpushed,
         }));
     }
 

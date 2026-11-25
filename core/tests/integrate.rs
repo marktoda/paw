@@ -518,6 +518,26 @@ fn replaced_remote_history_can_be_taken_without_the_local_changes() {
 }
 
 #[test]
+fn a_replaced_remote_can_be_taken_over_a_commit_paw_did_not_make() {
+    let w = world();
+    std::fs::write(phone(&w).join("web/example.com.gpg"), "edited by hand").unwrap();
+    std::fs::write(phone(&w).join("web/other.gpg"), "this one too").unwrap();
+    phone_git(&w, &["add", "-A"], "Two entries at once.");
+    desktop_git(&w, &["reset", "--quiet", "--hard", "HEAD~1"]);
+    desktop_git(&w, &["push", "--quiet", "--force", "origin", "HEAD:refs/heads/main"]);
+    let new_tip = w.server.tip();
+
+    match pull(&w).unwrap() {
+        Integration::RemoteReplaced(replaced) => assert_eq!(replaced.unpushed, 1),
+        other => panic!("expected RemoteReplaced, got {other:?}"),
+    }
+
+    sync::accept_replaced_remote(phone(&w), false).unwrap();
+    assert_eq!(head(&w), new_tip);
+    clean(&w);
+}
+
+#[test]
 fn a_change_to_a_gpg_id_is_reported_with_both_versions() {
     let w = world();
     phone_write(&w, "web/mine.gpg", "mine");
