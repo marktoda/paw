@@ -56,9 +56,11 @@ pub enum KeyTouch {
     Unknown,
 }
 
-fn key_touch(tx: &mut Card<Transaction<'_>>, slot: KeyType) -> KeyTouch {
+/// A reader that fails while the card is read fails the read; a card that
+/// answers without a policy has an unknown one.
+fn key_touch(tx: &mut Card<Transaction<'_>>, slot: KeyType) -> Result<KeyTouch, PawError> {
     use openpgp_card::ocard::data::TouchPolicy;
-    match tx.user_interaction_flag(slot) {
+    Ok(match tx.user_interaction_flag(slot) {
         Ok(Some(uif)) => match uif.touch_policy() {
             TouchPolicy::Off => KeyTouch::Off,
             TouchPolicy::On | TouchPolicy::Fixed => KeyTouch::EachUse,
@@ -67,8 +69,9 @@ fn key_touch(tx: &mut Card<Transaction<'_>>, slot: KeyType) -> KeyTouch {
         },
         // Cards without the touch feature have no such data object.
         Ok(None) => KeyTouch::Off,
+        Err(e @ openpgp_card::Error::Smartcard(_)) => return Err(card_err(e)),
         Err(_) => KeyTouch::Unknown,
-    }
+    })
 }
 
 struct Backend(Arc<dyn ApduTransport>);
@@ -144,8 +147,8 @@ pub(crate) fn card_info(transport: Arc<dyn ApduTransport>) -> Result<CardInfo, P
     let ident = tx.application_identifier().map_err(card_err)?.ident();
     let fps = tx.fingerprints().map_err(card_err)?;
     let pin_tries_left = tx.pw_status_bytes().map_err(card_err)?.err_count_pw1();
-    let decryption_touch = key_touch(&mut tx, KeyType::Decryption);
-    let authentication_touch = key_touch(&mut tx, KeyType::Authentication);
+    let decryption_touch = key_touch(&mut tx, KeyType::Decryption)?;
+    let authentication_touch = key_touch(&mut tx, KeyType::Authentication)?;
     let touch_required = decryption_touch != KeyTouch::Off;
 
     Ok(CardInfo {
