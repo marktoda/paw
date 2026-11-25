@@ -42,6 +42,9 @@ final class KeyReader {
 
     @ObservationIgnored private var attempt = 0
     @ObservationIgnored private var watching = false
+    /// `stopWatching` ran: nothing queued before it reads the key or
+    /// follows a reader again.
+    @ObservationIgnored private var stopped = false
     #if !targetEnvironment(simulator)
     @ObservationIgnored private var slotWatch: NSKeyValueObservation?
     @ObservationIgnored private var slotStateWatch: NSKeyValueObservation?
@@ -62,7 +65,7 @@ final class KeyReader {
     /// simulator: the simulated key is out at launch. On a device the
     /// system says, and a key already in is read.
     func watch(startsUnplugged: Bool) {
-        guard !watching else { return }
+        guard !watching, !stopped else { return }
         watching = true
         #if targetEnvironment(simulator)
         present = !startsUnplugged || port.session() != nil
@@ -86,8 +89,9 @@ final class KeyReader {
         #endif
     }
 
-    /// Stops following the readers: the screen is going away.
+    /// Stops following the readers, for good: the screen is going away.
     func stopWatching() {
+        stopped = true
         #if !targetEnvironment(simulator)
         slotWatch = nil
         slotStateWatch = nil
@@ -106,6 +110,7 @@ final class KeyReader {
     /// land here, and reading the key again would end the session a task
     /// is using. Only the latest read's answer counts.
     func read() {
+        guard !stopped else { return }
         attempt += 1
         let attempt = attempt
         let port = port
@@ -185,6 +190,7 @@ final class KeyReader {
 
     #if !targetEnvironment(simulator)
     private func readersChanged(present: Bool) {
+        guard !stopped else { return }
         self.present = present
         if present {
             watchSlotState()
@@ -206,7 +212,7 @@ final class KeyReader {
                 guard slot.state == .validCard else { return }
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
-                        guard let self, self.port.session() == nil else { return }
+                        guard let self, !self.stopped, self.port.session() == nil else { return }
                         self.keyCameIn()
                     }
                 }
@@ -214,7 +220,8 @@ final class KeyReader {
             let handoff = Handoff(value: watch)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    self?.slotStateWatch = handoff.value
+                    guard let self, !self.stopped else { return }
+                    self.slotStateWatch = handoff.value
                 }
             }
         }
