@@ -118,7 +118,6 @@ Things that are easy to lose track of because nothing fails when they are missin
 | The Release build ran on the phone for the first time 2026-11-24 (run 45525329289) | the owner has not yet reported on it |
 | Held-back changes are not re-encrypted automatically after recipients change | a manual action in the sync sheet is in progress, batch 5 |
 | Three entries in the owner's store are encrypted to old keys | paw cannot open them; needs the owner |
-| The five-way test split was last balanced before the unit tests replaced seven UI tests | parts may be uneven; re-measure after the next full run |
 | Swift unit tests cover the models (67); screens are still tested by clicking through the simulator | slow |
 | Background-time wrapping, file protection, keyboard refusal, auto-close on lock | built, never observed on the device |
 
