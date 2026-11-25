@@ -81,29 +81,29 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 |---|---|
 | GitHub sign-in (GitHub App, read-only on one repository) for background pull and the repository picker. The owner registered the app `paw-password-store` (client id `Iv23liyBePbnvQPCcGRz`, device sign-in enabled) on 2026-11-23 | done; signed in and checked for changes without the key on the iPhone 2026-11-23; token renewal after 8 hours not yet observed |
 | Deploy key in the Secure Enclave for other hosts | later |
-| Background refresh, "recipients changed" warning, replaced history | warning and replaced-history screens done; the core entry point for background refresh exists; scheduling it in iOS is next |
+| Background refresh, "recipients changed" warning, replaced history | done; background refresh is scheduled and skips while the device is locked (the store is unreadable then) |
 
 ### M7 AutoFill, the rest
 
 | Item | Status |
 |---|---|
-| AutoFill extension: list for the site, matching by registered domain, fill with Face ID or the key, suggestions above the keyboard, confirm before filling another site, store in the App Group | merged 2026-11-24; waiting on the owner's device checks. Not built: saving from the extension, hand-off fallback, international domain names, the `url` cross-check |
+| AutoFill extension: list for the site, matching by registered domain and by name, fill with Face ID or the key, suggestions above the keyboard, confirm before filling another site, `url` cross-check, international names shown as `xn--`, store in the App Group | done; waiting on the owner's device checks. Not built: saving from the extension (needs iOS 26.2), one-time codes in the extension |
 
 ### M8 Settings and finish
 
 | Item | Status |
 |---|---|
-| Settings, "Who can open these passwords", replace key, diagnostics export, remove store | partly: Settings has store, GitHub, AutoFill, diagnostics and remove store. Not built: "Who can open these passwords", replace key, Face ID on/off, diagnostics export, forget server key |
+| Settings, "Who can open these passwords", replace key, diagnostics export, remove store | done except replace key (design only): store, GitHub, AutoFill, who can open, Face ID switch, sites used, server keys with forget, key diagnostics with copy, licences, build stamp, remove store |
 | Copy and UX polish passes | two passes merged (2026-11-23, 2026-11-24); further passes follow the owner's notes from the phone |
-| App icon (paw built from discs) and wordmark rework | later |
-| Licence notices for bundled libraries | later |
+| App icon (paw built from discs) and wordmark rework | icon done (the paw); gold or pale toes still open |
+| Licence notices for bundled libraries | done; `scripts/licences.py --check` runs in CI |
 
 ### M9 iPad
 
 | Item | Status |
 |---|---|
-| Three-column layout, form sheets, keyboard shortcuts; Developer Mode on the iPad | in progress on branch `ipad`: split view in regular width (Home, folder or search, open entry) read from the same route list as the iPhone stack; form sheets; ⌘F ⌘N ⌘R ⌘L ⌘, and ⌘C on the open entry; Esc cancels sheets; all orientations and multitasking; `IPadTests` skip on iPhone. Never built: needs a CI run on an iPad simulator, then the device checks below |
-| Device words on iPad ("iPhone", "Face ID" on a Touch ID iPad) | later |
+| Three-column layout, form sheets, keyboard shortcuts; Developer Mode on the iPad | done on the iPad simulator (its own CI part); device checks below |
+| Device words on iPad ("iPhone", "Face ID" on a Touch ID iPad) | in progress, batch 5 |
 
 ### After the first version
 
@@ -115,16 +115,18 @@ Things that are easy to lose track of because nothing fails when they are missin
 
 | Gap | Why it matters |
 |---|---|
-| The Release build has never run on the phone | optimisation, stripped harnesses and the device bindings are only proven by CI |
-| Held-back changes are not re-encrypted automatically after recipients change | they stay queued until done by hand |
+| The Release build ran on the phone for the first time 2026-11-24 (run 45525329289) | the owner has not yet reported on it |
+| Held-back changes are not re-encrypted automatically after recipients change | a manual action in the sync sheet is in progress, batch 5 |
 | Three entries in the owner's store are encrypted to old keys | paw cannot open them; needs the owner |
-| Sync, gallery, key and enclave tests use their own slow helpers | the slowest part of a full run |
-| No unit tests in Swift; all app behaviour is tested by clicking through the simulator | slow, and model bugs are found late |
+| The five-way test split was last balanced before the unit tests replaced seven UI tests | parts may be uneven; re-measure after the next full run |
+| Swift unit tests cover the models (67); screens are still tested by clicking through the simulator | slow |
 | Background-time wrapping, file protection, keyboard refusal, auto-close on lock | built, never observed on the device |
 
 Merged 2026-11-24: plain repository list in the picker; per-process Face ID enrolment record; name matching with remembered site pairings (`site-pairings.json`, no screen to view or clear them yet); a lost PIN told apart from a missed touch; the key log.
 
 Merged 2026-11-24, batch 3 (one build, run 45500441073, all green): Release device build without the simulated key, scanned in CI; legacy PIN-taking exports and the test screen removed; background refresh scheduled (skips while the iPhone is locked: the store is unreadable then); held-back re-encryption in the core (no UI yet); Settings: who can open, Face ID switch, sites used, server keys with forget, copy diagnostics, licences, build stamp; AutoFill: `url` cross-check, international names (always shown as `xn--`), username from the body; the paw icon; Sync, Gallery and Enclave tests on the shared helpers; iPad three-column layout with its own CI part.
+
+Merged 2026-11-24, batch 4 (main `1231999`, installed on the iPhone as run 45525329289): fixes from two reviews (a locked background launch no longer offers to delete the store; server-key change warning; whole fingerprints; iPad folder selection; held-back flip-flop; Face ID switch ordering; clipboard expiry); a copy pass over Settings, sync, AutoFill and diagnostics; Swift unit tests (`PawTests`) in CI, and the seven UI tests they replace removed.
 
 Not built: saving a password from the extension (needs iOS 26.2; minimum is 26.0); replace key (design only: both keys in turn, one touch per password); "iPad"/"Touch ID" wording on iPad. libgit2's bundled xdiff is LGPL: decide before any App Store listing.
 
@@ -132,7 +134,7 @@ Not built: saving a password from the extension (needs iOS 26.2; minimum is 26.0
 | Check | Status |
 |---|---|
 | Settings › Key diagnostics › "Check the touch timeout", without touching the key; then copy the key log | waiting |
-| First Release build: Settings › About says the commit and "Release"; open an entry, AutoFill fill, Face ID copy, send | waiting |
+| First Release build: Settings › About says the commit and "Release"; open an entry, AutoFill fill, Face ID copy, send | installed 2026-11-24; waiting on the owner |
 | "Read key" on the newest build, to see both slots' touch policies | waiting |
 | First real clone | done 2026-11-23 |
 | Auto-close after locking the phone and after 2 minutes away | waiting |
@@ -145,11 +147,11 @@ Not built: saving a password from the extension (needs iOS 26.2; minimum is 26.0
 | Background check row in the sync sheet after a few hours in the background | waiting |
 | Who can open these passwords shows the three old-key entries | waiting |
 | Settings › Key diagnostics › Key log shows the app's and AutoFill's lines; what the key answers after a touch timeout and to the PIN check after it | waiting |
-| iPad: the key opens an entry over USB-C, and AutoFill fills with it | waiting on the `ipad` branch |
-| iPad: three columns in landscape, the right column first in portrait; Slide Over and a narrow window fall back to the iPhone layout without losing the open folder or entry | waiting on the `ipad` branch |
-| iPad: opening a second entry closes the first (nothing of it left in the right column); auto-close after locking and after 2 minutes away; the app-switcher cover | waiting on the `ipad` branch |
-| iPad with a keyboard: ⌘F, ⌘N, ⌘R, ⌘L, ⌘, and ⌘C (open entry only) listed when ⌘ is held; Esc cancels the key sheet; return sends the PIN; none of them opens anything without the key or Face ID | waiting on the `ipad` branch |
-| iPad: key sheet, editor, sync and Settings as centred form sheets; large type fills the screen | waiting on the `ipad` branch |
+| iPad: the key opens an entry over USB-C, and AutoFill fills with it | waiting |
+| iPad: three columns in landscape, the right column first in portrait; Slide Over and a narrow window fall back to the iPhone layout without losing the open folder or entry | waiting |
+| iPad: opening a second entry closes the first (nothing of it left in the right column); auto-close after locking and after 2 minutes away; the app-switcher cover | waiting |
+| iPad with a keyboard: ⌘F, ⌘N, ⌘R, ⌘L, ⌘, and ⌘C (open entry only) listed when ⌘ is held; Esc cancels the key sheet; return sends the PIN; none of them opens anything without the key or Face ID | waiting |
+| iPad: key sheet, editor, sync and Settings as centred form sheets; large type fills the screen | waiting |
 
 ## Open decisions for the owner
 
