@@ -279,6 +279,8 @@ final class EditTests: PawUITestCase {
         tap("entry-rename")
         type("gitlab-old", into: "form-name")
         chooseFolder("email")
+        // Save waits for who can open email.
+        expectEnabled("form-save", true)
         tap("form-save")
         expectGone("form-save")
         expectNoKeySheet()

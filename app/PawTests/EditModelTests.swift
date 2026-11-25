@@ -5,7 +5,7 @@ import XCTest
 /// the writable fixture store. None of it needs the key.
 @MainActor
 final class EditModelTests: XCTestCase {
-    func testTheCoreSaysWhatIsWrongWithANameAndSaveWaits() throws {
+    func testTheCoreSaysWhatIsWrongWithANameAndSaveWaits() async throws {
         let fixture = try Fixture(writable: true)
         let edits = try XCTUnwrap(fixture.model.edits)
         let form = EntryFormModel(adding: "", writer: edits.writer, folders: fixture.model.allFolders)
@@ -28,6 +28,7 @@ final class EditModelTests: XCTestCase {
         form.name = "github.com-2"
         form.changed()
         XCTAssertNil(form.problem(for: .name))
+        await waitFor("who can open web") { form.folderWritable != nil }
         XCTAssertTrue(form.canSave)
     }
 
@@ -47,10 +48,10 @@ final class EditModelTests: XCTestCase {
         XCTAssertEqual(form.password.count, 12)
     }
 
-    func testSavingANewEntryQueuesItAndKeepsAFaceIdCopy() throws {
+    func testSavingANewEntryQueuesItAndKeepsAFaceIdCopy() async throws {
         let fixture = try Fixture(writable: true)
         let model = fixture.model
-        try fixture.add("shop.example", folder: "web")
+        try await fixture.add("shop.example", folder: "web")
         XCTAssertEqual(model.toast, "Saved. Not sent yet.")
         XCTAssertEqual(model.edits?.unpushed.count, 1)
         XCTAssertEqual(model.edits?.bannerTitle, "1 change not sent")
@@ -59,11 +60,11 @@ final class EditModelTests: XCTestCase {
         XCTAssertTrue(model.search("shop").contains { $0.entry.path == "web/shop.example" })
     }
 
-    func testDiscardingOneChangeTakesBackOnlyThatChange() throws {
+    func testDiscardingOneChangeTakesBackOnlyThatChange() async throws {
         let fixture = try Fixture(writable: true)
         let model = fixture.model
-        try fixture.add("keep.example", folder: "web")
-        try fixture.add("drop.example", folder: "web")
+        try await fixture.add("keep.example", folder: "web")
+        try await fixture.add("drop.example", folder: "web")
         let edits = try XCTUnwrap(model.edits)
         XCTAssertEqual(edits.bannerTitle, "2 changes not sent")
         let change = try XCTUnwrap(edits.unpushed.first { $0.entry == "web/keep.example" })

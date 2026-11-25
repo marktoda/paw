@@ -25,12 +25,12 @@ final class SyncModelTests: XCTestCase {
         }
     }
 
-    func testThePillBeforeAnyCheckAndWithAChangeWaiting() throws {
+    func testThePillBeforeAnyCheckAndWithAChangeWaiting() async throws {
         let fixture = try Fixture(writable: true)
         let sync = try syncModel(fixture)
         XCTAssertEqual(sync.pillState(unpushed: 0), .needsKey)
         XCTAssertFalse(sync.canSend(unpushed: 0))
-        try fixture.add("waiting.example", folder: "web")
+        try await fixture.add("waiting.example", folder: "web")
         XCTAssertEqual(sync.pillState(unpushed: 1), .notSent(checked: nil))
         XCTAssertTrue(sync.canSend(unpushed: 1))
 
@@ -59,7 +59,7 @@ final class SyncModelTests: XCTestCase {
         let model = fixture.model
         let sync = try syncModel(fixture)
         let edits = try XCTUnwrap(model.edits)
-        try fixture.add("sent.example", folder: "web")
+        try await fixture.add("sent.example", folder: "web")
 
         sync.start(.send, app: model)
         await passPin(sync)
@@ -73,7 +73,7 @@ final class SyncModelTests: XCTestCase {
         }
 
         // A second send in the same run: the PIN is still held.
-        try fixture.add("again.example", folder: "web")
+        try await fixture.add("again.example", folder: "web")
         model.toast = nil
         sync.start(.send, app: model)
         var askedForPin = false
@@ -89,7 +89,7 @@ final class SyncModelTests: XCTestCase {
         let fixture = try Fixture(writable: true)
         let model = fixture.model
         let sync = try syncModel(fixture)
-        try fixture.add("cancel.example", folder: "web")
+        try await fixture.add("cancel.example", folder: "web")
         sync.start(.send, app: model)
         await waitFor("the PIN") { sync.keyStage == .pin(triesLeft: 3, forgotten: false) }
         sync.cancelSheet()
@@ -106,7 +106,7 @@ final class SyncModelTests: XCTestCase {
         let sync = try syncModel(fixture)
         SimRemoteHandle.shared.setRefusesPushes(true)
         defer { SimRemoteHandle.shared.setRefusesPushes(false) }
-        try fixture.add("refused.example", folder: "web")
+        try await fixture.add("refused.example", folder: "web")
 
         sync.start(.send, app: model)
         await passPin(sync)

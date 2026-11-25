@@ -144,14 +144,15 @@ final class Fixture {
         model.pathChanged()
     }
 
-    /// A new entry with a typed password, saved as the form's Save does.
-    /// Needs a `writable` fixture.
-    func add(_ name: String, folder: String, file: StaticString = #filePath, line: UInt = #line) throws {
+    /// A new entry with a typed password, saved as the form's Save does once
+    /// it knows who can open the folder. Needs a `writable` fixture.
+    func add(_ name: String, folder: String, file: StaticString = #filePath, line: UInt = #line) async throws {
         let edits = try XCTUnwrap(model.edits, "The fixture store should be writable", file: file, line: line)
         let form = EntryFormModel(adding: folder, writer: edits.writer, folders: model.allFolders)
         form.name = name
         form.password = "Typed-pass-42"
         form.changed()
+        await waitFor("who can open \(folder)", file: file, line: line) { form.folderWritable != nil }
         XCTAssertTrue(form.canSave, "\(form.problems)", file: file, line: line)
         let (outcome, text) = try XCTUnwrap(form.save(copies: model.copies), file: file, line: line)
         model.saved(outcome, purpose: form.purpose, savedText: text)

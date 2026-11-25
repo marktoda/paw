@@ -42,6 +42,30 @@ final class EntryFormStoreTests: XCTestCase {
         XCTAssertEqual(form.effectiveFolder, "shop")
         XCTAssertEqual(writer.counts.recipients, before.recipients + 1)
     }
+
+    func testSaveWaitsForANewFolderAndKeepsItsAnswerWhenTheStoreIsReadAgain() async throws {
+        let fixture = try Fixture(writable: true)
+        let edits = try XCTUnwrap(fixture.model.edits)
+        let form = EntryFormModel(
+            adding: "web", writer: edits.writer, folders: fixture.model.allFolders, store: fixture.model.store)
+        form.binding(\.name, field: "name").wrappedValue = "new.example"
+        form.binding(\.password, field: "password").wrappedValue = "Typed-pass-42"
+        await waitFor("who can open web") { form.folderWritable != nil }
+        XCTAssertTrue(form.canSave)
+
+        // Another folder: no answer, so no Save, until its own lands.
+        form.chooseFolder("email")
+        XCTAssertNil(form.recipients)
+        XCTAssertFalse(form.canSave)
+        await waitFor("who can open email") { form.folderWritable != nil }
+        XCTAssertTrue(form.canSave)
+
+        // The store read again: the answer for email stays while it is asked again.
+        try await fixture.add("other.example", folder: "web")
+        form.storeChanged(fixture.model.store)
+        XCTAssertNotNil(form.recipients)
+        XCTAssertTrue(form.canSave)
+    }
 }
 
 /// The fixture's writer, counting the calls that read the store under its lock.

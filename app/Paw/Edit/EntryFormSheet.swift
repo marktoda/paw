@@ -192,6 +192,7 @@ private struct EntryFormView: View {
                 FolderChoiceLabel(title: "Not in a folder", chosen: form.newFolder == nil && form.folder.isEmpty)
             }
             ForEach(form.folders, id: \.self) { folder in
+                // Not known yet: offered, and Save waits for its answer.
                 let writable = form.folderOpenable[folder] ?? true
                 Button {
                     form.chooseFolder(folder)

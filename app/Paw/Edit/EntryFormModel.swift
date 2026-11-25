@@ -46,7 +46,7 @@ final class EntryFormModel {
     let folders: [String]
     /// Whether paw has every key each folder is encrypted for, read off the
     /// main thread when the form opens and when the store changes. A folder
-    /// not in it yet is offered; Save still checks.
+    /// not in it yet is offered: Save waits for that folder's own answer.
     private(set) var folderOpenable: [String: Bool] = [:]
 
     var name = ""
@@ -97,6 +97,8 @@ final class EntryFormModel {
     /// The extra fields' keys as opened, lower-cased.
     @ObservationIgnored private var openedFieldKeys: Set<String> = []
     @ObservationIgnored private var recipientsFolder: String?
+    /// The folder `recipients` is the answer for.
+    @ObservationIgnored private var answeredFolder: String?
 
     /// A blank form in `folder`.
     init(adding folder: String, writer: StoreWriter, folders: [String], store: PassStore? = nil) {
@@ -306,13 +308,17 @@ final class EntryFormModel {
     /// Who can open the folder the entry goes in, read off the main thread:
     /// it takes the store's lock, which a sync can hold for seconds. While a
     /// new folder is typed, once the typing pauses. A late answer for a
-    /// folder no longer chosen is dropped.
+    /// folder no longer chosen is dropped. The answer for the same folder
+    /// stays until the new one lands; another folder has none until then.
     private func loadRecipients() {
         let folder = effectiveFolder
         let pause = newFolder != nil
         let writer = writer
         recipientsFolder = folder
-        recipients = nil
+        if answeredFolder != folder {
+            answeredFolder = nil
+            recipients = nil
+        }
         recipientsTask?.cancel()
         recipientsTask = Task { [weak self] in
             if pause {
@@ -323,20 +329,32 @@ final class EntryFormModel {
                 Result { try writer.folderRecipients(folder: folder) }
             }.value
             guard !Task.isCancelled, let self, self.recipientsFolder == folder else { return }
+            self.answeredFolder = folder
             self.recipients = result
         }
     }
 
     /// Which folders paw can save in, for the picker, read off the main
-    /// thread (each one takes the store's lock).
+    /// thread (each one takes the store's lock). Stops between folders once
+    /// the sheet closes or the store is read again.
     private func loadFolderOpenable() {
         let folders = folders
         let writer = writer
         openableTask?.cancel()
         openableTask = Task { [weak self] in
-            let found = await Task.detached(priority: .userInitiated) {
-                Dictionary(folders.map { ($0, writer.folderOpenable($0)) }, uniquingKeysWith: { first, _ in first })
-            }.value
+            let work = Task.detached(priority: .userInitiated) { () -> [String: Bool] in
+                var found: [String: Bool] = [:]
+                for folder in folders where found[folder] == nil {
+                    if Task.isCancelled { break }
+                    found[folder] = writer.folderOpenable(folder)
+                }
+                return found
+            }
+            let found = await withTaskCancellationHandler {
+                await work.value
+            } onCancel: {
+                work.cancel()
+            }
             guard !Task.isCancelled, let self else { return }
             self.folderOpenable = found
         }
@@ -409,14 +427,15 @@ final class EntryFormModel {
             || !setupKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || removingOneTimeCode
     }
 
-    /// Whether the folder can be saved in now; `nil` while not known.
+    /// Whether the folder can be saved in now; `nil` while not known or
+    /// when it couldn't be told. Save waits for `true`.
     var folderWritable: Bool? {
         guard case .success(let recipients)? = recipients else { return nil }
         return recipients.confirmed && !recipients.changed && recipients.lines.allSatisfy(\.isReady)
     }
 
     var canSave: Bool {
-        problems.isEmpty && fieldProblems.isEmpty && (isEditing ? hasChanges : true) && folderWritable != false
+        problems.isEmpty && fieldProblems.isEmpty && (isEditing ? hasChanges : true) && folderWritable == true
     }
 
     /// Tries to save. Returns what was saved and the text as saved, or says

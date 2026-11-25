@@ -24,7 +24,7 @@ final class HeldBackModelTests: XCTestCase {
         // A second key paw has the public half of, then work/ is given to both.
         let other = SimulatedKey.newOther(pin: Fixture.pin, touchRequired: false, touchTimeoutMs: 15_000)
         _ = try edits.writer.pinCardKey(connection: other.asConnection())
-        try fixture.add("held.example", folder: "work")
+        try await fixture.add("held.example", folder: "work")
         let host = try XCTUnwrap(SimRemoteHandle.shared.host)
         let list = fixture.key.fingerprintHex() + "\n" + other.fingerprintHex() + "\n"
         _ = try host.commitFile(path: "work/.gpg-id", contents: Data(list.utf8), message: "Give work a second key.")
