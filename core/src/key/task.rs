@@ -23,9 +23,8 @@ use std::thread::JoinHandle;
 
 use zeroize::Zeroizing;
 
-use super::enrolment::KeyMismatch;
 use super::session::{Halt, KeySession, Pin};
-use super::{KeyError, KeyOutcome, KeyPurpose, KeyTaskListener, KeyTaskState, TaskProgress};
+use super::{KeyError, KeyOutcome, KeyPurpose, KeyTaskListener, KeyTaskState, TaskFailure, TaskProgress};
 
 struct Inner {
     state: KeyTaskState,
@@ -39,8 +38,6 @@ struct Inner {
     committing: bool,
     /// The session the task runs on, once it has one.
     session: Option<Arc<KeySession>>,
-    /// The task refused a card that is not the enrolled key.
-    mismatch: Option<KeyMismatch>,
 }
 
 /// Numbers tasks in the key log, per process.
@@ -215,11 +212,6 @@ impl TaskCore {
         session.watch(self);
     }
 
-    /// Records why the card was refused, before the task says it failed.
-    pub(crate) fn set_key_mismatch(&self, mismatch: KeyMismatch) {
-        self.lock().mismatch = Some(mismatch);
-    }
-
     /// Waits until `done` says so, or the task is cancelled.
     pub(crate) fn wait_until(&self, mut done: impl FnMut() -> bool) -> Result<(), Halt> {
         let mut inner = self.lock();
@@ -243,7 +235,7 @@ impl TaskCore {
             }
             let again = last_error.is_some();
             let stage = KeyTaskState::Pin {
-                tries_left: (prompt.tries_left < 3).then_some(prompt.tries_left),
+                tries_left: prompt.tries_left,
                 forgot_after_background: prompt.forgot_after_background,
                 last_error: last_error.take(),
             };
@@ -300,19 +292,15 @@ pub struct KeyTask {
 }
 
 /// What a task's thread runs.
-pub(crate) type Body = Box<dyn FnOnce(&Arc<TaskCore>) -> Result<KeyOutcome, Halt> + Send>;
+pub(crate) type Body = Box<dyn FnOnce(&Arc<TaskCore>) -> Result<KeyOutcome, TaskFailure> + Send>;
 
 impl KeyTask {
     /// Creates a task in `initial` and, unless that is final, starts its
     /// thread on `body`.
-    ///
-    /// `mismatch` is set when the task starts out refusing a card that is
-    /// not the enrolled key.
-    pub(crate) fn start_with_mismatch(
+    pub(crate) fn start(
         purpose: KeyPurpose,
         listener: Arc<dyn KeyTaskListener>,
         initial: KeyTaskState,
-        mismatch: Option<KeyMismatch>,
         body: Body,
     ) -> Arc<Self> {
         let finished = initial.is_final();
@@ -330,7 +318,6 @@ impl KeyTask {
                 supplied: None,
                 committing: false,
                 session: None,
-                mismatch,
             }),
             changed: Condvar::new(),
         });
@@ -342,10 +329,7 @@ impl KeyTask {
             let result = std::panic::catch_unwind(AssertUnwindSafe(|| body(&core)));
             let end = match result {
                 Ok(Ok(outcome)) => KeyTaskState::Done { outcome },
-                Ok(Err(Halt::Fail(error))) => KeyTaskState::Failed { error },
-                Ok(Err(Halt::AskPin(_))) => KeyTaskState::Failed {
-                    error: KeyError::Reader { detail: "the PIN was needed where it cannot be asked".into() },
-                },
+                Ok(Err(failure)) => failure.state(),
                 Err(_) => {
                     core.panicked.store(true, Ordering::SeqCst);
                     KeyTaskState::Failed { error: KeyError::Reader { detail: "paw hit an internal error".into() } }
@@ -367,10 +351,9 @@ impl KeyTask {
         self.core.tag()
     }
 
-    /// A task that has already failed with `error`.
-    pub(crate) fn failed(purpose: KeyPurpose, listener: Arc<dyn KeyTaskListener>, error: KeyError) -> Arc<Self> {
-        let initial = KeyTaskState::Failed { error: error.clone() };
-        Self::start_with_mismatch(purpose, listener, initial, None, Box::new(move |_| Err(Halt::Fail(error))))
+    /// A task that has already failed with `failure`.
+    pub(crate) fn failed(purpose: KeyPurpose, listener: Arc<dyn KeyTaskListener>, failure: TaskFailure) -> Arc<Self> {
+        Self::start(purpose, listener, failure.state(), Box::new(|_| unreachable!("a failed task never runs")))
     }
 
     /// Waits for the task's thread to end. `true` if it panicked (it then
@@ -409,13 +392,5 @@ impl KeyTask {
     /// Stops the task now, at any stage. See the module comment.
     pub fn cancel(&self) {
         self.core.cancel();
-    }
-
-    /// If the task failed because the plugged-in key is not the one the
-    /// store was set up with: both keys, for "This is a different key from
-    /// the one this store was set up with". The task's error is then
-    /// `NotForThisKey`, and no PIN was sent.
-    pub fn key_mismatch(&self) -> Option<KeyMismatch> {
-        self.core.lock().mismatch.clone()
     }
 }

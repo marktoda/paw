@@ -34,7 +34,7 @@ use crate::sync::hosts::{self, KnownHosts};
 use crate::sync::{self, Cloned, Connection, PresentedHostKey, RefusedPath};
 use crate::write::{Keyring, LineStatus, WriteError};
 use crate::PawError;
-use outcome::{RemoteMessage, RemoteReason, says_repository_missing};
+use outcome::{RemoteMessage, RemoteReason};
 use crate::key::touch_clock::{TouchClock, TouchExpectation};
 
 /// The key as setup shows it on "Your key". Public data only.
@@ -98,12 +98,24 @@ pub enum SetupError {
     UnusableKey { message: String },
     #[error("{message}")]
     WrongStep { message: String },
+    /// See [`PawError::StoreBusy`].
+    #[error("{}", crate::lock::STORE_BUSY)]
+    StoreBusy,
     #[error("{message}")]
     Failed { message: String },
 }
 
 fn failed(error: impl std::fmt::Display) -> SetupError {
     SetupError::Failed { message: error.to_string() }
+}
+
+impl From<PawError> for SetupError {
+    fn from(error: PawError) -> Self {
+        match error {
+            PawError::StoreBusy => Self::StoreBusy,
+            other => failed(other),
+        }
+    }
 }
 
 /// Offered when a host could not be reached on its usual port: "Port 22
@@ -362,7 +374,7 @@ impl SetupFlow {
     /// The store's lock, held: for removing or replacing the repository,
     /// and for the keyring and enrolment writes.
     fn exclusive(&self) -> Result<crate::lock::Exclusive, SetupError> {
-        crate::lock::StoreLock::for_state_dir(&self.dir).exclusive().map_err(failed)
+        crate::lock::StoreLock::for_state_dir(&self.dir).exclusive().map_err(SetupError::from)
     }
 
     fn restart_download(&mut self) -> Result<(), SetupError> {
@@ -502,7 +514,7 @@ impl SetupFlow {
         let address = self.address()?;
         let host = address.connect_host().to_owned();
         self.remote_message = None;
-        match self.known_hosts().pin(&host, address.port).map_err(failed)? {
+        match self.known_hosts().pin(&host, address.port).map_err(SetupError::from)? {
             Some(_) => self.ask_host(),
             None => {
                 let scanned = sync::scan_host_key(&host, address.port, &self.route);
@@ -546,14 +558,14 @@ impl SetupFlow {
     pub fn forget_host_key(&mut self) -> Result<SetupState, SetupError> {
         self.expect(&[Step::CheckHost, Step::NeedPin], "forget the host's key")?;
         let address = self.address()?;
-        self.known_hosts().forget(address.connect_host(), address.port).map_err(failed)?;
+        self.known_hosts().forget(address.connect_host(), address.port).map_err(SetupError::from)?;
         self.remote_message = None;
         self.go(Step::CheckHost)
     }
 
     fn remote(&self) -> Result<sync::Remote, SetupError> {
         let address = self.address()?;
-        let remote = self.known_hosts().remote(&address).map_err(failed)?;
+        let remote = self.known_hosts().remote(&address).map_err(SetupError::from)?;
         let mut remote = remote.ok_or_else(|| SetupError::WrongStep { message: "the host has not been checked".into() })?;
         remote.route = self.route.clone();
         Ok(remote)
@@ -590,14 +602,14 @@ impl SetupFlow {
                 },
             ),
             // The login went through, and the host refused the repository.
-            _ if said.as_deref().is_some_and(says_repository_missing) => (
+            _ if said.as_deref().is_some_and(sync::says_repository_missing) => (
                 RemoteReason::RepositoryNotFound,
                 failed(format!(
                     "no store at that address: {} says {} doesn't exist, or this key can't see it",
                     remote.host, remote.path
                 )),
             ),
-            other => (RemoteReason::Other, failed(other)),
+            other => (RemoteReason::Other, SetupError::from(other)),
         };
         self.note_remote(reason, said);
         self.no_connection = no_connection;
@@ -766,7 +778,7 @@ impl SetupFlow {
     pub(crate) fn pick_test_entry(&self) -> Result<String, SetupError> {
         self.expect(&[Step::TestDecrypt], "test the key")?;
         let fingerprint = self.key()?.decryption_fingerprint.clone();
-        let store = PassStore::open(self.repo_dir().to_string_lossy().into_owned()).map_err(failed)?;
+        let store = PassStore::open(self.repo_dir().to_string_lossy().into_owned()).map_err(SetupError::from)?;
 
         let mut maybe = None;
         let mut sure = None;
@@ -825,8 +837,8 @@ impl SetupFlow {
         let fingerprint = keyring.pin_card_key(card_key).map_err(write_failed)?;
         // Only the `.gpg-id` that governs the entry just opened, and only if
         // that entry names the card's key, says which line is the card's.
-        let store = PassStore::open(repo.to_string_lossy().into_owned()).map_err(failed)?;
-        let ciphertext = store.read_entry(&entry).map_err(failed)?;
+        let store = PassStore::open(repo.to_string_lossy().into_owned()).map_err(SetupError::from)?;
+        let ciphertext = store.read_entry(&entry).map_err(SetupError::from)?;
         let bound = keyring.bind_card_for_opened_entry(&repo, &fingerprint, &entry, &ciphertext, crate::write::now_secs());
         match bound {
             // Several unknown lines: the person picks the card's later.
@@ -834,7 +846,7 @@ impl SetupFlow {
             Err(e) => return Err(write_failed(e)),
         }
         keyring.accept_all_recipients_at_setup(&repo).map_err(write_failed)?;
-        save_enrolment(&self.dir, identity).map_err(failed)?;
+        save_enrolment(&self.dir, identity).map_err(SetupError::from)?;
         drop(held);
         self.decryption.used_at(Instant::now());
         self.saved.opened = Some(entry);

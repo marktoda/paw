@@ -31,16 +31,6 @@ impl ApduTransport for Adapter {
     }
 }
 
-/// Whether an error's message (from any of paw's error types) says the
-/// store was busy: another part of paw, or the AutoFill extension, was
-/// using it for longer than paw waits. Nothing was changed, the store is
-/// not broken, and trying again will work. Its message starts with "the
-/// password store is busy".
-#[uniffi::export]
-pub fn is_store_busy(message: String) -> bool {
-    crate::lock::is_store_busy(&message)
-}
-
 mod copies;
 pub mod sync;
 mod key;

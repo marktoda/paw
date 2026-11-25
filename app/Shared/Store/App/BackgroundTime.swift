@@ -51,7 +51,7 @@ final class BackgroundTime {
 
     private static func isFinal(_ state: KeyTaskState) -> Bool {
         switch state {
-        case .done, .failed, .cancelled: true
+        case .done, .failed, .syncFailed, .setupFailed, .cancelled: true
         default: false
         }
     }

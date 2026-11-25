@@ -10,7 +10,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use key_common::*;
-use paw_core::PawError;
 use paw_core::ffi::sync::Setup;
 use paw_core::key::{KeyError, KeyTaskState, LoginPurpose};
 use paw_core::setup::SetupState;
@@ -106,7 +105,7 @@ fn fails_when_nobody_touches_the_key() {
     let login = login(&port_with(&key), LoginPurpose::Fetch, &driver);
     let signer = login.signer().unwrap();
 
-    assert!(matches!(signer.sign(&login_sized()), Err(PawError::Sign(_))));
+    assert!(matches!(signer.sign(&login_sized()), Err(KeyError::TouchTimeout)));
     assert!(matches!(finish(login.task()), KeyTaskState::Failed { error: KeyError::TouchTimeout }));
     assert_eq!(key.authentication_count(), 0);
 }

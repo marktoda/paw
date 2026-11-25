@@ -21,7 +21,7 @@ use ring::signature::{ED25519, UnparsedPublicKey};
 
 fn opened(state: &KeyTaskState) -> (String, Option<i64>) {
     match state {
-        KeyTaskState::Done { outcome: KeyOutcome::Opened { entry, face_id_until_ms } } => {
+        KeyTaskState::Done { outcome: KeyOutcome::Opened { entry, face_id_until_ms, .. } } => {
             (entry.password().unwrap_or_default(), *face_id_until_ms)
         }
         other => panic!("expected an opened entry, got {other:?}"),
@@ -35,7 +35,7 @@ fn failed(state: &KeyTaskState) -> KeyError {
     }
 }
 
-fn pin_stage(state: &KeyTaskState) -> (Option<u8>, bool, Option<KeyError>) {
+fn pin_stage(state: &KeyTaskState) -> (u8, bool, Option<KeyError>) {
     match state {
         KeyTaskState::Pin { tries_left, forgot_after_background, last_error } => {
             (*tries_left, *forgot_after_background, last_error.clone())
@@ -131,7 +131,7 @@ fn pin_changed_elsewhere_drops_the_held_pin_after_one_try() {
 
     let (tries_left, forgot, last_error) = pin_stage(&task.state());
     assert_eq!(last_error, Some(KeyError::HeldPinRejected { tries_left: 2 }));
-    assert_eq!(tries_left, Some(2));
+    assert_eq!(tries_left, 2);
     assert!(!forgot);
     assert!(!session.holds_pin());
     assert_eq!(rig.sim.verify_attempts(), 2, "one try spent on the old PIN, no more");
@@ -149,14 +149,14 @@ fn fewer_than_three_tries_are_shown_before_input() {
     rig.port.attach(rig.sim.clone()).unwrap();
 
     let task = open(&rig, ENTRY, &Driver::new());
-    assert_eq!(pin_stage(&task.state()), (Some(2), false, None));
+    assert_eq!(pin_stage(&task.state()), (2, false, None));
     assert_eq!(rig.sim.verify_attempts(), 0);
     task.cancel();
 
     let rig = rig_unplugged(SimTouch::Off, SimTouch::Off);
     rig.port.attach(rig.sim.clone()).unwrap();
     let task = open(&rig, ENTRY, &Driver::new());
-    assert_eq!(pin_stage(&task.state()), (None, false, None), "three tries: nothing to warn about");
+    assert_eq!(pin_stage(&task.state()), (3, false, None), "three tries: nothing to warn about");
     task.cancel();
 }
 
@@ -168,11 +168,11 @@ fn wrong_pin_counts_down_then_blocks_and_blocked_is_reported_without_a_try() {
 
     task.supply_pin(b"000000".to_vec());
     driver.wait_for(|s| matches!(s, KeyTaskState::Pin { last_error: Some(_), .. }));
-    assert_eq!(pin_stage(&task.state()), (Some(2), false, Some(KeyError::WrongPin { tries_left: 2 })));
+    assert_eq!(pin_stage(&task.state()), (2, false, Some(KeyError::WrongPin { tries_left: 2 })));
 
     task.supply_pin(b"000000".to_vec());
     driver.wait_for(|s| matches!(s, KeyTaskState::Pin { last_error: Some(KeyError::WrongPin { tries_left: 1 }), .. }));
-    assert_eq!(pin_stage(&task.state()).0, Some(1));
+    assert_eq!(pin_stage(&task.state()).0, 1);
 
     task.supply_pin(b"000000".to_vec());
     assert_eq!(failed(&finish(&task)), KeyError::PinBlocked);
@@ -226,7 +226,7 @@ fn fourteen_minutes_in_the_background_keeps_the_pin_fifteen_forget_it() {
     assert!(eventually(|| !rig.sim.pin_verified()), "the card was de-verified too");
 
     let task = open(&rig, OTHER_ENTRY, &Driver::new());
-    assert_eq!(pin_stage(&task.state()), (None, true, None));
+    assert_eq!(pin_stage(&task.state()), (3, true, None));
     task.supply_pin(PIN.as_bytes().to_vec());
     finish(&task);
     assert_eq!(rig.sim.verify_attempts(), 2);
@@ -236,7 +236,7 @@ fn fourteen_minutes_in_the_background_keeps_the_pin_fifteen_forget_it() {
     finish(&task);
     session.forget_pin();
     let task = open(&rig, ENTRY, &Driver::new());
-    assert_eq!(pin_stage(&task.state()), (None, false, None));
+    assert_eq!(pin_stage(&task.state()), (3, false, None));
     task.cancel();
 }
 
@@ -249,7 +249,7 @@ fn the_background_limit_holds_even_if_coming_back_was_not_noted() {
     rig.clock.advance_ms(PIN_BACKGROUND_LIMIT.as_millis() as u64 + 1);
 
     let task = open(&rig, ENTRY, &Driver::new());
-    assert_eq!(pin_stage(&task.state()), (None, true, None));
+    assert_eq!(pin_stage(&task.state()), (3, true, None));
     task.cancel();
 }
 
@@ -928,7 +928,7 @@ fn a_pin_lost_before_a_signature_fails_it_with_pin_forgotten() {
 
     let error = signer.sign(b"a login").unwrap_err();
 
-    assert!(matches!(error, paw_core::PawError::Sign(_)), "{error:?}");
+    assert_eq!(error, KeyError::PinForgotten);
     assert_eq!(failed(&finish(login.task())), KeyError::PinForgotten);
     assert!(!rig.port.session().unwrap().holds_pin());
     assert_eq!(rig.sim.verify_attempts(), 1);

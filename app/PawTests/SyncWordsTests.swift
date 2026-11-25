@@ -48,20 +48,24 @@ final class SyncWordsTests: XCTestCase {
             send.nextStep, "Check its SSH key is on your account there. Your 2 changes are saved on this iPhone.")
     }
 
-    func testTheHostsMessageIsReadForARefusedPushAMissingStoreAndARefusedRemote() {
+    func testARefusedPushAMissingStoreAndARefusedRemoteHaveTheirOwnWords() {
         let refused = SyncFailure(
-            .Failed(message: "The host refused the push: protected branch"), during: .send, unpushed: 2, host: "h")
+            .PushRefused(message: "The host refused the push: protected branch"), during: .send, unpushed: 2, host: "h")
         XCTAssertEqual(refused.kind, .pushRefused)
         XCTAssertEqual(refused.problem, "h refused your changes")
         XCTAssertEqual(refused.nextStep, "Your 2 changes are saved on this iPhone. Details say why.")
         XCTAssertEqual(refused.pill, "Not sent \u{00B7} refused")
+        XCTAssertEqual(refused.details, ["The host refused the push: protected branch"])
 
-        let gone = SyncFailure(.Failed(message: "Repository not found"), during: .send, unpushed: 0, host: "h")
+        let gone = SyncFailure(
+            .RepositoryMissing(message: "Repository not found"), during: .send, unpushed: 0, host: "h")
         XCTAssertEqual(gone.kind, .repositoryGone)
         XCTAssertEqual(gone.pill, "Not sent \u{00B7} store not found")
 
         let remote = SyncFailure(
-            .Failed(message: "The remote contains something paw will not check out: Web/github.com"),
+            .RefusedRemote(
+                paths: [RefusedPath(path: "Web/github.com", reason: "a name used twice")],
+                message: "the remote contains something paw will not check out: Web/github.com (a name used twice)"),
             during: .refresh, unpushed: 1, host: "h")
         XCTAssertEqual(remote.kind, .refusedRemote)
         XCTAssertEqual(remote.problem, "Your store has names paw can't download")
@@ -74,6 +78,11 @@ final class SyncWordsTests: XCTestCase {
         XCTAssertEqual(other.problem, "Couldn't check for changes")
         XCTAssertEqual(other.nextStep, "Try again.")
         XCTAssertEqual(other.details, ["boom"])
+
+        let busy = SyncFailure(.StoreBusy, during: .refresh, unpushed: 0, host: "h")
+        XCTAssertEqual(busy.kind, .other)
+        XCTAssertEqual(busy.problem, "Couldn't check for changes")
+        XCTAssertEqual(busy.details, [storeBusyText])
     }
 
     func testACancelIsQuietAndOffersNothing() {

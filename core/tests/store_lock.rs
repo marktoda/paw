@@ -50,11 +50,10 @@ fn sync_task(
         sync.clone().refresh_with_key(port, driver.clone())
     };
     driver.drive(&task);
-    let end = finish(&task);
-    match (end, sync.last_task_result()) {
-        (_, Err(error)) => Err(error.to_string()),
-        (KeyTaskState::Done { .. }, Ok(Some(report))) => Ok(report),
-        (other, _) => Err(format!("the sync task ended {other:?}")),
+    match finish(&task) {
+        KeyTaskState::SyncFailed { error } => Err(error.to_string()),
+        KeyTaskState::Done { outcome: KeyOutcome::Synced { report } } => Ok(report),
+        other => Err(format!("the sync task ended {other:?}")),
     }
 }
 const REPOSITORY: &str = "you/password-store";
@@ -198,6 +197,7 @@ impl World {
     fn send(&self) -> Result<operation::SyncReport, sync::SyncError> {
         let signer = signer_with(&self.key, PIN);
         steps::sync(&self.remote.remote().unwrap(), &signer, &self.repo(), self.state(), true)
+            .map_err(key_common::sync_failure)
     }
 
     /// The working copy matches the branch, nothing is half done, and no
@@ -742,7 +742,7 @@ fn another_process_holding_the_lock_is_waited_for_and_its_death_frees_it() {
     let started = Instant::now();
     let refused = store.exclusive_within(Duration::from_millis(300)).unwrap_err();
     assert!(started.elapsed() >= Duration::from_millis(300));
-    assert!(paw_core::ffi::is_store_busy(refused.to_string()), "{refused}");
+    assert!(matches!(refused, paw_core::PawError::StoreBusy), "{refused}");
     assert!(store.shared_within(Duration::from_millis(100)).is_err(), "a reader waits for a writer in another process");
 
     // The holder is killed mid-write: the kernel drops its lock, and what
@@ -1026,26 +1026,33 @@ fn a_refused_push_reports_the_refusal_not_busy_while_the_store_is_held() {
         });
     }
     let connection = connect(&w);
-    let error = steps::push(&connection, &w.repo()).unwrap_err().to_string();
+    let error = steps::push(&connection, &w.repo()).unwrap_err();
     release.send(()).unwrap();
-    assert!(!paw_core::ffi::is_store_busy(error.clone()), "{error}");
+    assert!(matches!(error, sync::PushError::Failed(sync::SyncError::PushRefused { .. })), "{error}");
     assert!(!w.remote_has("lock/refused"));
     assert_eq!(queue::unpushed(&w.repo()).unwrap().len(), 1, "still waiting");
 }
 
 #[test]
-fn busy_is_recognisable_through_every_error_type() {
-    let busy = paw_core::lock::busy();
-    assert!(busy.to_string().starts_with(paw_core::lock::STORE_BUSY_PREFIX));
-    for message in [
-        busy.to_string(),
-        WriteError::from(paw_core::lock::busy()).to_string(),
-        sync::SyncError::from(paw_core::lock::busy()).to_string(),
+fn busy_stays_busy_through_every_error_type() {
+    use paw_core::PawError;
+    let busy = PawError::StoreBusy.to_string();
+    assert!(matches!(WriteError::from(PawError::StoreBusy), WriteError::StoreBusy));
+    assert!(matches!(sync::SyncError::from(PawError::StoreBusy), sync::SyncError::StoreBusy));
+    assert!(matches!(sync::SyncError::from(WriteError::StoreBusy), sync::SyncError::StoreBusy));
+    assert!(matches!(paw_core::setup::SetupError::from(PawError::StoreBusy), paw_core::setup::SetupError::StoreBusy));
+    for error in [
+        WriteError::StoreBusy.to_string(),
+        sync::SyncError::StoreBusy.to_string(),
+        paw_core::setup::SetupError::StoreBusy.to_string(),
+        paw_core::key::KeyError::StoreBusy.to_string(),
     ] {
-        assert!(paw_core::ffi::is_store_busy(message.clone()), "{message}");
+        assert_eq!(error, busy);
     }
-    assert!(!paw_core::ffi::is_store_busy("could not reach the git host: timed out".into()));
-    assert!(!paw_core::ffi::is_store_busy("paw tried to change the store while reading it".into()));
+    assert!(!matches!(
+        sync::SyncError::from(PawError::Network("timed out".into())),
+        sync::SyncError::StoreBusy
+    ));
 }
 
 #[test]

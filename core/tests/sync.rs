@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use key_common::{Driver, KeySigner, PIN, login, port_with};
 use paw_core::sim::remote::steps;
-use paw_core::key::LoginPurpose;
+use paw_core::key::{KeyError, LoginPurpose};
 use paw_core::sim::SimulatedKey;
 use paw_core::ssh::{SshPublicKey, SshSigner};
 use paw_core::sync::{self, Author, Connection, HostKeyPin};
@@ -50,8 +50,18 @@ fn commit_entry(dir: &Path) -> String {
 }
 
 /// `Connection` has no `Debug`, so `unwrap_err` is not available.
-fn refusal(result: Result<Connection, PawError>) -> PawError {
-    result.err().expect("the connection should have been refused")
+fn refusal(result: Result<Connection, sync::ConnectError>) -> PawError {
+    match result.err().expect("the connection should have been refused") {
+        sync::ConnectError::Remote(error) => error,
+        sync::ConnectError::Key(error) => panic!("expected the host's refusal, got the key's: {error:?}"),
+    }
+}
+
+fn key_refusal(result: Result<Connection, sync::ConnectError>) -> KeyError {
+    match result.err().expect("the connection should have been refused") {
+        sync::ConnectError::Key(error) => error,
+        sync::ConnectError::Remote(error) => panic!("expected the key's refusal, got {error:?}"),
+    }
 }
 
 #[test]
@@ -138,10 +148,10 @@ fn a_push_onto_a_remote_that_moved_is_refused_and_changes_nothing() {
     commit_entry(dir.path());
 
     // Before fetching, the remote's new tip is unknown here.
-    assert!(matches!(steps::push(&connection, dir.path()), Err(PawError::NotFastForward)));
+    assert!(matches!(steps::push(&connection, dir.path()), Err(sync::PushError::NotFastForward)));
     // After fetching it is known, and still not an ancestor of ours.
     steps::fetch(&connection, dir.path()).unwrap();
-    assert!(matches!(steps::push(&connection, dir.path()), Err(PawError::NotFastForward)));
+    assert!(matches!(steps::push(&connection, dir.path()), Err(sync::PushError::NotFastForward)));
 
     assert_eq!(server.tip(), desktop);
 }
@@ -160,7 +170,9 @@ fn a_push_the_host_refuses_is_reported() {
     commit_entry(dir.path());
 
     match steps::push(&connection, dir.path()) {
-        Err(PawError::Git(why)) => assert!(why.contains("refused the push"), "{why}"),
+        Err(sync::PushError::Failed(sync::SyncError::PushRefused { message })) => {
+            assert!(message.contains("refused the push"), "{message}")
+        }
         other => panic!("expected a refusal, got {other:?}"),
     }
     assert_eq!(server.tip(), before);
@@ -209,9 +221,9 @@ fn an_untouched_key_fails_the_login() {
     let login = login(&port, LoginPurpose::Fetch, &Driver::typist(PIN));
     let signer = login.signer().unwrap();
 
-    let error = refusal(Connection::open(&server.remote(), &signer));
+    let error = key_refusal(Connection::open(&server.remote(), &signer));
 
-    assert!(matches!(error, PawError::Sign(_)), "{error:?}");
+    assert!(matches!(error, KeyError::Reader { .. }), "{error:?}");
     assert_eq!(server.logins(), 0);
 }
 
@@ -236,7 +248,7 @@ impl SshSigner for Measured<'_> {
         self.0.public_key()
     }
 
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, PawError> {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, KeyError> {
         self.1.store(data.len(), Ordering::SeqCst);
         self.0.sign(data)
     }

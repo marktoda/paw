@@ -435,7 +435,7 @@ final class AutoFillModel {
     }
 
     private static func faceIdNotice(_ error: Error, entry: EntryRef) -> AutoFillNotice {
-        if isStoreBusy(message: String(describing: error)) {
+        if isStoreBusy(error) {
             return AutoFillNotice(problem: "The store is busy", nextStep: "Tap \(entry.name) again.")
         }
         switch error as? PawError {
@@ -546,7 +546,7 @@ final class AutoFillModel {
                 keyStage = .plugIn
             }
         case .pin(let triesLeft, let forgotten, let lastError):
-            let tries = Int(triesLeft ?? 3)
+            let tries = Int(triesLeft)
             switch lastError {
             case nil:
                 keyStage = .pin(triesLeft: tries, forgotten: forgotten)
@@ -562,7 +562,7 @@ final class AutoFillModel {
             keyStage = .touch
         case .working:
             keyStage = .working(message: "Opening \(entry.name)\u{2026}", progress: nil)
-        case .done(.opened(let opened, let until)):
+        case .done(.opened(let opened, let until, _)):
             keyStage = .done
             if until != nil, source?.copies != nil {
                 live.insert(entry.path)
@@ -570,15 +570,16 @@ final class AutoFillModel {
             fill(opened, entry: entry)
         case .done:
             keyStage = .done
-        case .failed(.NotForThisKey) where task.keyMismatch() != nil:
+        case .failed(.DifferentKey):
             keyStage = .failed(
                 problem: "This isn't your store's key",
                 nextStep: "Plug in the key you set paw up with.")
         case .failed(.PinBlocked):
             keyStage = .locked
-        case .failed(.Cancelled), .cancelled:
+        // An open never syncs or sets up.
+        case .failed(.Cancelled), .cancelled, .syncFailed, .setupFailed:
             break
-        case .failed(let error) where isStoreBusy(message: String(describing: error)):
+        case .failed(.StoreBusy):
             keyStage = .failed(problem: "The store is busy", nextStep: "Try again in a moment.")
         case .failed(let error):
             if case .KeyRemoved = error {
@@ -611,7 +612,7 @@ final class AutoFillModel {
         guard Self.isFinal(state) else { return }
         tasks[id] = nil
         let path = taskEntries.removeValue(forKey: id)
-        guard case .done(.opened(let opened, let until)) = state else { return }
+        guard case .done(.opened(let opened, let until, _)) = state else { return }
         opened.close()
         if until != nil, let copies = source?.copies, let path {
             let carried = Carry(value: copies)
@@ -849,7 +850,7 @@ extension AutoFillModel {
     /// Done, failed or cancelled: nothing changes it any more.
     fileprivate static func isFinal(_ state: KeyTaskState) -> Bool {
         switch state {
-        case .done, .failed, .cancelled: true
+        case .done, .failed, .syncFailed, .setupFailed, .cancelled: true
         default: false
         }
     }

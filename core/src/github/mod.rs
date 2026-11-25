@@ -186,6 +186,9 @@ pub enum GitHubError {
     /// The keychain could not keep or read the sign-in.
     #[error("the sign-in could not be kept: {message}")]
     Vault { message: String },
+    /// See [`crate::PawError::StoreBusy`].
+    #[error("{}", crate::lock::STORE_BUSY)]
+    StoreBusy,
     #[error("{message}")]
     Failed { message: String },
 }

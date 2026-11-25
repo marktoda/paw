@@ -159,8 +159,7 @@ fn every_held_back_change_is_re_encrypted_for_the_new_list_with_a_touch_each_and
 
     let task = w.reencrypt(&driver);
 
-    assert!(matches!(finish(&task), KeyTaskState::Done { outcome: KeyOutcome::Reencrypted }));
-    assert_eq!(w.sync.last_reencrypt().unwrap(), Some(ReencryptReport { reencrypted: 3, left: vec![] }));
+    assert_eq!(reencrypted(&task), ReencryptReport { reencrypted: 3, left: vec![] });
     assert_eq!(w.card.decipher_count(), 3);
     assert_eq!(driver.count(key_common::is_touch), 3, "{:?}", driver.states());
     assert_eq!(driver.count(key_common::is_pin), 1);
@@ -197,6 +196,14 @@ impl KeyTaskListener for CancelAfter {
     }
 }
 
+/// What a re-encrypt that ran to the end did.
+fn reencrypted(task: &Arc<KeyTask>) -> ReencryptReport {
+    match finish(task) {
+        KeyTaskState::Done { outcome: KeyOutcome::Reencrypted { report } } => report,
+        other => panic!("expected a finished re-encrypt, got {other:?}"),
+    }
+}
+
 #[test]
 fn a_cancel_part_way_keeps_what_was_done_and_a_second_run_does_only_the_rest() {
     let w = three_held_back();
@@ -212,7 +219,6 @@ fn a_cancel_part_way_keeps_what_was_done_and_a_second_run_does_only_the_rest() {
     assert_eq!(w.held(), ["Work/b", "Work/c"], "the first one is done, the rest still held");
     assert_eq!(w.queued(), before, "nothing lost");
     assert_eq!(w.open_with(&w.other, "Work/a").unwrap(), "a-pw\n");
-    assert_eq!(w.sync.last_reencrypt().unwrap(), None);
     // Nothing is sent while any is held back.
     let tip = w.server.tip();
     let report = steps::sync(&w.server.remote(), &w.signer(), &w.repo(), w.state.path(), true).unwrap();
@@ -222,8 +228,7 @@ fn a_cancel_part_way_keeps_what_was_done_and_a_second_run_does_only_the_rest() {
     let driver = Driver::helpful(PIN, &w.card);
     let task = w.reencrypt(&driver);
 
-    assert!(matches!(finish(&task), KeyTaskState::Done { .. }));
-    assert_eq!(w.sync.last_reencrypt().unwrap(), Some(ReencryptReport { reencrypted: 2, left: vec![] }));
+    assert_eq!(reencrypted(&task), ReencryptReport { reencrypted: 2, left: vec![] });
     assert_eq!(w.card.decipher_count(), 3, "the first one was not opened again");
     assert!(driver.saw(progress(0, 2)) && driver.saw(progress(2, 2)), "{:?}", driver.states());
     assert!(w.held().is_empty());
@@ -265,8 +270,7 @@ fn changes_that_cannot_be_re_encrypted_stay_held_back_and_say_why() {
 
     let task = w.reencrypt(&driver);
 
-    assert!(matches!(finish(&task), KeyTaskState::Done { .. }));
-    let report = w.sync.last_reencrypt().unwrap().unwrap();
+    let report = reencrypted(&task);
     assert_eq!(report.reencrypted, 1);
     let held = w.sync.held_back().unwrap();
     let id = |entry: &str| held.iter().find(|h| h.entry == entry).unwrap().id.clone();
@@ -300,8 +304,7 @@ fn with_nothing_held_back_it_does_nothing() {
 
     let task = w.reencrypt(&driver);
 
-    assert!(matches!(finish(&task), KeyTaskState::Done { .. }));
-    assert_eq!(w.sync.last_reencrypt().unwrap(), Some(ReencryptReport { reencrypted: 0, left: vec![] }));
+    assert_eq!(reencrypted(&task), ReencryptReport { reencrypted: 0, left: vec![] });
     assert_eq!(w.card.decipher_count(), 0);
     assert_eq!(git(&w.repo(), &["rev-parse", "HEAD"]), head);
 }
@@ -345,8 +348,7 @@ fn a_rename_that_kept_its_ciphertext_is_opened_once() {
 
     let task = w.reencrypt(&driver);
 
-    assert!(matches!(finish(&task), KeyTaskState::Done { .. }));
-    assert_eq!(w.sync.last_reencrypt().unwrap().unwrap().reencrypted, 2);
+    assert_eq!(reencrypted(&task).reencrypted, 2);
     assert_eq!(w.card.decipher_count(), 1, "one touch for one ciphertext");
     assert!(w.held().is_empty());
     assert_eq!(w.open_with(&w.other, "Work/b").unwrap(), "a-pw\n");

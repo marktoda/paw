@@ -744,7 +744,7 @@ final class SetupModel {
         case .plugIn:
             sheet.stage = .plugIn
         case .pin(let triesLeft, let forgotten, let lastError):
-            let tries = Int(triesLeft ?? 3)
+            let tries = Int(triesLeft)
             switch lastError {
             case nil:
                 sheet.stage = .pin(triesLeft: tries, forgotten: forgotten)
@@ -774,12 +774,17 @@ final class SetupModel {
             succeeded(sheet)
             return
         case .failed(.Reader):
+            self.sheet = nil
+            pinEntry = ""
+            stopped(sheet.purpose, because: nil)
+            return
+        case .setupFailed(let error):
             // Not the key's problem: the host, the repository or the store.
             self.sheet = nil
             pinEntry = ""
-            failedElsewhere(sheet.purpose)
+            stopped(sheet.purpose, because: error)
             return
-        case .failed(.Cancelled), .cancelled:
+        case .failed(.Cancelled), .cancelled, .syncFailed:
             self.sheet = nil
             pinEntry = ""
             state = setup.state()
@@ -797,7 +802,7 @@ final class SetupModel {
     }
 
     private func entryName(_ task: KeyTask) -> String {
-        if case .checkKey(let entry) = task.purpose(), !entry.isEmpty {
+        if case .checkKey(let entry?) = task.purpose(), !entry.isEmpty {
             return entry.split(separator: "/").last.map(String.init) ?? entry
         }
         return "your store"
@@ -853,11 +858,11 @@ final class SetupModel {
         }
     }
 
-    private func failedElsewhere(_ purpose: SetupSheet.Purpose) {
-        do {
-            state = try setup.lastTaskResult()
-        } catch {
-            state = setup.state()
+    /// The task ended without its step done: `error` says why, if it was
+    /// the setup's.
+    private func stopped(_ purpose: SetupSheet.Purpose, because error: SetupError?) {
+        state = setup.state()
+        if let error {
             let refused = purpose == .download ? setup.refusedRemote() : []
             if refused.isEmpty {
                 show(error, during: purpose == .download ? .downloading : .checkingKey)
@@ -910,6 +915,10 @@ final class SetupModel {
             // A host whose keys ship with paw: its key is never forgotten.
             problem = SetupProblem(
                 problem: "paw kept this server's key", nextStep: Self.sentence(message),
+                action: .startOver, actionTitle: "Start setup again")
+        case .StoreBusy where moment == .forgettingHostKey:
+            problem = SetupProblem(
+                problem: "paw kept this server's key", nextStep: Self.sentence(storeBusyText),
                 action: .startOver, actionTitle: "Start setup again")
         default:
             problem = Self.words(error, during: moment)
@@ -1009,7 +1018,8 @@ final class SetupModel {
             return SetupProblem(
                 problem: "Setup got out of step", nextStep: "Go back one step and try again.",
                 details: [message])
-        case .Failed(let message):
+        case .Failed, .StoreBusy:
+            let message = if case .Failed(let message) = error { message } else { storeBusyText }
             if downloading {
                 return SetupProblem(
                     problem: "The download didn't finish",

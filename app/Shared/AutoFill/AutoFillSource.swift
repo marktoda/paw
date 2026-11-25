@@ -77,8 +77,7 @@ enum StoreForAutoFill {
                 pairings: SitePairings.open(stateDir: location.stateDir.path),
                 codes: OneTimeCodeEntries.open(stateDir: location.stateDir.path)))
         } catch {
-            let detail = String(describing: error)
-            return isStoreBusy(message: detail) ? .busy : .unreadable(detail)
+            return isStoreBusy(error) ? .busy : .unreadable(String(describing: error))
         }
     }
 

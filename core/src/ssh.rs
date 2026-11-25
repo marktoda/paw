@@ -11,7 +11,6 @@
 
 use base64::Engine;
 
-use crate::PawError;
 
 const ED25519: &str = "ssh-ed25519";
 
@@ -54,5 +53,5 @@ pub trait SshSigner: Send + Sync {
 
     /// Signs `data` and returns the bare signature (64 bytes for ed25519).
     /// May block for as long as the key waits for a touch.
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, PawError>;
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, crate::key::KeyError>;
 }

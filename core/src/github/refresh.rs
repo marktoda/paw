@@ -301,7 +301,6 @@ impl GitHubAccount {
         let stopping = |step| stop(step) || Instant::now() >= deadline;
         // How long to wait for a lock: briefly, and never past the deadline.
         let lock_wait = || BACKGROUND_LOCK_WAIT.min(deadline.saturating_duration_since(Instant::now()));
-        let busy = |e: &PawError| crate::lock::is_store_busy(&e.to_string());
         let failed = |e: &dyn std::fmt::Display| BackgroundRefreshReport::ended(BackgroundOutcome::Failed { message: e.to_string() });
         match self.keeper.signed_in() {
             Ok(true) => {}
@@ -340,7 +339,7 @@ impl GitHubAccount {
         let fetching = match self.fetch_with_token(&http, &link, lock_wait(), Some(&mut in_time)) {
             Ok(fetching) => fetching,
             Err(_) if stopping(RefreshStep::Fetch) => return out_of_time(),
-            Err(FetchError::Paw(e)) if busy(&e) => return BackgroundRefreshReport::ended(BackgroundOutcome::Busy),
+            Err(FetchError::Paw(PawError::StoreBusy)) => return BackgroundRefreshReport::ended(BackgroundOutcome::Busy),
             Err(FetchError::GitHub(e)) => return from_github(e),
             Err(FetchError::Paw(PawError::Network(message))) => {
                 return BackgroundRefreshReport::ended(BackgroundOutcome::Offline { message });
@@ -356,7 +355,7 @@ impl GitHubAccount {
         }
         let held = match self.publish(fetching, lock_wait()) {
             Ok(held) => held,
-            Err(e) if busy(&e) => return BackgroundRefreshReport::ended(BackgroundOutcome::Busy),
+            Err(PawError::StoreBusy) => return BackgroundRefreshReport::ended(BackgroundOutcome::Busy),
             Err(e) => return failed(&e),
         };
 

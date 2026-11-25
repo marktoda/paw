@@ -73,7 +73,7 @@ impl Phone {
             driver.clone(),
         );
         driver.drive(&task);
-        let KeyTaskState::Done { outcome: KeyOutcome::Opened { entry, face_id_until_ms } } = finish(&task) else {
+        let KeyTaskState::Done { outcome: KeyOutcome::Opened { entry, face_id_until_ms, .. } } = finish(&task) else {
             panic!("the entry did not open: {:?}", driver.states());
         };
         self.key.touches.fetch_add(driver.count(is_touch) as u32, Ordering::SeqCst);

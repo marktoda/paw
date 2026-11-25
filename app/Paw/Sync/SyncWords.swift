@@ -66,7 +66,8 @@ struct SyncFailure: Equatable {
 }
 
 extension SyncFailure {
-    /// A sync error from the core's `last_task_result`.
+    /// A sync error from a key task's `SyncFailed`, or a check with the
+    /// sign-in.
     init(_ error: SyncError, during kind: SyncKind, unpushed: Int, host: String) {
         let waiting = Self.waiting(unpushed)
         let notDone = switch kind {
@@ -111,51 +112,49 @@ extension SyncFailure {
             nextStep = "Nothing was overwritten or sent."
             details = paths
             pill = "Sync stopped"
-        case .WrongPin(let triesLeft):
-            self.kind = .other
-            problem = "Wrong PIN"
-            nextStep = triesLeft == 1 ? "1 try left before the key locks." : "\(triesLeft) tries left."
-            pill = notDone
-        case .PinBlocked:
-            self.kind = .other
-            problem = "Your key is locked"
-            nextStep = "Unlock it on a computer with its reset code or admin PIN."
-            pill = notDone
-        case .Sign(let message):
-            self.kind = .other
-            problem = "Your key didn't sign in"
-            nextStep = "Try again and touch the gold part while it blinks."
+        case .RefusedRemote:
+            self.kind = .refusedRemote
+            problem = "Your store has names paw can't download"
+            nextStep = Self.sentences("Rename them on a computer.", waiting)
+            pill = "Sync paused \u{00B7} Review"
+        case .PushRefused(let message):
+            self.kind = .pushRefused
+            problem = "\(host) refused your changes"
+            nextStep = Self.sentences(waiting, "Details say why.")
             details = [message]
+            pill = "Not sent \u{00B7} refused"
+        case .RepositoryMissing(let message):
+            self.kind = .repositoryGone
+            problem = "\(host) can't find your store"
+            nextStep = Self.sentences("It may have been renamed, deleted or made private.", waiting)
+            details = [message]
+            pill = "\(notDone) \u{00B7} store not found"
+        case .Cancelled:
+            let cancelled = Self.cancelled(during: kind, unpushed: unpushed)
+            self.kind = cancelled.kind
+            problem = cancelled.problem
+            nextStep = cancelled.nextStep
+            pill = cancelled.pill
+        case .StoreBusy:
+            self.kind = .other
+            problem = Self.couldNot(kind)
+            nextStep = Self.sentences("Try again.", waiting)
+            details = [storeBusyText]
             pill = notDone
         case .Failed(let message):
-            let lowered = message.lowercased()
+            self.kind = .other
+            problem = Self.couldNot(kind)
+            nextStep = Self.sentences("Try again.", waiting)
             details = [message]
-            if lowered.hasPrefix("the remote contains something paw will not check out") {
-                self.kind = .refusedRemote
-                problem = "Your store has names paw can't download"
-                nextStep = Self.sentences("Rename them on a computer.", waiting)
-                details = []
-                pill = "Sync paused \u{00B7} Review"
-            } else if lowered.contains("refused the push") {
-                self.kind = .pushRefused
-                problem = "\(host) refused your changes"
-                nextStep = Self.sentences(waiting, "Details say why.")
-                pill = "Not sent \u{00B7} refused"
-            } else if lowered.contains("repository not found") || lowered.contains("not found") {
-                self.kind = .repositoryGone
-                problem = "\(host) can't find your store"
-                nextStep = Self.sentences("It may have been renamed, deleted or made private.", waiting)
-                pill = "\(notDone) \u{00B7} store not found"
-            } else {
-                self.kind = .other
-                problem = switch kind {
-                case .send: "Couldn't send your changes"
-                case .refresh: "Couldn't check for changes"
-                case .reencrypt: "Couldn't re-encrypt your changes"
-                }
-                nextStep = Self.sentences("Try again.", waiting)
-                pill = notDone
-            }
+            pill = notDone
+        }
+    }
+
+    private static func couldNot(_ kind: SyncKind) -> String {
+        switch kind {
+        case .send: "Couldn't send your changes"
+        case .refresh: "Couldn't check for changes"
+        case .reencrypt: "Couldn't re-encrypt your changes"
         }
     }
 

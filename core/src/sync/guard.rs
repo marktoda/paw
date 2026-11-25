@@ -73,7 +73,8 @@ impl From<Refused> for PawError {
 
 impl From<Refused> for super::SyncError {
     fn from(refused: Refused) -> Self {
-        super::SyncError::Failed { message: refused.to_string() }
+        let message = refused.to_string();
+        super::SyncError::RefusedRemote { paths: refused.0, message }
     }
 }
 

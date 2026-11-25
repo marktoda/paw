@@ -30,14 +30,10 @@ pub mod write;
 
 uniffi::setup_scaffolding!();
 
-#[derive(Debug, thiserror::Error, uniffi::Error)]
+#[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
 pub enum PawError {
     #[error("could not talk to the key: {0}")]
     Transport(String),
-    #[error("wrong PIN, {tries_left} tries left")]
-    WrongPin { tries_left: u8 },
-    #[error("the PIN is blocked; unblock it with the admin PIN")]
-    PinBlocked,
     #[error("this is not an encrypted pass entry: {0}")]
     NotAnEntry(String),
     #[error("card error: {0}")]
@@ -67,6 +63,11 @@ pub enum PawError {
     /// The store on this device could not be read, or holds no such thing.
     #[error("{0}")]
     Store(String),
+    /// Another part of paw, or the AutoFill extension, held the store for
+    /// longer than paw waits. Nothing was changed, the store is not broken,
+    /// and trying again will work.
+    #[error("{}", lock::STORE_BUSY)]
+    StoreBusy,
     /// The entry decrypted, but to something other than text. It is left
     /// exactly as it is.
     #[error("this entry is not text, so paw cannot show or edit it")]

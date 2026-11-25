@@ -98,6 +98,8 @@ enum GitHubWords {
             return Device.words("paw couldn't keep the sign-in on this iPhone. Try again.")
         case .Refused(let message), .Failed(let message):
             return "GitHub didn't allow it: \(message). Try again."
+        case .StoreBusy:
+            return "GitHub didn't allow it: \(storeBusyText). Try again."
         case .NotLinked:
             return "No store chosen yet. Choose one."
         case .WrongRepository(let store, _):

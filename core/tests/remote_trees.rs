@@ -226,7 +226,7 @@ fn integrate_after(card: &Arc<SimulatedKey>, what: &str, extra: Vec<(&'static st
     let result = sync::integrate(&dir);
 
     let message = match result {
-        Err(SyncError::Failed { message }) => message,
+        Err(error @ SyncError::RefusedRemote { .. }) => error.to_string(),
         other => panic!("{what}: integrate was not refused: {other:?}"),
     };
     assert_eq!(git(&dir, &["rev-parse", "HEAD"]), head, "{what}");
@@ -294,7 +294,8 @@ fn a_local_name_that_collides_with_a_remote_one_is_not_replayed() {
 
     let result = sync::integrate(dir.path());
 
-    let Err(SyncError::Failed { message }) = result else { panic!("{result:?}") };
+    let Err(error @ SyncError::RefusedRemote { .. }) = result else { panic!("{result:?}") };
+    let message = error.to_string();
     assert_refusal_names(&message, "web/bank.gpg", "replay");
     assert_eq!(git(dir.path(), &["rev-parse", "HEAD"]), head);
     assert_eq!(queue::unpushed(dir.path()).unwrap().len(), 1);
@@ -345,7 +346,8 @@ fn a_folder_turned_into_a_link_under_a_waiting_change_is_refused() {
 
     let result = sync::integrate(&dir);
 
-    let Err(SyncError::Failed { message }) = result else { panic!("{result:?}") };
+    let Err(error @ SyncError::RefusedRemote { .. }) = result else { panic!("{result:?}") };
+    let message = error.to_string();
     assert_eq!(message, format!("{REFUSED}: web (it is a symbolic link)"));
     assert_eq!(
         sync::refused_remote(&dir).unwrap(),
@@ -455,7 +457,8 @@ fn a_pull_cannot_write_beside_the_store_on_a_casefold_file_system() {
     let result = sync::integrate(&dir);
 
     assert!(!state.join("recipients").exists(), "a pull wrote outside the store: {result:?}");
-    let Err(SyncError::Failed { message }) = result else { panic!("{result:?}") };
+    let Err(error @ SyncError::RefusedRemote { .. }) = result else { panic!("{result:?}") };
+    let message = error.to_string();
     assert!(message.starts_with(REFUSED), "{message}");
     // The NFC link and the NFD folder are one name here.
     let named = "caf\u{e9} (it is a symbolic link, and on an iPhone it is the same name as cafe\u{301})";
@@ -474,7 +477,8 @@ fn a_pull_cannot_write_beside_the_store_on_a_casefold_file_system() {
     );
     repo.reference("refs/remotes/origin/main", third, true, "fetch").unwrap();
     let result = sync::integrate(&dir);
-    let Err(SyncError::Failed { message }) = result else { panic!("{result:?}") };
+    let Err(error @ SyncError::RefusedRemote { .. }) = result else { panic!("{result:?}") };
+    let message = error.to_string();
     assert!(message.contains("same name as"), "{message}");
     assert!(!state.join("recipients").exists());
 }

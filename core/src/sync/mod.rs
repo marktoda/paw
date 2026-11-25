@@ -8,7 +8,7 @@
 //! login.
 //!
 //! A push only ever fast-forwards. If the remote has moved, it fails with
-//! [`PawError::NotFastForward`] and changes nothing.
+//! [`PushError::NotFastForward`] and changes nothing.
 
 pub mod address;
 pub(crate) mod guard;
@@ -31,8 +31,8 @@ pub use history::{ChangeKind, KeptBoth};
 pub use integrate::{
     IntegrateReport, Integration, RecipientsChange, Replaced, accept_replaced_remote, integrate,
 };
-pub use transport::{Connection, DOWNLOAD_LIMIT, HostKeyPin, PresentedHostKey, Remote, Route, key_type_words, scan_host_key};
-pub(crate) use transport::made_no_connection;
+pub use transport::{ConnectError, Connection, DOWNLOAD_LIMIT, HostKeyPin, PresentedHostKey, Remote, Route, key_type_words, scan_host_key};
+pub(crate) use transport::{made_no_connection, says_repository_missing};
 
 use crate::PawError;
 use crate::lock::{Exclusive, FETCH_WAIT, Fetching, StoreLock};
@@ -57,18 +57,30 @@ pub enum SyncError {
     /// The host does not accept the key. Asked before the PIN or a touch.
     #[error("the git host did not accept this key")]
     KeyRejected,
-    #[error("wrong PIN, {tries_left} tries left")]
-    WrongPin { tries_left: u8 },
-    #[error("the PIN is blocked; unblock it with the admin PIN")]
-    PinBlocked,
-    /// The key did not sign: most often nobody touched it in time.
-    #[error("the key did not sign the login: {message}")]
-    Sign { message: String },
     #[error("could not reach the git host: {message}")]
     Network { message: String },
     /// The remote moved again while pushing, after one retry.
     #[error("the remote kept changing; try again")]
     RemoteKeptMoving,
+    /// The remote holds something paw will not check out (see
+    /// [`refused_remote`]). The store and the waiting changes stay as they
+    /// were; the remote has to be fixed from another computer.
+    #[error("{message}")]
+    RefusedRemote { paths: Vec<RefusedPath>, message: String },
+    /// The host refused the update, by a rule of its own. `message` is what
+    /// git and the host said.
+    #[error("{message}")]
+    PushRefused { message: String },
+    /// The host says the repository is not there, or that this key can't
+    /// see it. `message` is what git and the host said.
+    #[error("{message}")]
+    RepositoryMissing { message: String },
+    /// See [`PawError::StoreBusy`].
+    #[error("{}", crate::lock::STORE_BUSY)]
+    StoreBusy,
+    /// Stopped between two steps, as asked. Nothing is left half done.
+    #[error("stopped")]
+    Cancelled,
     #[error("{message}")]
     Failed { message: String },
 }
@@ -77,10 +89,17 @@ impl From<PawError> for SyncError {
     fn from(error: PawError) -> Self {
         match error {
             PawError::KeyRejected => Self::KeyRejected,
-            PawError::WrongPin { tries_left } => Self::WrongPin { tries_left },
-            PawError::PinBlocked => Self::PinBlocked,
-            PawError::Sign(message) => Self::Sign { message },
             PawError::Network(message) => Self::Network { message },
+            PawError::StoreBusy => Self::StoreBusy,
+            other => Self::Failed { message: other.to_string() },
+        }
+    }
+}
+
+impl From<crate::write::WriteError> for SyncError {
+    fn from(error: crate::write::WriteError) -> Self {
+        match error {
+            crate::write::WriteError::StoreBusy => Self::StoreBusy,
             other => Self::Failed { message: other.to_string() },
         }
     }
@@ -208,7 +227,7 @@ pub(crate) fn begin_fetch(store: &StoreLock, repo: &Repository) -> Result<Fetchi
 }
 
 /// [`begin_fetch`], waiting at most `wait` for another fetch of the store
-/// to end (a background refresh waits only briefly: [`crate::lock::busy`]).
+/// to end (a background refresh waits only briefly: [`PawError::StoreBusy`]).
 pub(crate) fn begin_fetch_within(store: &StoreLock, repo: &Repository, wait: Duration) -> Result<Fetching, PawError> {
     let fetching = store.fetching(wait)?;
     crate::lock::remove_stale_fetch_locks(store.repo());
@@ -574,6 +593,26 @@ pub(crate) fn check_not_being_sent(
     Ok(())
 }
 
+/// Why a push did not go. Nothing was pushed.
+#[derive(Debug, thiserror::Error)]
+pub enum PushError {
+    /// The remote has moved since it was fetched: fetch, integrate and try
+    /// again. paw never forces.
+    #[error("{}", PawError::NotFastForward)]
+    NotFastForward,
+    #[error(transparent)]
+    Failed(SyncError),
+}
+
+impl From<PawError> for PushError {
+    fn from(error: PawError) -> Self {
+        match error {
+            PawError::NotFastForward => Self::NotFastForward,
+            other => Self::Failed(other.into()),
+        }
+    }
+}
+
 /// Pushes the commit `tip` to `branch` (`refs/heads/...`) on the remote, as
 /// a fast-forward only. `held` is the store lock: it is used to record
 /// which commit is going out, then released for the transfer. After it,
@@ -587,7 +626,7 @@ pub(crate) fn push_tip(
     tip: git2::Oid,
     held: Exclusive,
     _pushing: &crate::lock::Pushing,
-) -> Result<(), PawError> {
+) -> Result<(), PushError> {
     let short = refs::short(branch).ok_or_else(|| PawError::Git("HEAD is not on a branch".into()))?;
     repo.reference(&refs::pushing(short), tip, true, "push").map_err(git_err)?;
     drop(held);
@@ -613,12 +652,14 @@ pub(crate) fn push_tip(
     });
 
     let outcome = match (sent, refused) {
-        (Err(e), _) => Err(e),
+        (Err(e), _) => Err(e.into()),
         // The host moved between our look at its branch and our update.
         (Ok(()), Some(why)) if why.contains("non-fast-forward") || why.contains("fetch first") => {
-            Err(PawError::NotFastForward)
+            Err(PushError::NotFastForward)
         }
-        (Ok(()), Some(why)) => Err(PawError::Git(format!("the host refused the push: {why}"))),
+        (Ok(()), Some(why)) => Err(PushError::Failed(SyncError::PushRefused {
+            message: PawError::Git(format!("the host refused the push: {why}")).to_string(),
+        })),
         (Ok(()), None) => Ok(()),
     };
     let clear_marker = || {

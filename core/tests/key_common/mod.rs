@@ -8,12 +8,11 @@
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
-use paw_core::PawError;
 use paw_core::copies::CopyCache;
-use paw_core::key::{KeyError, KeyPort, KeyTask, KeyTaskListener, KeyTaskState, LoginPurpose, SessionSigner};
+use paw_core::key::{KeyError, KeyPort, KeyTask, KeyTaskListener, KeyTaskState, LoginPurpose};
 use paw_core::sim::copies::{SimClock, SimKeystore};
 use paw_core::sim::fixture::write_fixture_store;
-use paw_core::sim::tasks::{SimLogin, decipher};
+use paw_core::sim::tasks::{SimLogin, SimSigner, decipher};
 use paw_core::sim::{SimOptions, SimTouch, SimulatedKey};
 use paw_core::ssh::{SshPublicKey, SshSigner};
 use paw_core::store::PassStore;
@@ -261,18 +260,8 @@ pub fn login(port: &Arc<KeyPort>, purpose: LoginPurpose, driver: &Arc<Driver>) -
 pub struct KeySigner {
     pub port: Arc<KeyPort>,
     pub driver: Arc<Driver>,
-    signer: SessionSigner,
+    signer: SimSigner,
     _login: SimLogin,
-}
-
-impl KeySigner {
-    /// The error the sign-in task failed with, once a signature failed.
-    pub fn failure(&self) -> Option<KeyError> {
-        match self._login.task().state() {
-            KeyTaskState::Failed { error } => Some(error),
-            _ => None,
-        }
-    }
 }
 
 pub fn signer_with(sim: &Arc<SimulatedKey>, pin: &str) -> KeySigner {
@@ -281,6 +270,14 @@ pub fn signer_with(sim: &Arc<SimulatedKey>, pin: &str) -> KeySigner {
     let login = login(&port, LoginPurpose::Fetch, &driver);
     let signer = login.signer().expect("the sign-in failed");
     KeySigner { port, driver, signer, _login: login }
+}
+
+/// A sync's failure that is the sync's, not the key's.
+pub fn sync_failure(failure: paw_core::key::TaskFailure) -> paw_core::sync::SyncError {
+    match failure {
+        paw_core::key::TaskFailure::Sync(error) => error,
+        other => panic!("expected the sync's failure, got {other:?}"),
+    }
 }
 
 /// [`signer_with`] for a key whose PIN is [`PIN`].
@@ -293,7 +290,7 @@ impl SshSigner for KeySigner {
         self.signer.public_key()
     }
 
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, PawError> {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, KeyError> {
         self.signer.sign(data)
     }
 }

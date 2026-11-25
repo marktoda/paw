@@ -98,7 +98,7 @@ struct TouchTimeoutSection: View {
             if let lastError {
                 let words = KeyErrorWords(pinAskedAgain: lastError, entry: "the check", purpose: .check)
                 ErrorRow(kind: .error, problem: words.problem, nextStep: words.nextStep)
-            } else if let triesLeft {
+            } else if triesLeft < 3 {
                 line(triesLeft == 1 ? "1 PIN try left before the key locks." : "\(triesLeft) PIN tries left.")
             }
             // As the key sheet's field: no content type, so iOS offers no
@@ -131,7 +131,7 @@ struct TouchTimeoutSection: View {
             outcome("Your key gave up waiting for a touch.")
         case .done:
             outcome("Your key signed. It was touched, or it doesn't need a touch to sign in.")
-        case .failed(.NotForThisKey):
+        case .failed(.DifferentKey):
             outcome("This isn't the key this store was set up with. No PIN was sent.")
         case .failed(.Cancelled), .cancelled:
             EmptyView()

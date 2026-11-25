@@ -494,7 +494,7 @@ final class SyncModel {
         case .plugIn:
             stage = .plugIn
         case .pin(let triesLeft, let forgotten, let lastError):
-            let tries = Int(triesLeft ?? 3)
+            let tries = Int(triesLeft)
             switch lastError {
             case nil:
                 stage = .pin(triesLeft: tries, forgotten: forgotten)
@@ -518,16 +518,15 @@ final class SyncModel {
                 self.progress = progress
                 stage = .working(message: workingMessage(kind, unpushed: unpushed), progress: progress.map(Self.progressLine))
             }
-        case .done:
+        case .done(let outcome):
             stage = .done
-            finished(kind, sheetID: sheet.id)
-        case .failed(.Reader(let detail)):
-            if failedElsewhere(kind, unpushed: unpushed) {
-                return
-            }
-            let words = syncKeyWords(.Reader(detail: detail), during: kind, unpushed: unpushed)
-            stage = .failed(problem: words.problem, nextStep: words.nextStep)
-            running = nil
+            finished(kind, sheetID: sheet.id, outcome: outcome)
+        case .syncFailed(let error):
+            syncFailed(error, kind: kind, unpushed: unpushed)
+            return
+        case .setupFailed:
+            cancelSheet()
+            return
         case .failed(.Cancelled), .cancelled:
             cancelSheet()
             return
@@ -576,46 +575,33 @@ final class SyncModel {
     }
 
     /// The task failed for a reason that is not the key's: the sheet turns
-    /// into the status page, with the failure said inline. `false` if it
-    /// was the key's after all (the reader itself failed).
-    private func failedElsewhere(_ kind: SyncKind, unpushed: Int) -> Bool {
-        let error: Error
-        do {
-            if kind == .reencrypt {
-                _ = try sync.lastReencrypt()
-            } else {
-                _ = try sync.lastTaskResult()
-            }
-            return false
-        } catch let found {
-            error = found
-        }
+    /// into the status page, with the failure said inline.
+    private func syncFailed(_ error: SyncError, kind: SyncKind, unpushed: Int) {
         running = nil
         #if targetEnvironment(simulator)
         SimRemoteHandle.shared.syncFailed()
         refreshSimSummary()
         #endif
-        if let error = error as? SyncError {
-            failure = SyncFailure(error, during: kind, unpushed: unpushed, host: host)
-        } else {
-            failure = SyncFailure(
-                kind: .other, during: kind, problem: "Couldn't sync", nextStep: SyncFailure.waiting(unpushed),
-                details: [describe(error)], pill: "Sync failed")
-        }
+        failure = SyncFailure(error, during: kind, unpushed: unpushed, host: host)
         recomputeLocal()
         pinEntry = ""
         sheet?.mode = .status
-        return true
     }
 
     /// The core's sync went through. The sheet shows Done for a second and
     /// closes, unless what came back needs looking at (replaced history,
     /// held-back changes): then it turns into the status page that says so.
-    private func finished(_ kind: SyncKind, sheetID: UUID) {
+    private func finished(_ kind: SyncKind, sheetID: UUID, outcome: KeyOutcome) {
         running = nil
-        let needsLook = kind == .reencrypt
-            ? reencrypted((try? sync.lastReencrypt()) ?? nil)
-            : absorb((try? sync.lastTaskResult()) ?? nil, kind: kind)
+        let needsLook: Bool
+        switch outcome {
+        case .reencrypted(let report):
+            needsLook = reencrypted(report)
+        case .synced(let report):
+            needsLook = absorb(report, kind: kind)
+        default:
+            needsLook = kind == .reencrypt ? reencrypted(nil) : absorb(nil, kind: kind)
+        }
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(1))
             guard let self, self.sheet?.id == sheetID, case .key(_, _, .done)? = self.sheet?.mode else { return }

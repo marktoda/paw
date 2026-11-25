@@ -71,6 +71,9 @@ struct KeyErrorWords: Equatable {
             nextStep = recipients.count == 1
                 ? "It's encrypted for another key. Open it on a computer that has that key."
                 : "It's encrypted for other keys. Open it on a computer that has one of them."
+        case .DifferentKey:
+            problem = "This key can't open \(entry)"
+            nextStep = "It's encrypted for another key. Open it on a computer that has that key."
         case .NoDecryptionKey:
             problem = "This key has no decryption key"
             nextStep = "paw needs a key with an OpenPGP decryption key. Try another key."
@@ -80,6 +83,9 @@ struct KeyErrorWords: Equatable {
         case .EntryUnreadable(let detail):
             problem = "\(entry) can't be read"
             nextStep = "Its file may be damaged (\(detail))."
+        case .StoreBusy:
+            problem = "\(entry) can't be read"
+            nextStep = "Its file may be damaged (\(storeBusyText))."
         case .DecryptFailed:
             problem = "This key couldn't open \(entry)"
             nextStep = "It may be encrypted for another key."

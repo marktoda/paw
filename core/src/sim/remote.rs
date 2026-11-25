@@ -1111,7 +1111,7 @@ pub mod steps {
     use crate::lock::{FETCH_WAIT, StoreLock};
     use crate::ssh::SshSigner;
     use crate::sync::operation::{self, SyncReport};
-    use crate::sync::{self, Cloned, Connection, Remote, SyncError, git_err, refs};
+    use crate::sync::{self, Cloned, Connection, Remote, git_err, refs};
 
     /// Clones the remote's default branch into `dir`, which must be empty
     /// or not exist yet. An empty repository, or one holding what paw will
@@ -1136,7 +1136,7 @@ pub mod steps {
 
     /// Pushes the current branch to the branch of the same name, as a
     /// fast-forward only, as a send does.
-    pub fn push(connection: &Connection, dir: &Path) -> Result<(), PawError> {
+    pub fn push(connection: &Connection, dir: &Path) -> Result<(), sync::PushError> {
         let store = StoreLock::for_repo(dir);
         let pushing = store.pushing(FETCH_WAIT)?;
         let repo = sync::guard::open(dir)?;
@@ -1155,7 +1155,7 @@ pub mod steps {
         dir: &Path,
         state_dir: &Path,
         send: bool,
-    ) -> Result<SyncReport, SyncError> {
+    ) -> Result<SyncReport, crate::key::TaskFailure> {
         operation::run_until(remote, signer, dir, state_dir, send, &|| false, None)
     }
 }

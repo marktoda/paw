@@ -105,8 +105,13 @@ func describeEditError(_ error: Error) -> String {
         switch error {
         case .UncommittedChanges(let paths):
             return "The store has changes paw didn't make: \(paths.joined(separator: ", "))."
-        case .Failed(let message):
+        case .Failed(let message), .RefusedRemote(_, let message), .PushRefused(let message),
+             .RepositoryMissing(let message):
             return message.prefix(1).uppercased() + message.dropFirst() + "."
+        case .StoreBusy:
+            return storeBusyText.prefix(1).uppercased() + storeBusyText.dropFirst() + "."
+        case .Cancelled:
+            return "Stopped."
         default:
             return String(describing: error)
         }
@@ -159,6 +164,8 @@ func editProblem(_ error: WriteError, folder: String) -> EditProblem {
         return EditProblem(problem: "That password can't be generated", nextStep: message)
     case .Failed(let message), .Certificate(let message):
         return EditProblem(problem: "Couldn't save this", nextStep: "Nothing was changed. Details: \(message)")
+    case .StoreBusy:
+        return EditProblem(problem: "Couldn't save this", nextStep: "Nothing was changed. Details: \(storeBusyText)")
     case .NoEncryptionKey(_, let reason):
         return EditProblem(problem: "A key for this folder can't encrypt", nextStep: reason)
     case .NotPinned:

@@ -164,7 +164,10 @@ impl GitHubAccount {
         let link = GitHubLink { full_name: chosen.full_name.clone(), id: chosen.id, ssh_address: chosen.ssh_address.clone() };
         let _held = crate::lock::StoreLock::for_state_dir(&self.state_dir)
             .exclusive()
-            .map_err(|e| GitHubError::Failed { message: e.to_string() })?;
+            .map_err(|e| match e {
+                crate::PawError::StoreBusy => GitHubError::StoreBusy,
+                other => GitHubError::Failed { message: other.to_string() },
+            })?;
         link.save(&self.state_dir)?;
         Ok(chosen.ssh_address.clone())
     }

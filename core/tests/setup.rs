@@ -138,13 +138,11 @@ impl Rig {
 
     /// Done, or failed for a reason that is the setup's, not the key's.
     fn result(&self, state: KeyTaskState) -> Result<SetupState, SetupError> {
-        let result = self.setup.last_task_result();
         match state {
-            KeyTaskState::Done { .. } => assert!(result.is_ok(), "{result:?}"),
-            KeyTaskState::Failed { error: KeyError::Reader { .. } } => assert!(result.is_err(), "{result:?}"),
+            KeyTaskState::Done { .. } => Ok(self.setup.state()),
+            KeyTaskState::SetupFailed { error } => Err(error),
             other => panic!("the task ended {other:?}"),
         }
-        result
     }
 }
 

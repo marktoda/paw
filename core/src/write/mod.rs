@@ -75,13 +75,19 @@ pub enum WriteError {
     /// A password policy that cannot be used.
     #[error("{message}")]
     Policy { message: String },
+    /// See [`PawError::StoreBusy`].
+    #[error("{}", crate::lock::STORE_BUSY)]
+    StoreBusy,
     #[error("{message}")]
     Failed { message: String },
 }
 
 impl From<PawError> for WriteError {
     fn from(error: PawError) -> Self {
-        Self::Failed { message: error.to_string() }
+        match error {
+            PawError::StoreBusy => Self::StoreBusy,
+            other => Self::Failed { message: other.to_string() },
+        }
     }
 }
 

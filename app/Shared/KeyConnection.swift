@@ -116,18 +116,28 @@ final class SimulatedCardConnection: CardConnection, @unchecked Sendable {
 }
 #endif
 
+/// The words for a store another part of paw (or the AutoFill extension)
+/// was using for longer than paw waits. Nothing was changed.
+let storeBusyText = "the password store is busy: another part of paw (or the AutoFill extension) is using it; try again"
+
+/// Whether `error` says the store was busy: trying again will work, and the
+/// store is not broken.
+func isStoreBusy(_ error: Swift.Error) -> Bool {
+    if case .StoreBusy? = error as? PawError { return true }
+    if case .StoreBusy? = error as? KeyError { return true }
+    if case .StoreBusy? = error as? SyncError { return true }
+    if case .StoreBusy? = error as? SetupError { return true }
+    if case .StoreBusy? = error as? WriteError { return true }
+    if case .StoreBusy? = error as? GitHubError { return true }
+    return false
+}
+
 /// Turns a failure into a sentence a person can act on.
 func describe(_ error: Swift.Error) -> String {
     guard let error = error as? PawError else {
         return error.localizedDescription
     }
     switch error {
-    case .WrongPin(let triesLeft):
-        return triesLeft == 1
-            ? "Wrong PIN. 1 try left before the key locks."
-            : "Wrong PIN. \(triesLeft) tries left."
-    case .PinBlocked:
-        return "The PIN is locked. Unlock it with your admin PIN."
     case .Transport(let message):
         return "Could not talk to the key: \(message)"
     case .NotAnEntry(let message):
@@ -154,6 +164,8 @@ func describe(_ error: Swift.Error) -> String {
         return "Git reported a problem: \(message)"
     case .Store(let message):
         return message
+    case .StoreBusy:
+        return storeBusyText
     case .NotText:
         return "This entry is not text, so paw cannot show it."
     case .NotForThisKey(let recipients):

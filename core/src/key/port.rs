@@ -15,7 +15,7 @@ use super::keylog::{self, Sink};
 use super::session::{Halt, KeySession};
 use super::signer::{SessionSigner, authenticate};
 use super::task::{Body, KeyTask, TaskCore};
-use super::{KeyError, KeyOutcome, KeyPurpose, KeyTaskListener, KeyTaskState, LoginPurpose};
+use super::{KeyError, KeyOutcome, KeyPurpose, KeyTaskListener, KeyTaskState, LoginPurpose, TaskFailure};
 use super::ApduTransport;
 use super::Uptime;
 use crate::PawError;
@@ -39,11 +39,11 @@ struct State {
 const TOUCH_CHECK_LEN: usize = 146;
 
 /// Work a task does once the key has done its part, before it ends.
-pub(crate) type After = Box<dyn FnOnce(&Arc<KeySession>) -> Result<(), KeyError> + Send>;
+pub(crate) type After = Box<dyn FnOnce(&Arc<KeySession>) -> Result<(), TaskFailure> + Send>;
 
 /// What a sign-in task does on the network with the signer, in the task's
 /// thread. It reports progress and ends the task.
-pub(crate) type Work = Box<dyn FnOnce(&Arc<TaskCore>, SessionSigner) -> Result<KeyOutcome, Halt> + Send>;
+pub(crate) type Work = Box<dyn FnOnce(&Arc<TaskCore>, SessionSigner) -> Result<KeyOutcome, TaskFailure> + Send>;
 
 /// Deciphers one ciphertext with the session's key, in a decrypting
 /// task's thread: the PIN is asked once, the key is touched for each.
@@ -53,7 +53,7 @@ pub(crate) type Opener<'a> = dyn FnMut(&[u8]) -> Result<zeroize::Zeroizing<Vec<u
 /// It reports progress, checks for cancel between ciphertexts, and returns
 /// how the task ends.
 pub(crate) type DecryptWork =
-    Box<dyn FnOnce(&Arc<TaskCore>, &mut Opener<'_>) -> Result<KeyOutcome, Halt> + Send>;
+    Box<dyn FnOnce(&Arc<TaskCore>, &mut Opener<'_>) -> Result<KeyOutcome, TaskFailure> + Send>;
 
 /// What an open does once the entry has decrypted.
 enum Then {
@@ -61,15 +61,6 @@ enum Then {
     Keep(Option<(Arc<CopyCache>, Duration)>),
     /// Wipes it at once (setup's key check), then runs `after` if given.
     Check(Option<After>),
-}
-
-/// How a task refuses a card that is not the enrolled one. `KeyError` cannot
-/// gain a variant without breaking Swift's exhaustive switches, so this is
-/// the existing "not for this key" refusal, found before any PIN or touch,
-/// naming the key that is expected; the task's `key_mismatch` has both
-/// identities.
-pub(crate) fn mismatch_error(mismatch: &KeyMismatch) -> KeyError {
-    KeyError::NotForThisKey { recipients: vec![super::enrolment::mismatch_message(mismatch)] }
 }
 
 /// The refusal for `session` if it is not `expected`.
@@ -85,8 +76,12 @@ pub struct KeyPort {
     state: Mutex<State>,
 }
 
-fn entry_unreadable(error: crate::PawError) -> KeyError {
-    KeyError::EntryUnreadable { detail: error.to_string() }
+fn entry_unreadable(error: PawError) -> KeyError {
+    match error {
+        PawError::StoreBusy => KeyError::StoreBusy,
+        PawError::NotText => KeyError::EntryUnreadable { detail: "it is not text".into() },
+        other => KeyError::EntryUnreadable { detail: other.to_string() },
+    }
 }
 
 /// What opening an entry needs, checked before any PIN or touch: the file
@@ -156,7 +151,7 @@ impl KeyPort {
     ) -> KeyTaskState {
         let Some(session) = session else { return KeyTaskState::PlugIn };
         if let Some(mismatch) = enrolment_check(expected, session) {
-            return KeyTaskState::Failed { error: mismatch_error(&mismatch) };
+            return KeyTaskState::Failed { error: KeyError::DifferentKey { mismatch: Box::new(mismatch) } };
         }
         if let Err(error) = check(session) {
             return KeyTaskState::Failed { error };
@@ -169,7 +164,7 @@ impl KeyPort {
             return KeyTaskState::Failed { error: KeyError::PinBlocked };
         }
         KeyTaskState::Pin {
-            tries_left: (prompt.tries_left < 3).then_some(prompt.tries_left),
+            tries_left: prompt.tries_left,
             forgot_after_background: prompt.forgot_after_background,
             last_error: None,
         }
@@ -188,10 +183,9 @@ impl KeyPort {
         listener: Arc<dyn KeyTaskListener>,
         expected: Option<KeyIdentity>,
         check: impl FnOnce(&KeySession) -> Result<(), KeyError>,
-        body: impl FnOnce(&Arc<TaskCore>, &Arc<KeySession>) -> Result<KeyOutcome, Halt> + Send + 'static,
+        body: impl FnOnce(&Arc<TaskCore>, &Arc<KeySession>) -> Result<KeyOutcome, TaskFailure> + Send + 'static,
     ) -> Arc<KeyTask> {
         let session = self.session();
-        let mismatch = session.as_deref().and_then(|session| enrolment_check(expected.as_ref(), session));
         let held_at_start = session.as_deref().is_some_and(KeySession::holds_pin_now);
         let initial = Self::initial(session.as_deref(), expected.as_ref(), check);
         let what = keylog::purpose_words(&purpose);
@@ -228,12 +222,11 @@ impl KeyPort {
                 }
             };
             if let Some(mismatch) = enrolment_check(expected.as_ref(), &session) {
-                task.set_key_mismatch(mismatch.clone());
-                return Err(Halt::Fail(mismatch_error(&mismatch)));
+                return Err(KeyError::DifferentKey { mismatch: Box::new(mismatch) }.into());
             }
             body(task, &session)
         });
-        let task = KeyTask::start_with_mismatch(purpose, listener, initial, mismatch, body);
+        let task = KeyTask::start(purpose, listener, initial, body);
         // A task refused before it began never runs its body.
         if let (true, Some(session)) = (finished, logged_session) {
             session.log().line(start_line(task.tag(), &session, false));
@@ -266,7 +259,7 @@ impl KeyPort {
                 session.ssh_key()?;
                 task.unlocked(session, |_| Ok(()))?;
                 if task.cancelled() {
-                    return Err(Halt::Fail(KeyError::Cancelled));
+                    return Err(KeyError::Cancelled.into());
                 }
                 task.set(KeyTaskState::Working { progress: None });
                 let signer = SessionSigner::new(task.clone(), session.clone())?;
@@ -315,7 +308,7 @@ impl KeyPort {
         expected: Option<KeyIdentity>,
         after: After,
     ) -> Arc<KeyTask> {
-        let purpose = KeyPurpose::CheckKey { entry: entry.clone() };
+        let purpose = KeyPurpose::CheckKey { entry: Some(entry.clone()) };
         self.open_or_check(purpose, store, entry, Then::Check(Some(after)), listener, expected)
     }
 
@@ -342,11 +335,11 @@ impl KeyPort {
                 let session_key = task.unlocked(session, |job| plan.decipher(job, task, key))?;
                 if task.cancelled() {
                     // The late answer of a cancelled task: wiped on drop.
-                    return Err(Halt::Fail(KeyError::Cancelled));
+                    return Err(KeyError::Cancelled.into());
                 }
                 let plaintext = plan.finish(session_key)?;
                 if std::str::from_utf8(&plaintext).is_err() {
-                    return Err(Halt::Fail(KeyError::EntryUnreadable { detail: "it is not text".into() }));
+                    return Err(entry_unreadable(PawError::NotText).into());
                 }
                 let copies = match then {
                     Then::Keep(copies) => copies,
@@ -354,7 +347,7 @@ impl KeyPort {
                         drop(plaintext);
                         if let Some(after) = after {
                             if !task.begin_commit() {
-                                return Err(Halt::Fail(KeyError::Cancelled));
+                                return Err(KeyError::Cancelled.into());
                             }
                             after(session)?;
                         }
@@ -362,17 +355,21 @@ impl KeyPort {
                     }
                 };
                 if !task.begin_commit() {
-                    return Err(Halt::Fail(KeyError::Cancelled));
+                    return Err(KeyError::Cancelled.into());
                 }
                 // The entry opens even if keeping the copy fails: the
                 // person has already touched the key.
-                let face_id_until_ms = copies.and_then(|(copies, ttl)| {
-                    copies.put(&entry, &plaintext, &content_id(&ciphertext), ttl).ok().flatten()
-                });
+                let (face_id_until_ms, copy_failed) = match copies
+                    .map(|(copies, ttl)| copies.put(&entry, &plaintext, &content_id(&ciphertext), ttl))
+                {
+                    None => (None, None),
+                    Some(Ok(until)) => (until, None),
+                    Some(Err(error)) => (None, Some(error)),
+                };
                 let mut plaintext = plaintext;
                 let entry = OpenedEntry::decrypted(std::mem::take(&mut *plaintext), content_id(&ciphertext))
                     .map_err(entry_unreadable)?;
-                Ok(KeyOutcome::Opened { entry, face_id_until_ms })
+                Ok(KeyOutcome::Opened { entry, face_id_until_ms, copy_failed })
             },
         )
     }
@@ -416,7 +413,7 @@ impl KeyPort {
     /// Setup's key check: opens `entry` to prove the key works, and wipes
     /// the text at once. No copy is kept.
     pub fn check_key(self: Arc<Self>, store: Arc<PassStore>, entry: String, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
-        let purpose = KeyPurpose::CheckKey { entry: entry.clone() };
+        let purpose = KeyPurpose::CheckKey { entry: Some(entry.clone()) };
         let expected = self.expected();
         self.open_or_check(purpose, store, entry, Then::Check(None), listener, expected)
     }
@@ -447,7 +444,7 @@ impl KeyPort {
                 let unsigned: Vec<u8> = (0..TOUCH_CHECK_LEN).map(|i| i as u8).collect();
                 task.unlocked(session, |job| authenticate(job, task, &unsigned))?;
                 if task.cancelled() {
-                    return Err(Halt::Fail(KeyError::Cancelled));
+                    return Err(KeyError::Cancelled.into());
                 }
                 Ok(KeyOutcome::SignedIn)
             },
@@ -455,8 +452,8 @@ impl KeyPort {
     }
 
     /// Sets the key the store was set up with (from `load_enrolled_key`), or
-    /// none. While set, every task on another card fails before any PIN is
-    /// sent; see `key_mismatch` on the task.
+    /// none. While set, every task on another card fails with
+    /// `DifferentKey` before any PIN is sent.
     pub fn set_enrolled_key(&self, key: Option<KeyIdentity>) {
         self.lock().enrolled = key;
     }

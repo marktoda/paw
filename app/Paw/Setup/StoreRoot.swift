@@ -32,15 +32,16 @@ final class StoreRootModel {
         case setup(SetupModel)
         case home(AppModel, StoreControls)
         /// The store on this iPhone could not be opened: the raw error for
-        /// "Details", and the changes that setting up again would lose.
-        case failed(detail: String, unpushed: Int)
+        /// "Details", the changes that setting up again would lose, and
+        /// whether it was only busy.
+        case failed(detail: String, unpushed: Int, busy: Bool)
         /// The store could not be read while the iPhone is locked: iOS
         /// launched paw in the background, or the phone locked mid-open.
         /// Nothing is wrong; it opens again once the phone is unlocked.
         case waitingForUnlock
     }
 
-    private(set) var phase: Phase = .failed(detail: "", unpushed: 0)
+    private(set) var phase: Phase = .failed(detail: "", unpushed: 0, busy: false)
     /// Whether the store paw kept before the App Group is still on this
     /// iPhone (`LegacyStore`): "present", "gone", or "unknown" until looked.
     private(set) var legacyFolder = "unknown"
@@ -131,7 +132,7 @@ final class StoreRootModel {
             return
         }
         let unpushed = (try? StoreSync.open(stateDir: location.stateDir.path).unpushed().count) ?? 0
-        phase = .failed(detail: String(describing: error), unpushed: unpushed)
+        phase = .failed(detail: String(describing: error), unpushed: unpushed, busy: isStoreBusy(error))
     }
 
     private func makeSetup(_ setup: Setup) -> SetupModel {
@@ -236,7 +237,7 @@ final class StoreRootModel {
     func startOver() {
         _ = wipeKeychain()
         if let problem = wipeAndRestart() {
-            phase = .failed(detail: problem, unpushed: 0)
+            phase = .failed(detail: problem, unpushed: 0, busy: false)
         }
     }
 
@@ -265,6 +266,7 @@ final class StoreRootModel {
 struct StoreRoot: View {
     @State private var root: StoreRootModel?
     @State private var problem: String?
+    @State private var problemIsBusy = false
     /// paw's folder could not be read while the phone was locked.
     @State private var waitingForUnlock = false
     @Environment(\.scenePhase) private var scenePhase
@@ -277,7 +279,7 @@ struct StoreRoot: View {
                 WaitingForUnlockView()
             } else if let problem {
                 StoreProblemView(
-                    detail: problem, unpushed: Self.unpushedOnDisk(), retry: { build() },
+                    detail: problem, unpushed: Self.unpushedOnDisk(), busy: problemIsBusy, retry: { build() },
                     startOver: { removeEverything() })
             } else {
                 PawColor.bg.ignoresSafeArea()
@@ -309,6 +311,7 @@ struct StoreRoot: View {
         } catch {
             if ProtectedData.isAvailable {
                 problem = String(describing: error)
+                problemIsBusy = isStoreBusy(error)
                 waitingForUnlock = false
             } else {
                 problem = nil
@@ -331,6 +334,7 @@ struct StoreRoot: View {
             build()
         } catch {
             problem = String(describing: error)
+            problemIsBusy = isStoreBusy(error)
         }
     }
 
@@ -359,9 +363,10 @@ private struct StoreRootContent: View {
             case .home(let model, let controls):
                 RootView(model: model)
                     .environment(\.storeControls, controls)
-            case .failed(let detail, let unpushed):
+            case .failed(let detail, let unpushed, let busy):
                 StoreProblemView(
-                    detail: detail, unpushed: unpushed, retry: { root.route() }, startOver: { root.startOver() })
+                    detail: detail, unpushed: unpushed, busy: busy, retry: { root.route() },
+                    startOver: { root.startOver() })
             case .waitingForUnlock:
                 WaitingForUnlockView()
             }
@@ -458,14 +463,13 @@ private struct StoreProblemView: View {
     let detail: String
     /// Changes saved on this iPhone and not sent: lost by setting up again.
     let unpushed: Int
+    /// Another part of paw held the store for too long. Nothing is broken, so
+    /// this never offers to delete anything: it waits and tries again.
+    let busy: Bool
     let retry: () -> Void
     let startOver: () -> Void
 
     @State private var confirming = false
-
-    /// Another part of paw held the store for too long. Nothing is broken, so
-    /// this never offers to delete anything: it waits and tries again.
-    private var busy: Bool { isStoreBusy(message: detail) }
 
     var body: some View {
         if busy {

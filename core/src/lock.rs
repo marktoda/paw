@@ -19,8 +19,8 @@
 //!   extension never leaves the store locked.
 //!
 //! Every wait is bounded ([`DEFAULT_WAIT`] to change, [`SHARED_WAIT`] to
-//! read); past it the operation fails with [`busy`], whose message starts
-//! with [`STORE_BUSY_PREFIX`] ([`is_store_busy`]), and changes nothing.
+//! read); past it the operation fails with [`PawError::StoreBusy`] and
+//! changes nothing.
 //!
 //! **The only file lock is the store lock**, and every holder keeps it for
 //! local file work only: never across a transfer, a wait for the key or a
@@ -62,6 +62,11 @@ use crate::PawError;
 
 /// The store lock's file, in the state directory: paw's only file lock.
 pub const STORE_LOCK_FILE: &str = crate::layout::STORE_LOCK;
+
+/// What every error type's `StoreBusy` says.
+pub const STORE_BUSY: &str =
+    "the password store is busy: another part of paw (or the AutoFill extension) is using it; try again";
+
 /// The longest a change waits for the store lock. Every holder keeps it
 /// for local file work only, so this is far longer than any real wait.
 pub const DEFAULT_WAIT: Duration = Duration::from_secs(15);
@@ -74,25 +79,6 @@ pub const RECORD_WAIT: Duration = Duration::from_secs(120);
 pub const FETCH_WAIT: Duration = Duration::from_secs(60);
 /// Where a repository outside a state directory keeps its lock files.
 const GIT_LOCK_DIR: &str = "paw";
-
-/// How the message of [`busy`] starts, whichever error type carries it.
-/// Stable: the app recognises it ([`is_store_busy`]).
-pub const STORE_BUSY_PREFIX: &str = "the password store is busy";
-
-/// The error a lock that could not be had in time becomes. Nothing was
-/// changed.
-pub fn busy() -> PawError {
-    PawError::Store(format!(
-        "{STORE_BUSY_PREFIX}: another part of paw (or the AutoFill extension) is using it; try again"
-    ))
-}
-
-/// Whether an error's message (any of paw's error types) says the store
-/// was busy: nothing was changed and trying again will work. Not a broken
-/// store.
-pub fn is_store_busy(message: &str) -> bool {
-    message.contains(STORE_BUSY_PREFIX)
-}
 
 #[cfg(feature = "sim")]
 thread_local! {
@@ -387,7 +373,7 @@ fn enter(gate: &Gate, mode: Mode, deadline: Instant) -> Result<(), PawError> {
                 // Readers held back for this writer may go now.
                 gate.changed.notify_all();
             }
-            return Err(busy());
+            return Err(PawError::StoreBusy);
         }
         state = gate.changed.wait_timeout(state, deadline - now).unwrap_or_else(|p| p.into_inner()).0;
     }
@@ -441,7 +427,7 @@ fn lock_file(path: &Path, mode: Mode, deadline: Instant) -> Result<Option<File>,
         }
         let now = Instant::now();
         if now >= deadline {
-            return Err(busy());
+            return Err(PawError::StoreBusy);
         }
         std::thread::sleep(pause.min(deadline - now));
         pause = (pause * 2).min(Duration::from_millis(20));

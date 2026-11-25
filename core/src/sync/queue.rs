@@ -181,9 +181,8 @@ fn encrypted_for_exactly(found: &crate::recipients::EntryRecipients, keys: &[pgp
 /// recipients, which needs the key. Accept the new recipients, then
 /// [`reencrypt_each`] (or take the change back with [`discard`]).
 pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncError> {
-    let failed = |e: crate::write::WriteError| SyncError::Failed { message: e.to_string() };
     let _reading = StoreLock::for_repo(dir).shared()?;
-    let keyring = crate::write::Keyring::open(state_dir).map_err(failed)?;
+    let keyring = crate::write::Keyring::open(state_dir)?;
     let repo = super::guard::open(dir)?;
     let local = waiting(&repo)?;
     let now = crate::write::now_secs();
@@ -325,17 +324,42 @@ pub struct ReencryptReport {
 
 /// Why [`OpenEach`] did not give a change's text.
 #[derive(Debug)]
-pub enum OpenFailure {
+pub enum OpenFailure<S = SyncError> {
     /// This one can't be opened; leave it and go on with the next.
     Skip(LeftReason),
-    /// Stop here (cancel, the key went away, no touch). What is already
-    /// re-encrypted stays so.
-    Stop(SyncError),
+    /// Stop here (cancel, the key went away, no touch), and end
+    /// [`reencrypt_each`] with `S`. What is already re-encrypted stays so.
+    Stop(S),
 }
 
 /// Gives the text of a held-back change from its waiting ciphertext, for
 /// [`reencrypt_each`].
-pub type OpenEach<'a> = dyn FnMut(&HeldBack, &[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>, OpenFailure> + 'a;
+pub type OpenEach<'a, S = SyncError> =
+    dyn FnMut(&HeldBack, &[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>, OpenFailure<S>> + 'a;
+
+/// How [`reencrypt_each`] stopped early.
+enum Ended<S> {
+    Failed(SyncError),
+    Stopped(S),
+}
+
+impl<S> From<SyncError> for Ended<S> {
+    fn from(error: SyncError) -> Self {
+        Self::Failed(error)
+    }
+}
+
+impl<S> From<crate::PawError> for Ended<S> {
+    fn from(error: crate::PawError) -> Self {
+        Self::Failed(error.into())
+    }
+}
+
+impl<S> From<crate::write::WriteError> for Ended<S> {
+    fn from(error: crate::write::WriteError) -> Self {
+        Self::Failed(error.into())
+    }
+}
 
 /// A held-back change, looked at for re-encrypting.
 enum Look {
@@ -377,10 +401,9 @@ fn looked(
     state_dir: &Path,
     skipped: &std::collections::HashMap<(String, Oid), LeftReason>,
 ) -> Result<ReencryptCheck, SyncError> {
-    let failed = |e: crate::write::WriteError| SyncError::Failed { message: e.to_string() };
     let held = held_back(dir, state_dir)?;
     let _reading = StoreLock::for_repo(dir).shared()?;
-    let keyring = crate::write::Keyring::open(state_dir).map_err(failed)?;
+    let keyring = crate::write::Keyring::open(state_dir)?;
     let repo = super::guard::open(dir)?;
     let local = waiting(&repo)?;
     let now = crate::write::now_secs();
@@ -421,14 +444,26 @@ pub fn reencrypt_check(dir: &Path, state_dir: &Path) -> Result<ReencryptCheck, S
 /// is written. Two changes with the same waiting ciphertext are opened
 /// once. The store lock is never held while `open` runs; a save in between
 /// only makes it look again.
-pub fn reencrypt_each(
+pub fn reencrypt_each<S: From<SyncError>>(
     dir: &Path,
     state_dir: &Path,
-    open: &mut OpenEach<'_>,
+    open: &mut OpenEach<'_, S>,
     progress: &mut dyn FnMut(u32, u32),
-) -> Result<ReencryptReport, SyncError> {
+) -> Result<ReencryptReport, S> {
+    match reencrypt_each_until(dir, state_dir, open, progress) {
+        Ok(report) => Ok(report),
+        Err(Ended::Failed(error)) => Err(error.into()),
+        Err(Ended::Stopped(stop)) => Err(stop),
+    }
+}
+
+fn reencrypt_each_until<S>(
+    dir: &Path,
+    state_dir: &Path,
+    open: &mut OpenEach<'_, S>,
+    progress: &mut dyn FnMut(u32, u32),
+) -> Result<ReencryptReport, Ended<S>> {
     use std::collections::HashMap;
-    let failed = |e: crate::write::WriteError| SyncError::Failed { message: e.to_string() };
     let mut done = 0;
     let mut total = reencrypt_check(dir, state_dir)?.ready;
     // Tried and left, by (path, waiting blob): ids change as the queue is
@@ -444,7 +479,7 @@ pub fn reencrypt_each(
         let next = {
             let held = held_back(dir, state_dir)?;
             let _reading = StoreLock::for_repo(dir).shared()?;
-            let keyring = crate::write::Keyring::open(state_dir).map_err(failed)?;
+            let keyring = crate::write::Keyring::open(state_dir)?;
             let repo = super::guard::open(dir)?;
             let local = waiting(&repo)?;
             let now = crate::write::now_secs();
@@ -464,7 +499,8 @@ pub fn reencrypt_each(
         if written.contains(&(path.clone(), blob)) {
             return Err(SyncError::Failed {
                 message: "a change paw re-encrypted is still held back; nothing was sent".into(),
-            });
+            }
+            .into());
         }
         total = total.max(done + 1);
         progress(done, total);
@@ -479,7 +515,7 @@ pub fn reencrypt_each(
                     skipped.insert((path, blob), reason);
                     continue;
                 }
-                Err(OpenFailure::Stop(error)) => return Err(error),
+                Err(OpenFailure::Stop(stop)) => return Err(Ended::Stopped(stop)),
             }
         }
 
@@ -495,23 +531,24 @@ pub fn reencrypt_each(
             if moved > 3 {
                 return Err(SyncError::Failed {
                     message: "the waiting changes kept changing while paw was re-encrypting them; try again".into(),
-                });
+                }
+                .into());
             }
             continue;
         }
         ensure_clean(&repo)?;
-        let keyring = crate::write::Keyring::open(state_dir).map_err(failed)?;
+        let keyring = crate::write::Keyring::open(state_dir)?;
         let folder = crate::path::folder_of(&path);
-        let keys = keyring.resolve(dir, folder, crate::write::now_secs()).map_err(failed)?;
+        let keys = keyring.resolve(dir, folder, crate::write::now_secs())?;
         let Some(text) = texts.get(&blob) else {
-            return Err(SyncError::Failed { message: "internal: a held-back change's text went missing".into() });
+            return Err(SyncError::Failed { message: "internal: a held-back change's text went missing".into() }.into());
         };
-        let ciphertext = crate::write::encrypt(&keys, text.as_slice()).map_err(failed)?;
+        let ciphertext = crate::write::encrypt(&keys, text.as_slice())?;
         let new_blob = repo.blob(&ciphertext).map_err(git_err)?;
         let mut swaps = HashMap::new();
         swaps.insert((path.clone(), blob), new_blob);
         if rewrite_with(&held, &store, &repo, &local, &swaps)?.is_none() {
-            return Err(SyncError::Failed { message: "internal: a held-back change was not in the queue".into() });
+            return Err(SyncError::Failed { message: "internal: a held-back change was not in the queue".into() }.into());
         }
         written.insert((path, new_blob));
         moved = 0;

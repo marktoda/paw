@@ -74,53 +74,9 @@ impl RemoteReason {
     }
 }
 
-/// Whether what a host printed when a git command failed says the
-/// repository is not there, or not there for this key. Hosts word it
-/// differently:
-/// - GitHub: "ERROR: Repository not found."
-/// - GitLab: "ERROR: The project you were looking for could not be found or
-///   you don't have permission to view it."
-/// - Gitea, Forgejo (Codeberg): "... Repository does not exist"
-/// - Bitbucket: "repository does not exist", "Forbidden"
-/// - git-daemon and plain `git-upload-pack`: "... does not appear to be a
-///   git repository"
-pub(crate) fn says_repository_missing(said: &str) -> bool {
-    let said = said.to_ascii_lowercase();
-    if said.contains("command not found") {
-        return false;
-    }
-    [
-        "repository not found",
-        "could not be found",
-        "does not exist",
-        "not appear to be a git repository",
-        "you don't have permission",
-        "access denied",
-        "forbidden",
-    ]
-    .iter()
-    .any(|phrase| said.contains(phrase))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn hosts_wordings_of_a_missing_repository_are_recognised() {
-        for said in [
-            "ERROR: Repository not found.",
-            "ERROR: The project you were looking for could not be found or you don't have permission to view it.",
-            "Gitea: Repository does not exist",
-            "fatal: '/srv/x.git' does not appear to be a git repository",
-            "Forbidden",
-        ] {
-            assert!(says_repository_missing(said), "{said}");
-        }
-        for said in ["", "sh: git-upload-pack: command not found", "fatal: protocol error: bad line length"] {
-            assert!(!says_repository_missing(said), "{said}");
-        }
-    }
 
     #[test]
     fn reasons_are_saved_by_name() {

@@ -90,8 +90,7 @@ fn a_card_that_is_not_the_enrolled_key_is_refused_before_the_pin() {
     let task = rig.port.clone().check_touch_timeout(driver.clone());
     driver.drive(&task);
 
-    assert!(matches!(finish(&task), KeyTaskState::Failed { error: KeyError::NotForThisKey { .. } }));
-    assert!(task.key_mismatch().is_some());
+    assert!(matches!(finish(&task), KeyTaskState::Failed { error: KeyError::DifferentKey { .. } }));
     assert_eq!(rig.sim.verify_attempts(), 0);
     assert_eq!(rig.sim.pin_queries(), 0);
 }

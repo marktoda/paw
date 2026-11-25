@@ -26,6 +26,7 @@ use russh::keys::{Algorithm, HashAlg, PublicKey, PublicKeyOrCertificate};
 use russh::{Channel, ChannelMsg, Disconnect};
 
 use crate::PawError;
+use crate::key::KeyError;
 use crate::ssh::{SshPublicKey, SshSigner};
 
 /// How long to wait for the TCP connection and SSH handshake.
@@ -399,6 +400,29 @@ pub fn scan_host_key(host: &str, port: u16, route: &Route) -> Result<PresentedHo
 /// Lets russh ask an [`SshSigner`] for the login signature.
 struct LoginSigner<'a>(&'a dyn SshSigner);
 
+/// Why [`Connection::open`] did not log in.
+#[derive(Debug, thiserror::Error)]
+pub enum ConnectError {
+    /// The key failed to sign the login (no touch, unplugged, PIN gone).
+    #[error(transparent)]
+    Key(KeyError),
+    /// The host, the network or the host key.
+    #[error(transparent)]
+    Remote(PawError),
+}
+
+impl From<PawError> for ConnectError {
+    fn from(error: PawError) -> Self {
+        Self::Remote(error)
+    }
+}
+
+impl From<russh::SendError> for ConnectError {
+    fn from(error: russh::SendError) -> Self {
+        Self::Remote(error.into())
+    }
+}
+
 /// russh needs to report a closed session through the signer's error type.
 impl From<russh::SendError> for PawError {
     fn from(_: russh::SendError) -> Self {
@@ -407,18 +431,18 @@ impl From<russh::SendError> for PawError {
 }
 
 impl russh::Signer for LoginSigner<'_> {
-    type Error = PawError;
+    type Error = ConnectError;
 
     async fn auth_sign(
         &mut self,
         _key: &AgentIdentity,
         _hash_alg: Option<HashAlg>,
         mut signed: Vec<u8>,
-    ) -> Result<Vec<u8>, PawError> {
+    ) -> Result<Vec<u8>, ConnectError> {
         // This blocks, possibly on a touch. It runs on the thread that called
         // `Connection::open`, not on the runtime's worker, so the session
         // keeps answering the host meanwhile.
-        let signature = self.0.sign(&signed)?;
+        let signature = self.0.sign(&signed).map_err(ConnectError::Key)?;
 
         // russh wants the signed data back with the SSH signature appended:
         // string(string(algorithm) string(signature)).
@@ -441,7 +465,7 @@ impl Connection {
     /// The host is asked whether it accepts the public key before the signer
     /// is used, so a key the host does not know costs no PIN try and no
     /// touch: that case is [`PawError::KeyRejected`].
-    pub fn open(remote: &Remote, signer: &dyn SshSigner) -> Result<Self, PawError> {
+    pub fn open(remote: &Remote, signer: &dyn SshSigner) -> Result<Self, ConnectError> {
         let runtime = runtime()?;
         let session = runtime.block_on(async {
             let mut session = handshake(remote).await?;
@@ -452,7 +476,7 @@ impl Connection {
                 .await?;
             match login {
                 AuthResult::Success => Ok(session),
-                AuthResult::Failure { .. } => Err(PawError::KeyRejected),
+                AuthResult::Failure { .. } => Err(ConnectError::Remote(PawError::KeyRejected)),
             }
         })?;
 
@@ -529,6 +553,34 @@ impl Connection {
 
         result.map_err(|e| self.shared.explain(e))
     }
+}
+
+/// Whether what a host printed when a git command failed says the
+/// repository is not there, or not there for this key. Hosts word it
+/// differently:
+/// - GitHub: "ERROR: Repository not found."
+/// - GitLab: "ERROR: The project you were looking for could not be found or
+///   you don't have permission to view it."
+/// - Gitea, Forgejo (Codeberg): "... Repository does not exist"
+/// - Bitbucket: "repository does not exist", "Forbidden"
+/// - git-daemon and plain `git-upload-pack`: "... does not appear to be a
+///   git repository"
+pub(crate) fn says_repository_missing(said: &str) -> bool {
+    let said = said.to_ascii_lowercase();
+    if said.contains("command not found") {
+        return false;
+    }
+    [
+        "repository not found",
+        "could not be found",
+        "does not exist",
+        "not appear to be a git repository",
+        "you don't have permission",
+        "access denied",
+        "forbidden",
+    ]
+    .iter()
+    .any(|phrase| said.contains(phrase))
 }
 
 impl Drop for Connection {
@@ -702,5 +754,26 @@ impl Write for ServiceStream {
 impl Drop for ServiceStream {
     fn drop(&mut self) {
         let _ = self.shared.runtime.block_on(self.channel.close());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::says_repository_missing;
+
+    #[test]
+    fn hosts_wordings_of_a_missing_repository_are_recognised() {
+        for said in [
+            "ERROR: Repository not found.",
+            "ERROR: The project you were looking for could not be found or you don't have permission to view it.",
+            "Gitea: Repository does not exist",
+            "fatal: '/srv/x.git' does not appear to be a git repository",
+            "Forbidden",
+        ] {
+            assert!(says_repository_missing(said), "{said}");
+        }
+        for said in ["", "sh: git-upload-pack: command not found", "fatal: protocol error: bad line length"] {
+            assert!(!says_repository_missing(said), "{said}");
+        }
     }
 }

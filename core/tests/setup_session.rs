@@ -144,15 +144,13 @@ fn a_whole_setup_asks_for_the_pin_once_and_touches_as_the_policies_say() {
     assert!(downloading.saw(is_touch) && checking.saw(is_touch));
     // Progress was reported while cloning.
     assert!(downloading.saw(|s| matches!(s, KeyTaskState::Working { progress: Some(_) })));
-    assert_eq!(w.setup.last_task_result().unwrap(), w.setup.state());
 
     // A refresh right after, inside the cached window: no PIN, no touch.
     let sync = StoreSync::open(w.dir.path().to_string_lossy().into_owned()).unwrap();
     let refreshing = Driver::helpful(PIN, &w.sim);
     let task = sync.clone().refresh_with_key(w.port.clone(), refreshing.clone());
     refreshing.drive(&task);
-    assert!(matches!(finish(&task), KeyTaskState::Done { .. }));
-    assert!(sync.last_task_result().unwrap().is_some());
+    assert!(matches!(finish(&task), KeyTaskState::Done { outcome: KeyOutcome::Synced { .. } }));
     assert!(!refreshing.saw(is_pin) && !refreshing.saw(is_touch));
     assert_eq!(w.sim.verify_attempts(), 1);
     assert_eq!(w.sim.authentication_count(), 2);
@@ -178,8 +176,8 @@ fn after_setup_a_new_entry_saves_with_no_further_step() {
     let sending = Driver::helpful(PIN, &w.sim);
     let task = sync.clone().send_with_key(w.port.clone(), sending.clone());
     sending.drive(&task);
-    assert!(matches!(finish(&task), KeyTaskState::Done { .. }), "{:?}", sync.last_task_result());
-    let report = sync.last_task_result().unwrap().unwrap();
+    let state = finish(&task);
+    let KeyTaskState::Done { outcome: KeyOutcome::Synced { report } } = state else { panic!("{state:?}") };
     assert_eq!(report.pushed, 1);
     assert_eq!(w.server.sim.tip(), Some(support::git(&w.dir.path().join("repo"), &["rev-parse", "HEAD"])));
     assert_eq!(w.sim.verify_attempts(), 1);
@@ -296,8 +294,7 @@ fn a_changed_host_key_stops_setup_with_both_fingerprints() {
     // At the download, after the PIN: refused before the key signs.
     let driver = Driver::helpful(PIN, &w.sim);
     let state = download(&w, &driver);
-    assert!(matches!(state, KeyTaskState::Failed { error: KeyError::Reader { .. } }), "{state:?}");
-    assert!(matches!(w.setup.last_task_result(), Err(SetupError::HostKeyChanged { .. })));
+    assert!(matches!(state, KeyTaskState::SetupFailed { error: SetupError::HostKeyChanged { .. } }), "{state:?}");
     assert_eq!(w.sim.authentication_count(), 0);
     assert_eq!(w.server.logins(), 0);
     assert!(matches!(w.setup.state(), SetupState::NeedPin { .. }));
@@ -310,15 +307,13 @@ fn a_connection_dropped_mid_clone_fails_cleanly_and_the_next_try_works() {
     w.server.sim.set_drop_mid_clone(true);
     let driver = Driver::helpful(PIN, &w.sim);
     let state = download(&w, &driver);
-    assert!(matches!(state, KeyTaskState::Failed { error: KeyError::Reader { .. } }), "{state:?}");
-    assert!(w.setup.last_task_result().is_err());
+    assert!(matches!(state, KeyTaskState::SetupFailed { .. }), "{state:?}");
     assert!(matches!(w.setup.state(), SetupState::NeedPin { .. }));
     assert!(!w.dir.path().join("repo").exists());
 
     w.server.sim.set_drop_mid_clone(false);
     let again = Driver::helpful(PIN, &w.sim);
     assert!(matches!(download(&w, &again), KeyTaskState::Done { .. }));
-    assert!(w.setup.last_task_result().is_ok());
     assert!(!again.saw(is_pin));
     assert_eq!(w.sim.verify_attempts(), 1);
     assert!(matches!(w.setup.state(), SetupState::TestDecrypt { entries: ENTRIES, .. }));
@@ -332,8 +327,8 @@ fn another_key_plugged_in_mid_setup_is_refused_before_the_pin() {
     w.port.attach(other.clone()).unwrap();
     let driver = Driver::helpful(PIN, &other);
     let task = w.setup.clone().download_with_key(w.port.clone(), driver.clone());
-    assert!(matches!(finish(&task), KeyTaskState::Failed { error: KeyError::NotForThisKey { .. } }));
-    let mismatch = task.key_mismatch().unwrap();
+    let state = finish(&task);
+    let KeyTaskState::Failed { error: KeyError::DifferentKey { mismatch } } = state else { panic!("{state:?}") };
     assert_eq!(mismatch.presented, KeyIdentity {
         ident: "0006:87654321".into(),
         decryption_fingerprint: Some(other.fingerprint_hex()),
@@ -354,8 +349,9 @@ fn another_key_plugged_in_before_the_test_decrypt_is_refused_before_the_pin() {
     let task = w.setup.clone().test_decrypt_with_key(w.port.clone(), driver.clone());
     driver.drive(&task);
 
-    assert!(matches!(finish(&task), KeyTaskState::Failed { error: KeyError::NotForThisKey { .. } }));
-    assert_eq!(task.key_mismatch().unwrap().presented.ident, "0006:87654321");
+    let state = finish(&task);
+    let KeyTaskState::Failed { error: KeyError::DifferentKey { mismatch } } = state else { panic!("{state:?}") };
+    assert_eq!(mismatch.presented.ident, "0006:87654321");
     assert_eq!(other.verify_attempts() + other.pin_queries(), 0);
     assert_eq!(other.decipher_count(), 0);
     assert!(matches!(w.setup.state(), SetupState::TestDecrypt { .. }));
@@ -382,8 +378,7 @@ fn a_repository_the_key_cannot_see_is_told_apart_from_a_refused_key() {
     let driver = Driver::helpful(PIN, &w.sim);
     let state = download(&w, &driver);
 
-    assert!(matches!(state, KeyTaskState::Failed { error: KeyError::Reader { .. } }), "{state:?}");
-    let Err(SetupError::Failed { message }) = w.setup.last_task_result() else { panic!() };
+    let KeyTaskState::SetupFailed { error: SetupError::Failed { message } } = state else { panic!("{state:?}") };
     assert!(message.contains("doesn't exist, or this key can't see it"), "{message}");
     assert_eq!(
         w.setup.last_remote_message(),
@@ -413,8 +408,7 @@ fn an_empty_repository_sends_the_task_path_back_to_the_address_with_the_reason()
 
     let state = download(&w, &Driver::helpful(PIN, &w.sim));
 
-    assert!(matches!(state, KeyTaskState::Failed { error: KeyError::Reader { .. } }), "{state:?}");
-    assert!(matches!(w.setup.last_task_result(), Err(SetupError::EmptyRepository)));
+    assert!(matches!(state, KeyTaskState::SetupFailed { error: SetupError::EmptyRepository }), "{state:?}");
     assert!(matches!(w.setup.state(), SetupState::Address { .. }), "{:?}", w.setup.state());
     assert_eq!(w.setup.last_remote_message().unwrap().reason, RemoteReason::EmptyRepository);
     assert!(!w.dir.path().join("repo").exists());
@@ -434,7 +428,7 @@ fn an_empty_repository_sends_the_task_path_back_to_the_address_with_the_reason()
     let driver = Driver::helpful(PIN, &w.sim);
     let task = relaunched.clone().download_with_key(w.port.clone(), driver.clone());
     driver.drive(&task);
-    assert!(matches!(finish(&task), KeyTaskState::Done { .. }), "{:?}", relaunched.last_task_result());
+    assert!(matches!(finish(&task), KeyTaskState::Done { .. }));
     assert!(matches!(relaunched.state(), SetupState::TestDecrypt { .. }));
     let reopened = Setup::open(w.dir.path().to_string_lossy().into_owned()).unwrap();
     assert_eq!(reopened.last_remote_message(), None);
@@ -553,7 +547,7 @@ fn a_refresh_reports_what_its_fetch_received() {
     let driver = Driver::helpful(PIN, &w.sim);
     let task = sync.clone().refresh_with_key(w.port.clone(), driver.clone());
     driver.drive(&task);
-    assert!(matches!(finish(&task), KeyTaskState::Done { .. }), "{:?}", sync.last_task_result());
+    assert!(matches!(finish(&task), KeyTaskState::Done { .. }));
 
     // The sheet saw the objects come in, ending at the total.
     assert!(driver.saw(|state| matches!(

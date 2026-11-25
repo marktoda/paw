@@ -22,7 +22,7 @@ use paw_core::sync::{
     RecipientsChange, SyncError,
 };
 use paw_core::write::{GitIdentity, WriteStore};
-use key_common::{PIN, signer};
+use key_common::{PIN, signer, sync_failure};
 use support::{GitServer, git};
 
 struct World {
@@ -651,7 +651,7 @@ fn a_sync_with_a_key_the_host_does_not_know_stops_before_the_pin() {
     let stranger = paw_core::ssh::SshPublicKey::ed25519(&[3u8; 32]).authorized_key();
     let server = GitServer::start(&[stranger]);
 
-    let error = steps::sync(&server.remote(), &signer(&w.card), phone(&w), w.state.path(), true).unwrap_err();
+    let error = sync_failure(steps::sync(&server.remote(), &signer(&w.card), phone(&w), w.state.path(), true).unwrap_err());
 
     assert!(matches!(error, SyncError::KeyRejected), "{error:?}");
     assert_eq!(w.card.authentication_count(), signatures);
@@ -666,7 +666,7 @@ fn a_sync_to_a_host_with_another_key_is_refused_with_both_fingerprints() {
     remote.host_key = HostKeyPin::parse(&support::some_other_host_key()).unwrap();
     let pinned = remote.host_key.fingerprint();
 
-    let error = steps::sync(&remote, &signer(&w.card), phone(&w), w.state.path(), true).unwrap_err();
+    let error = sync_failure(steps::sync(&remote, &signer(&w.card), phone(&w), w.state.path(), true).unwrap_err());
 
     match error {
         SyncError::HostKeyChanged { expected, presented, .. } => {

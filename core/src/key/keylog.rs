@@ -235,11 +235,13 @@ pub(crate) fn error_name(error: &KeyError) -> String {
         KeyError::TouchTimeout => "TouchTimeout".into(),
         KeyError::KeyRemoved => "KeyRemoved".into(),
         KeyError::NotForThisKey { .. } => "NotForThisKey".into(),
+        KeyError::DifferentKey { .. } => "DifferentKey".into(),
         KeyError::NoDecryptionKey => "NoDecryptionKey".into(),
         KeyError::NoAuthenticationKey => "NoAuthenticationKey".into(),
         KeyError::EntryUnreadable { .. } => "EntryUnreadable".into(),
         KeyError::DecryptFailed { .. } => "DecryptFailed".into(),
         KeyError::Reader { .. } => "Reader".into(),
+        KeyError::StoreBusy => "StoreBusy".into(),
         KeyError::Cancelled => "Cancelled".into(),
     }
 }
@@ -254,8 +256,8 @@ pub(crate) fn stage_words(state: &KeyTaskState) -> Option<String> {
             if let Some(error) = last_error {
                 words += &format!(" (again: {})", error_name(error));
             }
-            if let Some(tries) = tries_left {
-                words += &format!(" ({tries} tries left)");
+            if *tries_left < 3 {
+                words += &format!(" ({tries_left} tries left)");
             }
             if *forgot_after_background {
                 words += " (forgot after background)";
@@ -268,6 +270,8 @@ pub(crate) fn stage_words(state: &KeyTaskState) -> Option<String> {
         KeyTaskState::Working { progress: Some(_) } => return None,
         KeyTaskState::Done { .. } => "Done".into(),
         KeyTaskState::Failed { error } => format!("Failed({})", error_name(error)),
+        KeyTaskState::SyncFailed { .. } => "SyncFailed".into(),
+        KeyTaskState::SetupFailed { .. } => "SetupFailed".into(),
         KeyTaskState::Cancelled => "Cancelled".into(),
     })
 }

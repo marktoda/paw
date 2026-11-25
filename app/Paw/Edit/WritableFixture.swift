@@ -48,6 +48,10 @@ enum WritableFixture {
                 return
             case .failed(let error):
                 throw Failure(errorDescription: "\(what) failed: \(error).")
+            case .syncFailed(let error):
+                throw Failure(errorDescription: "\(what) failed: \(error).")
+            case .setupFailed(let error):
+                throw Failure(errorDescription: "\(what) failed: \(error).")
             case .cancelled:
                 throw Failure(errorDescription: "\(what) was cancelled.")
             default:
@@ -80,9 +84,8 @@ enum WritableFixture {
             state = try setup.confirmHost(fingerprint: fingerprint)
         }
         try finish(setup.downloadWithKey(port: port, listener: Unheard()), pin: pin, "The download")
-        state = try setup.lastTaskResult()
         try finish(setup.testDecryptWithKey(port: port, listener: Unheard()), pin: pin, "The key check")
-        state = try setup.lastTaskResult()
+        state = setup.state()
         guard case .done = state else {
             throw Failure(errorDescription: "Setup stopped at \(state).")
         }
@@ -95,7 +98,6 @@ enum WritableFixture {
             _ = try host.commitFile(
                 path: "work/.gpg-id", contents: Data(lines.utf8), message: "Give work its own list of keys.")
             try finish(sync.refreshWithKey(port: port, listener: Unheard()), pin: pin, "The refresh")
-            _ = try sync.lastTaskResult()
         }
         return Prepared(
             stateDir: stateDir.path, repoDir: storeRepoDir(stateDir: stateDir.path),

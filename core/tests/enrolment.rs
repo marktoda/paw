@@ -53,10 +53,13 @@ fn a_different_card_is_refused_before_any_verify() {
     let sign_in = login(&port, LoginPurpose::Fetch, &driver);
     let task = sign_in.task();
     let state = finish(task);
-    let KeyTaskState::Failed { error: KeyError::NotForThisKey { recipients } } = state else { panic!("{state:?}") };
-    assert!(recipients[0].contains("different key from the one this store was set up with"), "{recipients:?}");
-    assert!(recipients[0].contains("serial 12345678") && recipients[0].contains("serial 87654321"));
-    assert_eq!(task.key_mismatch(), Some(mismatch));
+    let KeyTaskState::Failed { error: ref error @ KeyError::DifferentKey { mismatch: ref refused } } = state else {
+        panic!("{state:?}")
+    };
+    let words = error.to_string();
+    assert!(words.contains("different key from the one this store was set up with"), "{words}");
+    assert!(words.contains("serial 12345678") && words.contains("serial 87654321"));
+    assert_eq!(**refused, mismatch);
     assert!(!driver.saw(is_pin));
     // Nothing that carries or asks about a PIN reached the card.
     assert_eq!(other.verify_attempts(), 0);
@@ -74,8 +77,7 @@ fn a_task_waiting_for_a_key_refuses_the_wrong_one_when_it_is_plugged_in() {
 
     let other = other_key();
     port.attach(other.clone()).unwrap();
-    assert!(matches!(finish(task), KeyTaskState::Failed { error: KeyError::NotForThisKey { .. } }));
-    assert!(task.key_mismatch().is_some());
+    assert!(matches!(finish(task), KeyTaskState::Failed { error: KeyError::DifferentKey { .. } }));
     assert_eq!(other.verify_attempts() + other.pin_queries(), 0);
 }
 
@@ -89,7 +91,6 @@ fn the_enrolled_card_proceeds() {
     let driver = Driver::helpful(PIN, &rig.sim);
     let task = open(&rig, ENTRY, &driver);
     assert!(matches!(finish(&task), KeyTaskState::Done { .. }));
-    assert!(task.key_mismatch().is_none());
     assert_eq!(rig.sim.verify_attempts(), 1);
 }
 

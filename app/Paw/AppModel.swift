@@ -541,7 +541,7 @@ final class AppModel {
                 request.stage = .plugIn
             }
         case .pin(let triesLeft, let forgotten, let lastError):
-            let tries = Int(triesLeft ?? 3)
+            let tries = Int(triesLeft)
             switch lastError {
             case nil:
                 request.stage = .pin(triesLeft: tries, forgotten: forgotten)
@@ -561,21 +561,20 @@ final class AppModel {
                 progress: progress.map { "\($0.done) of \($0.total)" })
         case .done(let outcome):
             finished(outcome, request: &request)
+        case .failed(.DifferentKey(let mismatch)):
+            // Not this entry's problem: the key is not the store's.
+            request.stage = .failed(
+                problem: "This isn't the key this store was set up with",
+                nextStep: Self.mismatchWords(mismatch))
+            request.differentKey = true
         case .failed(.NotForThisKey):
-            if let mismatch = task.keyMismatch() {
-                // Not this entry's problem: the key is not the store's.
-                request.stage = .failed(
-                    problem: "This isn't the key this store was set up with",
-                    nextStep: Self.mismatchWords(mismatch))
-                request.differentKey = true
-            } else {
-                keyRequest = nil
-                showAnotherKey(request.entry)
-                return
-            }
+            keyRequest = nil
+            showAnotherKey(request.entry)
+            return
         case .failed(.PinBlocked):
             request.stage = .locked
-        case .failed(.Cancelled), .cancelled:
+        // An open never syncs or sets up.
+        case .failed(.Cancelled), .cancelled, .syncFailed, .setupFailed:
             keyRequest = nil
             return
         case .failed(let error):
@@ -601,7 +600,7 @@ final class AppModel {
     }
 
     private func finished(_ outcome: KeyOutcome, request: inout KeyRequest) {
-        guard case .opened(let opened, _) = outcome else {
+        guard case .opened(let opened, _, _) = outcome else {
             request.stage = .done
             return
         }
@@ -650,7 +649,7 @@ final class AppModel {
         guard state.isFinal else { return }
         tasks[id] = nil
         let origin = taskOrigins.removeValue(forKey: id)
-        guard case .done(.opened(let entry, let faceIdUntilMs)) = state else { return }
+        guard case .done(.opened(let entry, let faceIdUntilMs, _)) = state else { return }
         entry.close()
         guard faceIdUntilMs != nil, let origin, let copies else { return }
         do {
@@ -666,7 +665,7 @@ final class AppModel {
     }
 
     private func faceIdUntil(_ outcome: KeyOutcome) -> Int64? {
-        if case .opened(_, let until) = outcome { return until }
+        if case .opened(_, let until, _) = outcome { return until }
         return nil
     }
 
@@ -896,7 +895,7 @@ extension KeyTaskState {
     /// Done, failed or cancelled: nothing changes it any more.
     var isFinal: Bool {
         switch self {
-        case .done, .failed, .cancelled: true
+        case .done, .failed, .syncFailed, .setupFailed, .cancelled: true
         default: false
         }
     }

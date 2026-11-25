@@ -203,7 +203,7 @@ fn ssh_twin(w: &World) -> tempfile::TempDir {
 
 fn ssh_refresh(w: &World, twin: &Path) -> Result<operation::SyncReport, SyncError> {
     let signer = signer_with(&w.key, PIN);
-    steps::sync(&w.remote.remote().unwrap(), &signer, &twin.join("repo"), twin, false)
+    steps::sync(&w.remote.remote().unwrap(), &signer, &twin.join("repo"), twin, false).map_err(key_common::sync_failure)
 }
 
 // --- the device flow ------------------------------------------------------------
@@ -627,7 +627,7 @@ fn a_hostile_tree_fetched_over_https_is_refused_exactly_as_over_ssh() {
     let over_https = w.account.refresh_store().unwrap_err();
     let over_ssh = ssh_refresh(&w, twin.path()).unwrap_err();
 
-    assert!(matches!((&over_https, &over_ssh), (SyncError::Failed { .. }, SyncError::Failed { .. })));
+    assert!(matches!((&over_https, &over_ssh), (SyncError::RefusedRemote { .. }, SyncError::RefusedRemote { .. })));
     assert_eq!(over_https.to_string(), over_ssh.to_string());
     assert!(over_https.to_string().starts_with("the remote contains something paw will not check out"), "{over_https}");
     assert_eq!(sync::refused_remote(&w.repo()).unwrap(), sync::refused_remote(&twin.path().join("repo")).unwrap());

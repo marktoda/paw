@@ -15,7 +15,6 @@ use super::apdu;
 use super::task::TaskCore;
 use super::touch::{self, TouchWatch};
 use super::{KeyError, KeyTaskState};
-use crate::PawError;
 use crate::ssh::{SshPublicKey, SshSigner};
 
 pub struct SessionSigner {
@@ -28,18 +27,6 @@ impl SessionSigner {
     pub(crate) fn new(task: Arc<TaskCore>, session: Arc<KeySession>) -> Result<Self, KeyError> {
         let public_key = session.ssh_key()?.clone();
         Ok(Self { task, session, public_key })
-    }
-}
-
-/// The SSH code speaks [`PawError`]; the task keeps the precise error.
-fn paw_error(error: &KeyError) -> PawError {
-    match error {
-        KeyError::WrongPin { tries_left } | KeyError::HeldPinRejected { tries_left } => {
-            PawError::WrongPin { tries_left: *tries_left }
-        }
-        KeyError::PinBlocked => PawError::PinBlocked,
-        KeyError::NoAuthenticationKey => PawError::NoSshKey(error.to_string()),
-        other => PawError::Sign(other.to_string()),
     }
 }
 
@@ -78,26 +65,22 @@ impl SshSigner for SessionSigner {
         &self.public_key
     }
 
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, PawError> {
-        let cancelled = || PawError::Sign(KeyError::Cancelled.to_string());
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, KeyError> {
         if self.task.cancelled() {
-            return Err(cancelled());
+            return Err(KeyError::Cancelled);
         }
         let result = self.session.run(&self.task, |job| {
             job.unlock(None)?;
             authenticate(job, &self.task, data)
         });
-        let error = match result {
-            Ok(_) if self.task.cancelled() => return Err(cancelled()),
+        match result {
+            Ok(_) if self.task.cancelled() => Err(KeyError::Cancelled),
             Ok(signature) => {
                 self.task.set(KeyTaskState::Working { progress: None });
-                return Ok(signature);
+                Ok(signature)
             }
-            Err(Halt::AskPin(Some(error)) | Halt::Fail(error)) => error,
-            Err(Halt::AskPin(None)) => KeyError::PinForgotten,
-        };
-        let paw = paw_error(&error);
-        self.task.set(KeyTaskState::Failed { error });
-        Err(paw)
+            Err(Halt::AskPin(Some(error)) | Halt::Fail(error)) => Err(error),
+            Err(Halt::AskPin(None)) => Err(KeyError::PinForgotten),
+        }
     }
 }
