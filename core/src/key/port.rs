@@ -16,8 +16,10 @@ use super::session::{Halt, KeySession};
 use super::signer::{SessionSigner, authenticate};
 use super::task::{Body, KeyTask, TaskCore};
 use super::{KeyError, KeyOutcome, KeyPurpose, KeyTaskListener, KeyTaskState, LoginPurpose};
-use crate::{ApduTransport, PawError};
-use crate::copies::{Clock, CopyCache, content_id};
+use super::ApduTransport;
+use crate::PawError;
+use super::Uptime;
+use crate::copies::{CopyCache, content_id};
 use crate::ffi::OpenedEntry;
 use crate::store::PassStore;
 
@@ -41,7 +43,7 @@ pub(crate) type After = Box<dyn FnOnce(&Arc<KeySession>) -> Result<(), KeyError>
 
 /// What a sign-in task does on the network with the signer, in the task's
 /// thread. It reports progress and ends the task.
-pub(crate) type Work = Box<dyn FnOnce(&Arc<TaskCore>, SessionSigner) -> Result<Option<KeyOutcome>, Halt> + Send>;
+pub(crate) type Work = Box<dyn FnOnce(&Arc<TaskCore>, SessionSigner) -> Result<KeyOutcome, Halt> + Send>;
 
 /// Deciphers one ciphertext with the session's key, in a decrypting
 /// task's thread: the PIN is asked once, the key is touched for each.
@@ -51,7 +53,7 @@ pub(crate) type Opener<'a> = dyn FnMut(&[u8]) -> Result<zeroize::Zeroizing<Vec<u
 /// It reports progress, checks for cancel between ciphertexts, and returns
 /// how the task ends.
 pub(crate) type DecryptWork =
-    Box<dyn FnOnce(&Arc<TaskCore>, &mut Opener<'_>) -> Result<Option<KeyOutcome>, Halt> + Send>;
+    Box<dyn FnOnce(&Arc<TaskCore>, &mut Opener<'_>) -> Result<KeyOutcome, Halt> + Send>;
 
 /// What an open does once the entry has decrypted.
 enum Then {
@@ -77,7 +79,7 @@ fn enrolment_check(expected: Option<&KeyIdentity>, session: &KeySession) -> Opti
 
 #[derive(uniffi::Object)]
 pub struct KeyPort {
-    clock: Arc<dyn Clock>,
+    uptime: Arc<dyn Uptime>,
     /// Counts plug-ins, so a task at `PlugIn` cannot miss one.
     plugged: AtomicU64,
     state: Mutex<State>,
@@ -96,6 +98,15 @@ fn read_and_check(store: &PassStore, entry: &str, session: &KeySession) -> Resul
 }
 
 impl KeyPort {
+    /// `uptime` measures time in the background for the PIN limit.
+    pub(crate) fn with_uptime(uptime: Arc<dyn Uptime>) -> Arc<Self> {
+        Arc::new(Self {
+            uptime,
+            plugged: AtomicU64::new(0),
+            state: Mutex::new(State { session: None, waiting: Vec::new(), enrolled: None, log: None }),
+        })
+    }
+
     fn lock(&self) -> MutexGuard<'_, State> {
         // Plain values only.
         self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -107,7 +118,7 @@ impl KeyPort {
         self.unplugged();
         let sink = self.lock().log.clone();
         let again = self.plugged.load(Ordering::SeqCst) > 0;
-        let session = KeySession::open(transport, self.clock.clone(), sink, again)?;
+        let session = KeySession::open(transport, self.uptime.clone(), sink, again)?;
         let waiting = {
             let mut state = self.lock();
             if let Some(old) = state.session.replace(session.clone()) {
@@ -177,7 +188,7 @@ impl KeyPort {
         listener: Arc<dyn KeyTaskListener>,
         expected: Option<KeyIdentity>,
         check: impl FnOnce(&KeySession) -> Result<(), KeyError>,
-        body: impl FnOnce(&Arc<TaskCore>, &Arc<KeySession>) -> Result<Option<KeyOutcome>, Halt> + Send + 'static,
+        body: impl FnOnce(&Arc<TaskCore>, &Arc<KeySession>) -> Result<KeyOutcome, Halt> + Send + 'static,
     ) -> Arc<KeyTask> {
         let session = self.session();
         let mismatch = session.as_deref().and_then(|session| enrolment_check(expected.as_ref(), session));
@@ -347,7 +358,7 @@ impl KeyPort {
                             }
                             after(session)?;
                         }
-                        return Ok(Some(KeyOutcome::KeyChecked));
+                        return Ok(KeyOutcome::KeyChecked);
                     }
                 };
                 if !task.begin_commit() {
@@ -361,7 +372,7 @@ impl KeyPort {
                 let mut plaintext = plaintext;
                 let entry = OpenedEntry::from_plaintext(std::mem::take(&mut *plaintext))
                     .map_err(entry_unreadable)?;
-                Ok(Some(KeyOutcome::Opened { entry, face_id_until_ms }))
+                Ok(KeyOutcome::Opened { entry, face_id_until_ms })
             },
         )
     }
@@ -369,17 +380,6 @@ impl KeyPort {
 
 #[uniffi::export]
 impl KeyPort {
-    /// `clock` measures time in the background for the PIN limit (its
-    /// monotonic clock).
-    #[uniffi::constructor]
-    pub fn new(clock: Arc<dyn Clock>) -> Arc<Self> {
-        Arc::new(Self {
-            clock,
-            plugged: AtomicU64::new(0),
-            state: Mutex::new(State { session: None, waiting: Vec::new(), enrolled: None, log: None }),
-        })
-    }
-
     /// The key was unplugged (the reader went away). Ends its session and
     /// drops the PIN; a task using it fails with `KeyRemoved`.
     pub fn unplugged(&self) {
@@ -421,26 +421,6 @@ impl KeyPort {
         self.open_or_check(purpose, store, entry, Then::Check(None), listener, expected)
     }
 
-    /// Unlocks the key for a git login. Once the PIN is verified the task
-    /// shows `Working`; the Rust caller then takes `login_signer`, opens the
-    /// connection, and calls `finish_login`.
-    pub fn sign_in(self: Arc<Self>, login: LoginPurpose, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
-        let expected = self.expected();
-        self.start(
-            KeyPurpose::SignIn { login },
-            listener,
-            expected,
-            |session| session.ssh_key().map(drop),
-            |task, session| {
-                session.ssh_key()?;
-                task.unlocked(session, |_| Ok(()))?;
-                task.set(KeyTaskState::Working { progress: None });
-                task.mark_signer_ready();
-                Ok(None)
-            },
-        )
-    }
-
     /// Key diagnostics' touch timeout check: with the PIN (asked if the
     /// session holds none), the key is asked for one signature with its
     /// authentication key, of fixed bytes the size of a git login, and
@@ -469,12 +449,12 @@ impl KeyPort {
                 if task.cancelled() {
                     return Err(Halt::Fail(KeyError::Cancelled));
                 }
-                Ok(Some(KeyOutcome::SignedIn))
+                Ok(KeyOutcome::SignedIn)
             },
         )
     }
 
-    /// Sets the key the store was set up with (from `enrolled_key`), or
+    /// Sets the key the store was set up with (from `load_enrolled_key`), or
     /// none. While set, every task on another card fails before any PIN is
     /// sent; see `key_mismatch` on the task.
     pub fn set_enrolled_key(&self, key: Option<KeyIdentity>) {
@@ -484,18 +464,7 @@ impl KeyPort {
     /// Reads the enrolled key of the store in `state_dir` and sets it.
     /// Returns it, or `None` if setup has not recorded one (then every card
     /// is accepted, as during setup).
-    ///
-    /// Also starts this process's key log in `state_dir` if none was set
-    /// (see `set_key_log`), named after the process: this is the call both
-    /// the app and the AutoFill extension make with the store's state
-    /// directory.
     pub fn load_enrolled_key(&self, state_dir: String) -> Result<Option<KeyIdentity>, PawError> {
-        {
-            let mut state = self.lock();
-            if state.log.is_none() {
-                state.log = Some(Sink::new(std::path::Path::new(&state_dir), &keylog::default_process()));
-            }
-        }
         let key = enrolment::load_enrolment(std::path::Path::new(&state_dir))?;
         self.set_enrolled_key(key.clone());
         Ok(key)
@@ -514,10 +483,6 @@ impl KeyPort {
         self.lock().log.as_ref().map(|sink| sink.dir().to_string_lossy().into_owned())
     }
 
-    pub fn enrolled_key(&self) -> Option<KeyIdentity> {
-        self.expected()
-    }
-
     /// How the plugged-in key differs from the enrolled one, or `None` if it
     /// is the enrolled key, no key is enrolled, or no key is plugged in.
     pub fn key_mismatch(&self) -> Option<KeyMismatch> {
@@ -529,21 +494,5 @@ impl KeyPort {
     /// enrolled key, or none is enrolled.
     pub fn key_matches_enrolment(&self) -> bool {
         self.session().is_some() && self.key_mismatch().is_none()
-    }
-
-    /// "Replace my key": records the plugged-in key as the store's key in
-    /// `state_dir`, in place of the old one, and accepts it from now on.
-    /// Needs no PIN. Encrypting new entries for it is a separate step (the
-    /// store's `.gpg-id` and the pinned keys).
-    pub fn replace_enrolled_key(&self, state_dir: String) -> Result<KeyIdentity, PawError> {
-        let session = self.session().ok_or_else(|| PawError::Card("no key is plugged in".into()))?;
-        let identity = KeyIdentity::of(session.card_info());
-        {
-            let state_dir = std::path::Path::new(&state_dir);
-            let _held = crate::lock::StoreLock::for_state_dir(state_dir).exclusive()?;
-            enrolment::save_enrolment(state_dir, &identity)?;
-        }
-        self.set_enrolled_key(Some(identity.clone()));
-        Ok(identity)
     }
 }

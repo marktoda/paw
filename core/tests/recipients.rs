@@ -9,15 +9,18 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, OnceLock};
 
+mod key_common;
+
 use paw_core::recipients::{Access, EntryRecipients, Recipient, access, entry_recipients};
 use paw_core::sim::SimulatedKey;
-use paw_core::{PawError, card_decryption_key, card_info, decrypt_entry, encrypt_to_card, encrypt_to_keys};
+use key_common::{PIN, decrypt_text, port_with};
+use paw_core::PawError;
+use paw_core::sim::fixture::encrypt;
 use pgp::composed::{KeyType, SecretKeyParamsBuilder, SignedPublicSubKey};
 use pgp::packet::{KeyFlags, PubKeyInner, PublicSubkey};
 use pgp::ser::Serialize;
 use pgp::types::{KeyDetails, Password};
 
-const PIN: &str = "123456";
 const ENTRY: &str = "correct horse battery staple\nlogin: you@example.com\n";
 const LAPTOP: &str = "laptop@example.com";
 const BACKUP: &str = "backup@example.com";
@@ -25,6 +28,10 @@ const CARD: &str = "card@example.com";
 
 fn card() -> Arc<SimulatedKey> {
     SimulatedKey::new(PIN.into(), false, 50)
+}
+
+fn for_card(text: &str) -> Vec<u8> {
+    encrypt(&[card().decryption_key().unwrap()], text.as_bytes()).unwrap()
 }
 
 fn card_fingerprint() -> String {
@@ -51,7 +58,7 @@ fn card_certificate() -> Vec<u8> {
         .unwrap();
     let mut certificate = primary.to_public_key();
 
-    let on_card = card_decryption_key(card()).unwrap();
+    let on_card = card().decryption_key().unwrap();
     let subkey = PublicSubkey::from_inner(
         PubKeyInner::new(
             on_card.version(),
@@ -162,7 +169,7 @@ fn named(keys: Vec<Recipient>) -> EntryRecipients {
 
 #[test]
 fn an_entry_from_paw_names_the_card_and_can_be_opened() {
-    let entry = encrypt_to_card(card(), ENTRY.as_bytes()).unwrap();
+    let entry = for_card(ENTRY);
 
     assert_eq!(entry_recipients(&entry).unwrap(), named(vec![key_id(&card_fingerprint())]));
     assert_eq!(access(&entry, &card_fingerprint()), Access::CanOpen);
@@ -171,8 +178,8 @@ fn an_entry_from_paw_names_the_card_and_can_be_opened() {
 #[test]
 fn the_card_reports_the_fingerprint_that_entries_name() {
     // `CardInfo.decryption_fingerprint` is what the app passes to `access`.
-    let fingerprint = card_info(card()).unwrap().decryption_fingerprint.unwrap();
-    let entry = encrypt_to_card(card(), ENTRY.as_bytes()).unwrap();
+    let fingerprint = port_with(&card()).session().unwrap().info().decryption_fingerprint.unwrap();
+    let entry = for_card(ENTRY);
 
     assert_eq!(access(&entry, &fingerprint), Access::CanOpen);
     // Spacing and letter case, as people paste fingerprints.
@@ -187,8 +194,7 @@ fn an_entry_from_gnupg_for_the_card_can_be_opened_and_really_opens() {
     assert_eq!(entry_recipients(&entry).unwrap(), named(vec![key_id(&card_fingerprint())]));
     assert_eq!(access(&entry, &card_fingerprint()), Access::CanOpen);
 
-    let plaintext = decrypt_entry(card(), PIN, &entry, &|| {}).unwrap();
-    assert_eq!(String::from_utf8(plaintext).unwrap(), ENTRY);
+    assert_eq!(decrypt_text(&card(), PIN, &entry), ENTRY);
 }
 
 #[test]
@@ -227,20 +233,18 @@ fn an_entry_for_two_keys_opens_with_either_and_lists_both() {
 
 #[test]
 fn an_entry_from_paw_for_two_keys_lists_both_in_order() {
-    let on_card = card_decryption_key(card()).unwrap();
+    let on_card = card().decryption_key().unwrap();
     let other = paw_core::sim::fixture::other_key().unwrap();
     let other_fingerprint: String =
         other.fingerprint().as_bytes().iter().map(|b| format!("{b:02X}")).collect();
-    let entry =
-        encrypt_to_keys(rand::thread_rng(), &[other, on_card], ENTRY.as_bytes()).unwrap();
+    let entry = encrypt(&[other, on_card], ENTRY.as_bytes()).unwrap();
 
     assert_eq!(
         entry_recipients(&entry).unwrap(),
         named(vec![key_id(&other_fingerprint), key_id(&card_fingerprint())])
     );
     assert_eq!(access(&entry, &card_fingerprint()), Access::CanOpen);
-    let plaintext = decrypt_entry(card(), PIN, &entry, &|| {}).unwrap();
-    assert_eq!(String::from_utf8(plaintext).unwrap(), ENTRY);
+    assert_eq!(decrypt_text(&card(), PIN, &entry), ENTRY);
 }
 
 #[test]
@@ -393,7 +397,7 @@ fn garbage_is_unreadable_and_never_a_panic() {
 
 #[test]
 fn a_fingerprint_that_is_not_one_matches_nothing() {
-    let entry = encrypt_to_card(card(), ENTRY.as_bytes()).unwrap();
+    let entry = for_card(ENTRY);
     for fingerprint in ["", "ABCD", "not hex at all, and long enough to slice", "ü".repeat(20).as_str()] {
         assert!(
             matches!(access(&entry, fingerprint), Access::NotForThisKey { .. }),

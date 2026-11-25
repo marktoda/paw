@@ -5,6 +5,7 @@
 
 #![cfg(feature = "sim")]
 
+mod key_common;
 mod support;
 
 use std::path::{Path, PathBuf};
@@ -23,13 +24,12 @@ use paw_core::sync::queue;
 use paw_core::write::{
     DraftField, EntryDraft, FolderRecipients, GitIdentity, KeySource, Keyring, LineStatus, WriteError, WriteStore,
 };
-use paw_core::{card_decryption_key, decrypt_entry};
 use pgp::composed::{KeyType, SecretKeyParamsBuilder, SignedPublicKey, SignedPublicSubKey};
 use pgp::packet::{KeyFlags, PubKeyInner, PublicKey, PublicSubkey};
 use pgp::types::{KeyDetails, Password};
+use key_common::{PIN, decrypt_text};
 use support::git;
 
-const PIN: &str = "123456";
 const MARKER: &str = "PLAINTEXT-MARKER-5f1c";
 
 fn card() -> Arc<SimulatedKey> {
@@ -37,7 +37,7 @@ fn card() -> Arc<SimulatedKey> {
 }
 
 fn card_key() -> PublicKey {
-    card_decryption_key(card()).unwrap()
+    card().decryption_key().unwrap()
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -74,7 +74,7 @@ impl Store {
     }
 
     fn decrypt(&self, entry: &str) -> String {
-        String::from_utf8(decrypt_entry(card(), PIN, &self.file(entry), &|| {}).unwrap()).unwrap()
+        decrypt_text(&card(), PIN, &self.file(entry))
     }
 
     /// A commit from "the desktop": straight into the clone, as if pulled.
@@ -128,7 +128,7 @@ fn store_with(gpg_id: &str, files: &[(&str, &[u8])]) -> Store {
 }
 
 fn encrypted(text: &str) -> Vec<u8> {
-    paw_core::encrypt_to_keys(rand::thread_rng(), &[card_key()], text.as_bytes()).unwrap()
+    paw_core::sim::fixture::encrypt(&[card_key()], text.as_bytes()).unwrap()
 }
 
 /// A store for the card with `Work/github.com` and `Work/Jira`.

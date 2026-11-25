@@ -10,7 +10,7 @@ mod support;
 
 use std::sync::Arc;
 
-use key_common::{Driver, PIN, WAIT, finish, is_pin, is_touch};
+use key_common::{Driver, PIN, WAIT, finish, is_pin, is_touch, port_with};
 use paw_core::ffi::sync::{Setup, StoreSync};
 use paw_core::key::{KeyError, KeyIdentity, KeyOutcome, KeyPort, KeyTaskListener, KeyTaskState, enrolment};
 use paw_core::setup::outcome::{RemoteMessage, RemoteReason};
@@ -38,17 +38,31 @@ struct World {
     setup: Arc<Setup>,
 }
 
-fn world_with(sim: Arc<SimulatedKey>) -> World {
-    let server = GitServer::start_with_fixture(&[sim.ssh_public_key()]);
-    let port = KeyPort::new(SimClock::new(1_790_000_000_000));
-    port.attach(sim.clone()).unwrap();
+fn world_on(sim: Arc<SimulatedKey>, server: GitServer) -> World {
+    let port = port_with(&sim);
     let dir = tempfile::tempdir().unwrap();
     let setup = Setup::open(dir.path().to_string_lossy().into_owned()).unwrap();
     World { sim, port, server, dir, setup }
 }
 
+fn world_with(sim: Arc<SimulatedKey>) -> World {
+    let server = GitServer::start_with_fixture(&[sim.ssh_public_key()]);
+    world_on(sim, server)
+}
+
 fn world() -> World {
     world_with(cached_login_key())
+}
+
+/// Some other key, with the same PIN.
+fn other_key() -> Arc<SimulatedKey> {
+    SimulatedKey::other_with_options(paw_core::sim::SimOptions {
+        pin: PIN.into(),
+        decrypt_touch: false,
+        auth_touch: false,
+        touch_timeout: WAIT,
+        extended_length: false,
+    })
 }
 
 fn address(world: &World) -> String {
@@ -199,31 +213,10 @@ fn setup_records_the_key_and_gives_it_to_the_port() {
     assert_eq!(recorded.decryption_fingerprint.as_deref(), Some(w.sim.fingerprint_hex().as_str()));
     assert_eq!(recorded.authentication_fingerprint.as_deref(), Some(w.sim.authentication_fingerprint_hex().as_str()));
     assert_eq!(recorded.serial(), "12345678");
-    assert_eq!(w.port.enrolled_key(), Some(recorded));
     assert!(w.port.key_matches_enrolment());
-}
-
-#[test]
-fn the_old_one_shot_setup_completes_the_write_path_too() {
-    // The per-call steps (connection and PIN each time) end the same way.
-    let w = world_with(key_common::sim(SimTouch::Off, SimTouch::Off, WAIT));
-    let mut flow = paw_core::setup::SetupFlow::open(w.dir.path()).unwrap();
-    flow.read_key(w.sim.clone()).unwrap();
-    flow.set_address(&address(&w)).unwrap();
-    let SetupState::ConfirmHost { fingerprint, .. } = flow.check_host().unwrap() else { panic!() };
-    flow.confirm_host(&fingerprint).unwrap();
-    struct Quiet;
-    impl paw_core::setup::SetupEvents for Quiet {
-        fn touch_needed(&self, _: paw_core::setup::touch::TouchExpectation) {}
-        fn progress(&self, _: u32, _: u32) -> bool {
-            true
-        }
-    }
-    flow.download(w.sim.clone(), PIN, Arc::new(Quiet)).unwrap();
-    flow.test_decrypt(w.sim.clone(), PIN, Arc::new(Quiet)).unwrap();
-    assert!(flow.write_readiness().unwrap().can_save);
-    assert!(enrolment::load_enrolment(w.dir.path()).unwrap().is_some());
-    writer(&w).save(&new_entry("new-site")).unwrap();
+    // The port now holds out for that key: another one is not it.
+    w.port.attach(other_key()).unwrap();
+    assert_eq!(w.port.key_mismatch().unwrap().enrolled, recorded);
 }
 
 #[test]
@@ -335,13 +328,7 @@ fn a_connection_dropped_mid_clone_fails_cleanly_and_the_next_try_works() {
 fn another_key_plugged_in_mid_setup_is_refused_before_the_pin() {
     let w = world();
     to_need_pin(&w);
-    let other = SimulatedKey::other_with_options(paw_core::sim::SimOptions {
-        pin: PIN.into(),
-        decrypt_touch: false,
-        auth_touch: false,
-        touch_timeout: WAIT,
-        extended_length: false,
-    });
+    let other = other_key();
     w.port.attach(other.clone()).unwrap();
     let driver = Driver::helpful(PIN, &other);
     let task = w.setup.clone().download_with_key(w.port.clone(), driver.clone());
@@ -353,6 +340,26 @@ fn another_key_plugged_in_mid_setup_is_refused_before_the_pin() {
         authentication_fingerprint: Some(other.authentication_fingerprint_hex()),
     });
     assert_eq!(other.verify_attempts() + other.pin_queries(), 0);
+}
+
+#[test]
+fn another_key_plugged_in_before_the_test_decrypt_is_refused_before_the_pin() {
+    let w = world();
+    to_need_pin(&w);
+    assert!(matches!(download(&w, &Driver::helpful(PIN, &w.sim)), KeyTaskState::Done { .. }));
+    let other = other_key();
+    w.port.attach(other.clone()).unwrap();
+
+    let driver = Driver::helpful(PIN, &other);
+    let task = w.setup.clone().test_decrypt_with_key(w.port.clone(), driver.clone());
+    driver.drive(&task);
+
+    assert!(matches!(finish(&task), KeyTaskState::Failed { error: KeyError::NotForThisKey { .. } }));
+    assert_eq!(task.key_mismatch().unwrap().presented.ident, "0006:87654321");
+    assert_eq!(other.verify_attempts() + other.pin_queries(), 0);
+    assert_eq!(other.decipher_count(), 0);
+    assert!(matches!(w.setup.state(), SetupState::TestDecrypt { .. }));
+    assert!(enrolment::load_enrolment(w.dir.path()).unwrap().is_none());
 }
 
 #[test]
@@ -401,11 +408,7 @@ fn a_repository_the_key_cannot_see_is_told_apart_from_a_refused_key() {
 fn an_empty_repository_sends_the_task_path_back_to_the_address_with_the_reason() {
     let sim = cached_login_key();
     let server = GitServer::start_empty(&[sim.ssh_public_key()]);
-    let port = KeyPort::new(SimClock::new(1_790_000_000_000));
-    port.attach(sim.clone()).unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    let setup = Setup::open(dir.path().to_string_lossy().into_owned()).unwrap();
-    let w = World { sim, port, server, dir, setup };
+    let w = world_on(sim, server);
     to_need_pin(&w);
 
     let state = download(&w, &Driver::helpful(PIN, &w.sim));
@@ -416,7 +419,26 @@ fn an_empty_repository_sends_the_task_path_back_to_the_address_with_the_reason()
     assert_eq!(w.setup.last_remote_message().unwrap().reason, RemoteReason::EmptyRepository);
     assert!(!w.dir.path().join("repo").exists());
     let relaunched = Setup::open(w.dir.path().to_string_lossy().into_owned()).unwrap();
-    assert_eq!(relaunched.last_remote_message().unwrap().reason, RemoteReason::EmptyRepository);
+    assert!(matches!(relaunched.state(), SetupState::Address { .. }));
+    assert_eq!(relaunched.last_remote_message(), w.setup.last_remote_message());
+
+    // The same address again, once the store is pushed: it goes through.
+    let desktop = w.server.desktop();
+    paw_core::sim::fixture::write_fixture_store(desktop.path().to_string_lossy().into_owned()).unwrap();
+    support::git(desktop.path(), &["add", "-A"]);
+    support::git(desktop.path(), &["commit", "--quiet", "-m", "The store."]);
+    support::git(desktop.path(), &["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
+    relaunched.set_address(address(&w)).unwrap();
+    assert_eq!(relaunched.last_remote_message(), None);
+    assert!(matches!(relaunched.check_host().unwrap(), SetupState::NeedPin { .. }));
+    let driver = Driver::helpful(PIN, &w.sim);
+    let task = relaunched.clone().download_with_key(w.port.clone(), driver.clone());
+    driver.drive(&task);
+    assert!(matches!(finish(&task), KeyTaskState::Done { .. }), "{:?}", relaunched.last_task_result());
+    assert!(matches!(relaunched.state(), SetupState::TestDecrypt { .. }));
+    let reopened = Setup::open(w.dir.path().to_string_lossy().into_owned()).unwrap();
+    assert_eq!(reopened.last_remote_message(), None);
+    assert!(!std::fs::read_to_string(w.dir.path().join("setup")).unwrap().contains("problem="));
 }
 
 #[test]
@@ -482,7 +504,6 @@ fn a_pin_kdf_paw_does_not_support_stops_setup_at_your_key_before_any_pin() {
         let session = port.attach(sim.clone()).unwrap();
         let status = session.pin_kdf();
         assert_eq!((status.enabled, status.supported), (enabled, supported), "{algorithm:?}");
-        assert_eq!(session.pin_kdf_supported(), supported);
         assert_eq!(status.detail.is_some(), !supported);
 
         let dir = tempfile::tempdir().unwrap();
@@ -494,11 +515,6 @@ fn a_pin_kdf_paw_does_not_support_stops_setup_at_your_key_before_any_pin() {
             assert!(matches!(&read, Err(SetupError::UnusableKey { message }) if message.contains("KDF")), "{read:?}");
             assert_eq!(setup.state(), SetupState::ReadKey);
         }
-
-        // The older path, straight from the card, says the same.
-        let flow_dir = tempfile::tempdir().unwrap();
-        let mut flow = paw_core::setup::SetupFlow::open(flow_dir.path()).unwrap();
-        assert_eq!(flow.read_key(sim.clone()).is_ok(), supported, "{algorithm:?}");
         assert_eq!(sim.verify_attempts() + sim.pin_queries(), 0);
     }
 }
@@ -513,11 +529,10 @@ fn a_download_reports_objects_and_bytes_received() {
     driver.drive(&task);
     assert!(matches!(finish(&task), KeyTaskState::Done { .. }));
 
-    let transfer = task.transfer_progress().unwrap();
+    let transfer = w.setup.transfer_progress().unwrap();
     assert!(transfer.total_objects > 0);
     assert_eq!(transfer.received_objects, transfer.total_objects);
     assert!(transfer.received_bytes > 0);
-    assert_eq!(w.setup.transfer_progress(), Some(transfer));
     // The sheet saw it as Working with objects done and expected, ending
     // at the total.
     assert!(driver.saw(|state| matches!(
@@ -537,7 +552,9 @@ fn a_refresh_reports_what_its_fetch_received() {
     driver.drive(&task);
     assert!(matches!(finish(&task), KeyTaskState::Done { .. }), "{:?}", sync.last_task_result());
 
-    let transfer = task.transfer_progress().unwrap();
-    assert!(transfer.received_objects > 0 && transfer.received_objects == transfer.total_objects, "{transfer:?}");
-    assert!(transfer.received_bytes > 0);
+    // The sheet saw the objects come in, ending at the total.
+    assert!(driver.saw(|state| matches!(
+        state,
+        KeyTaskState::Working { progress: Some(p) } if p.total > 0 && p.done == p.total
+    )));
 }

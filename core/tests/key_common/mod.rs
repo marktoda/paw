@@ -1,5 +1,6 @@
 //! A plugged-in simulated key, a fixture store and a listener that records
-//! every stage, for the key session tests.
+//! every stage, for the key session tests; and the key as other tests use
+//! it, through a session: a signer for git logins, and a decrypt.
 
 // Each test binary uses its own part of this.
 #![allow(dead_code)]
@@ -7,11 +8,14 @@
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
+use paw_core::PawError;
 use paw_core::copies::CopyCache;
-use paw_core::key::{KeyPort, KeyTask, KeyTaskListener, KeyTaskState};
+use paw_core::key::{KeyError, KeyPort, KeyTask, KeyTaskListener, KeyTaskState, LoginPurpose, SessionSigner};
 use paw_core::sim::copies::{SimClock, SimKeystore};
 use paw_core::sim::fixture::write_fixture_store;
+use paw_core::sim::tasks::{SimLogin, decipher};
 use paw_core::sim::{SimOptions, SimTouch, SimulatedKey};
+use paw_core::ssh::{SshPublicKey, SshSigner};
 use paw_core::store::PassStore;
 
 pub const PIN: &str = "735190";
@@ -197,7 +201,8 @@ impl KeyTaskListener for Driver {
 }
 
 pub fn finish(task: &Arc<KeyTask>) -> KeyTaskState {
-    task.wait_final(WAIT).expect("the task never finished")
+    assert!(eventually(|| task.state().is_final()), "the task never finished");
+    task.state()
 }
 
 pub fn is_pin(state: &KeyTaskState) -> bool {
@@ -233,4 +238,85 @@ pub fn eventually(check: impl Fn() -> bool) -> bool {
         std::thread::sleep(Duration::from_millis(2));
     }
     false
+}
+
+/// A port of its own with `sim` plugged in.
+pub fn port_with(sim: &Arc<SimulatedKey>) -> Arc<KeyPort> {
+    let port = KeyPort::new(SimClock::new(1_790_000_000_000));
+    port.attach(sim.clone()).unwrap();
+    port
+}
+
+/// A sign-in on `port` whose signer the test logs in with, driven by
+/// `driver`.
+pub fn login(port: &Arc<KeyPort>, purpose: LoginPurpose, driver: &Arc<Driver>) -> SimLogin {
+    let login = SimLogin::start(port, purpose, driver.clone());
+    driver.drive(login.task());
+    login
+}
+
+/// `sim` signed in on a port of its own, as the app's sign-in task does:
+/// the SSH signer git logins are made with. Typing `pin` and touching the
+/// key when asked; the sign-in ends when this is dropped.
+pub struct KeySigner {
+    pub port: Arc<KeyPort>,
+    pub driver: Arc<Driver>,
+    signer: SessionSigner,
+    _login: SimLogin,
+}
+
+impl KeySigner {
+    /// The error the sign-in task failed with, once a signature failed.
+    pub fn failure(&self) -> Option<KeyError> {
+        match self._login.task().state() {
+            KeyTaskState::Failed { error } => Some(error),
+            _ => None,
+        }
+    }
+}
+
+pub fn signer_with(sim: &Arc<SimulatedKey>, pin: &str) -> KeySigner {
+    let port = port_with(sim);
+    let driver = Driver::helpful(pin, sim);
+    let login = login(&port, LoginPurpose::Fetch, &driver);
+    let signer = login.signer().expect("the sign-in failed");
+    KeySigner { port, driver, signer, _login: login }
+}
+
+/// [`signer_with`] for a key whose PIN is [`PIN`].
+pub fn signer(sim: &Arc<SimulatedKey>) -> KeySigner {
+    signer_with(sim, PIN)
+}
+
+impl SshSigner for KeySigner {
+    fn public_key(&self) -> &SshPublicKey {
+        self.signer.public_key()
+    }
+
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, PawError> {
+        self.signer.sign(data)
+    }
+}
+
+/// Deciphers `ciphertext` with the key on `port` in a key task, typing
+/// `pin` and touching `sim` when asked.
+pub fn decrypt_on(port: &Arc<KeyPort>, sim: &Arc<SimulatedKey>, pin: &str, ciphertext: &[u8]) -> Result<Vec<u8>, KeyError> {
+    let driver = Driver::helpful(pin, sim);
+    let (task, text) = decipher(port, ciphertext.to_vec(), driver.clone());
+    driver.drive(&task);
+    match finish(&task) {
+        KeyTaskState::Done { .. } => Ok(text.recv().unwrap().to_vec()),
+        KeyTaskState::Failed { error } => Err(error),
+        other => panic!("the decrypt ended {other:?}"),
+    }
+}
+
+/// [`decrypt_on`] on a port of its own: a key plugged in for this alone.
+pub fn decrypt(sim: &Arc<SimulatedKey>, pin: &str, ciphertext: &[u8]) -> Result<Vec<u8>, KeyError> {
+    decrypt_on(&port_with(sim), sim, pin, ciphertext)
+}
+
+/// [`decrypt`] of an entry that must open, as text.
+pub fn decrypt_text(sim: &Arc<SimulatedKey>, pin: &str, ciphertext: &[u8]) -> String {
+    String::from_utf8(decrypt(sim, pin, ciphertext).unwrap()).unwrap()
 }

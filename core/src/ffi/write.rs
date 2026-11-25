@@ -9,9 +9,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use super::{Adapter, CardConnection, FieldView, OpenedEntry};
+use super::{FieldView, OpenedEntry};
 use crate::copies::{CopyCache, content_id};
 use crate::generate::{self, PasswordPolicy};
+use crate::key::KeySession;
 use crate::store::codes::CodeFile;
 use crate::store::PassStore;
 use crate::store::pairings::PairingFile;
@@ -453,13 +454,12 @@ impl StoreWriter {
         self.store.keyring()?.accept_recipients(self.store.repo(), &folder)
     }
 
-    /// Setup: pins the plugged-in key's decryption key. Needs no PIN.
-    /// Returns its fingerprint.
-    pub fn pin_card_key(&self, connection: Arc<dyn CardConnection>) -> Result<String, WriteError> {
-        // The card is read first, with no lock held.
-        let key = crate::card_decryption_key(Arc::new(Adapter(connection)))?;
+    /// Pins the decryption key of the key `session` is on, as read when it
+    /// was plugged in. Needs no PIN. Returns its fingerprint.
+    pub fn pin_card_key(&self, session: Arc<KeySession>) -> Result<String, WriteError> {
+        let key = session.decryption_key().map_err(|e| WriteError::Failed { message: e.to_string() })?;
         let _held = self.store.exclusive()?;
-        self.store.keyring()?.pin_card_key(&key)
+        self.store.keyring()?.pin_card_key(key)
     }
 
     /// Setup, after the test decrypt succeeded: binds the one top-level

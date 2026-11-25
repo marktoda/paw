@@ -8,22 +8,19 @@ mod key_common;
 
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
 
-use key_common::{Driver, finish, is_touch};
+use key_common::{Driver, PIN, finish, is_touch};
 use paw_core::ffi::OpenedEntry;
 use paw_core::key::{KeyError, KeyOutcome, KeyPort, KeyTaskState};
 use paw_core::recipients::{Access, Recipient};
 use paw_core::sim::SimulatedKey;
 use paw_core::sim::copies::SimClock;
 use paw_core::sim::fixture::{
-    OTHER_KEY_FOLDER, other_key, other_key_fingerprint_hex, write_fixture_store, write_name_match_entries,
+    OTHER_KEY_FOLDER, encrypt, other_key, other_key_fingerprint_hex, write_fixture_store, write_name_match_entries,
 };
 use paw_core::store::service::{MatchKind, NamePairing};
 use paw_core::store::PassStore;
-use paw_core::{PawError, card_decryption_key, card_info, decrypt_entry, encrypt_to_keys};
-
-const PIN: &str = "123456";
+use paw_core::PawError;
 
 /// A simulated key plugged into a key port, as the app holds one.
 struct Plugged {
@@ -170,7 +167,7 @@ fn each_folder_names_the_key_its_entries_are_for() {
 #[test]
 fn the_card_can_open_everything_but_the_archive() {
     let (_dir, store) = fixture();
-    let card = card_info(SimulatedKey::new(PIN.into(), true, 50)).unwrap().decryption_fingerprint.unwrap();
+    let card = plugged().port.session().unwrap().info().decryption_fingerprint.unwrap();
     let other = other_key_fingerprint_hex().unwrap();
     let other_id = Recipient::KeyId { id: other[other.len() - 16..].to_owned() };
 
@@ -237,29 +234,27 @@ fn an_entry_for_another_key_is_refused_before_the_pin_or_a_touch() {
         assert_eq!(done.touches, 0);
     }
     assert_eq!(plugged.key.decipher_count(), 0);
-    assert_eq!(card_info(plugged.key.clone()).unwrap().pin_tries_left, 3);
+    assert_eq!(plugged.key.pin_tries_left(), 3);
 }
 
 #[test]
 fn an_entry_for_several_keys_costs_one_touch_wherever_the_card_is_listed() {
-    let key = SimulatedKey::new(PIN.into(), true, 50);
-    let on_card = card_decryption_key(key.clone()).unwrap();
+    let plugged = plugged();
+    let on_card = plugged.key.decryption_key().unwrap();
     let other = other_key().unwrap();
+    let dir = tempfile::tempdir().unwrap();
 
-    for recipients in [vec![other.clone(), on_card.clone()], vec![on_card.clone(), other.clone()]] {
-        let entry = encrypt_to_keys(rand::thread_rng(), &recipients, b"shared\n").unwrap();
-        let before = key.decipher_count();
-        let touches = AtomicU32::new(0);
+    for (name, recipients) in [("card-last", vec![other.clone(), on_card.clone()]), ("card-first", vec![on_card.clone(), other.clone()])] {
+        let entry = encrypt(&recipients, b"shared\n").unwrap();
+        std::fs::write(dir.path().join(format!("{name}.gpg")), entry).unwrap();
+        let store = PassStore::open(dir.path().to_str().unwrap().into()).unwrap();
+        let before = plugged.key.decipher_count();
 
-        let plaintext = decrypt_entry(key.clone(), PIN, &entry, &|| {
-            touches.fetch_add(1, Ordering::SeqCst);
-            key.touch();
-        })
-        .unwrap();
+        let done = plugged.open(&store, PIN, name);
 
-        assert_eq!(plaintext, b"shared\n");
-        assert_eq!(touches.load(Ordering::SeqCst), 1);
-        assert_eq!(key.decipher_count(), before + 1);
+        assert_eq!(done.result.unwrap().password().as_deref(), Some("shared"), "{name}");
+        assert_eq!(done.touches, 1, "{name}");
+        assert_eq!(plugged.key.decipher_count(), before + 1, "{name}");
     }
 }
 
@@ -336,7 +331,7 @@ fn closing_an_opened_entry_takes_everything_away() {
 fn an_entry_that_is_not_text_opens_as_an_error() {
     let key = SimulatedKey::new(PIN.into(), false, 50);
     let dir = tempfile::tempdir().unwrap();
-    let binary = paw_core::encrypt_to_card(key.clone(), &[0xFF, 0xD8, 0xFF, 0xE0, 0x00]).unwrap();
+    let binary = encrypt(&[key.decryption_key().unwrap()], &[0xFF, 0xD8, 0xFF, 0xE0, 0x00]).unwrap();
     std::fs::write(dir.path().join("photo.gpg"), binary).unwrap();
     let store = PassStore::open(dir.path().to_str().unwrap().into()).unwrap();
     let refused = plugged_key(key).open(&store, PIN, "photo").result.err().unwrap();

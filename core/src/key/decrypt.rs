@@ -6,11 +6,8 @@
 //! card's part, one PSO:DECIPHER per candidate (one for an entry that names
 //! this key, however many recipients it has). [`Plan::finish`] is the
 //! symmetric decryption, after the card is free again.
-//!
-//! The same rules as `crate::decrypt_entry`, which builds with the `sim`
-//! feature keep as the Rust tests' own path to the card; device builds have
-//! only this one.
 
+use std::io::Read;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -29,6 +26,35 @@ use super::touch::{self, TouchWatch};
 use super::KeyError;
 use crate::recipients;
 
+/// How many recipient packets of one entry the card is asked to unwrap:
+/// one. It is the first packet that names the card's decryption key, or,
+/// if none names it, the first hidden (wildcard) packet. Each try can cost
+/// a touch, so a crafted entry with many packets for this key cannot make
+/// the person touch the key again and again. An entry whose only packets
+/// are hidden, for several recipients, opens only if this key's packet is
+/// the first: `gpg --throw-keyids` with several recipients is rare in
+/// password stores, and a failed open says the key could not decrypt it.
+pub const MAX_DECIPHERS: usize = 1;
+
+/// The most decrypted text an entry may hold. Entries are a few lines; a
+/// tiny compressed file that expands without end would otherwise exhaust
+/// memory, which the AutoFill extension has very little of.
+pub(crate) const MAX_PLAINTEXT_BYTES: u64 = 1 << 20;
+
+/// Reads decrypted (and possibly decompressed) text into `out`, refusing
+/// anything longer than [`MAX_PLAINTEXT_BYTES`].
+fn read_capped(from: &mut impl Read, out: &mut Vec<u8>) -> Result<(), String> {
+    Read::take(from, MAX_PLAINTEXT_BYTES + 1)
+        .read_to_end(out)
+        .map_err(|e| e.to_string())?;
+    if out.len() as u64 > MAX_PLAINTEXT_BYTES {
+        use zeroize::Zeroize;
+        out.zeroize();
+        return Err("it holds more text than any password entry should".into());
+    }
+    Ok(())
+}
+
 fn unreadable(detail: impl std::fmt::Display) -> KeyError {
     KeyError::EntryUnreadable { detail: detail.to_string() }
 }
@@ -44,7 +70,7 @@ fn is_hidden(pkesk: &PublicKeyEncryptedSessionKey) -> bool {
 pub(crate) struct Plan<'a> {
     /// The one packet the card is asked to unwrap: the first addressed to
     /// this key, or if none is, the first hidden one (see
-    /// [`crate::MAX_DECIPHERS`]).
+    /// [`MAX_DECIPHERS`]).
     candidates: Vec<PublicKeyEncryptedSessionKey>,
     edata: Edata<'a>,
 }
@@ -61,7 +87,7 @@ impl<'a> Plan<'a> {
         });
         let (hidden, named): (Vec<_>, Vec<_>) = for_this_key.partition(is_hidden);
         let mut candidates = if named.is_empty() { hidden } else { named };
-        candidates.truncate(crate::MAX_DECIPHERS);
+        candidates.truncate(MAX_DECIPHERS);
         if candidates.is_empty() {
             let recipients = recipients::entry_recipients(ciphertext)
                 .map(|found| found.keys.iter().map(recipients::Recipient::describe).collect())
@@ -135,7 +161,7 @@ impl<'a> Plan<'a> {
             decrypted = decrypted.decompress().map_err(failed)?;
         }
         let mut plaintext = Zeroizing::new(Vec::new());
-        crate::read_capped(&mut decrypted, &mut plaintext)
+        read_capped(&mut decrypted, &mut plaintext)
             .map_err(|detail| KeyError::DecryptFailed { detail })?;
         Ok(plaintext)
     }

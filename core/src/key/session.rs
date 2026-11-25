@@ -22,10 +22,10 @@ use super::keylog::{self, KeyLog, Sink};
 use super::apdu::{self, Verify};
 use super::task::TaskCore;
 use super::wire::Wire;
-use super::{FAST_REFUSAL, KeyError, KeyTaskState, MAX_PIN_LEN, MIN_PIN_LEN, PIN_BACKGROUND_LIMIT};
-use crate::copies::Clock;
+use super::{FAST_REFUSAL, KeyError, KeyTaskState, MAX_PIN_LEN, MIN_PIN_LEN, PIN_BACKGROUND_LIMIT, Uptime};
 use crate::ssh::SshPublicKey;
-use crate::{ApduTransport, CardInfo, PawError};
+use super::card::{self, ApduTransport, CardInfo};
+use crate::PawError;
 
 /// A user PIN of a plausible length, wiped when dropped. It has no
 /// `Display`, and its `Debug` shows nothing of it.
@@ -110,7 +110,7 @@ pub struct KeySession {
     me: Weak<KeySession>,
     wire: Arc<Wire>,
     identity: Identity,
-    clock: Arc<dyn Clock>,
+    uptime: Arc<dyn Uptime>,
     ended: AtomicBool,
     state: Mutex<State>,
     card_free: Condvar,
@@ -136,14 +136,14 @@ impl KeySession {
     /// `again` says the port had read a key before.
     pub(crate) fn open(
         transport: Arc<dyn ApduTransport>,
-        clock: Arc<dyn Clock>,
+        uptime: Arc<dyn Uptime>,
         sink: Option<Arc<Sink>>,
         again: bool,
     ) -> Result<Arc<Self>, KeyError> {
         let log = KeyLog::new(sink);
         log.line(if again { "session start (key read again)" } else { "session start" });
         let wire = Wire::logged(transport, log.clone());
-        let opened = Self::read(wire, clock);
+        let opened = Self::read(wire, uptime);
         match &opened {
             Ok(session) => {
                 let info = session.card_info();
@@ -159,13 +159,13 @@ impl KeySession {
         opened
     }
 
-    fn read(wire: Arc<Wire>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, KeyError> {
-        let info = crate::card_info(wire.clone()).map_err(|e| read_error(&wire, e))?;
+    fn read(wire: Arc<Wire>, uptime: Arc<dyn Uptime>) -> Result<Arc<Self>, KeyError> {
+        let info = card::card_info(wire.clone()).map_err(|e| read_error(&wire, e))?;
         let decryption_key = match info.decryption_fingerprint {
-            Some(_) => Some(crate::card_decryption_key(wire.clone()).map_err(|e| read_error(&wire, e))?),
+            Some(_) => Some(card::card_decryption_key(wire.clone()).map_err(|e| read_error(&wire, e))?),
             None => None,
         };
-        let ssh_key = match crate::ssh::card_ssh_public_key(wire.clone()) {
+        let ssh_key = match card::card_ssh_public_key(wire.clone()) {
             Ok(key) => Some(key),
             Err(PawError::NoSshKey(_)) => None,
             Err(e) => return Err(read_error(&wire, e)),
@@ -176,7 +176,7 @@ impl KeySession {
             me: me.clone(),
             wire,
             identity: Identity { info, decryption_key, ssh_key, pin_kdf },
-            clock,
+            uptime,
             ended: AtomicBool::new(false),
             state: Mutex::new(State {
                 pin: None,
@@ -274,7 +274,7 @@ impl KeySession {
     /// is dropped, even if nobody said paw came back. A suspended process
     /// runs no code, so this is checked before anything uses the PIN.
     fn apply_background_limit(&self) {
-        let now = self.clock.monotonic_ms();
+        let now = self.uptime.monotonic_ms();
         let expired = {
             let state = self.lock();
             state.backgrounded_at_ms.is_some_and(|at| {
@@ -498,7 +498,7 @@ impl KeySession {
         };
         task.set(KeyTaskState::Working { progress: None });
         let forgets = self.lock().forgets;
-        let result = match crate::open(self.wire.clone()) {
+        let result = match card::open(self.wire.clone()) {
             Ok(card) => job(&mut CardJob { session: self, card, forgets }),
             Err(e) => Err(Halt::Fail(read_error(&self.wire, e))),
         };
@@ -663,12 +663,6 @@ impl KeySession {
         self.identity.pin_kdf.status()
     }
 
-    /// Whether paw can send this key its PIN: `false` for a PIN KDF paw does
-    /// not support, which every task would refuse before the PIN stage.
-    pub fn pin_kdf_supported(&self) -> bool {
-        !matches!(self.identity.pin_kdf, PinKdf::Unsupported(_))
-    }
-
     /// Whether paw holds the PIN, so the next task skips the PIN stage.
     /// Answered from memory: if the background limit has passed, the PIN
     /// is dropped and the card de-verified on another thread.
@@ -683,11 +677,6 @@ impl KeySession {
         self.log().text(utc_offset_secs)
     }
 
-    /// The key is still plugged in and answering.
-    pub fn is_connected(&self) -> bool {
-        !self.ended()
-    }
-
     /// Lock now: drops the PIN from memory before it returns, and
     /// de-verifies the card afterwards on another thread (after the running
     /// command, if one is waiting for a touch). Sends nothing to the card on
@@ -698,7 +687,7 @@ impl KeySession {
 
     /// paw went to the background. Locking the phone alone is not this.
     pub fn note_backgrounded(&self) {
-        let now = self.clock.monotonic_ms();
+        let now = self.uptime.monotonic_ms();
         let mut state = self.lock();
         state.backgrounded_at_ms.get_or_insert(now);
     }

@@ -1,14 +1,11 @@
 //! An [`SshSigner`] that signs through the key session, so that clone,
 //! fetch, push and setup share the PIN the person typed once.
 //!
-//! It comes from a sign-in task ([`KeyTask::login_signer`]), which has
-//! already verified the PIN before the connection opens. Each signature is
-//! one card job: the held PIN is re-verified silently if the card dropped
-//! it, then INTERNAL AUTHENTICATE runs, showing `Touch` on the task as the
-//! slot's policy says. No PIN is asked while the server waits: if paw no
-//! longer holds one, the signature fails.
-//!
-//! [`KeyTask::login_signer`]: super::KeyTask::login_signer
+//! A sign-in task makes it once the PIN is verified, before the connection
+//! opens. Each signature is one card job: the held PIN is re-verified
+//! silently if the card dropped it, then INTERNAL AUTHENTICATE runs,
+//! showing `Touch` on the task as the slot's policy says. No PIN is asked
+//! while the server waits: if paw no longer holds one, the signature fails.
 
 use std::sync::Arc;
 use std::time::Instant;

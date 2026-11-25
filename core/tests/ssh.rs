@@ -1,18 +1,22 @@
 //! SSH login signatures from a simulated OpenPGP card with an ed25519
-//! authentication key, checked with a verifier that shares no code with it.
+//! authentication key, made through the app's sign-in task and checked with
+//! a verifier that shares no code with it.
 
 #![cfg(feature = "sim")]
 
+mod key_common;
+
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use key_common::*;
+use paw_core::PawError;
+use paw_core::ffi::sync::Setup;
+use paw_core::key::{KeyError, KeyTaskState, LoginPurpose};
+use paw_core::setup::SetupState;
 use paw_core::sim::{SimOptions, SimulatedKey};
-use paw_core::ssh::{CardSigner, SshPublicKey, SshSigner, card_ssh_public_key, card_ssh_sign};
-use paw_core::{PawError, card_info};
+use paw_core::ssh::{SshPublicKey, SshSigner};
 use ring::signature::{ED25519, UnparsedPublicKey};
-
-const PIN: &str = "123456";
 
 fn key(decrypt_touch: bool, auth_touch: bool, extended_length: bool) -> Arc<SimulatedKey> {
     SimulatedKey::with_options(SimOptions {
@@ -30,9 +34,7 @@ fn raw_key(public: &SshPublicKey) -> &[u8] {
 }
 
 fn verifies(public: &SshPublicKey, message: &[u8], signature: &[u8]) -> bool {
-    UnparsedPublicKey::new(&ED25519, raw_key(public))
-        .verify(message, signature)
-        .is_ok()
+    UnparsedPublicKey::new(&ED25519, raw_key(public)).verify(message, signature).is_ok()
 }
 
 /// About the size of a real login: session id, user, key blob.
@@ -43,34 +45,31 @@ fn login_sized() -> Vec<u8> {
 #[test]
 fn reads_the_ssh_public_key_without_a_pin() {
     let key = key(true, true, false);
-    let public = card_ssh_public_key(key.clone()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let setup = Setup::open(dir.path().to_string_lossy().into_owned()).unwrap();
+    let SetupState::Address { key: summary } = setup.read_key_from_session(port_with(&key).session().unwrap()).unwrap()
+    else {
+        panic!("expected Address")
+    };
+    let line = summary.ssh_public_key;
 
-    assert_eq!(public, SshPublicKey::ed25519(&key.authentication_public_key()));
+    assert_eq!(line, SshPublicKey::ed25519(&key.authentication_public_key()).authorized_key());
     // Every ssh-ed25519 line starts the same way: the encoded algorithm name.
-    assert!(
-        public
-            .authorized_key()
-            .starts_with("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI")
-    );
+    assert!(line.starts_with("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI"));
     assert_eq!(key.authentication_count(), 0);
-    assert_eq!(card_info(key).unwrap().pin_tries_left, 3);
+    assert_eq!(key.verify_attempts(), 0);
 }
 
 #[test]
 fn signs_a_login_once_the_key_is_touched() {
     let key = key(true, true, false);
-    let public = card_ssh_public_key(key.clone()).unwrap();
+    let signer = signer(&key);
     let message = login_sized();
 
-    let asked = AtomicBool::new(false);
-    let signature = card_ssh_sign(key.clone(), PIN, &message, &|| {
-        asked.store(true, Ordering::SeqCst);
-        key.touch();
-    })
-    .unwrap();
+    let signature = signer.sign(&message).unwrap();
 
-    assert!(verifies(&public, &message, &signature));
-    assert!(asked.load(Ordering::SeqCst));
+    assert!(verifies(&SshPublicKey::ed25519(&key.authentication_public_key()), &message, &signature));
+    assert!(signer.driver.saw(is_touch));
     assert_eq!(key.authentication_count(), 1);
 }
 
@@ -81,32 +80,34 @@ fn signs_data_longer_than_one_short_apdu() {
     // Command chaining only, then extended length as a YubiKey advertises.
     for extended_length in [false, true] {
         let key = key(false, false, extended_length);
-        let public = card_ssh_public_key(key.clone()).unwrap();
-        let signature = card_ssh_sign(key, PIN, &message, &|| {}).unwrap();
-        assert!(verifies(&public, &message, &signature), "extended: {extended_length}");
+        let signer = signer(&key);
+        let signature = signer.sign(&message).unwrap();
+        assert!(verifies(signer.public_key(), &message, &signature), "extended: {extended_length}");
     }
 }
 
 #[test]
-fn the_card_signer_signs_with_the_key_it_reports() {
+fn the_signer_signs_with_the_key_it_reports() {
     let card = key(false, true, false);
-    let touch = card.clone();
-    let signer = CardSigner::new(card.clone(), PIN, move || touch.touch()).unwrap();
+    let signer = signer(&card);
     let message = login_sized();
 
     let signature = signer.sign(&message).unwrap();
 
+    assert_eq!(*signer.public_key(), SshPublicKey::ed25519(&card.authentication_public_key()));
     assert!(verifies(signer.public_key(), &message, &signature));
 }
 
 #[test]
 fn fails_when_nobody_touches_the_key() {
-    let key = key(true, true, false);
+    // Long enough not to read as a refusal at once.
+    let key = SimulatedKey::new(PIN.into(), true, 1_500);
+    let driver = Driver::typist(PIN);
+    let login = login(&port_with(&key), LoginPurpose::Fetch, &driver);
+    let signer = login.signer().unwrap();
 
-    assert!(matches!(
-        card_ssh_sign(key.clone(), PIN, &login_sized(), &|| {}),
-        Err(PawError::Sign(_))
-    ));
+    assert!(matches!(signer.sign(&login_sized()), Err(PawError::Sign(_))));
+    assert!(matches!(finish(login.task()), KeyTaskState::Failed { error: KeyError::TouchTimeout }));
     assert_eq!(key.authentication_count(), 0);
 }
 
@@ -114,35 +115,12 @@ fn fails_when_nobody_touches_the_key() {
 fn the_authentication_slot_has_its_own_touch_policy() {
     // Decryption needs a touch, authentication does not.
     let key = key(true, false, false);
+    let signer = signer(&key);
 
-    let asked = AtomicBool::new(false);
-    card_ssh_sign(key.clone(), PIN, &login_sized(), &|| asked.store(true, Ordering::SeqCst))
-        .unwrap();
+    signer.sign(&login_sized()).unwrap();
 
-    assert!(!asked.load(Ordering::SeqCst));
+    assert!(!signer.driver.saw(is_touch));
     assert_eq!(key.authentication_count(), 1);
-}
-
-#[test]
-fn wrong_pin_reports_tries_left_then_blocks() {
-    let key = key(true, true, false);
-    let message = login_sized();
-
-    for expected in [2, 1] {
-        match card_ssh_sign(key.clone(), "000000", &message, &|| key.touch()) {
-            Err(PawError::WrongPin { tries_left }) => assert_eq!(tries_left, expected),
-            other => panic!("expected WrongPin, got {other:?}"),
-        }
-    }
-    assert!(matches!(
-        card_ssh_sign(key.clone(), "000000", &message, &|| key.touch()),
-        Err(PawError::PinBlocked)
-    ));
-    assert!(matches!(
-        card_ssh_sign(key.clone(), PIN, &message, &|| key.touch()),
-        Err(PawError::PinBlocked)
-    ));
-    assert_eq!(key.authentication_count(), 0);
 }
 
 #[test]
@@ -158,7 +136,7 @@ fn the_card_refuses_to_sign_before_the_pin_is_verified() {
 #[test]
 fn the_card_takes_one_extended_length_command() {
     let key = key(false, false, true);
-    let public = card_ssh_public_key(key.clone()).unwrap();
+    let public = SshPublicKey::ed25519(&key.authentication_public_key());
     let message: Vec<u8> = (0..300u32).map(|i| i as u8).collect();
 
     let mut verify = vec![0x00, 0x20, 0x00, 0x82, PIN.len() as u8];

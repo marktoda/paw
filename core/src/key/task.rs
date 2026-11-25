@@ -20,13 +20,11 @@ use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
 
 use zeroize::Zeroizing;
 
 use super::enrolment::KeyMismatch;
 use super::session::{Halt, KeySession, Pin};
-use super::signer::SessionSigner;
 use super::{KeyError, KeyOutcome, KeyPurpose, KeyTaskListener, KeyTaskState, TaskProgress};
 
 struct Inner {
@@ -41,12 +39,8 @@ struct Inner {
     committing: bool,
     /// The session the task runs on, once it has one.
     session: Option<Arc<KeySession>>,
-    /// A sign-in task has the PIN verified and can sign.
-    signer_ready: bool,
     /// The task refused a card that is not the enrolled key.
     mismatch: Option<KeyMismatch>,
-    /// How far the clone or fetch after a sign-in has got.
-    transfer: Option<crate::sync::TransferProgress>,
 }
 
 /// Numbers tasks in the key log, per process.
@@ -195,24 +189,14 @@ impl TaskCore {
         }
     }
 
-    /// The clone or fetch after a sign-in has got this far: shown as
-    /// `Working` with objects done and expected, and kept for
-    /// `transfer_progress`. Nothing once the task has been cancelled or has
-    /// finished.
-    pub(crate) fn report_transfer(&self, update: crate::sync::TransferProgress) -> bool {
-        if self.cancelled() {
+    /// The work after the key has got this far: shown as `Working` with
+    /// the count done and expected. Nothing once the task has been
+    /// cancelled or has finished. `false` if it has: the work should stop.
+    pub(crate) fn report_progress(&self, done: u32, total: u32) -> bool {
+        if self.cancelled() || self.lock().state.is_final() {
             return false;
         }
-        {
-            let mut inner = self.lock();
-            if inner.state.is_final() {
-                return false;
-            }
-            inner.transfer = Some(update);
-        }
-        self.set(KeyTaskState::Working {
-            progress: Some(TaskProgress { done: update.received_objects, total: update.total_objects }),
-        });
+        self.set(KeyTaskState::Working { progress: Some(TaskProgress { done, total }) });
         !self.cancelled()
     }
 
@@ -234,11 +218,6 @@ impl TaskCore {
     /// Records why the card was refused, before the task says it failed.
     pub(crate) fn set_key_mismatch(&self, mismatch: KeyMismatch) {
         self.lock().mismatch = Some(mismatch);
-    }
-
-    pub(crate) fn mark_signer_ready(&self) {
-        self.lock().signer_ready = true;
-        self.changed.notify_all();
     }
 
     /// Waits until `done` says so, or the task is cancelled.
@@ -320,9 +299,8 @@ pub struct KeyTask {
     thread: Mutex<Option<JoinHandle<()>>>,
 }
 
-/// What a task's thread runs. `Ok(None)` leaves the task running (a
-/// sign-in, which its caller finishes).
-pub(crate) type Body = Box<dyn FnOnce(&Arc<TaskCore>) -> Result<Option<KeyOutcome>, Halt> + Send>;
+/// What a task's thread runs.
+pub(crate) type Body = Box<dyn FnOnce(&Arc<TaskCore>) -> Result<KeyOutcome, Halt> + Send>;
 
 impl KeyTask {
     /// Creates a task in `initial` and, unless that is final, starts its
@@ -352,9 +330,7 @@ impl KeyTask {
                 supplied: None,
                 committing: false,
                 session: None,
-                signer_ready: false,
                 mismatch,
-                transfer: None,
             }),
             changed: Condvar::new(),
         });
@@ -365,20 +341,17 @@ impl KeyTask {
         let spawned = std::thread::Builder::new().name("paw-key-task".into()).spawn(move || {
             let result = std::panic::catch_unwind(AssertUnwindSafe(|| body(&core)));
             let end = match result {
-                Ok(Ok(Some(outcome))) => Some(KeyTaskState::Done { outcome }),
-                Ok(Ok(None)) => None,
-                Ok(Err(Halt::Fail(error))) => Some(KeyTaskState::Failed { error }),
-                Ok(Err(Halt::AskPin(_))) => Some(KeyTaskState::Failed {
+                Ok(Ok(outcome)) => KeyTaskState::Done { outcome },
+                Ok(Err(Halt::Fail(error))) => KeyTaskState::Failed { error },
+                Ok(Err(Halt::AskPin(_))) => KeyTaskState::Failed {
                     error: KeyError::Reader { detail: "the PIN was needed where it cannot be asked".into() },
-                }),
+                },
                 Err(_) => {
                     core.panicked.store(true, Ordering::SeqCst);
-                    Some(KeyTaskState::Failed { error: KeyError::Reader { detail: "paw hit an internal error".into() } })
+                    KeyTaskState::Failed { error: KeyError::Reader { detail: "paw hit an internal error".into() } }
                 }
             };
-            if let Some(end) = end {
-                core.set(end);
-            }
+            core.set(end);
         });
         match spawned {
             Ok(handle) => *task.thread.lock().unwrap_or_else(|p| p.into_inner()) = Some(handle),
@@ -396,21 +369,8 @@ impl KeyTask {
 
     /// A task that has already failed with `error`.
     pub(crate) fn failed(purpose: KeyPurpose, listener: Arc<dyn KeyTaskListener>, error: KeyError) -> Arc<Self> {
-        Self::start_with_mismatch(purpose, listener, KeyTaskState::Failed { error }, None, Box::new(|_| Ok(None)))
-    }
-
-    /// Blocks until the task has finished, or `timeout` has passed. For
-    /// tests and Rust callers; Swift uses the listener.
-    pub fn wait_final(&self, timeout: Duration) -> Option<KeyTaskState> {
-        let deadline = Instant::now() + timeout;
-        let mut inner = self.core.lock();
-        loop {
-            if inner.state.is_final() {
-                return Some(inner.state.clone());
-            }
-            let left = deadline.checked_duration_since(Instant::now())?;
-            inner = self.core.changed.wait_timeout(inner, left).unwrap_or_else(|p| p.into_inner()).0;
-        }
+        let initial = KeyTaskState::Failed { error: error.clone() };
+        Self::start_with_mismatch(purpose, listener, initial, None, Box::new(move |_| Err(Halt::Fail(error))))
     }
 
     /// Waits for the task's thread to end. `true` if it panicked (it then
@@ -421,39 +381,6 @@ impl KeyTask {
             let _ = handle.join();
         }
         self.core.panicked.load(Ordering::SeqCst)
-    }
-
-    /// For a sign-in task: waits until the PIN is verified, then returns
-    /// the signer to open the git connection with. Call it before
-    /// connecting, so that no PIN is asked while the server waits.
-    pub fn login_signer(&self) -> Result<SessionSigner, KeyError> {
-        let mut inner = self.core.lock();
-        loop {
-            match &inner.state {
-                KeyTaskState::Failed { error } => return Err(error.clone()),
-                KeyTaskState::Cancelled => return Err(KeyError::Cancelled),
-                KeyTaskState::Done { .. } => {
-                    return Err(KeyError::Reader { detail: "the sign-in has already finished".into() });
-                }
-                _ => {}
-            }
-            if let (true, Some(session)) = (inner.signer_ready, inner.session.clone()) {
-                drop(inner);
-                return SessionSigner::new(self.core.clone(), session);
-            }
-            inner = self.core.changed.wait(inner).unwrap_or_else(|p| p.into_inner());
-        }
-    }
-
-    /// For a sign-in task: the work after the login has got this far.
-    pub fn report_progress(&self, done: u32, total: u32) {
-        self.core.set(KeyTaskState::Working { progress: Some(TaskProgress { done, total }) });
-    }
-
-    /// For a sign-in task: the caller is done with the key. How the network
-    /// part went is the caller's to report; the key's part is done.
-    pub fn finish_login(&self) {
-        self.core.set(KeyTaskState::Done { outcome: KeyOutcome::SignedIn });
     }
 }
 
@@ -490,13 +417,5 @@ impl KeyTask {
     /// `NotForThisKey`, and no PIN was sent.
     pub fn key_mismatch(&self) -> Option<KeyMismatch> {
         self.core.lock().mismatch.clone()
-    }
-
-    /// For a download or sync: objects and bytes received so far by its
-    /// clone or fetch, at most ten updates a second (each also shown as
-    /// `Working` with objects done and expected). `None` before the
-    /// transfer starts. Not updated after the task is cancelled.
-    pub fn transfer_progress(&self) -> Option<crate::sync::TransferProgress> {
-        self.core.lock().transfer
     }
 }

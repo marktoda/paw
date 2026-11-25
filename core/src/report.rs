@@ -21,7 +21,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::KeyTouch;
+use crate::key::KeyTouch;
 use crate::copies::CopyCache;
 use crate::ffi::github::GitHub;
 use crate::key::KeyPort;

@@ -8,8 +8,7 @@
 //! Each step is one call. A failure is a [`SetupError`] and leaves the flow
 //! at the step that failed, so the same call can be tried again. The step
 //! reached is saved in a small file in the state directory after every
-//! change, with nothing secret in it: the PIN is passed to the one call
-//! that needs it and dropped when that call returns. If the app is killed,
+//! change, with nothing secret in it. If the app is killed,
 //! [`SetupFlow::open`] picks up where it stopped; a download that was
 //! interrupted is removed and starts again.
 //!
@@ -23,35 +22,26 @@
 //!   ([`crate::write::keyring`]), written by the same step;
 //! - `repo/` — the store itself.
 //!
-//! The app runs the steps that need the key as key tasks on the key
-//! session, which share the PIN typed once (see `ffi::sync`). Builds with
-//! the `sim` feature also have them with a card and the PIN passed per call
-//! (`download`, `test_decrypt`), which the Rust tests use to set stores up;
-//! device builds do not. Both go through the same `begin_*` and `finish_*`
-//! steps here, so they save the same state and leave the same files.
+//! The steps that need the key run as key tasks on the key session, which
+//! share the PIN typed once (see `ffi::sync`); they go through the
+//! `begin_*` and `finish_*` steps here.
 
 pub mod address;
 pub mod outcome;
 pub mod touch;
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Instant;
 
-#[cfg(feature = "sim")]
-use zeroize::Zeroizing;
-
-use crate::key::KeyIdentity;
 use crate::key::enrolment::save_enrolment;
+use crate::key::{CardInfo, KeyIdentity, KeyTouch};
 use crate::recipients::Access;
-use crate::ssh::{SshPublicKey, card_ssh_public_key};
-#[cfg(feature = "sim")]
-use crate::ssh::CardSigner;
+use crate::ssh::SshPublicKey;
 use crate::store::PassStore;
 use crate::sync::hosts::{KnownHosts, is_bundled, pin_for};
 use crate::sync::{self, Cloned, Connection, PresentedHostKey, RefusedPath};
 use crate::write::{Keyring, LineStatus, WriteError};
-use crate::{ApduTransport, CardInfo, KeyTouch, PawError, card_info};
+use crate::PawError;
 use address::StoreAddress;
 use outcome::{RemoteMessage, RemoteReason, says_repository_missing};
 use touch::{TouchClock, TouchExpectation};
@@ -76,7 +66,7 @@ pub struct KeySummary {
 /// Where setup is, and what the screen for it needs.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum SetupState {
-    /// Plug in the key; then `read_key`.
+    /// Plug in the key; then `read_key_from_session`.
     ReadKey,
     /// Ask for the store's address; then `set_address`.
     Address { key: KeySummary },
@@ -86,9 +76,9 @@ pub enum SetupState {
     /// The host is not known yet. Show the fingerprint; `confirm_host` with
     /// it pins the key and goes on.
     ConfirmHost { host: String, algorithm: String, fingerprint: String },
-    /// Ask for the PIN; `download` clones the store with one login.
+    /// Ask for the PIN; `download_with_key` clones the store with one login.
     NeedPin { address: String, touch: TouchExpectation },
-    /// Cloned; `test_decrypt` opens one entry to prove the key works.
+    /// Cloned; `test_decrypt_with_key` opens one entry to prove the key works.
     TestDecrypt { entries: u32, touch: TouchExpectation },
     Done { opened: String, entries: u32 },
 }
@@ -110,12 +100,6 @@ pub enum SetupError {
     /// The host does not know this key. Add `public_key` to the account.
     #[error("{host} doesn't know this key yet")]
     KeyNotAccepted { host: String, public_key: String },
-    #[error("wrong PIN, {tries_left} tries left")]
-    WrongPin { tries_left: u8 },
-    #[error("the PIN is blocked; unblock it with the admin PIN")]
-    PinBlocked,
-    #[error("the key was not touched in time")]
-    TouchTimedOut,
     #[error("that store is empty")]
     EmptyRepository,
     #[error("that repository isn't a pass store: it has no .gpg-id file at the top")]
@@ -126,9 +110,6 @@ pub enum SetupError {
     CannotOpenEntry { entry: String, detail: String },
     #[error("this key cannot be used: {message}")]
     UnusableKey { message: String },
-    /// The progress callback asked to stop. The next `download` starts over.
-    #[error("stopped")]
-    Cancelled,
     #[error("{message}")]
     WrongStep { message: String },
     #[error("{message}")]
@@ -179,20 +160,6 @@ pub struct SetupWriteReadiness {
 /// A wrong step or a damaged store, as setup words it.
 fn write_failed(error: WriteError) -> SetupError {
     failed(format!("could not record the store's keys: {error}"))
-}
-
-#[cfg(feature = "sim")]
-/// What setup tells the app while a step runs.
-pub trait SetupEvents: Send + Sync {
-    /// The key is about to wait for a touch, or may be.
-    fn touch_needed(&self, expectation: TouchExpectation);
-    /// Objects received and expected while cloning. Return `false` to stop.
-    fn progress(&self, received: u32, total: u32) -> bool;
-    /// The same, with the bytes received. At most ten a second, and never
-    /// again once either has returned `false`.
-    fn transfer(&self, update: sync::TransferProgress) -> bool {
-        self.progress(update.received_objects, update.total_objects)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -348,21 +315,6 @@ fn remove_dir(path: &Path, _held: &crate::lock::Exclusive) -> Result<(), SetupEr
     }
 }
 
-#[cfg(feature = "sim")]
-/// What a login or a key operation failing means to the person.
-fn key_error(error: PawError, touch_asked: bool) -> SetupError {
-    match error {
-        PawError::WrongPin { tries_left } => SetupError::WrongPin { tries_left },
-        PawError::PinBlocked => SetupError::PinBlocked,
-        // The card refuses a signature or decryption it waited for and did
-        // not get a touch for; with no touch asked, it is another failure.
-        PawError::Sign(_) | PawError::Decrypt(_) | PawError::Card(_) if touch_asked => {
-            SetupError::TouchTimedOut
-        }
-        other => failed(other),
-    }
-}
-
 impl SetupFlow {
     /// Opens the setup kept in `state_dir`, creating the directory if need
     /// be, and resumes where it stopped.
@@ -511,20 +463,6 @@ impl SetupFlow {
                 Ok(self.state())
             }
         }
-    }
-
-    /// Reads the plugged-in key: no PIN, no touch.
-    /// A key whose PIN KDF paw cannot follow is refused here
-    /// (`UnusableKey`), before any PIN is asked.
-    pub fn read_key(&mut self, card: Arc<dyn ApduTransport>) -> Result<SetupState, SetupError> {
-        self.expect(&[Step::ReadKey, Step::Address], "read the key")?;
-        let info = card_info(card.clone()).map_err(failed)?;
-        let kdf = crate::key::kdf::read_from(card.clone()).map_err(failed)?;
-        if !kdf.status().supported {
-            return Err(SetupError::UnusableKey { message: crate::key::kdf::UNSUPPORTED_AT_SETUP.into() });
-        }
-        let ssh = card_ssh_public_key(card).map_err(|e| SetupError::UnusableKey { message: e.to_string() })?;
-        self.use_key(info, &ssh)
     }
 
     /// The key as its session read it when it was plugged in: no card
@@ -758,65 +696,6 @@ impl SetupFlow {
         }
     }
 
-#[cfg(feature = "sim")]
-    /// Clones the store with one login. `pin` is used for that login and
-    /// dropped when this returns.
-    pub fn download(
-        &mut self,
-        card: Arc<dyn ApduTransport>,
-        pin: &str,
-        events: Arc<dyn SetupEvents>,
-    ) -> Result<SetupState, SetupError> {
-        self.expect(&[Step::NeedPin], "download")?;
-        self.check_card(&card)?;
-        let (remote, repo) = self.begin_download()?;
-
-        let connection = {
-            let clock = self.authentication;
-            let asked = Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let (said, tell) = (asked.clone(), events.clone());
-            let signer = CardSigner::new(card, pin, move || {
-                said.store(true, std::sync::atomic::Ordering::SeqCst);
-                let expectation = clock.expectation();
-                if expectation != TouchExpectation::NotNeeded {
-                    tell.touch_needed(expectation);
-                }
-            })
-            .map_err(failed);
-            let opened = signer.and_then(|signer| {
-                Connection::open(&remote, &signer).map_err(|e| match e {
-                    e @ (PawError::Network(_) | PawError::HostKeyMismatch { .. } | PawError::KeyRejected) => {
-                        self.connection_error(&remote, e, None)
-                    }
-                    other => key_error(other, asked.load(std::sync::atomic::Ordering::SeqCst)),
-                })
-            });
-            match opened {
-                Ok(connection) => connection,
-                Err(e) => {
-                    self.go(Step::NeedPin)?;
-                    return Err(e);
-                }
-            }
-        };
-        self.authentication.used_at(Instant::now());
-
-        let mut cancelled = false;
-        let mut progress = |update| {
-            let go_on = events.transfer(update);
-            cancelled |= !go_on;
-            go_on
-        };
-        let cloned = sync::clone_with_transfer(&connection, &remote, &repo, Some(&mut progress));
-        let said = connection.remote_said();
-        drop(connection);
-        match cloned {
-            // Left as a kill would leave it: `open` cleans up.
-            Err(_) if cancelled => Err(SetupError::Cancelled),
-            other => self.finish_download(&remote, other, said),
-        }
-    }
-
     /// The start of a download: the remote to clone and where to, with any
     /// earlier attempt removed. Setup is at "cloning" until
     /// [`Self::finish_download`] or [`Self::abandon_download`].
@@ -901,45 +780,6 @@ impl SetupFlow {
             RemoteReason::EmptyRepository => SetupError::EmptyRepository,
             _ => SetupError::NotAPassStore,
         })
-    }
-
-#[cfg(feature = "sim")]
-    /// Opens one entry the key can open, to prove it works. The plaintext is
-    /// wiped at once. `pin` is dropped when this returns.
-    ///
-    /// Then, as after the session's key check: the card's key is pinned and
-    /// bound to its `.gpg-id` line, every `.gpg-id` is accepted, and the
-    /// key is recorded as the store's enrolled key.
-    pub fn test_decrypt(
-        &mut self,
-        card: Arc<dyn ApduTransport>,
-        pin: &str,
-        events: Arc<dyn SetupEvents>,
-    ) -> Result<SetupState, SetupError> {
-        let entry = self.pick_test_entry()?;
-        self.check_card(&card)?;
-        let store = PassStore::open(self.repo_dir().to_string_lossy().into_owned()).map_err(failed)?;
-        let ciphertext = store.read_entry(&entry).map_err(failed)?;
-
-        let clock = self.decryption;
-        let asked = std::sync::atomic::AtomicBool::new(false);
-        let touch = || {
-            asked.store(true, std::sync::atomic::Ordering::SeqCst);
-            let expectation = clock.expectation();
-            if expectation != TouchExpectation::NotNeeded {
-                events.touch_needed(expectation);
-            }
-        };
-        match crate::decrypt_entry(card.clone(), pin, &ciphertext, &touch) {
-            Ok(plaintext) => drop(Zeroizing::new(plaintext)),
-            Err(PawError::NotForThisKey { .. }) => return Err(SetupError::KeyCannotOpenStore),
-            Err(e @ (PawError::WrongPin { .. } | PawError::PinBlocked)) => return Err(key_error(e, false)),
-            Err(e) if asked.load(std::sync::atomic::Ordering::SeqCst) => return Err(key_error(e, true)),
-            Err(e) => return Err(SetupError::CannotOpenEntry { entry, detail: e.to_string() }),
-        }
-        let info = card_info(card.clone()).map_err(failed)?;
-        let key = crate::card_decryption_key(card).map_err(failed)?;
-        self.finish_test_decrypt(entry, &key, &KeyIdentity::of(&info))
     }
 
     /// The entry the test decrypt opens: the first the key surely opens,
@@ -1058,36 +898,6 @@ impl SetupFlow {
     /// something paw will not check out".
     pub fn refused_remote(&self) -> Vec<RefusedPath> {
         self.refused.clone()
-    }
-
-#[cfg(feature = "sim")]
-    /// For the per-call steps that take a card and a PIN (`sim` builds
-    /// only): refuses, before
-    /// any VERIFY, a card other than the key read at "Your key", and other
-    /// than the store's enrolled key if one is recorded here (a store set up
-    /// again in the same place).
-    fn check_card(&self, card: &Arc<dyn ApduTransport>) -> Result<(), SetupError> {
-        use crate::key::enrolment::{CardRefusal, check_card, check_card_against};
-        let refused = |refusal: CardRefusal| match refusal {
-            CardRefusal::Mismatch(mismatch) => {
-                SetupError::UnusableKey { message: crate::key::enrolment::mismatch_message(&mismatch) }
-            }
-            CardRefusal::Failed(error) => failed(error),
-        };
-        check_card(&self.dir, card).map_err(refused)?;
-        match self.expected_key() {
-            Some(expected) => check_card_against(&expected, card).map_err(|refusal| match refusal {
-                CardRefusal::Mismatch(mismatch) => SetupError::UnusableKey {
-                    message: format!(
-                        "this is not the key read at the start of setup ({}); this is {}. Plug that one in",
-                        mismatch.enrolled.describe(),
-                        mismatch.presented.describe()
-                    ),
-                },
-                other => refused(other),
-            }),
-            None => Ok(()),
-        }
     }
 
     /// The key setup read at the start, as an identity to hold a session to.

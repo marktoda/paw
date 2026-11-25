@@ -68,7 +68,7 @@ enum FixtureLaunch {
         keyPort.setKeyLog(stateDir: root.path, process: "app")
         let model = AppModel(
             store: store, copies: copies, clock: sharedClock,
-            connect: { try KeyConnection.openForSession() },
+            connect: { try KeyConnection.open() },
             simulator: SimulatorControls(
                 advanceClock: { clock.advanceMs(ms: $0) },
                 plugIn: { key.key.plugIn() },

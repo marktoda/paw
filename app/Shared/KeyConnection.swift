@@ -4,24 +4,17 @@ import Foundation
 /// port. In the simulator, which cannot see hardware, it is a simulated key
 /// so every screen can still be reached and tested.
 enum KeyConnection {
-    /// Opens a connection. Blocks; call off the main thread.
-    static func open(onTouchNeeded: @escaping @Sendable () -> Void) throws -> CardConnection {
-        #if targetEnvironment(simulator)
-        return SimulatedCardConnection(key: SimulatedKeyHolder.shared.key, onTouchNeeded: onTouchNeeded)
-        #else
-        return try UsbCardConnection(onTouchNeeded: onTouchNeeded)
-        #endif
-    }
-
-    /// A connection for the key session (`KeyPort.pluggedIn`), which reports
-    /// touches itself. Blocks; call off the main thread.
-    static func openForSession() throws -> CardConnection {
+    /// A connection for the key session (`KeyPort.pluggedIn`). Blocks; call
+    /// off the main thread.
+    static func open() throws -> CardConnection {
         #if targetEnvironment(simulator)
         if SimulatedKeyHolder.shared.takeAttachFailure() {
             throw ConnectionError.Failed(message: "The key didn't answer while it was being read.")
         }
+        return SimulatedCardConnection(key: SimulatedKeyHolder.shared.key)
+        #else
+        return try UsbCardConnection()
         #endif
-        return try open(onTouchNeeded: {})
     }
 
     static var readerNames: [String] {
@@ -29,14 +22,6 @@ enum KeyConnection {
         return ["Simulated key"]
         #else
         return UsbCardConnection.slotNames()
-        #endif
-    }
-
-    static var isSimulated: Bool {
-        #if targetEnvironment(simulator)
-        return true
-        #else
-        return false
         #endif
     }
 
@@ -117,11 +102,9 @@ final class SimulatedKeyHolder: @unchecked Sendable {
 
 final class SimulatedCardConnection: CardConnection, @unchecked Sendable {
     private let key: SimulatedKey
-    private let onTouchNeeded: @Sendable () -> Void
 
-    init(key: SimulatedKey, onTouchNeeded: @escaping @Sendable () -> Void) {
+    init(key: SimulatedKey) {
         self.key = key
-        self.onTouchNeeded = onTouchNeeded
     }
 
     func transmit(apdu: Data) throws -> Data {
@@ -129,10 +112,6 @@ final class SimulatedCardConnection: CardConnection, @unchecked Sendable {
         // on the main thread. The UI tests run with this check on.
         assert(!Thread.isMainThread, "card traffic on the main thread")
         return key.exchange(apdu: apdu)
-    }
-
-    func touchNeeded() {
-        onTouchNeeded()
     }
 }
 #endif
@@ -153,8 +132,6 @@ func describe(_ error: Swift.Error) -> String {
         return "Could not talk to the key: \(message)"
     case .NotAnEntry(let message):
         return "This is not an encrypted password: \(message)"
-    case .Decrypt(let message):
-        return "The key did not decrypt this: \(message)"
     case .Card(let message):
         return "The key reported a problem: \(message)"
     // The git errors cannot reach Swift yet: nothing exported from the core

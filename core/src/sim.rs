@@ -20,6 +20,7 @@ pub mod copies;
 pub mod fixture;
 pub mod github;
 pub mod remote;
+pub mod tasks;
 
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -28,7 +29,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use sha1::{Digest, Sha1};
 use x25519_dalek::{PublicKey, StaticSecret};
 
-use crate::ApduTransport;
+use crate::key::ApduTransport;
 use crate::key::FAST_REFUSAL;
 use crate::key::apdu::{
     self, DECIPHER_P1, DECIPHER_P2, FORGET_P1, GET_DATA, INTERNAL_AUTHENTICATE, PSO, PW1_82, SELECT, VERIFY, VERIFY_P1,
@@ -335,9 +336,8 @@ impl SimulatedKey {
         self.lock().touches
     }
 
-    /// The key as a card connection, to hand to `KeyPort.plugged_in`,
-    /// `Setup` and the other calls that take one, with no Swift adapter.
-    /// `touch_needed` does nothing: the simulator's UI touches it.
+    /// The key as a card connection, to hand to `KeyPort.plugged_in` with
+    /// no Swift adapter.
     pub fn as_connection(self: Arc<Self>) -> Arc<dyn CardConnection> {
         self
     }
@@ -353,8 +353,6 @@ impl CardConnection for SimulatedKey {
     fn transmit(&self, apdu: Vec<u8>) -> Result<Vec<u8>, ConnectionError> {
         self.transmit_checked(&apdu).map_err(|message| ConnectionError::Failed { message })
     }
-
-    fn touch_needed(&self) {}
 }
 
 /// OpenPGP v4 fingerprint of a Curve25519 key: `algorithm` is 18 (ECDH) or
@@ -475,6 +473,11 @@ impl SimulatedKey {
         }
         body.extend(sw.to_be_bytes());
         Ok(body)
+    }
+
+    /// The public half of the decryption key, as a session reads it.
+    pub fn decryption_key(self: &Arc<Self>) -> Result<pgp::packet::PublicKey, crate::PawError> {
+        crate::key::card::card_decryption_key(self.clone())
     }
 
     /// The raw ed25519 public key of the authentication slot.

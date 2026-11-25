@@ -15,17 +15,16 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
-use super::{Adapter, CardConnection};
 use crate::key::{
     After, DecryptWork, Halt, KeyError, KeyIdentity, KeyOutcome, KeyPort, KeyPurpose, KeySession, KeyTask,
-    KeyTaskListener, KeyTaskState, LoginPurpose, SessionSigner, TaskCore, TaskProgress, Work,
+    KeyTaskListener, KeyTaskState, KeyTouch, LoginPurpose, SessionSigner, TaskCore, TaskProgress, Work,
 };
 use crate::setup::address::StoreAddress;
 use crate::setup::touch::{TouchClock, TouchExpectation};
 use crate::setup::{SetupError, SetupFlow, SetupState, SetupWriteReadiness};
 use crate::store::PassStore;
 use crate::sync::{Cloned, Connection};
-use crate::{KeyTouch, PawError};
+use crate::PawError;
 use crate::sync::hosts::pin_for;
 use crate::sync::operation::{self, SyncReport};
 use crate::sync::queue::{self, HeldBack, LeftReason, OpenFailure, QueueItem, ReencryptCheck, ReencryptReport};
@@ -70,7 +69,7 @@ impl Setup {
     /// The download, in a sign-in task's thread, once the PIN is verified.
     /// The setup state is locked only between network steps, so `state`
     /// answers while it runs.
-    fn run_download(&self, task: &Arc<TaskCore>, signer: &SessionSigner) -> Result<Option<KeyOutcome>, Halt> {
+    fn run_download(&self, task: &Arc<TaskCore>, signer: &SessionSigner) -> Result<KeyOutcome, Halt> {
         let cancelled = || Halt::Fail(KeyError::Cancelled);
         let (remote, repo) = self.flow().begin_download().map_err(|e| self.record(e))?;
         if task.cancelled() {
@@ -103,7 +102,7 @@ impl Setup {
                 return false;
             }
             *lock(&self.transfer) = Some(update);
-            task.report_transfer(update)
+            task.report_progress(update.received_objects, update.total_objects)
         };
         let cloned = crate::sync::clone_with_transfer(&connection, &remote, &repo, Some(&mut progress));
         let said = connection.remote_said();
@@ -114,7 +113,7 @@ impl Setup {
         }
         let cloned: Result<Cloned, PawError> = cloned;
         self.flow().finish_download(&remote, cloned, said).map_err(|e| self.record(e))?;
-        Ok(Some(KeyOutcome::SignedIn))
+        Ok(KeyOutcome::SignedIn)
     }
 }
 
@@ -133,11 +132,6 @@ impl Setup {
 
     pub fn back(&self) -> Result<SetupState, SetupError> {
         self.flow().back()
-    }
-
-    /// Reads the plugged-in key. No PIN, no touch.
-    pub fn read_key(&self, connection: Arc<dyn CardConnection>) -> Result<SetupState, SetupError> {
-        self.flow().read_key(Arc::new(Adapter(connection)))
     }
 
     pub fn set_address(&self, address: String) -> Result<SetupState, SetupError> {
@@ -161,7 +155,7 @@ impl Setup {
     /// support yet"), before any PIN is asked.
     pub fn read_key_from_session(&self, session: Arc<KeySession>) -> Result<SetupState, SetupError> {
         let ssh = session.ssh_key().ok().cloned();
-        self.flow().read_key_from(session.card_info(), ssh.as_ref(), session.pin_kdf_supported())
+        self.flow().read_key_from(session.card_info(), ssh.as_ref(), session.pin_kdf().supported)
     }
 
     /// "Download your store" as a key task (sign-in, `Clone`): the PIN
@@ -341,7 +335,8 @@ impl StoreSync {
                 }
             };
             let stop = || task.cancelled();
-            let mut progress = |update: TransferProgress| task.report_transfer(update);
+            let mut progress =
+                |update: TransferProgress| task.report_progress(update.received_objects, update.total_objects);
             let result =
                 operation::run_until(&remote, &signer, &sync.repo(), &sync.state_dir, push, &stop, Some(&mut progress));
             if task.cancelled() {
@@ -356,7 +351,7 @@ impl StoreSync {
                 // A signing failure has already failed the task with the
                 // key's own error; this one is then ignored.
                 Some(halt) => Err(halt),
-                None => Ok(Some(KeyOutcome::SignedIn)),
+                None => Ok(KeyOutcome::SignedIn),
             }
         });
         let expected = port.expected();
@@ -570,7 +565,7 @@ impl StoreSync {
             *lock(&sync.last_reencrypt) = Some(result);
             match halt {
                 Some(halt) => Err(halt),
-                None => Ok(Some(KeyOutcome::Reencrypted)),
+                None => Ok(KeyOutcome::Reencrypted),
             }
         });
         port.decrypt_then(KeyPurpose::Reencrypt { count }, listener, work)

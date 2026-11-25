@@ -18,18 +18,16 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Barrier, Mutex, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use key_common::Driver;
+use key_common::{Driver, finish, port_with, signer_with};
 use paw_core::ffi::sync::StoreSync;
-use paw_core::key::{KeyPort, KeyTaskState};
-use paw_core::sim::copies::SimClock;
+use paw_core::ffi::sync::Setup;
+use paw_core::key::{KeyOutcome, KeyTaskState};
 use paw_core::github::{Endpoints, GitHubAccount, RepositoryList, SignInState, TokenVault, VaultError};
 use paw_core::lock::{STORE_LOCK_FILE, StoreLock};
-use paw_core::setup::touch::TouchExpectation;
-use paw_core::setup::{SetupEvents, SetupFlow, SetupState};
+use paw_core::setup::SetupState;
 use paw_core::sim::github::{SimGitHub, SimPollClock};
 use paw_core::sim::remote::SimRemote;
 use paw_core::sim::{SimTouch, SimulatedKey};
-use paw_core::ssh::CardSigner;
 use paw_core::store::PassStore;
 use paw_core::sync::{self, operation, queue};
 use paw_core::write::{EntryDraft, WriteError, WriteStore};
@@ -44,15 +42,14 @@ fn sync_task(
     push: bool,
     driver: Arc<Driver>,
 ) -> Result<operation::SyncReport, String> {
-    let port = KeyPort::new(SimClock::new(1_790_000_000_000));
-    port.attach(key.clone()).map_err(|e| e.to_string())?;
+    let port = port_with(key);
     let task = if push {
         sync.clone().send_with_key(port, driver.clone())
     } else {
         sync.clone().refresh_with_key(port, driver.clone())
     };
     driver.drive(&task);
-    let end = task.wait_final(Duration::from_secs(60)).ok_or("the sync task never finished")?;
+    let end = finish(&task);
     match (end, sync.last_task_result()) {
         (_, Err(error)) => Err(error.to_string()),
         (KeyTaskState::Done { .. }, Ok(Some(report))) => Ok(report),
@@ -123,16 +120,6 @@ fn account(endpoints: Endpoints, top: &Path) -> GitHubAccount {
     GitHubAccount::with(endpoints, &top.join("state"), vault, SimPollClock::new(), Arc::new(move || read_wall(&wall)))
 }
 
-struct Quiet;
-
-impl SetupEvents for Quiet {
-    fn touch_needed(&self, _expectation: TouchExpectation) {}
-
-    fn progress(&self, _received: u32, _total: u32) -> bool {
-        true
-    }
-}
-
 /// Signed in to the simulated GitHub, the store picked, cloned over SSH
 /// with the key, and the key check done: entries can be saved, sent and
 /// refreshed.
@@ -154,17 +141,25 @@ fn world_with(key: Arc<SimulatedKey>) -> World {
         panic!("not installed");
     };
     let address = w.account.select_repository(REPOSITORY).unwrap();
-    let mut flow = SetupFlow::open(w.state()).unwrap();
-    flow.read_key(w.key.clone()).unwrap();
-    flow.set_address(&address).unwrap();
-    let SetupState::ConfirmHost { fingerprint, .. } = flow.check_host().unwrap() else {
+    let port = port_with(&w.key);
+    let setup = Setup::open(w.state().to_string_lossy().into_owned()).unwrap();
+    setup.read_key_from_session(port.session().unwrap()).unwrap();
+    setup.set_address(address).unwrap();
+    let SetupState::ConfirmHost { fingerprint, .. } = setup.check_host().unwrap() else {
         panic!("expected ConfirmHost");
     };
-    flow.confirm_host(&fingerprint).unwrap();
-    let state = flow.download(w.key.clone(), PIN, Arc::new(Quiet)).unwrap();
-    assert!(matches!(state, SetupState::TestDecrypt { .. }), "{state:?}");
-    let state = flow.test_decrypt(w.key.clone(), PIN, Arc::new(Quiet)).unwrap();
-    assert!(matches!(state, SetupState::Done { .. }), "{state:?}");
+    setup.confirm_host(fingerprint).unwrap();
+    let driver = Driver::helpful(PIN, &w.key);
+    let task = setup.clone().download_with_key(port.clone(), driver.clone());
+    driver.drive(&task);
+    let end = finish(&task);
+    assert!(matches!(end, KeyTaskState::Done { outcome: KeyOutcome::SignedIn }), "{end:?}");
+    assert!(matches!(setup.state(), SetupState::TestDecrypt { .. }), "{:?}", setup.state());
+    let task = setup.clone().test_decrypt_with_key(port, driver.clone());
+    driver.drive(&task);
+    let end = finish(&task);
+    assert!(matches!(end, KeyTaskState::Done { outcome: KeyOutcome::KeyChecked }), "{end:?}");
+    assert!(matches!(setup.state(), SetupState::Done { .. }), "{:?}", setup.state());
     w
 }
 
@@ -200,7 +195,7 @@ impl World {
     }
 
     fn send(&self) -> Result<operation::SyncReport, sync::SyncError> {
-        let signer = CardSigner::new(self.key.clone(), PIN, || {}).unwrap();
+        let signer = signer_with(&self.key, PIN);
         operation::send_checked(&self.remote.remote().unwrap(), &signer, &self.repo(), self.state())
     }
 
@@ -845,7 +840,7 @@ fn every_mutating_entry_point_returns_even_when_its_thread_holds_the_lock() {
             note("accept_recipients", ffi_writer.accept_recipients(String::new()).map_err(|e| text(&e)));
             note("accept_all_recipients_at_setup", ffi_writer.accept_all_recipients_at_setup().map_err(|e| text(&e)));
             note("set_git_identity", ffi_writer.set_git_identity(None).map_err(|e| text(&e)));
-            note("pin_card_key", ffi_writer.pin_card_key(w.key.clone().as_connection()).map(drop).map_err(|e| text(&e)));
+            note("pin_card_key", ffi_writer.pin_card_key(port_with(&w.key).session().unwrap()).map(drop).map_err(|e| text(&e)));
             let sync_api = StoreSync::open(w.state().to_string_lossy().into_owned()).unwrap();
             note("store_sync.discard_all", sync_api.discard_all().map_err(|e| text(&e)));
             note("store_sync.undo_last", sync_api.undo_last().map(drop).map_err(|e| text(&e)));
@@ -862,7 +857,7 @@ fn every_mutating_entry_point_returns_even_when_its_thread_holds_the_lock() {
                 note("store_sync.send", sync_task(&sync_api, &key, true, Driver::helpful(PIN, &key)).map(drop));
             }
             note("sync.push", {
-                let signer = CardSigner::new(w.key.clone(), PIN, || {}).unwrap();
+                let signer = signer_with(&w.key, PIN);
                 let remote = w.remote.remote().unwrap();
                 sync::Connection::open(&remote, &signer).map_err(|e| text(&e)).and_then(|c| sync::push(&c, &repo).map_err(|e| text(&e)))
             });
@@ -923,7 +918,7 @@ fn two_processes_saving_and_integrating_at_once_lose_no_entry() {
 
 /// A connection to the world's SSH host with its key.
 fn connect(w: &World) -> sync::Connection {
-    let signer = CardSigner::new(w.key.clone(), PIN, || {}).unwrap();
+    let signer = signer_with(&w.key, PIN);
     sync::Connection::open(&w.remote.remote().unwrap(), &signer).unwrap()
 }
 

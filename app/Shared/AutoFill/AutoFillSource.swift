@@ -62,6 +62,7 @@ enum StoreForAutoFill {
         do {
             let store = try PassStore(dir: location.repoDir.path)
             let keyPort = KeyPort(clock: SystemClock())
+            keyPort.setKeyLog(stateDir: location.stateDir.path, process: "fill")
             // The store's key: any other key is refused before a PIN is sent.
             _ = try keyPort.loadEnrolledKey(stateDir: location.stateDir.path)
             #if targetEnvironment(simulator)
@@ -72,7 +73,7 @@ enum StoreForAutoFill {
             #endif
             return .ready(AutoFillSource(
                 store: store, copies: copies, keyPort: keyPort,
-                connect: { try KeyConnection.openForSession() },
+                connect: { try KeyConnection.open() },
                 pairings: SitePairings.open(stateDir: location.stateDir.path),
                 codes: OneTimeCodeEntries.open(stateDir: location.stateDir.path)))
         } catch {

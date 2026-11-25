@@ -133,7 +133,8 @@ final class SimRemoteHandle: @unchecked Sendable {
             // Only its public half is read, so the PIN does not matter.
             let other = SimulatedKey.newOther(pin: "", touchRequired: false, touchTimeoutMs: 1_000)
             let stateDir = URL(fileURLWithPath: repoDir).deletingLastPathComponent().path
-            _ = try StoreWriter.open(stateDir: stateDir).pinCardKey(connection: other.asConnection())
+            let session = try KeyPort(clock: SystemClock()).pluggedIn(connection: other.asConnection())
+            _ = try StoreWriter.open(stateDir: stateDir).pinCardKey(session: session)
             let lines = key.fingerprintHex() + "\n" + other.fingerprintHex() + "\n"
             _ = try host.commitFile(
                 path: "work/.gpg-id", contents: Data(lines.utf8), message: "Give work a second key.")

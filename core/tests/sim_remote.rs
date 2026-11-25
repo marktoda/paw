@@ -3,14 +3,14 @@
 
 #![cfg(feature = "sim")]
 
+mod key_common;
+
 use std::sync::Arc;
 
+use key_common::{PIN, signer};
 use paw_core::sim::SimulatedKey;
 use paw_core::sim::remote::SimRemote;
-use paw_core::ssh::CardSigner;
 use paw_core::sync::{self, Connection};
-
-const PIN: &str = "123456";
 
 fn key() -> Arc<SimulatedKey> {
     SimulatedKey::new(PIN.into(), false, 1000)
@@ -23,7 +23,7 @@ fn free_port() -> u16 {
 
 /// Clones what `host` serves and returns the checked-out tip.
 fn clone_tip(host: &SimRemote, key: &Arc<SimulatedKey>) -> String {
-    let signer = CardSigner::new(key.clone(), PIN, || {}).unwrap();
+    let signer = signer(key);
     let remote = host.remote().unwrap();
     let connection = Connection::open(&remote, &signer).unwrap();
     let dir = tempfile::tempdir().unwrap();

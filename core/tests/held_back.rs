@@ -13,20 +13,17 @@ mod support;
 use std::path::Path;
 use std::sync::{Arc, OnceLock, Weak};
 
-use key_common::{Driver, finish};
+use key_common::{Driver, PIN, decrypt, finish, signer};
 use paw_core::ffi::sync::StoreSync;
-use paw_core::key::{KeyOutcome, KeyPort, KeyTask, KeyTaskListener, KeyTaskState, TaskProgress};
+use paw_core::key::{KeyError, KeyOutcome, KeyPort, KeyTask, KeyTaskListener, KeyTaskState, TaskProgress};
 use paw_core::sim::copies::SimClock;
 use paw_core::sim::{SimTouch, SimulatedKey};
-use paw_core::ssh::{CardSigner, card_ssh_public_key};
 use paw_core::sync::operation::{self, SyncState};
 use paw_core::sync::queue::{self, LeftHeldBack, LeftReason, ReencryptReport};
 use paw_core::sync::{self, ChangeKind, Connection};
 use paw_core::write::{EntryDraft, Keyring, WriteStore};
-use paw_core::{card_decryption_key, decrypt_entry};
 use support::{GitServer, git};
 
-const PIN: &str = "123456";
 /// A fingerprint no key paw has is for.
 const UNKNOWN: &str = "0123456789ABCDEF0123456789ABCDEF01234567";
 
@@ -46,8 +43,8 @@ impl World {
         self.state.path().join("repo")
     }
 
-    fn signer(&self) -> CardSigner {
-        CardSigner::new(self.card.clone(), PIN, || {}).unwrap()
+    fn signer(&self) -> key_common::KeySigner {
+        signer(&self.card)
     }
 
     fn desktop_push(&self, files: &[(&str, Vec<u8>)], message: &str) {
@@ -95,10 +92,10 @@ impl World {
 
     /// The entry's file as the queue has it now, opened with `card` (with
     /// no touch: only to check, after the task).
-    fn open_with(&self, card: &Arc<SimulatedKey>, entry: &str) -> Result<String, paw_core::PawError> {
+    fn open_with(&self, card: &Arc<SimulatedKey>, entry: &str) -> Result<String, KeyError> {
         card.set_decryption_touch(SimTouch::Off);
         let bytes = std::fs::read(self.repo().join(format!("{entry}.gpg"))).unwrap();
-        decrypt_entry(card.clone(), PIN, &bytes, &|| {}).map(|t| String::from_utf8(t).unwrap())
+        decrypt(card, PIN, &bytes).map(|t| String::from_utf8(t).unwrap())
     }
 
     fn reencrypt(&self, driver: &Arc<Driver>) -> Arc<KeyTask> {
@@ -115,7 +112,7 @@ fn world() -> World {
     let card = SimulatedKey::new(PIN.into(), false, 5_000);
     card.set_decryption_touch(SimTouch::EachUse);
     let other = SimulatedKey::new_other(PIN.into(), false, 5_000);
-    let server = GitServer::start(&[card_ssh_public_key(card.clone()).unwrap().authorized_key()]);
+    let server = GitServer::start(&[card.ssh_public_key()]);
     let desktop = server.desktop();
     let state = tempfile::tempdir().unwrap();
     std::fs::write(state.path().join("remote"), format!("{}\n", server.sim.address())).unwrap();
@@ -129,8 +126,8 @@ fn world() -> World {
     let connection = Connection::open(&w.server.remote(), &w.signer()).unwrap();
     sync::clone(&connection, &w.server.remote(), &w.repo()).unwrap();
     let mut keyring = Keyring::open(w.state.path()).unwrap();
-    keyring.pin_card_key(&card_decryption_key(w.card.clone()).unwrap()).unwrap();
-    keyring.pin_card_key(&card_decryption_key(w.other.clone()).unwrap()).unwrap();
+    keyring.pin_card_key(&w.card.decryption_key().unwrap()).unwrap();
+    keyring.pin_card_key(&w.other.decryption_key().unwrap()).unwrap();
     keyring.accept_all_recipients_at_setup(&w.repo()).unwrap();
     w
 }
@@ -238,8 +235,8 @@ fn a_cancel_part_way_keeps_what_was_done_and_a_second_run_does_only_the_rest() {
 /// Commits `entry` encrypted for the other card only, as paw would word
 /// it: a waiting change the plugged-in card can't open.
 fn commit_for_the_other_card(w: &World, entry: &str) {
-    let key = card_decryption_key(w.other.clone()).unwrap();
-    let bytes = paw_core::encrypt_to_keys(rand::thread_rng(), &[key], b"theirs\n").unwrap();
+    let key = w.other.decryption_key().unwrap();
+    let bytes = paw_core::sim::fixture::encrypt(&[key], b"theirs\n").unwrap();
     let file = w.repo().join(format!("{entry}.gpg"));
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     std::fs::write(file, bytes).unwrap();
@@ -323,7 +320,7 @@ fn a_save_while_each_one_is_opened_does_not_add_up_to_a_failure() {
     let mut open = |_: &queue::HeldBack, bytes: &[u8]| {
         saved += 1;
         w.save("Notes", &format!("n{saved}"), "pw");
-        decrypt_entry(w.card.clone(), PIN, bytes, &|| {})
+        decrypt(&w.card, PIN, bytes)
             .map(zeroize::Zeroizing::new)
             .map_err(|e| queue::OpenFailure::Stop(paw_core::sync::SyncError::Failed { message: e.to_string() }))
     };

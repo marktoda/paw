@@ -50,9 +50,9 @@ fn a_different_card_is_refused_before_any_verify() {
 
     // A sign-in, which needs no entry: refused at once, PIN never asked.
     let driver = Driver::helpful(PIN, &other);
-    let task = port.clone().sign_in(LoginPurpose::Fetch, driver.clone());
-    driver.drive(&task);
-    let state = finish(&task);
+    let sign_in = login(&port, LoginPurpose::Fetch, &driver);
+    let task = sign_in.task();
+    let state = finish(task);
     let KeyTaskState::Failed { error: KeyError::NotForThisKey { recipients } } = state else { panic!("{state:?}") };
     assert!(recipients[0].contains("different key from the one this store was set up with"), "{recipients:?}");
     assert!(recipients[0].contains("serial 12345678") && recipients[0].contains("serial 87654321"));
@@ -68,12 +68,13 @@ fn a_task_waiting_for_a_key_refuses_the_wrong_one_when_it_is_plugged_in() {
     let usual = sim(SimTouch::Off, SimTouch::Off, WAIT);
     let port = enrolled_port(&usual);
     let driver = Driver::helpful(PIN, &usual);
-    let task = port.clone().sign_in(LoginPurpose::Clone, driver.clone());
+    let sign_in = paw_core::sim::tasks::SimLogin::start(&port, LoginPurpose::Clone, driver.clone());
+    let task = sign_in.task();
     assert!(matches!(task.state(), KeyTaskState::PlugIn));
 
     let other = other_key();
     port.attach(other.clone()).unwrap();
-    assert!(matches!(finish(&task), KeyTaskState::Failed { error: KeyError::NotForThisKey { .. } }));
+    assert!(matches!(finish(task), KeyTaskState::Failed { error: KeyError::NotForThisKey { .. } }));
     assert!(task.key_mismatch().is_some());
     assert_eq!(other.verify_attempts() + other.pin_queries(), 0);
 }
@@ -101,34 +102,28 @@ fn a_duplicate_of_the_enrolled_key_with_another_serial_is_the_same_key() {
 }
 
 #[test]
-fn replacing_the_key_records_the_new_one_and_accepts_it_from_then_on() {
+fn a_recorded_key_is_accepted_and_a_port_loading_the_record_refuses_another() {
     let usual = sim(SimTouch::Off, SimTouch::Off, WAIT);
-    let port = enrolled_port(&usual);
+    let other = other_key();
     let state_dir = tempfile::tempdir().unwrap();
     let dir = state_dir.path().to_string_lossy().into_owned();
-    enrolment::save_enrolment(state_dir.path(), &identity(&usual, "12345678")).unwrap();
+    enrolment::save_enrolment(state_dir.path(), &identity(&other, "87654321")).unwrap();
 
-    let other = other_key();
+    let port = KeyPort::new(SimClock::new(1_790_000_000_000));
+    assert_eq!(port.load_enrolled_key(dir.clone()).unwrap(), Some(identity(&other, "87654321")));
     port.attach(other.clone()).unwrap();
-    assert!(!port.key_matches_enrolment());
-
-    let replaced = port.replace_enrolled_key(dir.clone()).unwrap();
-    assert_eq!(replaced, identity(&other, "87654321"));
     assert!(port.key_matches_enrolment());
-    assert_eq!(paw_core::key::enrolment::enrolled_key(dir.clone()).unwrap(), Some(replaced.clone()));
 
-    // A sign-in on the new key now asks for the PIN and verifies it.
+    // A sign-in on the recorded key asks for the PIN and verifies it.
     let driver = Driver::helpful(PIN, &other);
-    let task = port.clone().sign_in(LoginPurpose::Fetch, driver.clone());
-    driver.drive(&task);
-    task.login_signer().unwrap();
-    task.finish_login();
-    assert!(matches!(finish(&task), KeyTaskState::Done { .. }));
+    let sign_in = login(&port, LoginPurpose::Fetch, &driver);
+    sign_in.signer().unwrap();
+    sign_in.finish();
+    assert!(matches!(finish(sign_in.task()), KeyTaskState::Done { .. }));
     assert_eq!(other.verify_attempts(), 1);
 
-    // A fresh port loading the record refuses the old key.
     let fresh = KeyPort::new(SimClock::new(1_790_000_000_000));
-    assert_eq!(fresh.load_enrolled_key(dir).unwrap(), Some(replaced));
+    fresh.load_enrolled_key(dir).unwrap();
     fresh.attach(usual.clone()).unwrap();
     assert!(!fresh.key_matches_enrolment());
 }

@@ -11,6 +11,7 @@
 //! - [`session`]: one connected card; the PIN; one card job at a time.
 //! - [`task`]: the state machine the sheet binds to.
 //! - [`apdu`]: the card's commands and status words, defined once.
+//! - [`card`]: the card as the openpgp-card library reads it.
 //! - [`wire`]: the transport wrapper that sees every command go out.
 //! - [`touch`]: when to show `Touch`.
 //! - [`decrypt`]: an entry, split into what needs the card and what not.
@@ -19,6 +20,7 @@
 //! - [`keylog`]: what paw and the card said to each other, for diagnosis.
 
 pub(crate) mod apdu;
+pub(crate) mod card;
 mod decrypt;
 pub mod enrolment;
 pub(crate) mod kdf;
@@ -33,6 +35,8 @@ mod wire;
 use std::sync::Arc;
 use std::time::Duration;
 
+pub use card::{ApduTransport, CardInfo, KeyTouch};
+pub use decrypt::MAX_DECIPHERS;
 pub use enrolment::{KeyIdentity, KeyMismatch};
 pub use kdf::PinKdfStatus;
 pub use keylog::{KeyLogLine, clear_key_log, key_log, key_log_text};
@@ -45,6 +49,12 @@ pub use signer::SessionSigner;
 pub use task::KeyTask;
 
 use crate::ffi::OpenedEntry;
+
+/// Milliseconds since boot, counting sleep; never goes backwards within one
+/// boot. What the PIN's time in the background is measured with.
+pub(crate) trait Uptime: Send + Sync {
+    fn monotonic_ms(&self) -> i64;
+}
 
 /// paw forgets the PIN once it has spent this long in the background
 /// (owner's decision; locking the phone alone does not count).

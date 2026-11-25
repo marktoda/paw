@@ -96,19 +96,27 @@ pub fn is_store_busy(message: &str) -> bool {
     message.contains(STORE_BUSY_PREFIX)
 }
 
+#[cfg(feature = "sim")]
 thread_local! {
     /// [`RECORD_WAIT`], unless a test lowered it for this thread.
     static RECORD_WAIT_HERE: std::cell::Cell<Duration> = const { std::cell::Cell::new(RECORD_WAIT) };
 }
 
 /// How long this thread waits to record a push that landed.
+#[cfg(feature = "sim")]
 pub(crate) fn record_wait() -> Duration {
     RECORD_WAIT_HERE.with(std::cell::Cell::get)
 }
 
-/// Runs `work` with this thread's wait to record a push lowered to `wait`
-/// (tests).
-#[doc(hidden)]
+/// How long this thread waits to record a push that landed.
+#[cfg(not(feature = "sim"))]
+pub(crate) fn record_wait() -> Duration {
+    RECORD_WAIT
+}
+
+/// Runs `work` with this thread's wait to record a push lowered to `wait`.
+/// For tests: `sim` builds only.
+#[cfg(feature = "sim")]
 pub fn with_record_wait<T>(wait: Duration, work: impl FnOnce() -> T) -> T {
     let before = RECORD_WAIT_HERE.with(|w| w.replace(wait));
     let result = work();

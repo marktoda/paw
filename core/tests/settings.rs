@@ -5,6 +5,7 @@
 
 #![cfg(feature = "sim")]
 
+mod key_common;
 mod support;
 
 use std::collections::HashMap;
@@ -21,24 +22,22 @@ use paw_core::key::KeyPort;
 use paw_core::report::{DiagnosticsFacts, LastSyncState, diagnostics_text};
 use paw_core::sim::SimulatedKey;
 use paw_core::sim::copies::{SimClock, SimKeystore};
-use paw_core::sim::fixture::other_key;
+use paw_core::sim::fixture::{encrypt, other_key};
 use paw_core::store::pairings::{PairingFile, SitePairings};
 use paw_core::write::{KeySource, Keyring, LineStatus};
-use paw_core::{card_decryption_key, encrypt_to_keys};
+use key_common::PIN;
 use support::git;
-
-const PIN: &str = "123456";
 
 fn card() -> Arc<SimulatedKey> {
     SimulatedKey::new(PIN.into(), false, 50)
 }
 
 fn for_card(text: &str) -> Vec<u8> {
-    encrypt_to_keys(rand::thread_rng(), &[card_decryption_key(card()).unwrap()], text.as_bytes()).unwrap()
+    encrypt(&[card().decryption_key().unwrap()], text.as_bytes()).unwrap()
 }
 
 fn for_other(text: &str) -> Vec<u8> {
-    encrypt_to_keys(rand::thread_rng(), &[other_key().unwrap()], text.as_bytes()).unwrap()
+    encrypt(&[other_key().unwrap()], text.as_bytes()).unwrap()
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -81,7 +80,7 @@ fn store_with(files: &[(&str, &[u8])]) -> Store {
     let repo = state.join("repo");
     git(root.path(), &["clone", "--quiet", bare.to_str().unwrap(), repo.to_str().unwrap()]);
     let mut keyring = Keyring::open(&state).unwrap();
-    keyring.pin_card_key(&card_decryption_key(card()).unwrap()).unwrap();
+    keyring.pin_card_key(&card().decryption_key().unwrap()).unwrap();
     keyring.accept_all_recipients_at_setup(&repo).unwrap();
     std::fs::write(state.join("setup"), "step=done\n").unwrap();
     Store { _root: root, state }

@@ -4,19 +4,21 @@
 
 #![cfg(feature = "sim")]
 
+mod key_common;
 mod support;
 
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use key_common::{Driver, KeySigner, PIN, login, port_with};
+use paw_core::key::LoginPurpose;
 use paw_core::sim::SimulatedKey;
-use paw_core::ssh::{CardSigner, SshPublicKey, SshSigner, card_ssh_public_key};
+use paw_core::ssh::{SshPublicKey, SshSigner};
 use paw_core::sync::{self, Author, Connection, HostKeyPin};
-use paw_core::{PawError, card_info};
+use paw_core::PawError;
 use support::{GitServer, git};
 
-const PIN: &str = "123456";
 const ENTRY: &str = "web/example.com.gpg";
 const MESSAGE: &str = "Add given password for web/example.com to store.";
 
@@ -26,13 +28,12 @@ fn card() -> Arc<SimulatedKey> {
 }
 
 fn authorised_line(card: &Arc<SimulatedKey>) -> String {
-    card_ssh_public_key(card.clone()).unwrap().authorized_key()
+    card.ssh_public_key()
 }
 
 /// A signer that touches the card whenever it asks.
-fn signer(card: &Arc<SimulatedKey>) -> CardSigner {
-    let touch = card.clone();
-    CardSigner::new(card.clone(), PIN, move || touch.touch()).unwrap()
+fn signer(card: &Arc<SimulatedKey>) -> KeySigner {
+    key_common::signer(card)
 }
 
 fn connect(server: &GitServer, card: &Arc<SimulatedKey>) -> Connection {
@@ -175,7 +176,7 @@ fn a_key_the_host_does_not_know_is_rejected_before_the_card_is_used() {
 
     assert!(matches!(error, PawError::KeyRejected), "{error:?}");
     assert_eq!(error.to_string(), "the git host did not accept this key");
-    // No signature, so no touch, and the PIN was never sent.
+    // No signature, so no touch.
     assert_eq!(card.authentication_count(), 0);
     assert_eq!(server.logins(), 0);
 }
@@ -199,24 +200,13 @@ fn a_host_with_the_wrong_key_is_refused_before_login() {
 }
 
 #[test]
-fn a_wrong_pin_fails_the_login_and_reports_the_tries_left() {
-    let card = card();
-    let server = GitServer::start(&[authorised_line(&card)]);
-    let touch = card.clone();
-    let signer = CardSigner::new(card.clone(), "000000", move || touch.touch()).unwrap();
-
-    let error = refusal(Connection::open(&server.remote(), &signer));
-
-    assert!(matches!(error, PawError::WrongPin { tries_left: 2 }), "{error:?}");
-    assert_eq!(server.logins(), 0);
-    assert_eq!(card_info(card).unwrap().pin_tries_left, 2);
-}
-
-#[test]
 fn an_untouched_key_fails_the_login() {
     let card = card();
     let server = GitServer::start(&[authorised_line(&card)]);
-    let signer = CardSigner::new(card.clone(), PIN, || {}).unwrap();
+    // The PIN is typed, the touch never comes.
+    let port = port_with(&card);
+    let login = login(&port, LoginPurpose::Fetch, &Driver::typist(PIN));
+    let signer = login.signer().unwrap();
 
     let error = refusal(Connection::open(&server.remote(), &signer));
 
@@ -238,7 +228,7 @@ fn an_unreachable_host_is_a_network_error() {
 }
 
 /// Wraps a signer to record how much data a login asks it to sign.
-struct Measured<'a>(&'a CardSigner, AtomicUsize);
+struct Measured<'a>(&'a dyn SshSigner, AtomicUsize);
 
 impl SshSigner for Measured<'_> {
     fn public_key(&self) -> &SshPublicKey {

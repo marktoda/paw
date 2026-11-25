@@ -79,7 +79,7 @@ fn a_touched_key_or_one_that_asks_for_no_touch_signs_and_the_check_is_done() {
 fn a_card_that_is_not_the_enrolled_key_is_refused_before_the_pin() {
     let rig = rig_timing_out(SimTouch::EachUse, Duration::from_millis(1_200));
     let other = SimulatedKey::new_other(PIN.into(), true, 1_000);
-    let info = paw_core::card_info(other).unwrap();
+    let info = port_with(&other).session().unwrap().info();
     rig.port.set_enrolled_key(Some(KeyIdentity {
         ident: info.ident,
         decryption_fingerprint: info.decryption_fingerprint,

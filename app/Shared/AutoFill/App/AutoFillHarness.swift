@@ -131,7 +131,7 @@ private final class HarnessWorld: @unchecked Sendable {
                 store: store,
                 copies: CopyCache(dir: copiesDir.path, keystore: keystore.asKeystore(), clock: clock),
                 keyPort: port,
-                connect: { try KeyConnection.openForSession() },
+                connect: { try KeyConnection.open() },
                 pairings: pairings,
                 codes: codes))
         } catch {

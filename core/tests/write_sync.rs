@@ -6,6 +6,7 @@
 
 #![cfg(feature = "sim")]
 
+mod key_common;
 mod support;
 
 use std::path::Path;
@@ -14,26 +15,19 @@ use std::sync::Arc;
 use paw_core::copies::content_id;
 use paw_core::entry::EntryDoc;
 use paw_core::sim::SimulatedKey;
-use paw_core::ssh::{CardSigner, card_ssh_public_key};
 use paw_core::sync::operation::{self, SyncState};
 use paw_core::sync::{self, ChangeKind, Connection, Integration, KeptBoth, queue};
 use paw_core::write::{EntryDraft, Keyring, WriteStore};
-use paw_core::{card_decryption_key, decrypt_entry};
 use pgp::types::KeyDetails;
+use key_common::{PIN, decrypt, decrypt_text, signer};
 use support::{GitServer, git};
-
-const PIN: &str = "123456";
 
 fn card() -> Arc<SimulatedKey> {
     SimulatedKey::new(PIN.into(), false, 50)
 }
 
-fn signer(card: &Arc<SimulatedKey>) -> CardSigner {
-    CardSigner::new(card.clone(), PIN, || {}).unwrap()
-}
-
 fn encrypted(text: &str) -> Vec<u8> {
-    paw_core::encrypt_to_keys(rand::thread_rng(), &[card_decryption_key(card()).unwrap()], text.as_bytes()).unwrap()
+    paw_core::sim::fixture::encrypt(&[card().decryption_key().unwrap()], text.as_bytes()).unwrap()
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -59,7 +53,7 @@ impl World {
 
     fn decrypt(&self, dir: &Path, entry: &str) -> String {
         let bytes = std::fs::read(dir.join(format!("{entry}.gpg"))).unwrap();
-        String::from_utf8(decrypt_entry(self.card.clone(), PIN, &bytes, &|| {}).unwrap()).unwrap()
+        decrypt_text(&self.card, PIN, &bytes)
     }
 
     fn desktop_push(&self, files: &[(&str, Vec<u8>)], message: &str) {
@@ -90,7 +84,7 @@ impl World {
 /// other key; cloned to the phone, whose keyring has both keys pinned.
 fn world() -> World {
     let card = card();
-    let server = GitServer::start(&[card_ssh_public_key(card.clone()).unwrap().authorized_key()]);
+    let server = GitServer::start(&[card.ssh_public_key()]);
     let desktop = server.desktop();
     let state = tempfile::tempdir().unwrap();
     let w = World { card, server, desktop, state };
@@ -113,7 +107,7 @@ fn world() -> World {
     let connection = Connection::open(&w.server.remote(), &signer(&w.card)).unwrap();
     sync::clone(&connection, &w.server.remote(), &w.repo()).unwrap();
     let mut keyring = Keyring::open(w.state.path()).unwrap();
-    keyring.pin_card_key(&card_decryption_key(w.card.clone()).unwrap()).unwrap();
+    keyring.pin_card_key(&w.card.decryption_key().unwrap()).unwrap();
     // The fixture's other key, pinned as a key paw may encrypt to.
     keyring.pin_card_key(&other).unwrap();
     keyring.accept_all_recipients_at_setup(&w.repo()).unwrap();
@@ -301,7 +295,7 @@ fn open_with_card(
 ) -> impl FnMut(&queue::HeldBack, &[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>, sync::SyncError> {
     move |item, bytes| {
         opened.borrow_mut().push(item.entry.clone());
-        Ok(zeroize::Zeroizing::new(decrypt_entry(w.card.clone(), PIN, bytes, &|| {}).unwrap()))
+        Ok(zeroize::Zeroizing::new(decrypt(&w.card, PIN, bytes).unwrap()))
     }
 }
 
@@ -370,7 +364,7 @@ fn a_save_while_the_held_back_changes_are_being_opened_stops_the_re_encryption()
     let mut open = |_: &queue::HeldBack, bytes: &[u8]| {
         // Meanwhile, a save (in the app, with no lock held here).
         w.write().save(&new_entry("Work", "meanwhile", "pw")).unwrap();
-        Ok(zeroize::Zeroizing::new(decrypt_entry(w.card.clone(), PIN, bytes, &|| {}).unwrap()))
+        Ok(zeroize::Zeroizing::new(decrypt(&w.card, PIN, bytes).unwrap()))
     };
     let error = queue::reencrypt_held_back(&w.repo(), w.state.path(), &mut open).unwrap_err();
 

@@ -430,7 +430,7 @@ impl Keyring {
         Ok(fingerprint)
     }
 
-    /// Pins the card's decryption key (from [`crate::card_decryption_key`]).
+    /// Pins the card's decryption key (from its key session).
     /// Returns its fingerprint. Pinning it again replaces it.
     pub fn pin_card_key(&mut self, key: &PublicKey) -> Result<String, WriteError> {
         let fingerprint = fingerprint_of(key);

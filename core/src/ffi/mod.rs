@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::ApduTransport;
+use crate::key::ApduTransport;
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum ConnectionError {
@@ -21,8 +21,6 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for ConnectionError {
 pub trait CardConnection: Send + Sync {
     /// Sends one command APDU and returns the response with its status bytes.
     fn transmit(&self, apdu: Vec<u8>) -> Result<Vec<u8>, ConnectionError>;
-    /// Called just before the key starts waiting for a touch.
-    fn touch_needed(&self);
 }
 
 struct Adapter(Arc<dyn CardConnection>);

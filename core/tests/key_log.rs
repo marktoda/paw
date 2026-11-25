@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use key_common::*;
-use paw_core::ApduTransport;
+use paw_core::key::ApduTransport;
 use paw_core::key::keylog::KEEP_LINES;
 use paw_core::key::{KeyError, KeyTaskState, clear_key_log, key_log, key_log_text};
 use paw_core::sim::{SimOptions, SimTouch, SimulatedKey};
@@ -382,22 +382,18 @@ fn removing_the_store_removes_the_log_and_the_log_never_makes_the_folder_again()
 }
 
 #[test]
-fn loading_the_enrolled_key_starts_the_log_for_this_process() {
+fn loading_the_enrolled_key_leaves_the_log_as_it_was_set() {
     let state = tempfile::tempdir().unwrap();
     let rig = rig_unplugged(SimTouch::Off, SimTouch::Off);
-    assert_eq!(rig.port.key_log_dir(), None);
     rig.port.load_enrolled_key(dir_string(&state)).unwrap();
-    assert_eq!(rig.port.key_log_dir(), Some(dir_string(&state)));
-    rig.port.attach(rig.sim.clone()).unwrap();
-    // Not inside an `.appex`: the app's file.
-    assert!(state.path().join("key-log.app").exists());
+    assert_eq!(rig.port.key_log_dir(), None);
 
-    // A name set explicitly is kept.
     let other = tempfile::tempdir().unwrap();
-    let rig = rig_unplugged(SimTouch::Off, SimTouch::Off);
     rig.port.set_key_log(dir_string(&other), "fill".into());
     rig.port.load_enrolled_key(dir_string(&state)).unwrap();
     assert_eq!(rig.port.key_log_dir(), Some(dir_string(&other)));
+    rig.port.attach(rig.sim.clone()).unwrap();
+    assert!(other.path().join("key-log.fill").exists());
 }
 
 #[test]

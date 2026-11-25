@@ -9,8 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use key_common::*;
-use paw_core::ApduTransport;
-use paw_core::key::KeyPort;
+use paw_core::key::{ApduTransport, KeyPort, LoginPurpose};
 use paw_core::sim::copies::SimClock;
 use paw_core::sim::{SimTouch, SimulatedKey};
 use proptest::prelude::*;
@@ -32,6 +31,18 @@ impl ApduTransport for Tampered {
             _ => real,
         }
     }
+}
+
+/// Whether `task` ends within `timeout`.
+fn ends_within(task: &Arc<paw_core::key::KeyTask>, timeout: Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if task.state().is_final() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    false
 }
 
 fn answer() -> impl Strategy<Value = Option<Vec<u8>>> {
@@ -64,25 +75,26 @@ proptest! {
             driver.drive(&task);
             // A task started after the card stopped answering waits at
             // PlugIn, as it should: give up on it after a while.
-            if task.wait_final(Duration::from_secs(5)).is_none() {
+            if !ends_within(&task, Duration::from_secs(5)) {
                 task.cancel();
             }
             prop_assert!(!task.join(), "the task's thread panicked");
         }
         let driver = Driver::helpful(PIN, &sim);
-        let task = port.clone().sign_in(paw_core::key::LoginPurpose::Fetch, driver.clone());
-        driver.drive(&task);
-        // `login_signer` waits for as long as the unlock takes: bound it.
-        let watchdog = task.clone();
+        let login = login(&port, LoginPurpose::Fetch, &driver);
+        // `signer` waits for as long as the unlock takes: bound it.
+        let watchdog = login.task().clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(5));
             watchdog.cancel();
         });
-        if let Ok(signer) = task.login_signer() {
+        if let Ok(signer) = login.signer() {
             let _ = paw_core::ssh::SshSigner::sign(&signer, b"login");
-            task.finish_login();
+            login.finish();
         }
-        task.cancel();
+        login.task().cancel();
+        let task = login.task().clone();
+        drop(login);
         prop_assert!(!task.join(), "the sign-in's thread panicked");
     }
 }

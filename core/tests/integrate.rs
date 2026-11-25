@@ -6,6 +6,7 @@
 
 #![cfg(feature = "sim")]
 
+mod key_common;
 mod support;
 
 use std::collections::BTreeMap;
@@ -13,7 +14,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use paw_core::sim::SimulatedKey;
-use paw_core::ssh::{CardSigner, card_ssh_public_key};
 use paw_core::sync::operation::{self, SyncState};
 use paw_core::sync::queue;
 use paw_core::sync::{
@@ -21,9 +21,8 @@ use paw_core::sync::{
     RecipientsChange, SyncError,
 };
 use paw_core::write::{GitIdentity, WriteStore};
+use key_common::{PIN, signer};
 use support::{GitServer, git};
-
-const PIN: &str = "123456";
 
 struct World {
     card: Arc<SimulatedKey>,
@@ -39,10 +38,6 @@ fn card() -> Arc<SimulatedKey> {
     SimulatedKey::new(PIN.into(), false, 50)
 }
 
-fn signer(card: &Arc<SimulatedKey>) -> CardSigner {
-    CardSigner::new(card.clone(), PIN, || {}).unwrap()
-}
-
 fn author() -> Author {
     Author { name: "iPhone".into(), email: "iphone@example.com".into() }
 }
@@ -51,7 +46,7 @@ fn author() -> Author {
 /// and a desktop clone of it.
 fn world() -> World {
     let card = card();
-    let server = GitServer::start(&[card_ssh_public_key(card.clone()).unwrap().authorized_key()]);
+    let server = GitServer::start(&[card.ssh_public_key()]);
     let desktop = server.desktop();
     let state = tempfile::tempdir().unwrap();
     let iphone = GitIdentity { name: "iPhone".into(), email: "iphone@example.com".into() };
@@ -620,7 +615,7 @@ fn a_sync_with_a_key_the_host_does_not_know_stops_before_the_pin() {
 
     assert!(matches!(error, SyncError::KeyRejected), "{error:?}");
     assert_eq!(w.card.authentication_count(), signatures);
-    assert_eq!(paw_core::card_info(w.card.clone()).unwrap().pin_tries_left, 3);
+    assert_eq!(w.card.pin_tries_left(), 3);
 }
 
 #[test]

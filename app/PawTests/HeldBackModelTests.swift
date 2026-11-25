@@ -23,7 +23,8 @@ final class HeldBackModelTests: XCTestCase {
         let sync = try XCTUnwrap(edits.syncing, "The fixture store should sync")
         // A second key paw has the public half of, then work/ is given to both.
         let other = SimulatedKey.newOther(pin: Fixture.pin, touchRequired: false, touchTimeoutMs: 15_000)
-        _ = try edits.writer.pinCardKey(connection: other.asConnection())
+        let otherSession = try KeyPort(clock: SystemClock()).pluggedIn(connection: other.asConnection())
+        _ = try edits.writer.pinCardKey(session: otherSession)
         try await fixture.add("held.example", folder: "work")
         let host = try XCTUnwrap(SimRemoteHandle.shared.host)
         let list = fixture.key.fingerprintHex() + "\n" + other.fingerprintHex() + "\n"

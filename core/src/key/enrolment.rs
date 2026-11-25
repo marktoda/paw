@@ -15,12 +15,9 @@
 //! plugged-in key in place of the old one.
 
 use std::path::Path;
-#[cfg(feature = "sim")]
-use std::sync::Arc;
 
-#[cfg(feature = "sim")]
-use crate::ApduTransport;
-use crate::{CardInfo, PawError};
+use super::CardInfo;
+use crate::PawError;
 
 /// The file in the state directory. Public data only.
 const FILE: &str = "enrolled-key";
@@ -169,44 +166,4 @@ pub(crate) fn mismatch_message(mismatch: &KeyMismatch) -> String {
         mismatch.enrolled.describe(),
         mismatch.presented.describe()
     )
-}
-
-#[cfg(feature = "sim")]
-/// Why the Rust tests' per-call setup path (`SetupFlow::download` and
-/// `test_decrypt`, sim builds only) refuses a card.
-#[derive(Debug)]
-pub(crate) enum CardRefusal {
-    /// It is not the key the store was set up with.
-    Mismatch(Box<KeyMismatch>),
-    /// The card or the enrolment record could not be read.
-    Failed(PawError),
-}
-
-#[cfg(feature = "sim")]
-/// For the per-call setup path that takes a card and a PIN (sim builds
-/// only; the app uses key tasks): refuses, before any VERIFY, a
-/// card that is not the key enrolled in `state_dir`, as the key port does
-/// for tasks. Reads only public data from the card, and only if a key is
-/// enrolled. A damaged record refuses every card.
-pub(crate) fn check_card(state_dir: &Path, card: &Arc<dyn ApduTransport>) -> Result<(), CardRefusal> {
-    let Some(enrolled) = load_enrolment(state_dir).map_err(CardRefusal::Failed)? else {
-        return Ok(());
-    };
-    check_card_against(&enrolled, card)
-}
-
-#[cfg(feature = "sim")]
-/// [`check_card`] against a known identity.
-pub(crate) fn check_card_against(expected: &KeyIdentity, card: &Arc<dyn ApduTransport>) -> Result<(), CardRefusal> {
-    let info = crate::card_info(card.clone()).map_err(CardRefusal::Failed)?;
-    match expected.check(&KeyIdentity::of(&info)) {
-        Some(mismatch) => Err(CardRefusal::Mismatch(Box::new(mismatch))),
-        None => Ok(()),
-    }
-}
-
-/// The key the store in `state_dir` was set up with, if any.
-#[uniffi::export]
-pub fn enrolled_key(state_dir: String) -> Result<Option<KeyIdentity>, PawError> {
-    load_enrolment(Path::new(&state_dir))
 }

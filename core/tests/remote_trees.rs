@@ -6,6 +6,7 @@
 
 #![cfg(feature = "sim")]
 
+mod key_common;
 mod support;
 
 use std::collections::BTreeSet;
@@ -15,11 +16,10 @@ use std::sync::Arc;
 use git2::{Oid, Repository, Signature};
 use paw_core::PawError;
 use paw_core::sim::SimulatedKey;
-use paw_core::ssh::{CardSigner, card_ssh_public_key};
 use paw_core::sync::{self, Author, Connection, SyncError, queue};
+use key_common::{PIN, signer};
 use support::{GitServer, git};
 
-const PIN: &str = "123456";
 const REFUSED: &str = "the remote contains something paw will not check out";
 
 /// One entry of a crafted tree.
@@ -133,11 +133,11 @@ fn card() -> Arc<SimulatedKey> {
 }
 
 fn server(card: &Arc<SimulatedKey>) -> GitServer {
-    GitServer::start(&[card_ssh_public_key(card.clone()).unwrap().authorized_key()])
+    GitServer::start(&[card.ssh_public_key()])
 }
 
 fn connect(server: &GitServer, card: &Arc<SimulatedKey>) -> Connection {
-    Connection::open(&server.remote(), &CardSigner::new(card.clone(), PIN, || {}).unwrap()).unwrap()
+    Connection::open(&server.remote(), &signer(card)).unwrap()
 }
 
 /// Every path under `dir` but `.git`, as a set, and the paths a link

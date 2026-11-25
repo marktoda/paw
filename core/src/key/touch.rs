@@ -15,8 +15,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 use super::task::TaskCore;
 use super::wire::{TouchHook, Wire};
-use super::{CACHED_TOUCH_GRACE, KeyTaskState};
-use crate::KeyTouch;
+use super::{CACHED_TOUCH_GRACE, KeyTaskState, KeyTouch};
 
 /// Reports `Touch` for the commands sent while it lives.
 pub(crate) struct TouchWatch {

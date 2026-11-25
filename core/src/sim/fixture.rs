@@ -22,6 +22,7 @@ use rand::rngs::StdRng;
 
 use super::{CREATED, SimulatedKey};
 use crate::PawError;
+use crate::write::WriteError;
 
 /// The folder whose entries the simulated key cannot open.
 pub const OTHER_KEY_FOLDER: &str = "archive";
@@ -125,14 +126,24 @@ fn write(path: &Path, bytes: &[u8]) -> Result<(), PawError> {
     std::fs::write(path, bytes).map_err(failed)
 }
 
+/// Encrypts `text` for `keys` as paw saves an entry, for tests that craft
+/// entries of their own.
+pub fn encrypt(keys: &[PublicKey], text: &[u8]) -> Result<Vec<u8>, WriteError> {
+    crate::write::encrypt(keys, text)
+}
+
+fn seeded_encrypt(seed: u64, key: &PublicKey, contents: &str) -> Result<Vec<u8>, PawError> {
+    crate::write::encrypt_with(StdRng::seed_from_u64(seed), std::slice::from_ref(key), contents.as_bytes())
+        .map_err(|e| PawError::Card(e.to_string()))
+}
+
 /// Writes the fixture store into `dir`, creating it if need be. Files
 /// already there are overwritten, never removed.
 #[uniffi::export]
 pub fn write_fixture_store(dir: String) -> Result<(), PawError> {
     let root = Path::new(&dir);
     // Only read for its public key, so the PIN and policies do not matter.
-    let card = SimulatedKey::new(String::new(), false, 0);
-    let card_key = crate::card_decryption_key(card)?;
+    let card_key = SimulatedKey::new(String::new(), false, 0).decryption_key()?;
     let other_key = other_key()?;
 
     write(&root.join(".gpg-id"), format!("{}\n", hex_fingerprint(&card_key)).as_bytes())?;
@@ -146,11 +157,7 @@ pub fn write_fixture_store(dir: String) -> Result<(), PawError> {
     for (entries, key) in groups {
         for (path, contents) in entries {
             seed += 1;
-            let ciphertext = crate::encrypt_to_keys(
-                StdRng::seed_from_u64(seed),
-                std::slice::from_ref(&key),
-                contents.as_bytes(),
-            )?;
+            let ciphertext = seeded_encrypt(seed, &key, contents)?;
             write(&root.join(format!("{path}.gpg")), &ciphertext)?;
         }
     }
@@ -164,11 +171,9 @@ pub fn write_fixture_store(dir: String) -> Result<(), PawError> {
 #[uniffi::export]
 pub fn write_name_match_entries(dir: String) -> Result<(), PawError> {
     let root = Path::new(&dir);
-    let card = SimulatedKey::new(String::new(), false, 0);
-    let card_key = crate::card_decryption_key(card)?;
+    let card_key = SimulatedKey::new(String::new(), false, 0).decryption_key()?;
     for (seed, (path, contents)) in (1000u64..).zip(NAME_MATCH_ENTRIES) {
-        let ciphertext =
-            crate::encrypt_to_keys(StdRng::seed_from_u64(seed), std::slice::from_ref(&card_key), contents.as_bytes())?;
+        let ciphertext = seeded_encrypt(seed, &card_key, contents)?;
         write(&root.join(format!("{path}.gpg")), &ciphertext)?;
     }
     Ok(())

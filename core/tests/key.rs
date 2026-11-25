@@ -14,7 +14,7 @@ use key_common::*;
 use paw_core::key::{
     CACHED_TOUCH_GRACE, KeyError, KeyOutcome, KeyTaskState, LoginPurpose, PIN_BACKGROUND_LIMIT,
 };
-use paw_core::ApduTransport;
+use paw_core::key::ApduTransport;
 use paw_core::sim::SimTouch;
 use paw_core::ssh::SshSigner;
 use ring::signature::{ED25519, UnparsedPublicKey};
@@ -77,16 +77,15 @@ fn pin_is_held_across_an_entry_open_and_an_ssh_login() {
     open_ok(&rig);
 
     let driver = Driver::helpful(PIN, &rig.sim);
-    let task = rig.port.clone().sign_in(LoginPurpose::Push { count: 2 }, driver.clone());
-    driver.drive(&task);
-    let signer = task.login_signer().unwrap();
+    let login = login(&rig.port, LoginPurpose::Push { count: 2 }, &driver);
+    let signer = login.signer().unwrap();
     let message: Vec<u8> = (0..146u8).collect();
     let signature = signer.sign(&message).unwrap();
-    task.finish_login();
+    login.finish();
 
     let public = rig.sim.authentication_public_key();
     assert!(UnparsedPublicKey::new(&ED25519, public).verify(&message, &signature).is_ok());
-    assert!(matches!(finish(&task), KeyTaskState::Done { outcome: KeyOutcome::SignedIn }));
+    assert!(matches!(finish(login.task()), KeyTaskState::Done { outcome: KeyOutcome::SignedIn }));
     assert!(!driver.saw(is_pin));
     assert!(driver.saw(is_touch));
     assert_eq!(rig.sim.verify_attempts(), 1);
@@ -284,7 +283,7 @@ impl HeldDeverify {
     }
 }
 
-impl paw_core::ApduTransport for HeldDeverify {
+impl ApduTransport for HeldDeverify {
     fn transmit(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
         if apdu.starts_with(&[0x00, 0x20, 0xFF, 0x82]) {
             self.arrived.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -402,7 +401,6 @@ fn removal_mid_touch_fails_as_key_removed_and_drops_the_pin() {
     rig.sim.unplug();
 
     assert_eq!(failed(&finish(&task)), KeyError::KeyRemoved);
-    assert!(!session.is_connected());
     assert!(!session.holds_pin());
     assert!(rig.port.session().is_none());
 
@@ -490,15 +488,14 @@ fn cancel_while_busy_leaves_the_running_task_alone() {
 fn cancel_while_working_stops_a_sign_in_before_it_signs() {
     let rig = rig(SimTouch::EachUse, SimTouch::EachUse);
     let driver = Driver::helpful(PIN, &rig.sim);
-    let task = rig.port.clone().sign_in(LoginPurpose::Fetch, driver.clone());
-    driver.drive(&task);
-    let signer = task.login_signer().unwrap();
-    assert!(matches!(task.state(), KeyTaskState::Working { .. }));
+    let login = login(&rig.port, LoginPurpose::Fetch, &driver);
+    let signer = login.signer().unwrap();
+    assert!(matches!(login.task().state(), KeyTaskState::Working { .. }));
 
-    cancel_now(&task, &driver);
+    cancel_now(login.task(), &driver);
     assert!(signer.sign(b"login").is_err());
     assert_eq!(rig.sim.authentication_count(), 0);
-    assert!(matches!(task.login_signer(), Err(KeyError::Cancelled)));
+    assert!(matches!(finish(login.task()), KeyTaskState::Cancelled));
 }
 
 #[test]
@@ -617,9 +614,8 @@ fn a_touch_timeout_fails_the_task_and_keeps_the_pin() {
 fn a_cached_touch_does_not_flash_a_prompt() {
     let rig = rig(SimTouch::Off, SimTouch::Cached);
     let driver = Driver::helpful(PIN, &rig.sim);
-    let task = rig.port.clone().sign_in(LoginPurpose::Clone, driver.clone());
-    driver.drive(&task);
-    let signer = task.login_signer().unwrap();
+    let login = login(&rig.port, LoginPurpose::Clone, &driver);
+    let signer = login.signer().unwrap();
 
     // The first login waits for a touch: Touch comes, after the grace.
     let started = Instant::now();
@@ -631,8 +627,8 @@ fn a_cached_touch_does_not_flash_a_prompt() {
     signer.sign(b"second login").unwrap();
     assert_eq!(driver.count(is_touch), 1);
     assert_eq!(rig.sim.authentication_count(), 2);
-    task.finish_login();
-    assert!(is_done(&finish(&task)));
+    login.finish();
+    assert!(is_done(&finish(login.task())));
 }
 
 #[test]
@@ -640,13 +636,11 @@ fn a_cached_touch_that_has_run_out_shows_the_prompt_while_still_waiting() {
     let rig = rig(SimTouch::Off, SimTouch::Cached);
     rig.sim.set_touch_cache_ms(0);
     let driver = Driver::helpful(PIN, &rig.sim);
-    let task = rig.port.clone().sign_in(LoginPurpose::Clone, driver.clone());
-    driver.drive(&task);
-    let signer = task.login_signer().unwrap();
+    let login = login(&rig.port, LoginPurpose::Clone, &driver);
+    let signer = login.signer().unwrap();
     signer.sign(b"first login").unwrap();
     signer.sign(b"second login").unwrap();
     assert_eq!(driver.count(is_touch), 2);
-    task.finish_login();
 }
 
 // One card job at a time.
@@ -928,15 +922,14 @@ fn a_slow_refusal_with_the_pin_still_verified_is_a_touch_timeout() {
 fn a_pin_lost_before_a_signature_fails_it_with_pin_forgotten() {
     let (rig, wrapped) = rig_losing_pin(SimTouch::EachUse, SimTouch::EachUse);
     let driver = Driver::helpful(PIN, &rig.sim);
-    let task = rig.port.clone().sign_in(LoginPurpose::Push { count: 1 }, driver.clone());
-    driver.drive(&task);
-    let signer = task.login_signer().unwrap();
+    let login = login(&rig.port, LoginPurpose::Push { count: 1 }, &driver);
+    let signer = login.signer().unwrap();
     wrapped.losses.store(1, Ordering::SeqCst);
 
     let error = signer.sign(b"a login").unwrap_err();
 
     assert!(matches!(error, paw_core::PawError::Sign(_)), "{error:?}");
-    assert_eq!(failed(&finish(&task)), KeyError::PinForgotten);
+    assert_eq!(failed(&finish(login.task())), KeyError::PinForgotten);
     assert!(!rig.port.session().unwrap().holds_pin());
     assert_eq!(rig.sim.verify_attempts(), 1);
     assert_eq!(rig.sim.pin_tries_left(), 3);

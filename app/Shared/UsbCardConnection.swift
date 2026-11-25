@@ -21,7 +21,6 @@ final class UsbCardConnection: CardConnection, @unchecked Sendable {
     }
 
     private let card: TKSmartCard
-    private let onTouchNeeded: @Sendable () -> Void
 
     /// The names of the smart card readers the system sees right now.
     static func slotNames() -> [String] {
@@ -29,7 +28,7 @@ final class UsbCardConnection: CardConnection, @unchecked Sendable {
     }
 
     /// Opens a session with the first key found. Blocks; call off the main thread.
-    init(onTouchNeeded: @escaping @Sendable () -> Void) throws {
+    init() throws {
         guard let manager = TKSmartCardSlotManager.default else { throw Failure.unavailable }
         guard let name = manager.slotNames.first else { throw Failure.noKey }
 
@@ -61,7 +60,6 @@ final class UsbCardConnection: CardConnection, @unchecked Sendable {
         }
 
         self.card = card
-        self.onTouchNeeded = onTouchNeeded
     }
 
     deinit {
@@ -88,9 +86,5 @@ final class UsbCardConnection: CardConnection, @unchecked Sendable {
                 message: failure?.localizedDescription ?? "The key sent no response.")
         }
         return response
-    }
-
-    func touchNeeded() {
-        onTouchNeeded()
     }
 }

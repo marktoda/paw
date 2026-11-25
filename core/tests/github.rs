@@ -5,6 +5,8 @@
 
 #![cfg(feature = "sim")]
 
+mod key_common;
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -13,14 +15,16 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use paw_core::github::{
     BackgroundOutcome, GitHubAccount, GitHubError, RefreshDecision, RefreshStep, RepositoryList, SignInState,
 };
-use paw_core::setup::touch::TouchExpectation;
-use paw_core::setup::{SetupEvents, SetupFlow, SetupState};
+use paw_core::ffi::sync::Setup;
+use paw_core::key::{KeyOutcome, KeyTaskState};
+use paw_core::setup::SetupState;
 use paw_core::sim::SimulatedKey;
 use paw_core::sim::github::{SIM_USER_CODE, SimBystander, SimDeviceOutcome, SimGitHub, SimPollClock, SimTokenVault};
 use paw_core::sim::remote::SimRemote;
-use paw_core::ssh::CardSigner;
 use paw_core::sync::operation::{self, SyncState};
 use paw_core::sync::{self, SyncError};
+
+use key_common::{Driver, finish, port_with, signer_with};
 
 const PIN: &str = "123456";
 const REPOSITORY: &str = "you/password-store";
@@ -94,14 +98,20 @@ impl World {
         };
         assert_eq!(repositories[0].full_name, REPOSITORY);
         let address = self.account.select_repository(REPOSITORY).unwrap();
-        let mut flow = SetupFlow::open(self.state_dir()).unwrap();
-        flow.read_key(self.key.clone()).unwrap();
-        flow.set_address(&address).unwrap();
-        let SetupState::ConfirmHost { fingerprint, .. } = flow.check_host().unwrap() else {
+        let port = port_with(&self.key);
+        let setup = Setup::open(self.state_dir().to_string_lossy().into_owned()).unwrap();
+        setup.read_key_from_session(port.session().unwrap()).unwrap();
+        setup.set_address(address).unwrap();
+        let SetupState::ConfirmHost { fingerprint, .. } = setup.check_host().unwrap() else {
             panic!("expected ConfirmHost");
         };
-        flow.confirm_host(&fingerprint).unwrap();
-        let state = flow.download(self.key.clone(), PIN, Arc::new(Quiet)).unwrap();
+        setup.confirm_host(fingerprint).unwrap();
+        let driver = Driver::helpful(PIN, &self.key);
+        let task = setup.clone().download_with_key(port, driver.clone());
+        driver.drive(&task);
+        let done = finish(&task);
+        assert!(matches!(done, KeyTaskState::Done { outcome: KeyOutcome::SignedIn }), "{done:?}");
+        let state = setup.state();
         assert!(matches!(state, SetupState::TestDecrypt { .. }), "{state:?}");
     }
 
@@ -127,16 +137,6 @@ impl World {
 
     fn git_requests(&self) -> usize {
         self.github.requests().iter().filter(|r| r.path.contains(".git/")).count()
-    }
-}
-
-struct Quiet;
-
-impl SetupEvents for Quiet {
-    fn touch_needed(&self, _expectation: TouchExpectation) {}
-
-    fn progress(&self, _received: u32, _total: u32) -> bool {
-        true
     }
 }
 
@@ -194,14 +194,14 @@ fn contains(haystack: &[u8], needle: &str) -> bool {
 fn ssh_twin(w: &World) -> tempfile::TempDir {
     let twin = tempfile::tempdir().unwrap();
     let remote = w.remote.remote().unwrap();
-    let signer = CardSigner::new(w.key.clone(), PIN, || {}).unwrap();
+    let signer = signer_with(&w.key, PIN);
     let connection = sync::Connection::open(&remote, &signer).unwrap();
     sync::clone(&connection, &remote, &twin.path().join("repo")).unwrap();
     twin
 }
 
 fn ssh_refresh(w: &World, twin: &Path) -> Result<operation::SyncReport, SyncError> {
-    let signer = CardSigner::new(w.key.clone(), PIN, || {}).unwrap();
+    let signer = signer_with(&w.key, PIN);
     operation::refresh(&w.remote.remote().unwrap(), &signer, &twin.join("repo"))
 }
 

@@ -407,8 +407,9 @@ final class SetupModel {
                     }
                 }
                 // Refused before any PIN: paw could not send this key its PIN.
-                guard session.pinKdfSupported() else {
-                    throw SetupUnsupportedPinKdf(detail: session.pinKdf().detail)
+                let kdf = session.pinKdf()
+                guard kdf.supported else {
+                    throw SetupUnsupportedPinKdf(detail: kdf.detail)
                 }
                 let info = session.info()
                 do {
@@ -773,7 +774,7 @@ final class SetupModel {
             touchLeftWaiting = false
         case .working(let progress):
             // Re-read on every change: objects and bytes, when known.
-            let transfer = sheet.purpose == .download ? task.transferProgress() : nil
+            let transfer = sheet.purpose == .download ? setup.transferProgress() : nil
             let line = transfer.flatMap(Self.transferLine) ?? progress.map(Self.progressLine)
             sheet.stage = .working(
                 message: workingMessage(sheet.purpose, started: progress != nil || transfer != nil),
@@ -906,8 +907,6 @@ final class SetupModel {
             addressProblem = message
         case .KeyNotAccepted(let host, let publicKey):
             notAccepted = KeyNotAccepted(host: host, publicKey: publicKey)
-        case .Cancelled:
-            problem = nil
         case .HostKeyChanged(let host, let expected, let presented):
             let bundled = (try? readStoreAddress(text: addressSet))?.hostKeyBundled ?? false
             problem = Self.hostKeyChanged(host: host, expected: expected, presented: presented, bundled: bundled)
@@ -995,20 +994,6 @@ final class SetupModel {
         case .HostKeyNotConfirmed(let host):
             return SetupProblem(
                 problem: "That isn't the fingerprint \(host) showed", nextStep: "Go back and connect again.")
-        case .WrongPin(let triesLeft):
-            return SetupProblem(
-                problem: "Wrong PIN",
-                nextStep: triesLeft == 1 ? "1 try left before the key locks." : "\(triesLeft) tries left.",
-                action: .retry, actionTitle: "Try again")
-        case .PinBlocked:
-            return SetupProblem(
-                problem: "Your key is locked",
-                nextStep: "Unlock it on a computer with its reset code or admin PIN.")
-        case .TouchTimedOut:
-            return SetupProblem(
-                problem: "Your key wasn't touched in time",
-                nextStep: "Try again and touch the gold part while it blinks.",
-                action: .retry, actionTitle: "Try again")
         case .EmptyRepository:
             return SetupProblem(
                 problem: "That store is empty",
@@ -1032,8 +1017,6 @@ final class SetupModel {
         case .UnusableKey(let message):
             return SetupProblem(
                 problem: "This key can't be used", nextStep: sentence(message))
-        case .Cancelled:
-            return SetupProblem(problem: "Cancelled", nextStep: "Nothing was kept.")
         case .WrongStep(let message):
             return SetupProblem(
                 problem: "Setup got out of step", nextStep: "Go back one step and try again.",

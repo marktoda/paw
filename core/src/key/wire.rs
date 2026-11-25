@@ -15,9 +15,8 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
-use super::{KeyError, apdu};
 use super::keylog::KeyLog;
-use crate::ApduTransport;
+use super::{ApduTransport, KeyError, apdu};
 
 /// Told when a command that may wait for a touch goes out, and when its
 /// answer (or the reader's failure) comes back.
@@ -42,10 +41,6 @@ pub(crate) struct Wire {
 }
 
 impl Wire {
-    pub(crate) fn new(inner: Arc<dyn ApduTransport>) -> Arc<Self> {
-        Self::logged(inner, KeyLog::detached())
-    }
-
     /// A wire that writes every exchange to `log`.
     pub(crate) fn logged(inner: Arc<dyn ApduTransport>, log: Arc<KeyLog>) -> Arc<Self> {
         Arc::new(Self { inner, record: Mutex::new(Record::default()), log })

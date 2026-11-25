@@ -1,76 +1,34 @@
 //! First-run setup as a state machine, against the in-process git host:
 //! every step, every failure, resuming after the app is killed, the address
-//! forms, and how host keys are trusted.
+//! forms, and how host keys are trusted. The steps that need the key run as
+//! key tasks on a port with the simulated key plugged in.
 
 #![cfg(feature = "sim")]
 
+mod key_common;
 mod support;
 
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
+use key_common::{Driver, PIN, WAIT, finish, is_touch, port_with};
+use paw_core::ffi::sync::Setup;
+use paw_core::key::{KeyError, KeyPort, KeyTaskState, KeyTouch};
 use paw_core::setup::address::StoreAddress;
-use paw_core::setup::touch::{TouchClock, TouchExpectation};
 use paw_core::setup::outcome::RemoteReason;
-use paw_core::setup::{SetupError, SetupEvents, SetupFlow, SetupState};
-use paw_core::sim::{SimOptions, SimulatedKey};
-use paw_core::ssh::{CardSigner, card_ssh_public_key};
+use paw_core::setup::touch::{TouchClock, TouchExpectation};
+use paw_core::setup::{SetupError, SetupFlow, SetupState};
+use paw_core::sim::{SimTouch, SimulatedKey};
+use paw_core::ssh::SshPublicKey;
 use paw_core::sync::hosts::{self, GITHUB_HOST_KEYS, KnownHosts};
 use paw_core::sync::{Connection, HostKeyPin};
 use paw_core::write::LineStatus;
-use paw_core::{ApduTransport, KeyTouch, card_info};
 use support::{GitServer, git};
 
-const PIN: &str = "123456";
-
-fn card(touch: bool) -> Arc<SimulatedKey> {
-    SimulatedKey::with_options(SimOptions {
-        pin: PIN.into(),
-        decrypt_touch: touch,
-        auth_touch: touch,
-        touch_timeout: Duration::from_millis(100),
-        extended_length: false,
-    })
-}
-
-fn authorised(card: &Arc<SimulatedKey>) -> String {
-    card_ssh_public_key(card.clone()).unwrap().authorized_key()
-}
-
-/// What the app would do: touch when asked, count the asks, and stop the
-/// download at the first progress report if told to.
-struct Events {
-    card: Arc<SimulatedKey>,
-    touch: bool,
-    asked: AtomicU32,
-    progress: AtomicU32,
-    stop: AtomicBool,
-}
-
-impl SetupEvents for Events {
-    fn touch_needed(&self, _expectation: TouchExpectation) {
-        self.asked.fetch_add(1, Ordering::SeqCst);
-        if self.touch {
-            self.card.touch();
-        }
-    }
-
-    fn progress(&self, _received: u32, _total: u32) -> bool {
-        self.progress.fetch_add(1, Ordering::SeqCst);
-        !self.stop.load(Ordering::SeqCst)
-    }
-}
-
-fn events(card: &Arc<SimulatedKey>, touch: bool) -> Arc<Events> {
-    Arc::new(Events {
-        card: card.clone(),
-        touch,
-        asked: AtomicU32::new(0),
-        progress: AtomicU32::new(0),
-        stop: AtomicBool::new(false),
-    })
+/// A key whose slots both ask for a touch as `touch` says.
+fn key(touch: SimTouch) -> Arc<SimulatedKey> {
+    key_common::sim(touch, touch, WAIT)
 }
 
 /// Pushes the fixture store (most of it for the simulated key) to `server`.
@@ -101,340 +59,322 @@ fn address(server: &GitServer) -> String {
     format!("ssh://git@127.0.0.1:{}/store.git", server.remote().port)
 }
 
-/// A flow at `CheckHost` for `server`, with the key read.
-fn at_check_host(dir: &Path, card: &Arc<SimulatedKey>, server: &GitServer) -> SetupFlow {
-    let mut flow = SetupFlow::open(dir).unwrap();
-    flow.read_key(card.clone()).unwrap();
-    flow.set_address(&address(server)).unwrap();
-    flow
+fn open_setup(dir: &Path) -> Arc<Setup> {
+    Setup::open(dir.to_string_lossy().into_owned()).unwrap()
 }
 
-/// A flow at `NeedPin`: the host's key confirmed and the key accepted.
-fn at_need_pin(dir: &Path, card: &Arc<SimulatedKey>, server: &GitServer) -> SetupFlow {
-    let mut flow = at_check_host(dir, card, server);
-    let SetupState::ConfirmHost { fingerprint, .. } = flow.check_host().unwrap() else {
-        panic!("expected ConfirmHost");
-    };
-    assert!(matches!(flow.confirm_host(&fingerprint).unwrap(), SetupState::NeedPin { .. }));
-    flow
+/// What the app sees after being killed and started again.
+fn relaunch(dir: &Path) -> SetupState {
+    open_setup(dir).state()
 }
 
-fn download(flow: &mut SetupFlow, card: &Arc<SimulatedKey>, events: &Arc<Events>) -> Result<SetupState, SetupError> {
-    flow.download(card.clone(), PIN, events.clone())
+/// A setup in a state directory of its own, for the store at `address`,
+/// with `sim` plugged into `port`.
+struct Rig {
+    sim: Arc<SimulatedKey>,
+    port: Arc<KeyPort>,
+    dir: tempfile::TempDir,
+    setup: Arc<Setup>,
+    address: String,
+}
+
+impl Rig {
+    fn new(sim: &Arc<SimulatedKey>, server: &GitServer) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let setup = open_setup(dir.path());
+        Self { sim: sim.clone(), port: port_with(sim), dir, setup, address: address(server) }
+    }
+
+    /// As after a relaunch: the setup read back from its state directory.
+    fn reopen(&mut self) {
+        self.setup = open_setup(self.dir.path());
+    }
+
+    fn repo(&self) -> std::path::PathBuf {
+        self.dir.path().join("repo")
+    }
+
+    /// At `CheckHost`: the key read from its session, the address set.
+    fn at_check_host(&self) {
+        self.setup.read_key_from_session(self.port.session().unwrap()).unwrap();
+        self.setup.set_address(self.address.clone()).unwrap();
+    }
+
+    /// At `NeedPin`: the host's key confirmed and the key accepted.
+    fn at_need_pin(&self) {
+        self.at_check_host();
+        let SetupState::ConfirmHost { fingerprint, .. } = self.setup.check_host().unwrap() else {
+            panic!("expected ConfirmHost");
+        };
+        assert!(matches!(self.setup.confirm_host(fingerprint).unwrap(), SetupState::NeedPin { .. }));
+    }
+
+    /// "Download your store" as a key task, driven by `driver`.
+    fn download_by(&self, driver: &Arc<Driver>) -> KeyTaskState {
+        let task = self.setup.clone().download_with_key(self.port.clone(), driver.clone());
+        driver.drive(&task);
+        finish(&task)
+    }
+
+    /// "Check your key" as a key task, driven by `driver`.
+    fn test_decrypt_by(&self, driver: &Arc<Driver>) -> KeyTaskState {
+        let task = self.setup.clone().test_decrypt_with_key(self.port.clone(), driver.clone());
+        driver.drive(&task);
+        finish(&task)
+    }
+
+    /// The download, typing the PIN and touching when asked: the state it
+    /// left setup in, or the setup error it failed with.
+    fn download(&self) -> Result<SetupState, SetupError> {
+        let state = self.download_by(&Driver::helpful(PIN, &self.sim));
+        self.result(state)
+    }
+
+    /// The test decrypt, typing the PIN and touching when asked.
+    fn test_decrypt(&self) -> Result<SetupState, SetupError> {
+        let state = self.test_decrypt_by(&Driver::helpful(PIN, &self.sim));
+        self.result(state)
+    }
+
+    /// Done, or failed for a reason that is the setup's, not the key's.
+    fn result(&self, state: KeyTaskState) -> Result<SetupState, SetupError> {
+        let result = self.setup.last_task_result();
+        match state {
+            KeyTaskState::Done { .. } => assert!(result.is_ok(), "{result:?}"),
+            KeyTaskState::Failed { error: KeyError::Reader { .. } } => assert!(result.is_err(), "{result:?}"),
+            other => panic!("the task ended {other:?}"),
+        }
+        result
+    }
 }
 
 // --- the whole flow --------------------------------------------------------
 
 #[test]
 fn setup_reads_the_key_checks_the_host_downloads_and_opens_one_entry() {
-    let card = card(true);
-    let server = GitServer::start(&[authorised(&card)]);
+    let sim = key(SimTouch::EachUse);
+    let server = GitServer::start(&[sim.ssh_public_key()]);
     push_fixture_store(&server);
-    let dir = tempfile::tempdir().unwrap();
-    let events = events(&card, true);
-    let mut flow = SetupFlow::open(dir.path()).unwrap();
-    assert_eq!(flow.state(), SetupState::ReadKey);
+    let rig = Rig::new(&sim, &server);
+    assert_eq!(rig.setup.state(), SetupState::ReadKey);
 
-    let SetupState::Address { key } = flow.read_key(card.clone()).unwrap() else { panic!() };
-    assert_eq!(key.ssh_public_key, authorised(&card));
+    let SetupState::Address { key } = rig.setup.read_key_from_session(rig.port.session().unwrap()).unwrap() else {
+        panic!()
+    };
+    assert_eq!(key.ssh_public_key, sim.ssh_public_key());
     assert_eq!(key.authentication_touch, KeyTouch::EachUse);
 
-    let state = flow.set_address(&address(&server)).unwrap();
+    let state = rig.setup.set_address(address(&server)).unwrap();
     assert_eq!(state, SetupState::CheckHost { address: address(&server), notice: None });
 
     // An unknown host: its key is shown before anything else happens.
-    let SetupState::ConfirmHost { host, algorithm, fingerprint } = flow.check_host().unwrap() else { panic!() };
+    let SetupState::ConfirmHost { host, algorithm, fingerprint } = rig.setup.check_host().unwrap() else { panic!() };
     assert_eq!((host.as_str(), algorithm.as_str()), ("127.0.0.1", "ssh-ed25519"));
     assert_eq!(fingerprint, server.remote().host_key.fingerprint());
 
-    let state = flow.confirm_host(&fingerprint).unwrap();
+    let state = rig.setup.confirm_host(fingerprint).unwrap();
     assert_eq!(state, SetupState::NeedPin { address: address(&server), touch: TouchExpectation::Needed });
     // Checking the host and the key cost no signature and no PIN try.
-    assert_eq!(card.authentication_count(), 0);
+    assert_eq!(sim.authentication_count(), 0);
     assert_eq!(server.logins(), 0);
 
-    let state = download(&mut flow, &card, &events).unwrap();
+    let downloading = Driver::helpful(PIN, &sim);
+    let state = rig.result(rig.download_by(&downloading)).unwrap();
     assert_eq!(state, SetupState::TestDecrypt { entries: 29, touch: TouchExpectation::Needed });
-    assert_eq!(card.authentication_count(), 1);
-    assert!(events.progress.load(Ordering::SeqCst) > 0);
-    assert_eq!(git(&flow.repo_dir(), &["rev-parse", "HEAD"]), server.tip());
+    assert_eq!(sim.authentication_count(), 1);
+    assert!(downloading.saw(|s| matches!(s, KeyTaskState::Working { progress: Some(_) })));
+    assert_eq!(git(&rig.repo(), &["rev-parse", "HEAD"]), server.tip());
 
-    let state = flow.test_decrypt(card.clone(), PIN, events.clone()).unwrap();
+    let checking = Driver::helpful(PIN, &sim);
+    let state = rig.result(rig.test_decrypt_by(&checking)).unwrap();
     let SetupState::Done { opened, entries } = state else { panic!("{state:?}") };
     assert_eq!(entries, 29);
     assert!(!opened.starts_with("archive/"), "{opened}");
-    assert_eq!(card.decipher_count(), 1);
-    assert_eq!(events.asked.load(Ordering::SeqCst), 2);
-    assert_eq!(card_info(card.clone()).unwrap().pin_tries_left, 3);
+    assert_eq!(sim.decipher_count(), 1);
+    assert_eq!(downloading.count(is_touch) + checking.count(is_touch), 2);
+    assert_eq!(sim.pin_tries_left(), 3);
 
     // Nothing secret is saved.
-    let saved = std::fs::read_to_string(dir.path().join("setup")).unwrap();
+    let saved = std::fs::read_to_string(rig.dir.path().join("setup")).unwrap();
     let fields: Vec<(&str, &str)> = saved.lines().filter_map(|line| line.split_once('=')).collect();
     let names: Vec<&str> = fields.iter().map(|(name, _)| *name).collect();
     assert_eq!(
         names,
         ["step", "ident", "ssh_public_key", "decryption_fingerprint", "authentication_touch", "decryption_touch", "address", "opened"]
     );
-    // (The simulated key's serial, 12345678, happens to contain its PIN.)
     assert!(fields.iter().all(|(_, value)| *value != PIN), "{saved}");
     assert!(saved.contains("step=done"), "{saved}");
     // Sync can find the store.
-    assert_eq!(paw_core::setup::saved_address(dir.path()).unwrap().display(), address(&server));
+    assert_eq!(paw_core::setup::saved_address(rig.dir.path()).unwrap().display(), address(&server));
 }
 
 #[test]
 fn a_confirmed_host_is_pinned_and_not_asked_about_again() {
-    let card = card(false);
-    let server = GitServer::start(&[authorised(&card)]);
-    let first = tempfile::tempdir().unwrap();
-    at_need_pin(first.path(), &card, &server);
+    let sim = key(SimTouch::Off);
+    let server = GitServer::start(&[sim.ssh_public_key()]);
+    let mut rig = Rig::new(&sim, &server);
+    rig.at_need_pin();
 
-    let pinned = KnownHosts::new(&first.path().join("known_hosts"))
+    let pinned = KnownHosts::new(&rig.dir.path().join("known_hosts"))
         .lookup("127.0.0.1", server.remote().port)
         .unwrap()
         .unwrap();
     assert_eq!(pinned.fingerprint(), server.remote().host_key.fingerprint());
 
     // Back to CheckHost: now the host is known, so it goes straight on.
-    let mut flow = SetupFlow::open(first.path()).unwrap();
-    flow.back().unwrap();
-    assert!(matches!(flow.check_host().unwrap(), SetupState::NeedPin { .. }));
+    rig.reopen();
+    rig.setup.back().unwrap();
+    assert!(matches!(rig.setup.check_host().unwrap(), SetupState::NeedPin { .. }));
 }
 
 #[test]
 fn a_wrong_fingerprint_does_not_pin_the_host() {
-    let card = card(false);
-    let server = GitServer::start(&[authorised(&card)]);
-    let dir = tempfile::tempdir().unwrap();
-    let mut flow = at_check_host(dir.path(), &card, &server);
-    flow.check_host().unwrap();
+    let sim = key(SimTouch::Off);
+    let server = GitServer::start(&[sim.ssh_public_key()]);
+    let rig = Rig::new(&sim, &server);
+    rig.at_check_host();
+    rig.setup.check_host().unwrap();
 
-    let error = flow.confirm_host("SHA256:not-what-was-shown").unwrap_err();
+    let error = rig.setup.confirm_host("SHA256:not-what-was-shown".into()).unwrap_err();
 
     assert!(matches!(error, SetupError::HostKeyNotConfirmed { .. }), "{error:?}");
-    assert!(!dir.path().join("known_hosts").exists());
-    assert!(matches!(flow.state(), SetupState::ConfirmHost { .. }));
+    assert!(!rig.dir.path().join("known_hosts").exists());
+    assert!(matches!(rig.setup.state(), SetupState::ConfirmHost { .. }));
 }
 
 // --- each failure ----------------------------------------------------------
 
 #[test]
 fn an_unreachable_host_is_its_own_failure() {
-    let card = card(false);
-    let server = GitServer::start(&[authorised(&card)]);
-    let dir = tempfile::tempdir().unwrap();
-    let mut flow = at_check_host(dir.path(), &card, &server);
+    let sim = key(SimTouch::Off);
+    let server = GitServer::start(&[sim.ssh_public_key()]);
+    let rig = Rig::new(&sim, &server);
+    rig.at_check_host();
     drop(server);
 
-    let error = flow.check_host().unwrap_err();
+    let error = rig.setup.check_host().unwrap_err();
 
     assert!(matches!(&error, SetupError::HostUnreachable { host, .. } if host == "127.0.0.1"), "{error:?}");
-    assert!(matches!(flow.state(), SetupState::CheckHost { .. }));
-    assert_eq!(flow.last_remote_message().unwrap().reason, RemoteReason::Unreachable);
-}
-
-#[test]
-fn a_changed_host_key_stops_with_both_fingerprints() {
-    let card = card(false);
-    let server = GitServer::start(&[authorised(&card)]);
-    let dir = tempfile::tempdir().unwrap();
-    let known = KnownHosts::new(&dir.path().join("known_hosts"));
-    known.add("127.0.0.1", server.remote().port, &support::some_other_host_key()).unwrap();
-    let pinned = HostKeyPin::parse(&support::some_other_host_key()).unwrap().fingerprint();
-    let mut flow = at_check_host(dir.path(), &card, &server);
-
-    let error = flow.check_host().unwrap_err();
-
-    match error {
-        SetupError::HostKeyChanged { expected, presented, .. } => {
-            assert_eq!(expected, [pinned]);
-            assert_eq!(presented, server.remote().host_key.fingerprint());
-        }
-        other => panic!("expected HostKeyChanged, got {other:?}"),
-    }
-    assert_eq!(server.logins(), 0);
-}
-
-#[test]
-fn a_key_the_host_does_not_know_is_reported_with_the_line_to_add_before_any_pin() {
-    let card = card(true);
-    let someone_else = paw_core::ssh::SshPublicKey::ed25519(&[3u8; 32]).authorized_key();
-    let server = GitServer::start(&[someone_else]);
-    let dir = tempfile::tempdir().unwrap();
-    let mut flow = at_check_host(dir.path(), &card, &server);
-    let SetupState::ConfirmHost { fingerprint, .. } = flow.check_host().unwrap() else { panic!() };
-
-    let error = flow.confirm_host(&fingerprint).unwrap_err();
-
-    match error {
-        SetupError::KeyNotAccepted { host, public_key } => {
-            assert_eq!(host, "127.0.0.1");
-            assert_eq!(public_key, authorised(&card));
-        }
-        other => panic!("expected KeyNotAccepted, got {other:?}"),
-    }
-    assert_eq!(card.authentication_count(), 0);
-    assert_eq!(card_info(card).unwrap().pin_tries_left, 3);
-    assert!(matches!(flow.state(), SetupState::CheckHost { .. }));
-    assert_eq!(flow.last_remote_message().unwrap().reason, RemoteReason::KeyNotAccepted);
-}
-
-#[test]
-fn a_repository_the_key_cannot_see_is_its_own_outcome_on_the_one_shot_path() {
-    let card = card(false);
-    let server = GitServer::start(&[authorised(&card)]);
-    push_fixture_store(&server);
-    let dir = tempfile::tempdir().unwrap();
-    let mut flow = at_need_pin(dir.path(), &card, &server);
-    server.sim.set_repository_not_found(true);
-
-    let error = download(&mut flow, &card, &events(&card, true)).unwrap_err();
-
-    assert!(matches!(&error, SetupError::Failed { message } if message.contains("can't see it")), "{error:?}");
-    let message = flow.last_remote_message().unwrap();
-    assert_eq!(message.reason, RemoteReason::RepositoryNotFound);
-    assert_eq!(message.said.as_deref(), Some("ERROR: Repository not found."));
-    assert!(matches!(flow.state(), SetupState::NeedPin { .. }));
+    assert!(matches!(rig.setup.state(), SetupState::CheckHost { .. }));
+    assert_eq!(rig.setup.last_remote_message().unwrap().reason, RemoteReason::Unreachable);
 }
 
 #[test]
 fn the_key_check_asks_without_a_signature() {
-    let card = card(true);
-    let server = GitServer::start(&[authorised(&card)]);
-    let key = card_ssh_public_key(card.clone()).unwrap();
+    let sim = key(SimTouch::EachUse);
+    let server = GitServer::start(&[sim.ssh_public_key()]);
+    let key = SshPublicKey::ed25519(&sim.authentication_public_key());
 
     assert!(Connection::probe(&server.remote(), &key).unwrap());
-    assert!(!Connection::probe(&server.remote(), &paw_core::ssh::SshPublicKey::ed25519(&[3u8; 32])).unwrap());
-    assert_eq!(card.authentication_count(), 0);
+    assert!(!Connection::probe(&server.remote(), &SshPublicKey::ed25519(&[3u8; 32])).unwrap());
+    assert_eq!(sim.authentication_count(), 0);
     assert_eq!(server.logins(), 0);
 }
 
 #[test]
 fn a_wrong_pin_reports_the_tries_left_then_the_block() {
-    let card = card(false);
-    let server = GitServer::start(&[authorised(&card)]);
+    let sim = key(SimTouch::Off);
+    let server = GitServer::start(&[sim.ssh_public_key()]);
     push_fixture_store(&server);
-    let dir = tempfile::tempdir().unwrap();
-    let mut flow = at_need_pin(dir.path(), &card, &server);
-    let events = events(&card, true);
+    let rig = Rig::new(&sim, &server);
+    rig.at_need_pin();
+    let driver = Driver::helpful("000000", &sim);
 
-    for tries_left in [2, 1] {
-        let error = flow.download(card.clone(), "000000", events.clone()).unwrap_err();
-        assert!(matches!(error, SetupError::WrongPin { tries_left: t } if t == tries_left), "{error:?}");
-        assert!(matches!(flow.state(), SetupState::NeedPin { .. }));
-    }
-    let error = flow.download(card.clone(), "000000", events.clone()).unwrap_err();
-    assert!(matches!(error, SetupError::PinBlocked), "{error:?}");
-    assert!(!flow.repo_dir().exists());
+    let state = rig.download_by(&driver);
+
+    assert!(matches!(state, KeyTaskState::Failed { error: KeyError::PinBlocked }), "{state:?}");
+    let wrong: Vec<u8> = driver
+        .states()
+        .into_iter()
+        .filter_map(|state| match state {
+            KeyTaskState::Pin { last_error: Some(KeyError::WrongPin { tries_left }), .. } => Some(tries_left),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(wrong, [2, 1]);
+    assert!(matches!(rig.setup.state(), SetupState::NeedPin { .. }));
+    assert_eq!(server.logins(), 0);
+    assert!(!rig.repo().exists());
 }
 
 #[test]
 fn a_key_nobody_touches_times_out() {
-    let card = card(true);
-    let server = GitServer::start(&[authorised(&card)]);
+    let sim = key_common::sim(SimTouch::EachUse, SimTouch::EachUse, Duration::from_millis(1500));
+    let server = GitServer::start(&[sim.ssh_public_key()]);
     push_fixture_store(&server);
-    let dir = tempfile::tempdir().unwrap();
-    let mut flow = at_need_pin(dir.path(), &card, &server);
+    let rig = Rig::new(&sim, &server);
+    rig.at_need_pin();
 
-    let error = download(&mut flow, &card, &events(&card, false)).unwrap_err();
+    let state = rig.download_by(&Driver::typist(PIN));
 
-    assert!(matches!(error, SetupError::TouchTimedOut), "{error:?}");
-    assert!(matches!(flow.state(), SetupState::NeedPin { .. }));
-}
-
-#[test]
-fn an_empty_repository_is_its_own_failure() {
-    let card = card(false);
-    let server = GitServer::start_empty(&[authorised(&card)]);
-    let dir = tempfile::tempdir().unwrap();
-    let mut flow = at_need_pin(dir.path(), &card, &server);
-
-    let error = download(&mut flow, &card, &events(&card, true)).unwrap_err();
-
-    assert!(matches!(error, SetupError::EmptyRepository), "{error:?}");
-    assert!(!flow.repo_dir().exists());
-    // Back at the address, which is kept, with the reason, also after a
-    // relaunch.
-    assert!(matches!(flow.state(), SetupState::Address { .. }), "{:?}", flow.state());
-    let message = flow.last_remote_message().unwrap();
-    assert_eq!(message.reason, RemoteReason::EmptyRepository);
-    assert_eq!((message.host.as_str(), message.repository.as_str()), ("127.0.0.1", "store.git"));
-    let relaunched = SetupFlow::open(dir.path()).unwrap();
-    assert!(matches!(relaunched.state(), SetupState::Address { .. }));
-    assert_eq!(relaunched.last_remote_message(), Some(message));
-    // The same address again, once the store is pushed: it goes through.
-    let mut flow = relaunched;
-    push_fixture_store(&server);
-    flow.set_address(&address(&server)).unwrap();
-    assert_eq!(flow.last_remote_message(), None);
-    assert!(matches!(flow.check_host().unwrap(), SetupState::NeedPin { .. }));
-    assert!(matches!(download(&mut flow, &card, &events(&card, true)).unwrap(), SetupState::TestDecrypt { .. }));
-    assert_eq!(SetupFlow::open(dir.path()).unwrap().last_remote_message(), None);
-    assert!(!std::fs::read_to_string(dir.path().join("setup")).unwrap().contains("problem="));
+    assert!(matches!(state, KeyTaskState::Failed { error: KeyError::TouchTimeout }), "{state:?}");
+    assert!(matches!(rig.setup.state(), SetupState::NeedPin { .. }));
+    assert!(!rig.repo().exists());
 }
 
 #[test]
 fn a_store_with_a_link_in_it_is_refused_and_says_where() {
-    let card = card(false);
-    let server = GitServer::start(&[authorised(&card)]);
+    let sim = key(SimTouch::Off);
+    let server = GitServer::start(&[sim.ssh_public_key()]);
     push_fixture_store(&server);
-    let state = tempfile::tempdir().unwrap();
     server.desktop_symlink("up", Path::new(".."));
-    let mut flow = at_need_pin(state.path(), &card, &server);
+    let rig = Rig::new(&sim, &server);
+    rig.at_need_pin();
 
-    let error = download(&mut flow, &card, &events(&card, true)).unwrap_err();
+    let error = rig.download().unwrap_err();
 
     let SetupError::Failed { message } = &error else { panic!("{error:?}") };
     assert!(message.starts_with("the remote contains something paw will not check out"), "{message}");
-    let refused = flow.refused_remote();
+    let refused = rig.setup.refused_remote();
     assert_eq!(refused.len(), 1, "{refused:?}");
     assert_eq!((refused[0].path.as_str(), refused[0].reason.as_str()), ("up", "it is a symbolic link"));
-    assert!(!flow.repo_dir().exists());
-    assert!(matches!(flow.state(), SetupState::NeedPin { .. }));
+    assert!(!rig.repo().exists());
+    assert!(matches!(rig.setup.state(), SetupState::NeedPin { .. }));
     // A download that succeeds forgets it.
     let desktop = server.desktop();
     git(desktop.path(), &["rm", "--quiet", "up"]);
     git(desktop.path(), &["commit", "--quiet", "-m", "No link."]);
     git(desktop.path(), &["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
-    download(&mut flow, &card, &events(&card, true)).unwrap();
-    assert!(flow.refused_remote().is_empty());
+    rig.download().unwrap();
+    assert!(rig.setup.refused_remote().is_empty());
 }
 
 #[test]
 fn a_repository_without_gpg_id_is_not_a_pass_store() {
-    let card = card(false);
-    let server = GitServer::start(&[authorised(&card)]);
-    let dir = tempfile::tempdir().unwrap();
-    let mut flow = at_need_pin(dir.path(), &card, &server);
+    let sim = key(SimTouch::Off);
+    let server = GitServer::start(&[sim.ssh_public_key()]);
+    let rig = Rig::new(&sim, &server);
+    rig.at_need_pin();
 
-    let error = download(&mut flow, &card, &events(&card, true)).unwrap_err();
+    let error = rig.download().unwrap_err();
 
     assert!(matches!(error, SetupError::NotAPassStore), "{error:?}");
-    assert!(!flow.repo_dir().exists());
-    assert!(matches!(flow.state(), SetupState::Address { .. }), "{:?}", flow.state());
-    assert_eq!(flow.last_remote_message().unwrap().reason, RemoteReason::NotAPassStore);
-    assert_eq!(SetupFlow::open(dir.path()).unwrap().last_remote_message().unwrap().reason, RemoteReason::NotAPassStore);
+    assert!(!rig.repo().exists());
+    assert!(matches!(rig.setup.state(), SetupState::Address { .. }), "{:?}", rig.setup.state());
+    assert_eq!(rig.setup.last_remote_message().unwrap().reason, RemoteReason::NotAPassStore);
+    assert_eq!(open_setup(rig.dir.path()).last_remote_message().unwrap().reason, RemoteReason::NotAPassStore);
     // Going back from the address forgets it.
-    flow.back().unwrap();
-    assert_eq!(SetupFlow::open(dir.path()).unwrap().last_remote_message(), None);
+    rig.setup.back().unwrap();
+    assert_eq!(open_setup(rig.dir.path()).last_remote_message(), None);
 }
 
 #[test]
 fn a_store_the_key_cannot_open_is_reported_before_any_touch() {
-    let card = card(true);
-    let server = GitServer::start(&[authorised(&card)]);
+    let sim = key(SimTouch::EachUse);
+    let server = GitServer::start(&[sim.ssh_public_key()]);
     push_foreign_store(&server);
-    let dir = tempfile::tempdir().unwrap();
-    let mut flow = at_need_pin(dir.path(), &card, &server);
-    let events = events(&card, true);
-    download(&mut flow, &card, &events).unwrap();
+    let rig = Rig::new(&sim, &server);
+    rig.at_need_pin();
+    rig.download().unwrap();
+    let touches = sim.touch_count();
 
-    let error = flow.test_decrypt(card.clone(), PIN, events.clone()).unwrap_err();
+    let error = rig.test_decrypt().unwrap_err();
 
     assert!(matches!(error, SetupError::KeyCannotOpenStore), "{error:?}");
     assert_eq!(error.to_string(), "cloned, but this key can't open any entry in the store");
-    assert_eq!(card.decipher_count(), 0);
-    assert!(matches!(flow.state(), SetupState::TestDecrypt { .. }));
+    assert_eq!(sim.decipher_count(), 0);
+    assert_eq!(sim.touch_count(), touches);
+    assert!(matches!(rig.setup.state(), SetupState::TestDecrypt { .. }));
 }
 
 #[test]
@@ -449,72 +389,68 @@ fn a_step_out_of_order_is_refused() {
 
 // --- resuming after a kill --------------------------------------------------
 
-/// What the app sees after being killed and started again.
-fn relaunch(dir: &Path) -> SetupState {
-    SetupFlow::open(dir).unwrap().state()
-}
-
 #[test]
 fn setup_resumes_after_a_kill_at_every_step() {
-    let card = card(false);
-    let server = GitServer::start(&[authorised(&card)]);
+    let sim = key(SimTouch::Off);
+    let server = GitServer::start(&[sim.ssh_public_key()]);
     push_fixture_store(&server);
-    let dir = tempfile::tempdir().unwrap();
-    let events = events(&card, true);
-    let mut flow = SetupFlow::open(dir.path()).unwrap();
-    assert_eq!(relaunch(dir.path()), SetupState::ReadKey);
+    let mut rig = Rig::new(&sim, &server);
+    let dir = rig.dir.path().to_path_buf();
+    assert_eq!(relaunch(&dir), SetupState::ReadKey);
 
-    let state = flow.read_key(card.clone()).unwrap();
-    assert_eq!(relaunch(dir.path()), state);
+    let state = rig.setup.read_key_from_session(rig.port.session().unwrap()).unwrap();
+    assert_eq!(relaunch(&dir), state);
 
-    let state = flow.set_address(&address(&server)).unwrap();
-    assert_eq!(relaunch(dir.path()), state);
+    let state = rig.setup.set_address(address(&server)).unwrap();
+    assert_eq!(relaunch(&dir), state);
 
     // Killed while the host's key waits for confirmation: the host is asked
     // again, so the key shown is always the one presented now.
-    let confirm = flow.check_host().unwrap();
-    assert!(matches!(relaunch(dir.path()), SetupState::CheckHost { .. }));
+    let confirm = rig.setup.check_host().unwrap();
+    assert!(matches!(relaunch(&dir), SetupState::CheckHost { .. }));
     let SetupState::ConfirmHost { fingerprint, .. } = confirm else { panic!() };
-    let state = flow.confirm_host(&fingerprint).unwrap();
-    assert_eq!(relaunch(dir.path()), state);
+    let state = rig.setup.confirm_host(fingerprint).unwrap();
+    assert_eq!(relaunch(&dir), state);
 
-    // Killed in the middle of the download (the progress report stops it
-    // where a kill would): the half-made copy is removed on relaunch.
-    events.stop.store(true, Ordering::SeqCst);
-    let error = download(&mut flow, &card, &events).unwrap_err();
-    assert!(matches!(error, SetupError::Cancelled), "{error:?}");
-    // Nothing is reported after the listener said stop.
-    assert_eq!(events.progress.load(Ordering::SeqCst), 1);
-    drop(flow);
-    assert!(dir.path().join("repo").exists());
-    let mut flow = SetupFlow::open(dir.path()).unwrap();
-    assert!(matches!(flow.state(), SetupState::NeedPin { .. }));
-    assert!(!flow.repo_dir().exists());
+    // Killed in the middle of the download (the state file and the
+    // half-made copy as a kill leaves them): the copy is removed on
+    // relaunch.
+    let file = dir.join("setup");
+    let saved = std::fs::read_to_string(&file).unwrap();
+    let cloning: String = saved
+        .lines()
+        .map(|line| if line.starts_with("step=") { "step=cloning\n".to_owned() } else { format!("{line}\n") })
+        .collect();
+    std::fs::write(&file, cloning).unwrap();
+    std::fs::create_dir_all(rig.repo().join(".git")).unwrap();
+    std::fs::write(rig.repo().join("half.gpg"), b"half").unwrap();
+    rig.reopen();
+    assert!(matches!(rig.setup.state(), SetupState::NeedPin { .. }));
+    assert!(!rig.repo().exists());
 
-    events.stop.store(false, Ordering::SeqCst);
-    let state = download(&mut flow, &card, &events).unwrap();
-    assert_eq!(relaunch(dir.path()), state);
+    let state = rig.download().unwrap();
+    assert_eq!(relaunch(&dir), state);
     let logins = server.logins();
 
     // Killed before the test decrypt: no second download.
-    let mut flow = SetupFlow::open(dir.path()).unwrap();
-    let state = flow.test_decrypt(card.clone(), PIN, events.clone()).unwrap();
+    rig.reopen();
+    let state = rig.test_decrypt().unwrap();
     assert!(matches!(state, SetupState::Done { .. }));
-    assert_eq!(relaunch(dir.path()), state);
+    assert_eq!(relaunch(&dir), state);
     assert_eq!(server.logins(), logins);
 }
 
 #[test]
 fn a_store_that_went_missing_after_the_download_is_downloaded_again() {
-    let card = card(false);
-    let server = GitServer::start(&[authorised(&card)]);
+    let sim = key(SimTouch::Off);
+    let server = GitServer::start(&[sim.ssh_public_key()]);
     push_fixture_store(&server);
-    let dir = tempfile::tempdir().unwrap();
-    let mut flow = at_need_pin(dir.path(), &card, &server);
-    download(&mut flow, &card, &events(&card, true)).unwrap();
-    std::fs::remove_dir_all(flow.repo_dir()).unwrap();
+    let rig = Rig::new(&sim, &server);
+    rig.at_need_pin();
+    rig.download().unwrap();
+    std::fs::remove_dir_all(rig.repo()).unwrap();
 
-    assert!(matches!(relaunch(dir.path()), SetupState::NeedPin { .. }));
+    assert!(matches!(relaunch(rig.dir.path()), SetupState::NeedPin { .. }));
 }
 
 #[test]
@@ -544,65 +480,42 @@ fn a_cached_touch_is_not_asked_for_again_within_its_window() {
     assert_eq!(TouchClock::new(KeyTouch::Unknown).expectation_at(now), TouchExpectation::MayBeNeeded);
 }
 
-/// The simulated key, reporting a cached touch policy for its
-/// authentication slot (whose own policy is off, so it signs untouched,
-/// as a key with a fresh cached touch does).
-struct CachedPolicy(Arc<SimulatedKey>);
-
-impl ApduTransport for CachedPolicy {
-    fn transmit(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
-        if apdu.starts_with(&[0x00, 0xCA, 0x00, 0xD8]) {
-            return Ok(vec![0x03, 0x20, 0x90, 0x00]);
-        }
-        let mut response = self.0.exchange(apdu.to_vec());
-        if apdu.starts_with(&[0x00, 0xCA, 0x00, 0x6E])
-            && let Some(at) = response.windows(4).position(|w| w == [0xD8, 0x02, 0x00, 0x20])
-        {
-            response[at + 2] = 0x03;
-        }
-        Ok(response)
-    }
-}
-
 #[test]
 fn a_second_login_within_the_cached_window_does_not_ask_for_a_touch() {
-    let sim = card(false);
-    let cached: Arc<dyn ApduTransport> = Arc::new(CachedPolicy(sim.clone()));
-    assert_eq!(card_info(cached.clone()).unwrap().authentication_touch, KeyTouch::Cached);
-    let server = GitServer::start(&[authorised(&sim)]);
+    let sim = key_common::sim(SimTouch::Off, SimTouch::Cached, WAIT);
+    let server = GitServer::start(&[sim.ssh_public_key()]);
     server.sim.set_repository_not_found(true);
-    let dir = tempfile::tempdir().unwrap();
-    let mut flow = SetupFlow::open(dir.path()).unwrap();
-    flow.read_key(cached.clone()).unwrap();
-    flow.set_address(&address(&server)).unwrap();
-    let SetupState::ConfirmHost { fingerprint, .. } = flow.check_host().unwrap() else { panic!() };
-    flow.confirm_host(&fingerprint).unwrap();
-    let events = events(&sim, false);
+    let rig = Rig::new(&sim, &server);
+    rig.at_need_pin();
+    assert_eq!(rig.port.session().unwrap().info().authentication_touch, KeyTouch::Cached);
 
     // The first login asks; the repository is not there, so it is tried again.
-    let first = flow.download(cached.clone(), PIN, events.clone()).unwrap_err();
-    assert!(matches!(first, SetupError::Failed { .. }), "{first:?}");
-    assert_eq!(events.asked.load(Ordering::SeqCst), 1);
-    assert_eq!(flow.state(), SetupState::NeedPin { address: address(&server), touch: TouchExpectation::NotNeeded });
+    let first = Driver::helpful(PIN, &sim);
+    let error = rig.result(rig.download_by(&first)).unwrap_err();
+    assert!(matches!(error, SetupError::Failed { .. }), "{error:?}");
+    assert_eq!(first.count(is_touch), 1);
+    assert_eq!(rig.setup.state(), SetupState::NeedPin { address: address(&server), touch: TouchExpectation::NotNeeded });
 
-    flow.download(cached.clone(), PIN, events.clone()).unwrap_err();
-    assert_eq!(events.asked.load(Ordering::SeqCst), 1);
+    let second = Driver::helpful(PIN, &sim);
+    rig.result(rig.download_by(&second)).unwrap_err();
+    assert!(!second.saw(is_touch));
     assert_eq!(sim.authentication_count(), 2);
 }
 
 #[test]
 fn a_key_that_needs_a_touch_each_time_is_asked_each_time() {
-    let card = card(true);
-    let server = GitServer::start(&[authorised(&card)]);
+    let sim = key(SimTouch::EachUse);
+    let server = GitServer::start(&[sim.ssh_public_key()]);
     server.sim.set_repository_not_found(true);
-    let dir = tempfile::tempdir().unwrap();
-    let mut flow = at_need_pin(dir.path(), &card, &server);
-    let events = events(&card, true);
+    let rig = Rig::new(&sim, &server);
+    rig.at_need_pin();
 
-    download(&mut flow, &card, &events).unwrap_err();
-    download(&mut flow, &card, &events).unwrap_err();
-
-    assert_eq!(events.asked.load(Ordering::SeqCst), 2);
+    for _ in 0..2 {
+        let driver = Driver::helpful(PIN, &sim);
+        rig.result(rig.download_by(&driver)).unwrap_err();
+        assert_eq!(driver.count(is_touch), 1);
+    }
+    assert_eq!(sim.touch_count(), 2);
 }
 
 // --- addresses -------------------------------------------------------------
@@ -715,9 +628,9 @@ fn only_the_pinned_key_types_are_offered() {
 
 #[test]
 fn a_host_with_several_keys_presents_the_pinned_one() {
-    let card = card(false);
-    let server = GitServer::start_with_two_host_keys(&[authorised(&card)]);
-    let signer = CardSigner::new(card.clone(), PIN, || {}).unwrap();
+    let sim = key(SimTouch::Off);
+    let server = GitServer::start_with_two_host_keys(&[sim.ssh_public_key()]);
+    let signer = key_common::signer(&sim);
 
     // Pinned to its second key: offering only that type makes the host
     // present it, where by default it would present ed25519.
@@ -759,25 +672,24 @@ fn push_files(server: &GitServer, files: &[(&str, Vec<u8>)]) {
 }
 
 fn encrypted_for(keys: &[pgp::packet::PublicKey], text: &str) -> Vec<u8> {
-    paw_core::encrypt_to_keys(rand::thread_rng(), keys, text.as_bytes()).unwrap()
+    paw_core::sim::fixture::encrypt(keys, text.as_bytes()).unwrap()
 }
 
-/// Sets up `server`'s store with `card` and returns the state directory.
-fn set_up(card: &Arc<SimulatedKey>, server: &GitServer) -> tempfile::TempDir {
-    let state = tempfile::tempdir().unwrap();
-    let events = events(card, false);
-    let mut flow = at_need_pin(state.path(), card, server);
-    download(&mut flow, card, &events).unwrap();
-    let done = flow.test_decrypt(card.clone(), PIN, events.clone()).unwrap();
+/// Sets up `server`'s store with `sim` and returns the state directory.
+fn set_up(sim: &Arc<SimulatedKey>, server: &GitServer) -> tempfile::TempDir {
+    let rig = Rig::new(sim, server);
+    rig.at_need_pin();
+    rig.download().unwrap();
+    let done = rig.test_decrypt().unwrap();
     assert!(matches!(done, SetupState::Done { .. }), "{done:?}");
-    state
+    rig.dir
 }
 
 #[test]
 fn a_team_line_at_the_top_is_not_bound_to_the_card_that_opened_a_personal_entry() {
-    let card = card(false);
-    let server = GitServer::start(&[authorised(&card)]);
-    let mine = paw_core::card_decryption_key(card.clone()).unwrap();
+    let sim = key(SimTouch::Off);
+    let server = GitServer::start(&[sim.ssh_public_key()]);
+    let mine = sim.decryption_key().unwrap();
     let team = paw_core::sim::fixture::other_key().unwrap();
     // The top names a team key paw has not got; `personal/` names the owner
     // by a line that does not name the card's subkey by itself.
@@ -791,13 +703,12 @@ fn a_team_line_at_the_top_is_not_bound_to_the_card_that_opened_a_personal_entry(
         ],
     );
 
-    let state = set_up(&card, &server);
+    let state = set_up(&sim, &server);
 
-    let flow = SetupFlow::open(state.path()).unwrap();
     let keyring = paw_core::write::Keyring::open(state.path()).unwrap();
     assert_eq!(keyring.line_status("team@example.com", 0), LineStatus::Missing);
     assert!(matches!(keyring.line_status("owner@example.com", 0), LineStatus::Ready { bound: true, .. }));
-    let readiness = flow.write_readiness().unwrap();
+    let readiness = open_setup(state.path()).write_readiness().unwrap();
     assert!(!readiness.can_save);
     assert_eq!(readiness.missing_recipients, ["team@example.com"]);
     assert!(readiness.folders_needing_keys.is_empty(), "{readiness:?}");
@@ -805,27 +716,27 @@ fn a_team_line_at_the_top_is_not_bound_to_the_card_that_opened_a_personal_entry(
 
 #[test]
 fn the_one_line_of_the_gpg_id_that_governs_the_opened_entry_is_bound() {
-    let card = card(false);
-    let server = GitServer::start(&[authorised(&card)]);
-    let mine = paw_core::card_decryption_key(card.clone()).unwrap();
+    let sim = key(SimTouch::Off);
+    let server = GitServer::start(&[sim.ssh_public_key()]);
+    let mine = sim.decryption_key().unwrap();
     push_files(
         &server,
         &[(".gpg-id", b"owner@example.com\n".to_vec()), ("bank.gpg", encrypted_for(&[mine], "mine\n"))],
     );
 
-    let state = set_up(&card, &server);
+    let state = set_up(&sim, &server);
 
     let keyring = paw_core::write::Keyring::open(state.path()).unwrap();
     assert!(matches!(keyring.line_status("owner@example.com", 0), LineStatus::Ready { bound: true, .. }));
-    let readiness = SetupFlow::open(state.path()).unwrap().write_readiness().unwrap();
+    let readiness = open_setup(state.path()).write_readiness().unwrap();
     assert!(readiness.can_save, "{readiness:?}");
 }
 
 #[test]
 fn nothing_is_bound_when_the_opened_entry_does_not_name_the_card() {
-    let card = card(false);
-    let server = GitServer::start(&[authorised(&card)]);
-    let mine = paw_core::card_decryption_key(card.clone()).unwrap();
+    let sim = key(SimTouch::Off);
+    let server = GitServer::start(&[sim.ssh_public_key()]);
+    let mine = sim.decryption_key().unwrap();
     let hidden = {
         // A hidden recipient: the packet does not say which key it is for.
         let mut bytes = encrypted_for(&[mine], "mine\n");
@@ -838,10 +749,10 @@ fn nothing_is_bound_when_the_opened_entry_does_not_name_the_card() {
     };
     push_files(&server, &[(".gpg-id", b"owner@example.com\n".to_vec()), ("bank.gpg", hidden)]);
 
-    let state = set_up(&card, &server);
+    let state = set_up(&sim, &server);
 
     let keyring = paw_core::write::Keyring::open(state.path()).unwrap();
     assert_eq!(keyring.line_status("owner@example.com", 0), LineStatus::Missing);
-    let readiness = SetupFlow::open(state.path()).unwrap().write_readiness().unwrap();
+    let readiness = open_setup(state.path()).write_readiness().unwrap();
     assert_eq!(readiness.missing_recipients, ["owner@example.com"]);
 }

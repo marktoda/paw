@@ -50,7 +50,7 @@ final class StoreRootModel {
     /// `-pawSimGitHub`).
     let gitHub: GitHubAccess?
     private let clock: Clock
-    private let connect: AppModel.Connect = { try KeyConnection.openForSession() }
+    private let connect: AppModel.Connect = { try KeyConnection.open() }
     #if targetEnvironment(simulator)
     private let simulatedClock: SimClock
     let keystore = SimKeystore()
@@ -73,7 +73,7 @@ final class StoreRootModel {
         self.clock = clock
         keyPort = KeyPort(clock: clock)
         // The app's half of the key log; the AutoFill extension starts its
-        // own from `loadEnrolledKey`, with the same state directory.
+        // own in the same state directory.
         keyPort.setKeyLog(stateDir: location.stateDir.path, process: "app")
         gitHub = GitHubRefresh.access(stateDir: location.stateDir)
         route()

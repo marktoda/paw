@@ -130,11 +130,6 @@ impl PinKdf {
     }
 }
 
-/// Reads the PIN KDF of the card behind `transport`. No PIN, no touch.
-pub(crate) fn read_from(transport: std::sync::Arc<dyn crate::ApduTransport>) -> Result<PinKdf, KeyError> {
-    PinKdf::read(&Wire::new(transport))
-}
-
 /// What setup says when it stops at "Your key" for a KDF paw cannot follow.
 pub(crate) const UNSUPPORTED_AT_SETUP: &str =
     "this key uses a PIN setting (KDF) that paw doesn't support yet. paw has not sent it the PIN, so no try was used";

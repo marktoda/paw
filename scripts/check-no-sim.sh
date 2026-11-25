@@ -11,9 +11,7 @@
 #
 # What it looks for:
 # - symbols of the simulated key, keystore, clock, fixture and git host,
-#   as Rust and as the UniFFI scaffolding Swift would call, and of the
-#   per-call path that takes a PIN (`decrypt_entry`, `CardSigner`), which
-#   only builds with the `sim` feature keep (`nm`);
+#   as Rust and as the UniFFI scaffolding Swift would call (`nm`);
 # - the fixture store's passwords and the simulated host's private host key,
 #   anywhere in the bytes (`grep -a`), which would mean the fixture was
 #   compiled in even if no symbol names it;
@@ -60,8 +58,6 @@ symbols=(
   'simgithub|SimGitHub'
   'write_fixture_store'
   'paw_core.*3sim[0-9]|paw_core::sim::'
-  'decrypt_entry'
-  'CardSigner'
 )
 
 # A few of the fixture store's passwords (core/src/sim/fixture.rs) and a

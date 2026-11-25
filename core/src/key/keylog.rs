@@ -30,8 +30,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use super::{KeyError, KeyPurpose, KeyTaskState, LoginPurpose, apdu};
-use crate::{KeyTouch, PawError};
+use super::{KeyError, KeyPurpose, KeyTaskState, KeyTouch, LoginPurpose, apdu};
+use crate::PawError;
 
 /// Lines a session keeps in memory: about 40 card commands with the task
 /// and session lines around them.
@@ -65,15 +65,6 @@ fn clean_process(process: &str) -> String {
     let cleaned: String =
         process.chars().filter(|c| c.is_ascii_alphanumeric()).map(|c| c.to_ascii_lowercase()).take(12).collect();
     if cleaned.is_empty() { "app".into() } else { cleaned }
-}
-
-/// "fill" in the AutoFill extension (its executable is inside an
-/// `.appex`), "app" anywhere else.
-pub(crate) fn default_process() -> String {
-    let in_extension = std::env::current_exe()
-        .map(|exe| exe.components().any(|part| part.as_os_str().to_string_lossy().ends_with(".appex")))
-        .unwrap_or(false);
-    if in_extension { "fill".into() } else { "app".into() }
 }
 
 impl Sink {
@@ -144,12 +135,6 @@ impl KeyLog {
             ring: Mutex::new(VecDeque::with_capacity(RING)),
             coarse: AtomicBool::new(false),
         })
-    }
-
-    /// A log that keeps nothing beyond its own ring (for a wire used
-    /// outside a session).
-    pub(crate) fn detached() -> Arc<Self> {
-        Self::new(None)
     }
 
     /// The PIN stage was just shown (or a task starts at it).
@@ -393,7 +378,7 @@ mod tests {
 
     #[test]
     fn the_ring_is_bounded() {
-        let log = KeyLog::detached();
+        let log = KeyLog::new(None);
         for n in 0..(RING * 3) {
             log.line(format!("line {n}"));
         }
