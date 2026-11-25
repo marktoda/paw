@@ -42,7 +42,6 @@ struct KeySheetContent: View {
     @Binding var pin: String
     /// A line under the steps, e.g. "Afterwards it opens with Face ID until 6:40 PM."
     var note: String? = nil
-    var minimumPinLength = 6
     var onContinue: () -> Void = {}
     var onCancel: () -> Void = {}
     /// "Try again" on the failed stage.
@@ -372,7 +371,7 @@ struct KeySheetContent: View {
     }
 
     private var canContinue: Bool {
-        pin.count >= minimumPinLength
+        pin.count >= 6
     }
 
     private var currentStep: Int {
