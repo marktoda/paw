@@ -11,6 +11,9 @@ import Foundation
 /// - `conflict`: `web/example.com` changes (edit it here too for "kept both");
 /// - `delete`: not possible yet: the simulated host cannot remove a file;
 /// - `gpgid`: `work/` gets its own `.gpg-id` (the same key);
+/// - `secondKey`: `work/` gets its own `.gpg-id` naming the key and a
+///   second simulated key whose public half paw is given first, so a
+///   change saved in `work` before it is held back and can be re-encrypted;
 /// - `link`: a name paw will not check out (`Web/github.com` beside
 ///   `web/`): the simulated host cannot commit a real link yet;
 /// - `rewrite`: the history is replaced (force-pushed). At launch this only
@@ -19,7 +22,7 @@ import Foundation
 /// `-pawSimRemoteRefusePushes 1` refuses every branch update, and
 /// `-pawSimRemoteDrop 1` cuts the next connection off half way.
 enum SimRemoteChange: String, CaseIterable, Identifiable {
-    case add, edit, conflict, delete, gpgid, link, rewrite
+    case add, edit, conflict, delete, gpgid, link, rewrite, secondKey
 
     var id: String { rawValue }
 
@@ -37,6 +40,7 @@ enum SimRemoteChange: String, CaseIterable, Identifiable {
         case .gpgid: "Give work/ its own .gpg-id"
         case .link: "Add a name paw won't check out"
         case .rewrite: "Replace the history"
+        case .secondKey: "Give work/ a second key"
         }
     }
 }
@@ -123,6 +127,17 @@ final class SimRemoteHandle: @unchecked Sendable {
         case .rewrite:
             try rewrite()
             return "Replaced the history."
+        case .secondKey:
+            let (key, repoDir) = lock.withLock { (self.key, self.repoDir) }
+            guard let host, let key, let repoDir else { return "No simulated host." }
+            // Only its public half is read, so the PIN does not matter.
+            let other = SimulatedKey.newOther(pin: "", touchRequired: false, touchTimeoutMs: 1_000)
+            let stateDir = URL(fileURLWithPath: repoDir).deletingLastPathComponent().path
+            _ = try StoreWriter.open(stateDir: stateDir).pinCardKey(connection: other.asConnection())
+            let lines = key.fingerprintHex() + "\n" + other.fingerprintHex() + "\n"
+            _ = try host.commitFile(
+                path: "work/.gpg-id", contents: Data(lines.utf8), message: "Give work a second key.")
+            return "work/ has a second key."
         }
     }
 
