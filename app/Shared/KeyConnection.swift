@@ -17,6 +17,16 @@ enum KeyConnection {
         #endif
     }
 
+    /// The simulated key is out at launch (`-pawSimUnplugged`). Always
+    /// `false` on a device, where the system says whether a key is in.
+    static var startsUnplugged: Bool {
+        #if targetEnvironment(simulator)
+        return SimulatedKeyHolder.shared.startsUnplugged
+        #else
+        return false
+        #endif
+    }
+
     static var readerNames: [String] {
         #if targetEnvironment(simulator)
         return ["Simulated key"]

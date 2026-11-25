@@ -1,9 +1,6 @@
 import Foundation
 import Observation
 import SwiftUI
-#if !targetEnvironment(simulator)
-import CryptoTokenKit
-#endif
 
 /// The screen setup shows. The core's state picks it; two of the core's
 /// steps have two screens each (the key, then the address; the address,
@@ -66,7 +63,7 @@ struct SetupProblem: Equatable {
     var offer: Offer? = nil
 }
 
-/// The key sheet while setup shows it.
+/// The key sheet while setup shows it; its stage is `SetupModel.keyTask`'s.
 struct SetupSheet: Identifiable {
     enum Purpose {
         case download, check
@@ -74,9 +71,6 @@ struct SetupSheet: Identifiable {
 
     let id = UUID()
     let purpose: Purpose
-    /// The core task the sheet follows now; "Try again" starts a new one.
-    var taskID: UUID
-    var stage: KeySheetStage
 }
 
 /// What the simulated host and key do for setup in the simulator. `nil` on
@@ -96,11 +90,6 @@ struct SetupSimulator {
     let startsUnplugged: Bool
 }
 
-/// Wraps a value that crosses from a work queue to the main actor once.
-private struct SetupHandoff<Value>: @unchecked Sendable {
-    let value: Value
-}
-
 /// Reading the key failed before it was read: the session could not be
 /// opened (design.md 2.11).
 private struct SetupAttachFailure: Error {
@@ -112,27 +101,12 @@ private struct SetupUnsupportedPinKdf: Error {
     let detail: String?
 }
 
-/// Hands a core task's stage changes to the main queue, in order.
-private final class SetupTaskListener: KeyTaskListener, @unchecked Sendable {
-    private let changed: @Sendable () -> Void
-
-    init(changed: @escaping @Sendable () -> Void) {
-        self.changed = changed
-    }
-
-    func stateChanged(state: KeyTaskState) {
-        DispatchQueue.main.async(execute: changed)
-    }
-}
-
 /// Drives the core's `Setup` for the setup screens. The core decides every
 /// step; this keeps what the screens need besides: which of a step's two
 /// screens is up, the problem to show, and the key sheet. The PIN goes
 /// from the sheet's field straight to the core task, never kept here.
 @MainActor @Observable
 final class SetupModel {
-    typealias Connect = @Sendable () throws -> CardConnection
-
     struct KeyNotAccepted: Equatable {
         let host: String
         let publicKey: String
@@ -150,8 +124,11 @@ final class SetupModel {
     let repoPath: String
     /// Shared with Home afterwards, so the PIN typed here is still held.
     let keyPort: KeyPort
+    /// The key going in and out, and reading it.
+    let reader: KeyReader
+    /// The key sheet's task: the download, or the check of the key.
+    let keyTask: KeyTaskDriver
     let simulator: SetupSimulator?
-    private let connect: Connect
     private let finished: () -> Void
     private let startOver: () -> Void
 
@@ -168,111 +145,78 @@ final class SetupModel {
     private(set) var working: String?
     var addressText = ""
     var sheet: SetupSheet?
-    /// What is typed in the sheet's PIN field: handed to the core task and
-    /// cleared at once, and whenever the sheet moves on.
-    var pinEntry = ""
     private(set) var readiness: SetupWriteReadiness?
     private(set) var storeFacts: StoreFacts?
     /// Hex fingerprint of the key's SSH key, once read this launch.
     private(set) var sshFingerprint: String?
-    /// A key is in (a reader is present, or the simulated key is plugged).
-    private(set) var keyPresent: Bool
-    /// Why the key in could not be read (its session not opened), for the
-    /// Plug in screen and its "Try again".
-    private(set) var attachProblem: String?
-    /// This iPhone has no smart card support at all (device only).
-    private(set) var noSmartCards = false
-    /// Core tasks not yet ended, for the UI tests' `sim-key-tasks`.
-    private(set) var pendingTasks = 0
     /// A download was cancelled while the key waited for its touch: the
     /// key still waits. The simulator's download screen offers to time it
     /// out; on a device the key's own timeout ends it.
     private(set) var touchLeftWaiting = false
 
-    @ObservationIgnored private var tasks: [UUID: KeyTask] = [:] {
-        didSet { countTasks() }
-    }
-    /// The sheet is up but its task waits for a cancelled one to end: a
-    /// download stopped while the key waited for a touch is still being
-    /// removed, and the next may start only once it is.
-    @ObservationIgnored private var waitingToStart = false {
-        didSet { countTasks() }
-    }
-    /// The sheet's task waits at Plug in and opening the key's session
-    /// failed: its "Try again" opens the session again.
-    @ObservationIgnored private var sheetAwaitsAttach = false
-    @ObservationIgnored private var attaching = false
-    #if !targetEnvironment(simulator)
-    @ObservationIgnored private var slotWatch: NSKeyValueObservation?
-    #endif
     private let workQueue = DispatchQueue(label: "paw-setup", qos: .userInitiated)
 
-    init(setup: Setup, repoPath: String, keyPort: KeyPort, connect: @escaping Connect, simulator: SetupSimulator?,
-         finished: @escaping () -> Void, startOver: @escaping () -> Void) {
+    init(setup: Setup, repoPath: String, keyPort: KeyPort, connect: @escaping KeyReader.Connect,
+         simulator: SetupSimulator?, finished: @escaping () -> Void, startOver: @escaping () -> Void) {
         self.setup = setup
         self.repoPath = repoPath
         self.keyPort = keyPort
-        self.connect = connect
+        let reader = KeyReader(port: keyPort, connect: connect)
+        self.reader = reader
+        keyTask = KeyTaskDriver(reader: reader, waitsForLetGoTasks: true)
         self.simulator = simulator
         self.finished = finished
         self.startOver = startOver
         let state = setup.state()
         self.state = state
         started = state != .readKey
-        keyPresent = keyPort.session() != nil || simulator.map { !$0.startsUnplugged } ?? false
         if case .checkHost(let address, _) = state {
             addressText = address
         }
         if case .done = state {
             learnAboutStore()
         }
+        keyTask.owner = self
+        reader.onPresent = { [weak self] in
+            self?.keyCameIn()
+        }
+        #if DEBUG && targetEnvironment(simulator)
+        if let simulator {
+            reader.plugsInSimulatedKey = simulator.plugIn
+        }
+        #endif
+        reader.watch(startsUnplugged: simulator?.startsUnplugged ?? true)
         #if targetEnvironment(simulator)
         // Before the key is read, reading it opens the session, and shows
         // on Plug in if that fails.
-        if keyPresent, state != .readKey { attachKey() }
-        #else
-        watchReaders()
+        if state != .readKey { reader.readIfNeeded() }
         #endif
     }
 
-    private func countTasks() {
-        pendingTasks = tasks.count + (waitingToStart ? 1 : 0)
+    /// A key is in (a reader is present, or the simulated key is plugged).
+    var keyPresent: Bool {
+        reader.present
     }
 
-    /// A key is in but has no session yet (a relaunch past the first step):
-    /// open one, so the key sheet finds it. A failure shows on Plug in, or
-    /// in the sheet if it waits at Plug in.
-    private func attachKey() {
-        guard keyPort.session() == nil, !attaching else { return }
-        attaching = true
-        let port = keyPort
-        let connect = connect
-        workQueue.async {
-            let result: Result<Void, Error> = Result {
-                _ = try port.pluggedIn(connection: connect())
-            }
-            let handoff = SetupHandoff(value: result)
-            DispatchQueue.main.async { [weak self] in
-                MainActor.assumeIsolated {
-                    self?.attached(handoff.value)
-                }
-            }
-        }
+    /// This iPhone has no smart card support at all (device only).
+    var noSmartCards: Bool {
+        reader.unsupported
     }
 
-    private func attached(_ result: Result<Void, Error>) {
-        attaching = false
-        switch result {
-        case .success:
-            attachProblem = nil
-        case .failure(let error):
-            let words = Self.attachWords(error)
-            attachProblem = words
-            if var sheet, sheet.stage == .plugIn {
-                sheet.stage = .failed(problem: "paw couldn't read your key", nextStep: words)
-                self.sheet = sheet
-                sheetAwaitsAttach = true
-            }
+    /// Why the key in could not be read (its session not opened), for the
+    /// Plug in screen and its "Try again".
+    var attachProblem: String? {
+        reader.failure.map(Self.attachWords)
+    }
+
+    /// A key came in: on Plug in, reading it is the step; elsewhere (a
+    /// relaunch past the first step) its session is opened, so the key
+    /// sheet finds it.
+    private func keyCameIn() {
+        if screen == .plugIn, sheet == nil {
+            readKey()
+        } else {
+            reader.readIfNeeded()
         }
     }
 
@@ -290,11 +234,11 @@ final class SetupModel {
 
     /// "Try again" under the attach problem on Plug in.
     func retryAttach() {
-        attachProblem = nil
+        reader.clearFailure()
         if screen == .plugIn {
             readKey()
         } else {
-            attachKey()
+            reader.readIfNeeded()
         }
     }
 
@@ -307,7 +251,7 @@ final class SetupModel {
         if screen == .plugIn, sheet == nil {
             readKey()
         } else if started || state != .readKey {
-            attachKey()
+            reader.read()
         }
     }
 
@@ -377,22 +321,17 @@ final class SetupModel {
     func readKey() {
         guard keyPresent, working == nil else { return }
         problem = nil
-        attachProblem = nil
+        reader.clearFailure()
         working = "Reading your key\u{2026}"
-        let port = keyPort
-        let connect = connect
+        let reader = reader
         let setup = setup
         workQueue.async {
             let result: Result<(SetupState, String?), Error> = Result {
                 let session: KeySession
-                if let held = port.session() {
-                    session = held
-                } else {
-                    do {
-                        session = try port.pluggedIn(connection: connect())
-                    } catch {
-                        throw SetupAttachFailure(error: error)
-                    }
+                do {
+                    session = try reader.openSession()
+                } catch {
+                    throw SetupAttachFailure(error: error)
                 }
                 // Refused before any PIN: paw could not send this key its PIN.
                 let kdf = session.pinKdf()
@@ -409,7 +348,7 @@ final class SetupModel {
                     throw SetupError.UnusableKey(message: "it can't be used for setup")
                 }
             }
-            let handoff = SetupHandoff(value: result)
+            let handoff = Handoff(value: result)
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
                     self?.keyRead(handoff.value)
@@ -427,7 +366,7 @@ final class SetupModel {
             keyConfirmed = false
         case .failure(let failure as SetupAttachFailure):
             state = setup.state()
-            attachProblem = Self.attachWords(failure.error)
+            reader.readFailed(failure.error)
         case .failure(let refusal as SetupUnsupportedPinKdf):
             state = setup.state()
             problem = SetupProblem(
@@ -591,7 +530,7 @@ final class SetupModel {
         let setup = setup
         let time = BackgroundTime.begin("Setup")
         workQueue.async {
-            let handoff = SetupHandoff(value: Result { try work(setup) })
+            let handoff = Handoff(value: Result { try work(setup) })
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
                     time.end()
@@ -626,95 +565,33 @@ final class SetupModel {
     private func startSheet(_ purpose: SetupSheet.Purpose) {
         guard sheet == nil else { return }
         problem = nil
-        guard tasks.isEmpty else {
-            sheet = SetupSheet(purpose: purpose, taskID: UUID(), stage: .busy)
-            waitingToStart = true
-            return
-        }
-        let taskID = startTask(purpose)
-        sheet = SetupSheet(purpose: purpose, taskID: taskID, stage: .busy)
-        taskChanged(taskID)
-    }
-
-    /// The last task the sheet let go of has ended: start the one waiting.
-    private func startWaitingTask() {
-        guard waitingToStart, tasks.isEmpty, var sheet else { return }
-        waitingToStart = false
-        sheet.taskID = startTask(sheet.purpose)
-        self.sheet = sheet
-        taskChanged(sheet.taskID)
-    }
-
-    private func startTask(_ purpose: SetupSheet.Purpose) -> UUID {
-        pinEntry = ""
-        let id = UUID()
-        let listener = SetupTaskListener { [weak self] in
-            MainActor.assumeIsolated {
-                self?.taskChanged(id)
+        sheet = SetupSheet(purpose: purpose)
+        let setup = setup
+        let port = keyPort
+        // A download stopped while the key waited for a touch is still
+        // being removed: the driver starts this one once it is.
+        keyTask.start { (listener: KeyTaskListener) -> KeyTask in
+            let task: KeyTask = switch purpose {
+            case .download: setup.downloadWithKey(port: port, listener: listener)
+            case .check: setup.testDecryptWithKey(port: port, listener: listener)
             }
+            BackgroundTime.hold("Setup", while: task)
+            return task
         }
-        switch purpose {
-        case .download: tasks[id] = setup.downloadWithKey(port: keyPort, listener: listener)
-        case .check: tasks[id] = setup.testDecryptWithKey(port: keyPort, listener: listener)
-        }
-        BackgroundTime.hold("Setup", while: tasks[id])
-        return id
-    }
-
-    func continueWithPin() {
-        guard let sheet, let task = tasks[sheet.taskID], !pinEntry.isEmpty else { return }
-        guard Self.asksForPin(sheet.stage) else { return }
-        task.supplyPin(pin: Data(pinEntry.utf8))
-        pinEntry = ""
-    }
-
-    /// "Try again" in the sheet: a new task, at the first stage still needed.
-    func retrySheet() {
-        guard var sheet else { return }
-        if sheetAwaitsAttach {
-            // The task still waits at Plug in: open the key's session again.
-            sheetAwaitsAttach = false
-            sheet.stage = .plugIn
-            self.sheet = sheet
-            attachKey()
-            return
-        }
-        tasks[sheet.taskID]?.cancel()
-        sheet.taskID = startTask(sheet.purpose)
-        sheet.stage = .busy
-        self.sheet = sheet
-        taskChanged(sheet.taskID)
     }
 
     /// Cancel always works. A download stopped part way leaves nothing: the
     /// core removes it and setup is back at the download step.
     func cancelSheet() {
-        if let sheet {
-            if sheet.stage == .touch {
-                // The key's command can't be interrupted: it still waits.
-                touchLeftWaiting = true
-            }
-            tasks[sheet.taskID]?.cancel()
+        if sheet != nil, keyTask.stage == .touch {
+            // The key's command can't be interrupted: it still waits.
+            touchLeftWaiting = true
         }
+        keyTask.cancel()
         sheet = nil
-        sheetAwaitsAttach = false
-        waitingToStart = false
-        pinEntry = ""
     }
 
     #if targetEnvironment(simulator)
-    /// The debug control on Plug in and on the sheet's Plug in stage: as a
-    /// reader appearing on a device does.
-    func simulatedPlugIn() {
-        simulator?.plugIn()
-        keyPresent = true
-        if screen == .plugIn, sheet == nil {
-            readKey()
-        } else {
-            attachKey()
-        }
-    }
-
     /// The debug control on the download screen after a cancel during the
     /// touch: the key's wait runs out now.
     func simulatedTouchTimeout() {
@@ -723,86 +600,8 @@ final class SetupModel {
     }
     #endif
 
-    private func taskChanged(_ id: UUID) {
-        guard let task = tasks[id] else { return }
-        let taskState = task.state()
-        guard var sheet, sheet.taskID == id else {
-            // A task the sheet let go of: once it ends, show where setup is.
-            if taskState.isFinal {
-                tasks[id] = nil
-                state = setup.state()
-                startWaitingTask()
-            }
-            return
-        }
-        if taskState.isFinal {
-            tasks[id] = nil
-        }
-        sheetAwaitsAttach = false
-        let purpose: KeyErrorWords.Purpose = sheet.purpose == .download ? .download : .check
-        switch taskState {
-        case .plugIn:
-            sheet.stage = .plugIn
-        case .pin(let triesLeft, let forgotten, let lastError):
-            let tries = Int(triesLeft)
-            switch lastError {
-            case nil:
-                sheet.stage = .pin(triesLeft: tries, forgotten: forgotten)
-            case .WrongPin(let left)?:
-                sheet.stage = .wrongPin(triesLeft: Int(left))
-            case let error?:
-                let words = KeyErrorWords(pinAskedAgain: error, entry: entryName(task), purpose: purpose)
-                sheet.stage = .pinAgain(triesLeft: tries, problem: words.problem, nextStep: words.nextStep)
-            }
-        case .busy:
-            sheet.stage = .busy
-        case .touch:
-            sheet.stage = .touch
-            // A new command waits for a touch, so any cancelled one has ended.
-            touchLeftWaiting = false
-        case .working(let progress):
-            // Re-read on every change: objects and bytes, when known.
-            let transfer = sheet.purpose == .download ? setup.transferProgress() : nil
-            let line = transfer.flatMap(Self.transferLine) ?? progress.map(Self.progressLine)
-            sheet.stage = .working(
-                message: workingMessage(sheet.purpose, started: progress != nil || transfer != nil),
-                progress: line)
-        case .done:
-            sheet.stage = .done
-            self.sheet = sheet
-            pinEntry = ""
-            succeeded(sheet)
-            return
-        case .failed(.Reader):
-            self.sheet = nil
-            pinEntry = ""
-            stopped(sheet.purpose, because: nil)
-            return
-        case .setupFailed(let error):
-            // Not the key's problem: the host, the repository or the store.
-            self.sheet = nil
-            pinEntry = ""
-            stopped(sheet.purpose, because: error)
-            return
-        case .failed(.Cancelled), .cancelled, .syncFailed:
-            self.sheet = nil
-            pinEntry = ""
-            state = setup.state()
-            return
-        case .failed(.PinBlocked):
-            sheet.stage = .locked
-        case .failed(let error):
-            let words = KeyErrorWords(error, entry: entryName(task), purpose: purpose)
-            sheet.stage = .failed(problem: words.problem, nextStep: words.nextStep)
-        }
-        if !Self.asksForPin(sheet.stage) {
-            pinEntry = ""
-        }
-        self.sheet = sheet
-    }
-
-    private func entryName(_ task: KeyTask) -> String {
-        if case .checkKey(let entry?) = task.purpose(), !entry.isEmpty {
+    private var entryName: String {
+        if case .checkKey(let entry?)? = keyTask.taskPurpose, !entry.isEmpty {
             return entry.split(separator: "/").last.map(String.init) ?? entry
         }
         return "your store"
@@ -829,23 +628,10 @@ final class SetupModel {
         return "\(Int(transfer.receivedObjects).formatted()) of \(Int(transfer.totalObjects).formatted()) \u{00B7} \(bytes)"
     }
 
-    private static func asksForPin(_ stage: KeySheetStage) -> Bool {
-        switch stage {
-        case .pin, .wrongPin, .pinAgain: true
-        default: false
-        }
-    }
-
-    private func succeeded(_ sheet: SetupSheet) {
+    private func succeeded() {
         state = setup.state()
         if case .done = state {
             learnAboutStore()
-        }
-        let shown = sheet.id
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(1))
-            guard let self, self.sheet?.id == shown else { return }
-            self.sheet = nil
         }
     }
 
@@ -1043,36 +829,74 @@ final class SetupModel {
         let capitalised = first.uppercased() + text.dropFirst()
         return capitalised.hasSuffix(".") ? capitalised : capitalised + "."
     }
+}
 
-    // MARK: The key going in and out (device)
+extension SetupModel: KeyTaskOwner {
+    private var wordsPurpose: KeyErrorWords.Purpose {
+        sheet?.purpose == .download ? .download : .check
+    }
 
-    #if !targetEnvironment(simulator)
-    /// Follows the system's smart card readers, as Home does: a reader
-    /// appearing on the plug-in screen reads the key.
-    private func watchReaders() {
-        guard let manager = TKSmartCardSlotManager.default else {
-            noSmartCards = true
-            return
-        }
-        slotWatch = manager.observe(\.slotNames, options: [.initial, .new]) { [weak self] manager, _ in
-            let present = !manager.slotNames.isEmpty
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    self?.readersChanged(present: present)
-                }
-            }
+    func keyWords(_ error: KeyError, pinAskedAgain: Bool) -> KeyErrorWords {
+        pinAskedAgain
+            ? KeyErrorWords(pinAskedAgain: error, entry: entryName, purpose: wordsPurpose)
+            : KeyErrorWords(error, entry: entryName, purpose: wordsPurpose)
+    }
+
+    func workingStage(_ progress: TaskProgress?) -> KeySheetStage {
+        let purpose = sheet?.purpose ?? .check
+        // Re-read on every change: objects and bytes, when known.
+        let transfer = purpose == .download ? setup.transferProgress() : nil
+        let line = transfer.flatMap(Self.transferLine) ?? progress.map(Self.progressLine)
+        return .working(message: workingMessage(purpose, started: progress != nil || transfer != nil), progress: line)
+    }
+
+    func attachWords(_ problem: KeyReadProblem) -> KeyErrorWords {
+        switch problem {
+        case .unsupported:
+            return KeyErrorWords(
+                problem: "This iPhone can't use USB keys",
+                nextStep: "paw needs an iPhone that can read a YubiKey over USB-C.")
+        case .failed(let error):
+            return KeyErrorWords(problem: "paw couldn't read your key", nextStep: Self.attachWords(error))
         }
     }
 
-    private func readersChanged(present: Bool) {
-        keyPresent = present
-        if !present {
-            keyPort.unplugged()
-        } else if screen == .plugIn {
-            readKey()
-        } else {
-            attachKey()
+    func keyStageShown(_ stage: KeySheetStage) {
+        if stage == .touch {
+            // A new command waits for a touch, so any cancelled one has ended.
+            touchLeftWaiting = false
         }
     }
-    #endif
+
+    func keyTaskEnded(_ end: KeyTaskEnd) -> KeySheetStage? {
+        guard let sheet else {
+            state = setup.state()
+            return nil
+        }
+        switch end.result {
+        case .done:
+            succeeded()
+            return .done
+        case .setupFailed(let error):
+            // Not the key's problem: the host, the repository or the store.
+            self.sheet = nil
+            stopped(sheet.purpose, because: error)
+            return nil
+        case .cancelled, .syncFailed:
+            self.sheet = nil
+            state = setup.state()
+            return nil
+        case .failed:
+            return standardStage(end.result)
+        }
+    }
+
+    /// A task the sheet let go of has ended: show where setup is.
+    func letGoTaskEnded(_ end: KeyTaskEnd) {
+        state = setup.state()
+    }
+
+    func doneShown() {
+        sheet = nil
+    }
 }

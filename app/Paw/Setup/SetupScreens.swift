@@ -49,7 +49,7 @@ struct SetupFlowView: View {
         }
         #if DEBUG && targetEnvironment(simulator)
         .background(alignment: .topLeading) {
-            SetupTaskCount(count: model.pendingTasks)
+            KeyTasksSignal(tasks: model.keyTask.pendingTasks)
         }
         #endif
         .privacyCover()
@@ -171,10 +171,10 @@ private struct PlugInScreen: View {
     }
 
     private var simulatorActions: [SimulatorAction] {
-        #if targetEnvironment(simulator)
+        #if DEBUG && targetEnvironment(simulator)
         if !model.keyPresent {
             return [SimulatorAction(title: "plug in the key", identifier: "simulated-plug-in") {
-                model.simulatedPlugIn()
+                model.reader.simulatedPlugIn()
             }]
         }
         if model.problem != nil {
@@ -692,84 +692,18 @@ private struct DoneScreen: View {
 
 /// The shared key sheet, following `model.sheet`.
 private struct SetupKeySheet: View {
-    @Bindable var model: SetupModel
-    @State private var detent = PresentationDetent.height(PawMetrics.keySheetHeight)
-
-    private var stage: KeySheetStage {
-        model.sheet?.stage ?? .busy
-    }
+    let model: SetupModel
 
     var body: some View {
-        KeySheetContent(
+        KeyTaskSheet(
+            driver: model.keyTask,
             purpose: model.sheet?.purpose == .check ? "Check your key" : "Download your store",
-            stage: stage,
-            pin: $model.pinEntry,
-            onContinue: { model.continueWithPin() },
-            onCancel: { model.cancelSheet() },
-            onRetry: { model.retrySheet() },
-            simulatorAction: simulatorAction,
-            moreSimulatorActions: moreSimulatorActions)
+            onCancel: { model.cancelSheet() })
             #if DEBUG && targetEnvironment(simulator)
             .background(alignment: .topLeading) {
-                SetupTaskCount(count: model.pendingTasks)
+                KeyTasksSignal(tasks: model.keyTask.pendingTasks)
             }
             #endif
-            .presentationDetents([.height(PawMetrics.keySheetHeight), .large], selection: $detent)
-            .presentationDragIndicator(.visible)
-            .pawSheetBackground()
-            .padFormSheet()
-            .onChange(of: stage, initial: true) {
-                detent = Self.needsKeyboard(stage) ? .large : .height(PawMetrics.keySheetHeight)
-            }
-            .privacyCover()
-    }
-
-    private var simulatorAction: SimulatorAction? {
-        #if targetEnvironment(simulator)
-        switch stage {
-        case .touch:
-            return SimulatorAction(title: "touch the key", identifier: "simulated-touch") {
-                KeyConnection.simulateTouch()
-            }
-        case .plugIn:
-            return SimulatorAction(title: "plug in the key", identifier: "simulated-plug-in") {
-                model.simulatedPlugIn()
-            }
-        default:
-            return nil
-        }
-        #else
-        return nil
-        #endif
-    }
-
-    private var moreSimulatorActions: [SimulatorAction] {
-        #if targetEnvironment(simulator)
-        if stage == .touch {
-            return [SimulatorAction(title: "time out the touch", identifier: "simulated-touch-timeout") {
-                KeyConnection.simulateTouchTimeout()
-            }]
-        }
-        #endif
-        return []
-    }
-
-    private static func needsKeyboard(_ stage: KeySheetStage) -> Bool {
-        switch stage {
-        case .pin, .wrongPin, .pinAgain: true
-        default: false
-        }
+            .keySheetPresentation(model.keyTask.stage)
     }
 }
-
-#if DEBUG && targetEnvironment(simulator)
-/// For the UI tests: how many core tasks have not ended, so a test can
-/// wait for "0" before checking that something did not happen.
-private struct SetupTaskCount: View {
-    let count: Int
-
-    var body: some View {
-        KeyTasksSignal(tasks: count)
-    }
-}
-#endif

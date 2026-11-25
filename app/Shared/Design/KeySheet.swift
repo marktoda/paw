@@ -23,6 +23,14 @@ enum KeySheetStage: Equatable {
     /// Something went wrong that trying again may fix, e.g. the key was not
     /// touched in time. `problem` says what happened, `nextStep` what to do.
     case failed(problem: String, nextStep: String)
+
+    /// The PIN field is up, with the keyboard.
+    var asksForPin: Bool {
+        switch self {
+        case .pin, .wrongPin, .pinAgain: true
+        default: false
+        }
+    }
 }
 
 /// The content of the key sheet for every stage. The host presents it with
@@ -39,11 +47,9 @@ struct KeySheetContent: View {
     var onCancel: () -> Void = {}
     /// "Try again" on the failed stage.
     var onRetry: () -> Void = {}
-    /// A control that stands in for the hardware in the simulator, drawn
-    /// below everything else and styled so it cannot pass for the app's own.
-    var simulatorAction: SimulatorAction? = nil
-    /// More such controls, below the first (e.g. "time out the touch").
-    var moreSimulatorActions: [SimulatorAction] = []
+    /// Controls that stand in for the hardware in the simulator, drawn
+    /// below everything else and styled so they cannot pass for the app's own.
+    var simulatorActions: [SimulatorAction] = []
     /// A way on that is not built yet, shown on the failed stage as a
     /// dimmed row, e.g. "Replace key (coming)".
     var comingSoon: String? = nil
@@ -69,7 +75,7 @@ struct KeySheetContent: View {
                     // Without a keyboard the buttons sit at the bottom of the sheet.
                     .frame(
                         maxWidth: .infinity,
-                        minHeight: isPinStage ? nil : proxy.size.height,
+                        minHeight: stage.asksForPin ? nil : proxy.size.height,
                         alignment: .top)
             }
             .scrollBounceBehavior(.basedOnSize)
@@ -80,10 +86,6 @@ struct KeySheetContent: View {
         .sensoryFeedback(trigger: stage) { _, new in
             Self.haptic(for: new)
         }
-    }
-
-    private var simulatorActions: [SimulatorAction] {
-        (simulatorAction.map { [$0] } ?? []) + moreSimulatorActions
     }
 
     // MARK: Parts
@@ -97,7 +99,7 @@ struct KeySheetContent: View {
                     .accessibilityIdentifier("key-sheet-purpose")
                 hero
                 words
-                if isPinStage {
+                if stage.asksForPin {
                     pinField
                 }
                 if showsSteps {
@@ -112,7 +114,7 @@ struct KeySheetContent: View {
                         .accessibilityIdentifier("key-sheet-note")
                 }
             }
-            if !isPinStage {
+            if !stage.asksForPin {
                 Spacer(minLength: 0)
             }
             buttons
@@ -355,10 +357,6 @@ struct KeySheetContent: View {
 
     // MARK: State
 
-    private var isPinStage: Bool {
-        triesLeft != nil
-    }
-
     private var showsSteps: Bool {
         switch stage {
         case .locked, .done, .failed: false
@@ -388,7 +386,7 @@ struct KeySheetContent: View {
 
     private func stageChanged() {
         showTouchHint = false
-        if isPinStage {
+        if stage.asksForPin {
             // With one try left the PIN is shown, so a slip is seen before it counts.
             if triesLeft == 1 { showPin = true }
             focus = .secure

@@ -415,50 +415,15 @@ private struct AutoFillFaceIdView: View {
 
 /// The app's key sheet, inline: the provider is already a sheet.
 private struct AutoFillKeySheet: View {
-    @Bindable var model: AutoFillModel
+    let model: AutoFillModel
 
     var body: some View {
-        KeySheetContent(
+        KeyTaskSheet(
+            driver: model.keyTask,
             purpose: model.keyEntry.map(model.purpose) ?? "",
-            stage: model.keyStage,
-            pin: $model.pinEntry,
             note: model.keepsCopies
-                ? Device.words("Then it fills with Face ID for \(AutoFillModel.faceIdWindowSecs / 3600) hours.") : nil,
-            onContinue: { model.continueWithPin() },
-            onCancel: { model.cancelKey() },
-            onRetry: { model.retry() },
-            simulatorAction: simulatorAction,
-            moreSimulatorActions: moreSimulatorActions)
+                ? Device.words("Then it fills with Face ID for \(FaceIdOpener.windowSecs / 3600) hours.") : nil,
+            onCancel: { model.cancelKey() })
             .background(PawColor.surface.ignoresSafeArea())
-    }
-
-    private var simulatorAction: SimulatorAction? {
-        #if targetEnvironment(simulator)
-        switch model.keyStage {
-        case .touch:
-            return SimulatorAction(title: "touch the key", identifier: "simulated-touch") {
-                KeyConnection.simulateTouch()
-            }
-        case .plugIn:
-            return SimulatorAction(title: "plug in the key", identifier: "simulated-plug-in") {
-                model.simulatedPlugIn()
-            }
-        default:
-            return nil
-        }
-        #else
-        return nil
-        #endif
-    }
-
-    private var moreSimulatorActions: [SimulatorAction] {
-        #if targetEnvironment(simulator)
-        guard model.keyStage == .touch else { return [] }
-        return [SimulatorAction(title: "time out the touch", identifier: "simulated-touch-timeout") {
-            KeyConnection.simulateTouchTimeout()
-        }]
-        #else
-        return []
-        #endif
     }
 }

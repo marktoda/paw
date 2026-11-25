@@ -41,9 +41,9 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     }
 
     /// Every way the provider can go away ends its key tasks and drops the
-    /// PIN: `fill` and `end` below (after `completeRequest` and
-    /// `cancelRequest`), a swipe down or iOS closing the sheet (here), and
-    /// the controller going away (`deinit`).
+    /// PIN (`AutoFillModel.shutDown`): the model's own fill or end, a swipe
+    /// down or iOS closing the sheet (here), and the controller going away
+    /// (`deinit`).
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         model?.viewWentAway()
@@ -109,14 +109,12 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     func fill(user: String, password: String) {
         let credential = ASPasswordCredential(user: user, password: password)
         extensionContext.completeRequest(withSelectedCredential: credential, completionHandler: nil)
-        model?.shutDown()
         model = nil
     }
 
     func fill(oneTimeCode: String) {
         let credential = ASOneTimeCodeCredential(code: oneTimeCode)
         extensionContext.completeOneTimeCodeRequest(using: credential, completionHandler: nil)
-        model?.shutDown()
         model = nil
     }
 
@@ -129,7 +127,6 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         case .failed: code = .failed
         }
         extensionContext.cancelRequest(withError: NSError(domain: ASExtensionErrorDomain, code: code.rawValue))
-        model?.shutDown()
         model = nil
     }
 }

@@ -1,8 +1,5 @@
 import Foundation
 import UIKit
-#if !targetEnvironment(simulator)
-import CryptoTokenKit
-#endif
 
 /// An entry that was open on screen and has been closed: its text is
 /// wiped; the screen says why and offers to open it again.
@@ -80,37 +77,4 @@ extension AppModel {
         closedEntries[id] = nil
         open(closed.ref)
     }
-
-    #if !targetEnvironment(simulator)
-    /// Follows the first reader's card state, so a key that finishes
-    /// powering up after its reader appeared is read then, without a
-    /// replug. KVO on `TKSmartCardSlot.state`; unverified on hardware.
-    func watchSlotState() {
-        guard let manager = TKSmartCardSlotManager.default, let name = manager.slotNames.first else { return }
-        manager.getSlot(withName: name) { [weak self] slot in
-            guard let slot else { return }
-            let watch = slot.observe(\.state, options: [.new]) { [weak self] slot, _ in
-                guard slot.state == .validCard else { return }
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated {
-                        guard let self, self.keyPort.session() == nil else { return }
-                        self.plugIn()
-                    }
-                }
-            }
-            let handoff = SlotWatchHandoff(watch: watch)
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    self?.slotStateWatch = handoff.watch
-                }
-            }
-        }
-    }
-    #endif
 }
-
-#if !targetEnvironment(simulator)
-private struct SlotWatchHandoff: @unchecked Sendable {
-    let watch: NSKeyValueObservation
-}
-#endif

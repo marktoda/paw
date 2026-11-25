@@ -21,7 +21,8 @@ enum SyncRoute: Hashable {
 struct SyncSheet: Identifiable {
     enum Mode: Equatable {
         case status
-        case key(kind: SyncKind, taskID: UUID, stage: KeySheetStage)
+        /// The key sheet; its stage is `SyncModel.keyTask`'s.
+        case key(kind: SyncKind)
     }
 
     let id = UUID()
@@ -153,24 +154,6 @@ struct SyncSummary: Identifiable, Equatable {
     }
 }
 
-/// Wraps a value that crosses from the sync queue to the main actor once.
-private struct SyncHandoff<Value>: @unchecked Sendable {
-    let value: Value
-}
-
-/// Hands a core task's stage changes to the main queue, in order.
-private final class SyncTaskListener: KeyTaskListener, @unchecked Sendable {
-    private let changed: @Sendable () -> Void
-
-    init(changed: @escaping @Sendable () -> Void) {
-        self.changed = changed
-    }
-
-    func stateChanged(state: KeyTaskState) {
-        DispatchQueue.main.async(execute: changed)
-    }
-}
-
 /// Sending and checking for changes: the pill, the sync sheet and the
 /// screens after a sync. The core does the sync, in its own thread, on one
 /// card-signed login; this keeps what the screens show, and never starts
@@ -183,9 +166,8 @@ final class SyncModel {
     let address: String
 
     var sheet: SyncSheet?
-    /// What is typed in the sheet's PIN field: handed to the core and
-    /// cleared at once, and whenever the sheet moves on.
-    var pinEntry = ""
+    /// The key sheet's task: a send, a check or a re-encrypt.
+    let keyTask: KeyTaskDriver
     private(set) var running: SyncKind?
     private(set) var progress: TaskProgress?
     private(set) var lastChecked: Date?
@@ -216,7 +198,6 @@ final class SyncModel {
     private(set) var backgroundRun: BackgroundRun?
 
     @ObservationIgnored private weak var app: AppModel?
-    @ObservationIgnored private var tasks: [UUID: KeyTask] = [:]
     /// The key task has had its touch: "Connecting" is over.
     @ObservationIgnored private var signedIn = false
     /// Where to go once the sheet has gone.
@@ -225,13 +206,15 @@ final class SyncModel {
     @ObservationIgnored private var backgroundWatch: NSObjectProtocol?
     /// What the last re-encrypt left, and why (only what it found trying).
     @ObservationIgnored private var lastLeft: [LeftHeldBack] = []
-    /// Re-encrypt tasks not yet ended, however the sheet let them go.
-    @ObservationIgnored private var reencryptTasks: Set<UUID> = []
+    /// What came back needs looking at: after Done, the sheet turns into
+    /// the status page instead of closing.
+    @ObservationIgnored private var doneNeedsLook = false
     private let workQueue = DispatchQueue(label: "paw-sync", qos: .userInitiated)
 
     init(sync: StoreSync, repoDir: String) {
         self.sync = sync
         self.repoDir = repoDir
+        keyTask = KeyTaskDriver()
         address = sync.address()
         let seen = UserDefaults.standard.double(forKey: Self.checkedKey(repoDir))
         lastChecked = seen > 0 ? Date(timeIntervalSince1970: seen) : nil
@@ -241,6 +224,7 @@ final class SyncModel {
         #endif
         recomputeLocal()
         backgroundRun = BackgroundRefresh.lastRun()
+        keyTask.owner = self
         // A background run that ends while paw is on screen (or coming
         // back to it); one that ends in the background waits for the next
         // `cameForward`.
@@ -359,55 +343,24 @@ final class SyncModel {
     func start(_ kind: SyncKind, app: AppModel) {
         guard running == nil, !accepting else { return }
         self.app = app
-        failure = nil
-        running = kind
-        progress = nil
-        signedIn = false
-        pinEntry = ""
-        if kind == .reencrypt {
-            lastLeft = []
-        }
-        let taskID = UUID()
-        let mode = SyncSheet.Mode.key(kind: kind, taskID: taskID, stage: .busy)
+        let mode = SyncSheet.Mode.key(kind: kind)
         if sheet == nil {
             sheet = SyncSheet(mode: mode)
         } else {
             sheet?.mode = mode
         }
-        launch(kind, taskID: taskID, app: app)
-    }
-
-    private func launch(_ kind: SyncKind, taskID: UUID, app: AppModel) {
-        let listener = SyncTaskListener { [weak self] in
-            MainActor.assumeIsolated {
-                self?.taskChanged(taskID)
+        keyTask.reader = app.reader
+        let sync = sync
+        let port = app.keyPort
+        keyTask.start { (listener: KeyTaskListener) -> KeyTask in
+            let task: KeyTask = switch kind {
+            case .send: sync.sendWithKey(port: port, listener: listener)
+            case .refresh: sync.refreshWithKey(port: port, listener: listener)
+            case .reencrypt: sync.reencryptWithKey(port: port, listener: listener)
             }
+            BackgroundTime.hold("Sync", while: task)
+            return task
         }
-        switch kind {
-        case .send: tasks[taskID] = sync.sendWithKey(port: app.keyPort, listener: listener)
-        case .refresh: tasks[taskID] = sync.refreshWithKey(port: app.keyPort, listener: listener)
-        case .reencrypt:
-            reencryptTasks.insert(taskID)
-            tasks[taskID] = sync.reencryptWithKey(port: app.keyPort, listener: listener)
-        }
-        BackgroundTime.hold("Sync", while: tasks[taskID])
-        taskChanged(taskID)
-    }
-
-    func continueWithPin() {
-        guard case .key(_, let id, let stage)? = sheet?.mode, let task = tasks[id], !pinEntry.isEmpty,
-              Self.asksForPin(stage) else { return }
-        task.supplyPin(pin: Data(pinEntry.utf8))
-        pinEntry = ""
-    }
-
-    /// "Try again" in the key sheet: a new task, which opens at the first
-    /// stage still needed (Touch if the PIN is still held).
-    func retry() {
-        guard case .key(let kind, let id, _)? = sheet?.mode, let app else { return }
-        tasks[id]?.cancel()
-        running = nil
-        start(kind, app: app)
     }
 
     /// "Try again" on the status page, after a failure.
@@ -426,15 +379,14 @@ final class SyncModel {
     /// cannot be stopped; the core throws its answer away. The queue is
     /// left as it was.
     func cancelSheet() {
-        if case .key(let kind, let id, _)? = sheet?.mode {
-            tasks[id]?.cancel()
+        if case .key(let kind)? = sheet?.mode {
+            keyTask.cancel()
             if running != nil {
                 failure = SyncFailure.cancelled(during: kind, unpushed: app?.edits?.unpushed.count ?? 0)
             }
             running = nil
         }
         sheet = nil
-        pinEntry = ""
         keyPathNote = nil
     }
 
@@ -474,80 +426,6 @@ final class SyncModel {
         cancelSheet()
     }
 
-    private func taskChanged(_ id: UUID) {
-        guard let task = tasks[id] else { return }
-        let state = task.state()
-        if state.isFinal, reencryptTasks.remove(id) != nil {
-            reloadAfterReencrypt()
-        }
-        guard var sheet, case .key(let kind, let current, _) = sheet.mode, current == id else {
-            // A task the sheet let go of: forget it once it ends.
-            if state.isFinal { tasks[id] = nil }
-            return
-        }
-        if state.isFinal {
-            tasks[id] = nil
-        }
-        let unpushed = app?.edits?.unpushed.count ?? 0
-        let stage: KeySheetStage
-        switch state {
-        case .plugIn:
-            stage = .plugIn
-        case .pin(let triesLeft, let forgotten, let lastError):
-            let tries = Int(triesLeft)
-            switch lastError {
-            case nil:
-                stage = .pin(triesLeft: tries, forgotten: forgotten)
-            case .WrongPin(let left)?:
-                stage = .wrongPin(triesLeft: Int(left))
-            case let error?:
-                let words = syncKeyWords(error, during: kind, unpushed: unpushed)
-                stage = .pinAgain(triesLeft: tries, problem: words.problem, nextStep: words.nextStep)
-            }
-        case .busy:
-            stage = .busy
-        case .touch:
-            signedIn = true
-            stage = .touch
-        case .working(let progress):
-            if kind == .reencrypt {
-                // The key's answer clears it; the count goes on.
-                if let progress { self.progress = progress }
-                stage = .working(message: workingMessage(kind, unpushed: unpushed), progress: nil)
-            } else {
-                self.progress = progress
-                stage = .working(message: workingMessage(kind, unpushed: unpushed), progress: progress.map(Self.progressLine))
-            }
-        case .done(let outcome):
-            stage = .done
-            finished(kind, sheetID: sheet.id, outcome: outcome)
-        case .syncFailed(let error):
-            syncFailed(error, kind: kind, unpushed: unpushed)
-            return
-        case .setupFailed:
-            cancelSheet()
-            return
-        case .failed(.Cancelled), .cancelled:
-            cancelSheet()
-            return
-        case .failed(.PinBlocked):
-            stage = .locked
-            running = nil
-        case .failed(let error):
-            let words = syncKeyWords(error, during: kind, unpushed: unpushed)
-            stage = .failed(problem: words.problem, nextStep: words.nextStep)
-            running = nil
-            #if targetEnvironment(simulator)
-            SimRemoteHandle.shared.syncFailed()
-            #endif
-        }
-        sheet.mode = .key(kind: kind, taskID: id, stage: stage)
-        if !Self.asksForPin(stage) {
-            pinEntry = ""
-        }
-        self.sheet = sheet
-    }
-
     private func workingMessage(_ kind: SyncKind, unpushed: Int) -> String {
         if kind == .reencrypt {
             return "Re-encrypting\u{2026}"
@@ -567,13 +445,6 @@ final class SyncModel {
         "\(Int(progress.done).formatted()) of \(Int(progress.total).formatted())"
     }
 
-    private static func asksForPin(_ stage: KeySheetStage) -> Bool {
-        switch stage {
-        case .pin, .wrongPin, .pinAgain: true
-        default: false
-        }
-    }
-
     /// The task failed for a reason that is not the key's: the sheet turns
     /// into the status page, with the failure said inline.
     private func syncFailed(_ error: SyncError, kind: SyncKind, unpushed: Int) {
@@ -584,32 +455,21 @@ final class SyncModel {
         #endif
         failure = SyncFailure(error, during: kind, unpushed: unpushed, host: host)
         recomputeLocal()
-        pinEntry = ""
         sheet?.mode = .status
     }
 
     /// The core's sync went through. The sheet shows Done for a second and
     /// closes, unless what came back needs looking at (replaced history,
     /// held-back changes): then it turns into the status page that says so.
-    private func finished(_ kind: SyncKind, sheetID: UUID, outcome: KeyOutcome) {
+    private func finished(_ kind: SyncKind, outcome: KeyOutcome) {
         running = nil
-        let needsLook: Bool
         switch outcome {
         case .reencrypted(let report):
-            needsLook = reencrypted(report)
+            doneNeedsLook = reencrypted(report)
         case .synced(let report):
-            needsLook = absorb(report, kind: kind)
+            doneNeedsLook = absorb(report, kind: kind)
         default:
-            needsLook = kind == .reencrypt ? reencrypted(nil) : absorb(nil, kind: kind)
-        }
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(1))
-            guard let self, self.sheet?.id == sheetID, case .key(_, _, .done)? = self.sheet?.mode else { return }
-            if needsLook {
-                self.sheet?.mode = .status
-            } else {
-                self.sheet = nil
-            }
+            doneNeedsLook = kind == .reencrypt ? reencrypted(nil) : absorb(nil, kind: kind)
         }
     }
 
@@ -645,8 +505,8 @@ final class SyncModel {
         return needsLook
     }
 
-    /// A re-encrypt that ran to the end (`taskChanged` reads the queue
-    /// again). Always back to the status page after: what is left held back
+    /// A re-encrypt that ran to the end (`reloadAfterReencrypt` reads the
+    /// queue again). Always back to the status page after: what is left held back
     /// is said there, and Send is there once none is.
     private func reencrypted(_ report: ReencryptReport?) -> Bool {
         lastLeft = report?.left ?? []
@@ -712,7 +572,7 @@ final class SyncModel {
         workQueue.async { [weak self] in
             let result = Result { try core.refreshStore() }
             let stillSignedIn = (try? core.isSignedIn()) ?? false
-            let handoff = SyncHandoff(value: (result, stillSignedIn))
+            let handoff = Handoff(value: (result, stillSignedIn))
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     time.end()
@@ -769,7 +629,7 @@ final class SyncModel {
                     }
                 }
             }
-            let handoff = SyncHandoff(value: summary)
+            let handoff = Handoff(value: summary)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self else { return }
@@ -796,7 +656,7 @@ final class SyncModel {
         let sync = sync
         let time = BackgroundTime.begin("Sync")
         workQueue.async { [weak self] in
-            let result = SyncHandoff(value: Result { try sync.acceptReplacedRemote(keepChanges: keepChanges) })
+            let result = Handoff(value: Result { try sync.acceptReplacedRemote(keepChanges: keepChanges) })
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     time.end()
@@ -868,4 +728,98 @@ final class SyncModel {
         simStatus = changed ? "Presenting another host key." : "Presenting the usual host key."
     }
     #endif
+}
+
+extension SyncModel: KeyTaskOwner {
+    private var keyKind: SyncKind {
+        if case .key(let kind)? = sheet?.mode { return kind }
+        return .refresh
+    }
+
+    private var unpushed: Int {
+        app?.edits?.unpushed.count ?? 0
+    }
+
+    func keyWords(_ error: KeyError, pinAskedAgain: Bool) -> KeyErrorWords {
+        syncKeyWords(error, during: keyKind, unpushed: unpushed)
+    }
+
+    func workingStage(_ progress: TaskProgress?) -> KeySheetStage {
+        let kind = keyKind
+        if kind == .reencrypt {
+            // The key's answer clears it; the count goes on.
+            if let progress { self.progress = progress }
+            return .working(message: workingMessage(kind, unpushed: unpushed), progress: nil)
+        }
+        self.progress = progress
+        return .working(message: workingMessage(kind, unpushed: unpushed), progress: progress.map(Self.progressLine))
+    }
+
+    func attachWords(_ problem: KeyReadProblem) -> KeyErrorWords {
+        AppModel.readProblemWords(problem)
+    }
+
+    /// A send, check or re-encrypt starts, or starts again on Try again.
+    func keyTaskStarting() {
+        let kind = keyKind
+        failure = nil
+        running = kind
+        progress = nil
+        signedIn = false
+        if kind == .reencrypt {
+            lastLeft = []
+        }
+    }
+
+    func keyStageShown(_ stage: KeySheetStage) {
+        if stage == .touch {
+            signedIn = true
+        }
+    }
+
+    func keyTaskEnded(_ end: KeyTaskEnd) -> KeySheetStage? {
+        if case .reencrypt = end.purpose {
+            reloadAfterReencrypt()
+        }
+        guard case .key(let kind)? = sheet?.mode else { return nil }
+        switch end.result {
+        case .done(let outcome):
+            finished(kind, outcome: outcome)
+            return .done
+        case .syncFailed(let error):
+            syncFailed(error, kind: kind, unpushed: unpushed)
+            return nil
+        case .setupFailed, .cancelled:
+            cancelSheet()
+            return nil
+        case .failed(let error):
+            running = nil
+            #if targetEnvironment(simulator)
+            if error != .PinBlocked {
+                SimRemoteHandle.shared.syncFailed()
+            }
+            #endif
+            return standardStage(end.result)
+        }
+    }
+
+    /// A task the sheet let go of has ended: a re-encrypt may have
+    /// rewritten some changes.
+    func letGoTaskEnded(_ end: KeyTaskEnd) {
+        if case .reencrypt = end.purpose {
+            reloadAfterReencrypt()
+        }
+    }
+
+    /// Done has shown for a second: close, unless what came back needs
+    /// looking at (replaced history, held-back changes); then the sheet
+    /// turns into the status page that says so.
+    func doneShown() {
+        guard case .key? = sheet?.mode else { return }
+        if doneNeedsLook {
+            sheet?.mode = .status
+        } else {
+            sheet = nil
+        }
+    }
 }

@@ -331,47 +331,26 @@ extension View {
 /// One sheet for the status page and the key stages of a send or check.
 private struct SyncSheetHost: View {
     let model: AppModel
-    @Bindable var syncing: SyncModel
-    @State private var detent = PresentationDetent.height(PawMetrics.keySheetHeight)
+    let syncing: SyncModel
 
-    private var keyStage: (kind: SyncKind, stage: KeySheetStage)? {
-        if case .key(let kind, _, let stage)? = syncing.sheet?.mode {
-            return (kind, stage)
-        }
+    private var keyKind: SyncKind? {
+        if case .key(let kind)? = syncing.sheet?.mode { return kind }
         return nil
-    }
-
-    private var needsKeyboard: Bool {
-        switch keyStage?.stage {
-        case .pin?, .wrongPin?, .pinAgain?: true
-        default: false
-        }
     }
 
     var body: some View {
         Group {
-            if let keyStage {
-                KeySheetContent(
-                    purpose: purpose(keyStage.kind),
-                    stage: keyStage.stage,
-                    pin: $syncing.pinEntry,
+            if let keyKind {
+                KeyTaskSheet(
+                    driver: syncing.keyTask,
+                    purpose: purpose(keyKind),
                     note: [syncing.keyPathNote, touchNote].compactMap { $0 }.joined(separator: " ").nilIfEmpty,
-                    onContinue: { syncing.continueWithPin() },
-                    onCancel: { syncing.cancelSheet() },
-                    onRetry: { syncing.retry() },
-                    simulatorAction: simulatorAction(keyStage.stage))
+                    onCancel: { syncing.cancelSheet() })
             } else {
                 SyncStatusSheet(model: model, syncing: syncing)
             }
         }
-        .presentationDetents([.height(PawMetrics.keySheetHeight), .large], selection: $detent)
-        .presentationDragIndicator(.visible)
-        .pawSheetBackground()
-        .padFormSheet()
-        .onChange(of: needsKeyboard, initial: true) {
-            detent = needsKeyboard ? .large : .height(PawMetrics.keySheetHeight)
-        }
-        .privacyCover()
+        .keySheetPresentation(keyKind == nil ? nil : syncing.keyTask.stage)
     }
 
     private func purpose(_ kind: SyncKind) -> String {
@@ -398,25 +377,6 @@ private struct SyncSheetHost: View {
         case .notNeeded, .needed: return nil
         case .mayBeNeeded: return "If it isn't blinking, no touch is needed."
         }
-    }
-
-    private func simulatorAction(_ stage: KeySheetStage) -> SimulatorAction? {
-        #if targetEnvironment(simulator)
-        switch stage {
-        case .touch:
-            return SimulatorAction(title: "touch the key", identifier: "simulated-touch") {
-                KeyConnection.simulateTouch()
-            }
-        case .plugIn:
-            return SimulatorAction(title: "plug in the key", identifier: "simulated-plug-in") {
-                model.simulatedPlugIn()
-            }
-        default:
-            return nil
-        }
-        #else
-        return nil
-        #endif
     }
 }
 

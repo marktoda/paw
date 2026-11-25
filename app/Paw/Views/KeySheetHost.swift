@@ -1,81 +1,45 @@
 import SwiftUI
 import UIKit
 
-/// The one key sheet, following `model.keyRequest`. Tall while the keyboard
-/// is up for the PIN, 480pt otherwise.
+/// The one key sheet, following `model.keyRequest`.
 struct KeySheetHost: View {
-    @Bindable var model: AppModel
-    @State private var detent = PresentationDetent.height(PawMetrics.keySheetHeight)
-
-    private var stage: KeySheetStage {
-        model.keyRequest?.stage ?? .busy
-    }
+    let model: AppModel
 
     var body: some View {
-        KeySheetContent(
+        KeyTaskSheet(
+            driver: model.keyTask,
             purpose: "Open \(model.keyRequest?.entry.name ?? "")",
-            stage: stage,
-            pin: $model.pinEntry,
             note: model.copies?.copiesEnabled() == true
-                ? "Then it opens with Face ID for \(AppModel.faceIdWindowSecs / 3600) hours." : nil,
-            onContinue: { model.continueWithPin() },
-            onCancel: { model.cancelKeyTask() },
-            onRetry: { model.retry() },
-            simulatorAction: simulatorAction,
-            moreSimulatorActions: moreSimulatorActions,
-            comingSoon: model.keyRequest?.differentKey == true ? "Replace key (coming)" : nil)
+                ? "Then it opens with Face ID for \(FaceIdOpener.windowSecs / 3600) hours." : nil,
+            comingSoon: model.keyRequest?.differentKey == true ? "Replace key (coming)" : nil,
+            onCancel: { model.cancelKeyTask() })
+            .keySheetPresentation(model.keyTask.stage)
+    }
+}
+
+extension View {
+    /// The key sheet as a sheet: 480pt, tall while the keyboard is up for
+    /// the PIN; opaque, a form sheet on iPad, and covered in the app
+    /// switcher. `stage` is `nil` while the sheet shows something else.
+    func keySheetPresentation(_ stage: KeySheetStage?) -> some View {
+        modifier(KeySheetPresentation(stage: stage))
+    }
+}
+
+private struct KeySheetPresentation: ViewModifier {
+    let stage: KeySheetStage?
+    @State private var detent = PresentationDetent.height(PawMetrics.keySheetHeight)
+
+    func body(content: Content) -> some View {
+        content
             .presentationDetents([.height(PawMetrics.keySheetHeight), .large], selection: $detent)
             .presentationDragIndicator(.visible)
             .pawSheetBackground()
             .padFormSheet()
             .onChange(of: stage, initial: true) {
-                detent = Self.needsKeyboard(stage) ? .large : .height(PawMetrics.keySheetHeight)
+                detent = stage?.asksForPin == true ? .large : .height(PawMetrics.keySheetHeight)
             }
             .privacyCover()
-    }
-
-    /// In the simulator, a finger on the key and a key going in.
-    private var simulatorAction: SimulatorAction? {
-        #if targetEnvironment(simulator)
-        switch stage {
-        case .touch:
-            return SimulatorAction(title: "touch the key", identifier: "simulated-touch") {
-                KeyConnection.simulateTouch()
-            }
-        case .plugIn:
-            return SimulatorAction(title: "plug in the key", identifier: "simulated-plug-in") {
-                model.simulatedPlugIn()
-            }
-        default:
-            return nil
-        }
-        #else
-        return nil
-        #endif
-    }
-
-    /// In the simulator, the key's touch timeout running out now.
-    private var moreSimulatorActions: [SimulatorAction] {
-        #if targetEnvironment(simulator)
-        if case .failed = stage, model.attachProblem != nil {
-            return [SimulatorAction(title: "let the key answer again", identifier: "simulated-key-answers") {
-                KeyConnection.simulateKeyAnswersAgain()
-            }]
-        }
-        guard stage == .touch else { return [] }
-        return [SimulatorAction(title: "time out the touch", identifier: "simulated-touch-timeout") {
-            KeyConnection.simulateTouchTimeout()
-        }]
-        #else
-        return []
-        #endif
-    }
-
-    private static func needsKeyboard(_ stage: KeySheetStage) -> Bool {
-        switch stage {
-        case .pin, .wrongPin, .pinAgain: true
-        default: false
-        }
     }
 }
 
@@ -185,7 +149,7 @@ private struct SimulatorSettingsSection: View {
             Button("Let the key answer when read") { KeyConnection.simulateKeyAnswersAgain() }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-key-answers")
-            Button("Let the next open finish after Cancel") { model.simulatesLateCancelNext = true }
+            Button("Let the next open finish after Cancel") { model.keyTask.simulatesLateCancelNext = true }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-late-cancel-next")
             // Ends a touch wait the sheet let go of, as the key's timeout would.

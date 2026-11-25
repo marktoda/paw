@@ -5,71 +5,17 @@ import SwiftUI
 /// key task on the app's key port (`KeyPort.checkTouchTimeout`), so the PIN
 /// goes only to the store's key, through the key session, as for an open.
 /// What the key answered goes to the key log below it.
-@MainActor @Observable
-final class TouchTimeoutCheck {
-    private(set) var state: KeyTaskState?
-    var pin = ""
-    @ObservationIgnored private var task: KeyTask?
-
-    var running: Bool {
-        guard let state else { return false }
-        return !state.isFinal
-    }
-
-    func start(on port: KeyPort) {
-        task?.cancel()
-        pin = ""
-        let listener = CheckListener { [weak self] in
-            MainActor.assumeIsolated { self?.refresh() }
-        }
-        task = port.checkTouchTimeout(listener: listener)
-        // A task can start at the PIN stage; listeners hear only changes.
-        refresh()
-    }
-
-    func sendPin() {
-        guard let task, case .pin? = state, !pin.isEmpty else { return }
-        task.supplyPin(pin: Data(pin.utf8))
-        pin = ""
-    }
-
-    func cancel() {
-        task?.cancel()
-        refresh()
-    }
-
-    private func refresh() {
-        guard let task else { return }
-        state = task.state()
-        if case .pin? = state {} else { pin = "" }
-        if state?.isFinal == true {
-            self.task = nil
-        }
-    }
-}
-
-private final class CheckListener: KeyTaskListener, @unchecked Sendable {
-    private let changed: @Sendable () -> Void
-
-    init(changed: @escaping @Sendable () -> Void) {
-        self.changed = changed
-    }
-
-    func stateChanged(state: KeyTaskState) {
-        DispatchQueue.main.async(execute: changed)
-    }
-}
-
+///
 /// The check's section in Key diagnostics. `finished` runs when it ends,
 /// so the key log can be read again.
 struct TouchTimeoutSection: View {
     let model: AppModel
-    let check: TouchTimeoutCheck
+    let check: KeyTaskDriver
     let finished: () -> Void
 
     var body: some View {
         Section {
-            if check.running {
+            if check.isFollowing {
                 progress
                 Button("Cancel", role: .cancel) { check.cancel() }
                     .foregroundStyle(PawColor.label)
@@ -77,9 +23,12 @@ struct TouchTimeoutSection: View {
             } else {
                 // No key, or another key: the task says so itself, before
                 // any PIN.
-                Button("Check the touch timeout") { check.start(on: model.keyPort) }
-                    .foregroundStyle(PawColor.label)
-                    .accessibilityIdentifier("touch-timeout-check")
+                Button("Check the touch timeout") {
+                    let port = model.keyPort
+                    check.start { listener in port.checkTouchTimeout(listener: listener) }
+                }
+                .foregroundStyle(PawColor.label)
+                .accessibilityIdentifier("touch-timeout-check")
                 if let state = check.state {
                     result(state)
                 }
@@ -87,7 +36,7 @@ struct TouchTimeoutSection: View {
         } header: {
             PawSectionHeader("Touch timeout")
         }
-        .onChange(of: check.running) { _, running in
+        .onChange(of: check.isFollowing) { _, running in
             if !running { finished() }
         }
     }
@@ -107,9 +56,9 @@ struct TouchTimeoutSection: View {
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
                 .submitLabel(.continue)
-                .onSubmit { check.sendPin() }
+                .onSubmit { check.continueWithPin() }
                 .accessibilityIdentifier("pin-field")
-            Button("Continue") { check.sendPin() }
+            Button("Continue") { check.continueWithPin() }
                 .foregroundStyle(PawColor.label)
                 .disabled(check.pin.isEmpty)
                 .accessibilityIdentifier("pin-continue")
