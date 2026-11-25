@@ -188,17 +188,22 @@ class PawUITestCase: XCTestCase {
         // look at an element costs about half a second on CI, so none is
         // repeated: `exists` is known from the wait, then from each swipe.
         var exists = waitToExist(found, timeout: 5)
+        // A swipe up can fling a long list past the row, which then no
+        // longer exists: past one that was there before the swipe, or,
+        // after three swipes, one in the middle never seen. Then come back
+        // up slowly, a screen at a time.
+        var flungPast = false
         var swipes = 0
         while !(exists && found.isHittable && !underKeyboard(found)) && swipes < 8 {
             // A coasting list can drop a lazy row between two looks: read
             // its frame from a snapshot, which says "gone" instead of failing.
             if exists, let top = (try? found.snapshot())?.frame.maxY, top < app.frame.height * 0.2 {
+                flungPast = false
                 app.swipeDown()
-            } else if !exists && swipes >= 3 {
-                // A long list can fling past a row in the middle, which then
-                // no longer exists: come back up slowly, a screen at a time.
+            } else if !exists && (flungPast || swipes >= 3) {
                 app.swipeDown(velocity: .slow)
             } else {
+                flungPast = exists
                 app.swipeUp()
             }
             swipes += 1
@@ -209,10 +214,9 @@ class PawUITestCase: XCTestCase {
         }
         XCTAssertTrue(exists, "\"\(identifier)\" should be on screen", file: file, line: line)
         if swipes > 0 {
-            waitUntilStill(found)
             // A row that stopped under the navigation bar counts as hittable,
             // but a tap there lands on the bar: bring it down a little.
-            if let top = (try? found.snapshot())?.frame.minY, top < app.frame.height * 0.16 {
+            if waitUntilStill(found).minY < app.frame.height * 0.16 {
                 let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
                 let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
                 from.press(forDuration: 0.05, thenDragTo: to)
@@ -224,14 +228,17 @@ class PawUITestCase: XCTestCase {
 
     /// A swipe leaves the list coasting, and a tap on a coasting list only
     /// stops it: wait until the element is in the same place twice running.
-    func waitUntilStill(_ found: XCUIElement) {
+    /// Returns where it stopped.
+    @discardableResult
+    func waitUntilStill(_ found: XCUIElement) -> CGRect {
         var last = found.frame
         for _ in 0..<20 {
             RunLoop.current.run(until: Date().addingTimeInterval(0.15))
             let now = found.frame
-            if now == last { return }
+            if now == last { return now }
             last = now
         }
+        return last
     }
 
     /// The keyboard covers it, though it counts as hittable.
