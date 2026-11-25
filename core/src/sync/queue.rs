@@ -537,6 +537,9 @@ pub fn reencrypt_each(
     // rewritten, these do not.
     let mut skipped: HashMap<(String, Oid), LeftReason> = HashMap::new();
     let mut texts: HashMap<Oid, zeroize::Zeroizing<Vec<u8>>> = HashMap::new();
+    // Written this run, by (path, new blob): one that still looks held back
+    // is never opened again.
+    let mut written: std::collections::HashSet<(String, Oid)> = std::collections::HashSet::new();
     let mut moved = 0;
     loop {
         // 1. The next one to do, read under the shared lock.
@@ -560,6 +563,11 @@ pub fn reencrypt_each(
             next
         };
         let Some((item, path, blob, bytes, head)) = next else { break };
+        if written.contains(&(path.clone(), blob)) {
+            return Err(SyncError::Failed {
+                message: "a change paw re-encrypted is still held back; nothing was sent".into(),
+            });
+        }
         total = total.max(done + 1);
         progress(done, total);
 
@@ -597,13 +605,18 @@ pub fn reencrypt_each(
         let keyring = crate::write::Keyring::open(state_dir).map_err(failed)?;
         let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
         let keys = keyring.resolve(dir, folder, crate::write::now_secs()).map_err(failed)?;
-        let text = texts.get(&blob).map(|t| t.as_slice()).unwrap_or_default();
-        let ciphertext = crate::write::encrypt(&keys, text).map_err(failed)?;
+        let Some(text) = texts.get(&blob) else {
+            return Err(SyncError::Failed { message: "internal: a held-back change's text went missing".into() });
+        };
+        let ciphertext = crate::write::encrypt(&keys, text.as_slice()).map_err(failed)?;
+        let new_blob = repo.blob(&ciphertext).map_err(git_err)?;
         let mut swaps = HashMap::new();
-        swaps.insert((path.clone(), blob), repo.blob(&ciphertext).map_err(git_err)?);
+        swaps.insert((path.clone(), blob), new_blob);
         if rewrite_with(&held, &store, &repo, &local, &swaps)?.is_none() {
             return Err(SyncError::Failed { message: "internal: a held-back change was not in the queue".into() });
         }
+        written.insert((path, new_blob));
+        moved = 0;
         done += 1;
         progress(done, total);
     }

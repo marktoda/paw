@@ -309,6 +309,33 @@ fn with_nothing_held_back_it_does_nothing() {
 }
 
 #[test]
+fn a_save_while_each_one_is_opened_does_not_add_up_to_a_failure() {
+    let w = world();
+    for name in ["a", "b", "c", "d", "e"] {
+        w.save("Work", name, &format!("{name}-pw"));
+    }
+    let (card, other) = (w.card.fingerprint_hex(), w.other.fingerprint_hex());
+    w.new_list("Work", &[&card, &other], true);
+    assert_eq!(w.held().len(), 5);
+    w.card.set_decryption_touch(SimTouch::Off);
+    let mut saved = 0;
+    // Each open saves something else, so the queue moves under every one.
+    let mut open = |_: &queue::HeldBack, bytes: &[u8]| {
+        saved += 1;
+        w.save("Notes", &format!("n{saved}"), "pw");
+        decrypt_entry(w.card.clone(), PIN, bytes, &|| {})
+            .map(zeroize::Zeroizing::new)
+            .map_err(|e| queue::OpenFailure::Stop(paw_core::sync::SyncError::Failed { message: e.to_string() }))
+    };
+
+    let report = queue::reencrypt_each(&w.repo(), w.state.path(), &mut open, &mut |_, _| {}).unwrap();
+
+    assert_eq!(report, ReencryptReport { reencrypted: 5, left: vec![] });
+    assert_eq!(saved, 5);
+    assert!(w.held().is_empty());
+}
+
+#[test]
 fn a_rename_that_kept_its_ciphertext_is_opened_once() {
     let w = world();
     w.save("Work", "a", "a-pw");
