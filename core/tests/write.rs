@@ -16,6 +16,7 @@ use paw_core::ffi::OpenedEntry;
 use paw_core::ffi::write::StoreWriter;
 use paw_core::recipients::{Recipient, entry_recipients};
 use paw_core::sim::SimulatedKey;
+use paw_core::store::PassStore;
 use paw_core::sim::copies::{SimClock, SimKeystore};
 use paw_core::sync::ChangeKind;
 use paw_core::sync::queue;
@@ -1019,6 +1020,12 @@ fn the_ffi_draft_reports_problems_and_the_writer_checks_the_name_is_free() {
     draft.set_name("Jira".into());
     assert!(draft.problems().is_empty());
     assert_eq!(writer(&s).validate(draft.clone()).unwrap()[0].message, "There's already an entry called 'Jira' in Work.");
+    // The same answer from the names already read, without the lock.
+    let names = PassStore::open(s.repo.to_str().unwrap().into()).unwrap();
+    assert_eq!(draft.problems_in(names.clone())[0].message, "There's already an entry called 'Jira' in Work.");
+    draft.set_name("jira-2".into());
+    assert!(draft.problems_in(names).is_empty());
+    draft.set_name("Jira".into());
     assert!(writer(&s).can_save_in("Work".into()));
     let FolderRecipients { lines, .. } = writer(&s).folder_recipients("Work".into()).unwrap();
     assert_eq!(lines.len(), 1);

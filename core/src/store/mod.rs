@@ -138,4 +138,9 @@ impl PassStore {
     pub fn entries(&self) -> &[EntryRef] {
         self.tree.entries()
     }
+
+    /// The names as read when this was opened.
+    pub(crate) fn tree(&self) -> &StoreTree {
+        &self.tree
+    }
 }

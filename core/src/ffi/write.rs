@@ -12,6 +12,7 @@ use std::time::Duration;
 use super::{Adapter, CardConnection, FieldView, OpenedEntry};
 use crate::copies::{CopyCache, content_id};
 use crate::generate::{self, PasswordPolicy};
+use crate::store::PassStore;
 use crate::store::pairings::PairingFile;
 use crate::store::tree::StoreTree;
 use crate::write::cert::{CertificateInfo, evaluate, read_certificates};
@@ -119,6 +120,13 @@ impl EntryDraft {
         problems.extend(crate::write::draft::folder_problems(draft.folder()));
         problems.extend(draft.value_problems());
         problems
+    }
+
+    /// The writer's `validate`, against the names `store` read when it was
+    /// opened: no lock and no disk, so the form can ask on every keystroke.
+    /// `store` can be out of date; saving checks again with the store locked.
+    pub fn problems_in(&self, store: Arc<PassStore>) -> Vec<DraftProblem> {
+        self.draft().problems(Some(store.tree()))
     }
 
     /// The password as it would be saved.
