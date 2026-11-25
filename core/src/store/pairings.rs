@@ -148,39 +148,7 @@ impl PairingFile {
     }
 
     fn write_atomic(&self, bytes: &[u8]) -> std::io::Result<()> {
-        self.remove_stale_temps();
-        let mut tag = [0u8; 12];
-        OsRng.fill_bytes(&mut tag);
-        let tag: String = tag.iter().map(|b| format!("{b:02x}")).collect();
-        let temp = self.state_dir.join(format!("{TEMP_PREFIX}{tag}"));
-        let written = (|| {
-            let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&temp)?;
-            file.write_all(bytes)?;
-            file.sync_all()?;
-            std::fs::rename(&temp, self.path())
-        })();
-        if written.is_err() {
-            let _ = std::fs::remove_file(&temp);
-        }
-        written
-    }
-
-    fn remove_stale_temps(&self) {
-        let Ok(listing) = std::fs::read_dir(&self.state_dir) else { return };
-        for child in listing.flatten() {
-            if !child.file_name().to_str().is_some_and(|n| n.starts_with(TEMP_PREFIX)) {
-                continue;
-            }
-            let old = child
-                .metadata()
-                .and_then(|m| m.modified())
-                .ok()
-                .and_then(|at| SystemTime::now().duration_since(at).ok())
-                .is_some_and(|age| age >= STALE_TEMP);
-            if old {
-                let _ = std::fs::remove_file(child.path());
-            }
-        }
+        write_atomic(&self.state_dir, TEMP_PREFIX, &self.path(), bytes)
     }
 
     /// Keeps that `entry` was filled on `site` (a registrable domain), as
@@ -254,6 +222,45 @@ impl PairingFile {
                     _ => Ok(()),
                 }
             }
+        }
+    }
+}
+
+/// Writes `bytes` to `path` (in `dir`) through a temporary file named
+/// `prefix…` that is renamed over it, so a reader sees a whole file or none.
+/// Temporary files a dead writer left behind are removed first.
+pub(crate) fn write_atomic(dir: &Path, prefix: &str, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    remove_stale_temps(dir, prefix);
+    let mut tag = [0u8; 12];
+    OsRng.fill_bytes(&mut tag);
+    let tag: String = tag.iter().map(|b| format!("{b:02x}")).collect();
+    let temp = dir.join(format!("{prefix}{tag}"));
+    let written = (|| {
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&temp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        std::fs::rename(&temp, path)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    written
+}
+
+fn remove_stale_temps(dir: &Path, prefix: &str) {
+    let Ok(listing) = std::fs::read_dir(dir) else { return };
+    for child in listing.flatten() {
+        if !child.file_name().to_str().is_some_and(|n| n.starts_with(prefix)) {
+            continue;
+        }
+        let old = child
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|at| SystemTime::now().duration_since(at).ok())
+            .is_some_and(|age| age >= STALE_TEMP);
+        if old {
+            let _ = std::fs::remove_file(child.path());
         }
     }
 }

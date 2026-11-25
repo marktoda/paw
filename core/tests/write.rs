@@ -1056,3 +1056,31 @@ fn site_pairings_follow_a_rename_a_move_and_an_edit_and_go_with_a_delete() {
     writer(&s).delete("Tools/jira".into(), None).unwrap();
     assert_eq!(paired(), vec![("Work/github.com".to_owned(), vec!["github.com".to_owned()])]);
 }
+
+#[test]
+fn one_time_code_marks_follow_saves_renames_and_deletes() {
+    use paw_core::store::codes::CodeFile;
+    let s = store();
+    let codes = CodeFile::new(&s.state);
+
+    let draft = writer(&s).new_draft("Work".into());
+    draft.set_name("Linear".into());
+    draft.set_password("pw".into());
+    draft.set_one_time_code("JBSWY3DPEHPK3PXP".into());
+    writer(&s).save(draft, None, 0).unwrap();
+    assert_eq!(codes.load(), ["Work/Linear"]);
+
+    writer(&s).rename("Work/Linear".into(), "Work".into(), "linear".into(), None).unwrap();
+    assert_eq!(codes.load(), ["Work/linear"]);
+
+    let draft = writer(&s).edit_draft(opened(&s, "Work/linear"), "Work/linear".into()).unwrap();
+    draft.remove_one_time_code();
+    writer(&s).save(draft, None, 0).unwrap();
+    assert!(codes.load().is_empty(), "a code removed in the editor is unmarked");
+
+    let draft = writer(&s).edit_draft(opened(&s, "Work/linear"), "Work/linear".into()).unwrap();
+    draft.set_one_time_code("JBSWY3DPEHPK3PXP".into());
+    writer(&s).save(draft, None, 0).unwrap();
+    writer(&s).delete("Work/linear".into(), None).unwrap();
+    assert!(codes.load().is_empty());
+}

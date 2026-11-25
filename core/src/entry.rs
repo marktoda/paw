@@ -221,6 +221,11 @@ impl EntryDoc {
         Some(Totp::from_address(&self.lines[index].text[start..]))
     }
 
+    /// Whether the first one-time-code line makes codes.
+    pub fn makes_codes(&self) -> bool {
+        matches!(self.one_time_code(), Some(Ok(_)))
+    }
+
     /// The value of the first field called `key`, in any letter case.
     pub fn field(&self, key: &str) -> Option<&str> {
         self.all_fields().find(|field| same_key(field.key, key)).map(|field| field.value)
