@@ -25,7 +25,7 @@ struct FaceIdSettingsSection: View {
                 PawSectionHeader(Device.biometrics)
             } footer: {
                 Text(isOn(copies)
-                     ? "For \(AppModel.faceIdWindowSecs / 3600) hours after you open a password with your key."
+                     ? "For \(FaceIdOpener.windowSecs / 3600) hours after you open a password with your key."
                      : "Every password needs your key.")
                     .font(PawFont.footnote)
                     .foregroundStyle(PawColor.labelSecondary)

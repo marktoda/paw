@@ -447,7 +447,7 @@ final class EntryFormModel {
             // owner's decision 8.1.10): the person just typed it on this
             // phone, usually to fill it straight in. An edit keeps the
             // copy's deadline, which the core handles.
-            let ttl = isEditing ? 0 : AppModel.faceIdWindowSecs
+            let ttl = isEditing ? 0 : FaceIdOpener.windowSecs
             return try BackgroundTime.run("Save") {
                 try writer.save(draft: draft, copies: copies, newCopyTtlSecs: ttl)
             }

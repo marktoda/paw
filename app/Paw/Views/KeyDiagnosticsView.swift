@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 /// Settings › Key diagnostics on a set-up store: what the key session read
 /// when the key was plugged in, which asks for no PIN and sends nothing to
-/// the key. Then the touch timeout check (`TouchTimeoutCheck`), a key task
+/// the key. Then the touch timeout check (`TouchTimeoutSection`), a key task
 /// like any other, so it cannot get round the enrolled-key and PIN KDF
 /// checks every key task makes.
 ///
@@ -20,7 +20,7 @@ struct KeyDiagnosticsView: View {
     /// What Copy diagnostics put on the pasteboard, shown below it.
     @State private var copiedReport: String?
     @State private var assembling = false
-    @State private var touchCheck = TouchTimeoutCheck()
+    @State private var touchCheck = KeyTaskDriver()
 
     /// The most lines shown; Copy log takes them all.
     private static let shownLines = 300
@@ -64,7 +64,7 @@ struct KeyDiagnosticsView: View {
                         if let problem = model.attachProblem {
                             ErrorRow(kind: .error, problem: problem.problem, nextStep: problem.nextStep,
                                      actionTitle: "Try again", actionNeedsKey: true) {
-                                model.plugIn()
+                                model.reader.read()
                             }
                         }
                     }

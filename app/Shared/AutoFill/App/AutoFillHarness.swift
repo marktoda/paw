@@ -166,7 +166,6 @@ private final class HarnessRun: AutoFillCompletion {
     func fill(user: String, password: String) {
         let digest = SHA256.hash(data: Data(password.utf8)).map { String(format: "%02x", $0) }.joined()
         result = "filled user=\(user) password-length=\(password.count) password-sha=\(digest.prefix(12))"
-        model?.shutDown()
         model = nil
         readPairingsSoon()
     }
@@ -174,7 +173,6 @@ private final class HarnessRun: AutoFillCompletion {
     func fill(oneTimeCode: String) {
         let digest = SHA256.hash(data: Data(oneTimeCode.utf8)).map { String(format: "%02x", $0) }.joined()
         result = "filled code-length=\(oneTimeCode.count) code-sha=\(digest.prefix(12))"
-        model?.shutDown()
         model = nil
         readPairingsSoon()
     }
@@ -224,7 +222,7 @@ private struct AutoFillHarnessView: View {
             if let model = run.model {
                 AutoFillRootView(model: model)
                     .overlay(alignment: .topLeading) {
-                        KeyTasksSignal(tasks: model.pendingKeyTasks)
+                        KeyTasksSignal(tasks: model.keyTask.pendingTasks)
                     }
                     .overlay(alignment: .topTrailing) {
                         // `-pawHarnessDismiss 1`: stands in for a swipe down.

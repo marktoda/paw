@@ -51,7 +51,7 @@ final class StoreRootModel {
     /// `-pawSimGitHub`).
     let gitHub: GitHubAccess?
     private let clock: Clock
-    private let connect: AppModel.Connect = { try KeyConnection.open() }
+    private let connect: KeyReader.Connect = { try KeyConnection.open() }
     #if targetEnvironment(simulator)
     private let simulatedClock: SimClock
     let keystore = SimKeystore()
