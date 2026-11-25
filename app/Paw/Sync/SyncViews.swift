@@ -230,6 +230,18 @@ struct SyncSendSection: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("unpushed-held-back")
                     .pawListRow()
+                    if syncing.reencryptReady > 0 {
+                        Button {
+                            syncing.startReencrypt(app: model)
+                        } label: {
+                            KeyActionLabel(reencryptTitle(syncing.reencryptReady))
+                        }
+                        .buttonStyle(.pawPrimary)
+                        .disabled(syncing.running != nil)
+                        .accessibilityIdentifier("unpushed-reencrypt")
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                    }
                 } else if syncing.canSend(unpushed: edits.unpushed.count) {
                     Button {
                         syncing.start(.send, app: model)
@@ -364,8 +376,16 @@ private struct SyncSheetHost: View {
 
     private func purpose(_ kind: SyncKind) -> String {
         switch kind {
-        case .send: model.edits?.sendTitle ?? "Send your changes"
-        case .refresh: "Update your store"
+        case .send:
+            return model.edits?.sendTitle ?? "Send your changes"
+        case .refresh:
+            return "Update your store"
+        case .reencrypt:
+            // "Re-encrypt 2 of 3" once the core has counted them.
+            if let progress = syncing.progress, progress.total > 1 {
+                return "Re-encrypt \(min(progress.done + 1, progress.total)) of \(progress.total)"
+            }
+            return reencryptTitle(syncing.reencryptReady)
         }
     }
 
@@ -588,10 +608,22 @@ private struct SyncStatusSheet: View {
         }
     }
 
-    /// Send and Check, each with the gold disc: that says they need the key.
+    /// Send (or Re-encrypt, while changes are held back) and Check, each
+    /// with the gold disc: that says they need the key.
     private var actions: some View {
         let canSend = syncing.canSend(unpushed: unpushed)
+        let canReencrypt = !syncing.heldBack.isEmpty && syncing.reencryptReady > 0
         return VStack(spacing: PawMetrics.Spacing.s) {
+            if canReencrypt {
+                Button {
+                    syncing.startReencrypt(app: model)
+                } label: {
+                    KeyActionLabel(reencryptTitle(syncing.reencryptReady))
+                }
+                .buttonStyle(.pawPrimary)
+                .disabled(syncing.running != nil)
+                .accessibilityIdentifier("sync-reencrypt")
+            }
             if canSend, let edits = model.edits {
                 Button {
                     syncing.start(.send, app: model)
@@ -610,7 +642,7 @@ private struct SyncStatusSheet: View {
                     KeyActionLabel("Check for changes")
                 }
             }
-            .buttonStyle(PawButtonStyle(kind: canSend ? .secondary : .primary))
+            .buttonStyle(PawButtonStyle(kind: canSend || canReencrypt ? .secondary : .primary))
             .disabled(syncing.running != nil)
             .accessibilityIdentifier("sync-check")
         }
