@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use super::OpenedEntry;
+use crate::entry::opened::OpenedEntry;
 use crate::PawError;
 use crate::copies::{CopyCache, CopyStatus, content_id};
 use crate::store::PassStore;
@@ -33,7 +33,7 @@ impl PassStore {
         let current = content_id(&self.read_entry(&entry)?);
         match copies.open(&entry, &current, &reason) {
             Ok(mut plaintext) => Ok(FaceIdOpen::Opened {
-                entry: OpenedEntry::from_plaintext(std::mem::take(&mut *plaintext))?,
+                entry: OpenedEntry::decrypted(std::mem::take(&mut *plaintext), current)?,
             }),
             Err(PawError::CopyUnavailable) => Ok(FaceIdOpen::NeedsKey),
             Err(e) => Err(e),

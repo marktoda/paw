@@ -25,10 +25,11 @@ use pgp::packet::PublicKey;
 use rand::rngs::OsRng;
 
 use crate::PawError;
+use crate::store::state_file::{read_bounded, write_atomic};
 use crate::sync::Author;
 pub use draft::{DraftField, DraftProblem, EntryDraft};
 pub use keyring::{FolderRecipients, KeySource, Keyring, LineStatus, RecipientLine};
-pub use ops::{Saved, WriteStore};
+pub use ops::{Deleted, FollowUp, FollowUpFailure, Saved, WriteStore};
 pub use scopes::{RecipientScope, ScopeKey};
 
 /// Why a change was not made. In every case nothing in the store changed.
@@ -108,7 +109,8 @@ pub struct GitIdentity {
 /// paw's neutral default. The person's global git configuration is never
 /// read.
 pub fn git_identity(state_dir: &Path) -> GitIdentity {
-    let text = std::fs::read_to_string(state_dir.join(IDENTITY_FILE)).unwrap_or_default();
+    let bytes = read_bounded(&state_dir.join(IDENTITY_FILE)).ok().flatten().unwrap_or_default();
+    let text = String::from_utf8(bytes).unwrap_or_default();
     let value = |name: &str| {
         text.lines()
             .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
@@ -139,10 +141,9 @@ pub fn set_git_identity(state_dir: &Path, identity: Option<&GitIdentity>) -> Res
             message: "a git name and e-mail address must be one line each, without < or >".into(),
         });
     }
+    let text = format!("name={}\nemail={}\n", identity.name.trim(), identity.email.trim());
     std::fs::create_dir_all(state_dir)
-        .and_then(|()| {
-            std::fs::write(&path, format!("name={}\nemail={}\n", identity.name.trim(), identity.email.trim()))
-        })
+        .and_then(|()| write_atomic(state_dir, ".git-identity.tmp-", &path, text.as_bytes()))
         .map_err(|e| WriteError::Failed { message: format!("could not save the git identity: {e}") })
 }
 

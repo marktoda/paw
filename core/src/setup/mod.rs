@@ -870,7 +870,7 @@ impl SetupFlow {
         let keyring = Keyring::open(&self.dir).map_err(write_failed)?;
         let now = crate::write::now_secs();
         let top = keyring.folder_recipients(&repo, "", now).map_err(write_failed)?;
-        let missing_recipients = if top.writable() {
+        let missing_recipients = if top.writable {
             Vec::new()
         } else {
             top.lines
@@ -886,11 +886,11 @@ impl SetupFlow {
                 continue;
             }
             let recipients = keyring.folder_recipients(&repo, folder, now).map_err(write_failed)?;
-            if !recipients.writable() {
+            if !recipients.writable {
                 folders_needing_keys.push(gpg_id);
             }
         }
-        Ok(SetupWriteReadiness { can_save: top.writable(), missing_recipients, folders_needing_keys })
+        Ok(SetupWriteReadiness { can_save: top.writable, missing_recipients, folders_needing_keys })
     }
 
     /// What the last download refused to check out: the paths and why.

@@ -1,26 +1,22 @@
 //! The add and edit screens as Swift sees them: an [`EntryDraft`] to fill
-//! in, a [`StoreWriter`] that saves, deletes, renames and moves, manages
-//! the pinned recipient keys, and the password generator.
+//! in, a [`StoreWriter`] that saves and deletes and manages the pinned
+//! recipient keys, and the password generator.
 //!
-//! As with [`super::OpenedEntry`], the text being edited stays on the Rust
-//! side; Swift reads one value at a time to fill the form.
+//! As with [`OpenedEntry`], the text being edited stays on the Rust side.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use super::{FieldView, OpenedEntry};
-use crate::copies::{CopyCache, content_id};
+use crate::copies::CopyCache;
+use crate::entry::opened::OpenedEntry;
 use crate::generate::{self, PasswordPolicy};
 use crate::key::KeySession;
-use crate::store::codes::CodeFile;
 use crate::store::PassStore;
-use crate::store::pairings::PairingFile;
 use crate::store::tree::StoreTree;
-use crate::write::cert::{CertificateInfo, evaluate, read_certificates};
-use crate::write::draft::join;
-use crate::write::keyring::certificate_named_by;
-use crate::write::{self as core, DraftProblem, FolderRecipients, GitIdentity, WriteError, WriteStore};
+use crate::write::cert::certificate_infos;
+use crate::write::keyring::{CertificateSummary, certificate_summaries};
+use crate::write::{self as core, Deleted, DraftProblem, FolderRecipients, Saved, WriteError, WriteStore};
 
 /// The add or edit form's contents. Make one with
 /// [`StoreWriter::new_draft`] or [`StoreWriter::edit_draft`].
@@ -43,19 +39,6 @@ impl EntryDraft {
 
 #[uniffi::export]
 impl EntryDraft {
-    pub fn name(&self) -> String {
-        self.draft().name().to_owned()
-    }
-
-    pub fn folder(&self) -> String {
-        self.draft().folder().to_owned()
-    }
-
-    /// The entry being edited; `None` for a new one.
-    pub fn editing(&self) -> Option<String> {
-        self.draft().original_path().map(str::to_owned)
-    }
-
     pub fn set_name(&self, name: String) {
         self.draft().set_name(&name);
     }
@@ -104,11 +87,6 @@ impl EntryDraft {
         self.draft().remove_one_time_code();
     }
 
-    /// Whether the entry as it would be saved has a one-time-code line.
-    pub fn has_one_time_code(&self) -> bool {
-        self.draft().preview().has_otp()
-    }
-
     /// The "Text" toggle: replaces the whole entry with `text`.
     pub fn set_text(&self, text: String) {
         self.draft().set_text(&text);
@@ -117,11 +95,7 @@ impl EntryDraft {
     /// Problems with the values typed, without looking at the store; the
     /// store's `validate` also checks the name is free.
     pub fn problems(&self) -> Vec<DraftProblem> {
-        let draft = self.draft();
-        let mut problems = crate::write::draft::name_problems(draft.name());
-        problems.extend(crate::write::draft::folder_problems(draft.folder()));
-        problems.extend(draft.value_problems());
-        problems
+        self.draft().problems(None)
     }
 
     /// The writer's `validate`, against the names `store` read when it was
@@ -130,75 +104,13 @@ impl EntryDraft {
     pub fn problems_in(&self, store: Arc<PassStore>) -> Vec<DraftProblem> {
         self.draft().problems(Some(store.tree()))
     }
-
-    /// The password as it would be saved.
-    pub fn password(&self) -> String {
-        self.draft().preview().password().to_owned()
-    }
-
-    pub fn username(&self) -> Option<String> {
-        self.draft().preview().username().map(str::to_owned)
-    }
-
-    pub fn url(&self) -> Option<String> {
-        self.draft().preview().url().map(str::to_owned)
-    }
-
-    pub fn notes(&self) -> String {
-        self.draft().preview().notes().as_str().to_owned()
-    }
-
-    /// The other fields as they would be saved, without values.
-    pub fn fields(&self) -> Vec<FieldView> {
-        self.draft()
-            .preview()
-            .other_fields()
-            .iter()
-            .map(|field| FieldView { id: field.line as u32, key: field.key.to_owned(), starts_hidden: field.looks_secret() })
-            .collect()
-    }
-
-    /// The value of one field listed by [`Self::fields`].
-    pub fn field_value(&self, id: u32) -> Option<String> {
-        let doc = self.draft().preview();
-        let fields = doc.other_fields();
-        fields.iter().find(|field| field.line as u32 == id).map(|field| field.value.to_owned())
-    }
-
-    /// The whole text as it would be saved, for the "Text" toggle.
-    pub fn text(&self) -> String {
-        String::from_utf8_lossy(&self.draft().preview().to_bytes()).into_owned()
-    }
 }
 
-/// What a save did.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct SaveOutcome {
-    /// Where the entry is now.
-    pub entry: String,
-    /// Where it was, if the save moved it.
-    pub previous: Option<String>,
-    /// The content id of the saved file.
-    pub content_id: Vec<u8>,
-    /// How many commits were made (0 if nothing changed).
-    pub commits: u32,
-    /// Until when the entry can be opened by Face ID, if it has a copy.
-    pub face_id_until_ms: Option<i64>,
-}
-
-/// A public certificate, as the import screen shows it.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct CertificateSummary {
-    pub primary_fingerprint: String,
-    pub user_ids: Vec<String>,
-    /// The key paw would encrypt to; `None` if there is none usable.
-    pub encryption_fingerprint: Option<String>,
-    /// When that key expires, seconds since 1970.
-    pub expires: Option<i64>,
-    /// Why there is no usable key.
-    pub problem: Option<String>,
-    /// The `.gpg-id` lines of this store it satisfies.
-    pub satisfies: Vec<String>,
+/// What would stop the form from setting the field `key` to `value`, if
+/// anything. For one row of the form, before it goes into the draft.
+#[uniffi::export]
+pub fn field_problem(key: String, value: String) -> Option<DraftProblem> {
+    core::draft::field_problem(&key, Some(&value))
 }
 
 /// Writing to the store set up in a state directory. Every call works
@@ -211,75 +123,6 @@ pub struct StoreWriter {
 impl StoreWriter {
     fn tree(&self) -> Result<StoreTree, WriteError> {
         Ok(StoreTree::scan(self.store.repo())?)
-    }
-
-    /// Every `.gpg-id` line in the store, from every folder's `.gpg-id`.
-    fn all_lines(&self) -> Vec<String> {
-        let tree = self.tree().ok();
-        let mut folders = vec![String::new()];
-        if let Some(tree) = &tree {
-            for entry in tree.entries() {
-                let mut folder = entry.folder.as_str();
-                while !folder.is_empty() {
-                    folders.push(folder.to_owned());
-                    folder = folder.rsplit_once('/').map_or("", |(parent, _)| parent);
-                }
-            }
-        }
-        folders.sort();
-        folders.dedup();
-        let mut lines: Vec<String> = folders
-            .iter()
-            .filter_map(|folder| crate::store::gpg_id::recipients_for(self.store.repo(), folder).ok())
-            .flatten()
-            .collect();
-        lines.sort();
-        lines.dedup();
-        lines
-    }
-
-    fn summaries(&self, infos: &[CertificateInfo]) -> Result<Vec<CertificateSummary>, WriteError> {
-        let lines = self.all_lines();
-        let mut out = Vec::new();
-        for info in infos {
-            let satisfies =
-                lines.iter().filter(|line| certificate_named_by(info, line)).cloned().collect();
-            out.push(CertificateSummary {
-                primary_fingerprint: info.primary.clone(),
-                user_ids: info.user_ids.clone(),
-                encryption_fingerprint: info.encryption.as_ref().ok().map(|c| c.fingerprint.clone()),
-                expires: info.encryption.as_ref().ok().and_then(|c| c.expires).map(i64::from),
-                problem: info.encryption.as_ref().err().cloned(),
-                satisfies,
-            });
-        }
-        Ok(out)
-    }
-
-    fn certificates(bytes: &[u8]) -> Result<Vec<CertificateInfo>, WriteError> {
-        let now = core::now_secs();
-        read_certificates(bytes)?.iter().map(|cert| evaluate(cert, now)).collect()
-    }
-}
-
-/// An entry moved or went: its site pairings follow it. A pairing that
-/// could not be moved or removed is harmless: it is only ever used for an
-/// entry at that path that matches the site by name.
-fn pairings_moved(store: &WriteStore, from: &str, to: Option<&str>) {
-    let file = PairingFile::new(store.state_dir());
-    let _ = match to {
-        Some(to) => file.moved(from, to),
-        None => file.clear(Some(from)),
-    };
-    // So does whether it has a one-time code.
-    let _ = CodeFile::new(store.state_dir()).moved(from, to);
-}
-
-fn forget_copy(copies: Option<&Arc<CopyCache>>, entry: &str) {
-    if let Some(copies) = copies {
-        // The entry is gone either way; a copy that could not be removed
-        // is stale and is wiped by the next read.
-        let _ = copies.forget(entry);
     }
 }
 
@@ -297,14 +140,11 @@ impl StoreWriter {
     }
 
     /// An edit form for `entry`, filled from `opened` (which must be that
-    /// entry, just opened). Saving is refused if the file changes before.
+    /// entry). Saving is refused if the file changed since it was opened.
     pub fn edit_draft(&self, opened: Arc<OpenedEntry>, entry: String) -> Result<Arc<EntryDraft>, WriteError> {
         let doc = opened.duplicate_doc().ok_or_else(|| WriteError::Failed { message: "the entry was closed".into() })?;
-        let bytes = {
-            let _reading = self.store.lock().shared()?;
-            crate::store::read::read_entry(self.store.repo(), &entry)?
-        };
-        Ok(EntryDraft::wrap(core::EntryDraft::edit(&entry, doc, Some(content_id(&bytes)))))
+        let content_id = opened.content_id().map(<[u8]>::to_vec);
+        Ok(EntryDraft::wrap(core::EntryDraft::edit(&entry, doc, content_id)))
     }
 
     /// Everything that would stop `draft` from saving, including a name
@@ -326,90 +166,14 @@ impl StoreWriter {
         draft: Arc<EntryDraft>,
         copies: Option<Arc<CopyCache>>,
         new_copy_ttl_secs: u32,
-    ) -> Result<SaveOutcome, WriteError> {
-        let draft = draft.draft();
-        let (saved, doc) = self.store.save(&draft)?;
-        if let Some(previous) = &saved.previous {
-            pairings_moved(&self.store, previous, Some(&saved.entry));
-        }
-        // AutoFill learns of a code added or removed here without the
-        // entry being opened again. Failing only leaves the mark as it was.
-        let _ = CodeFile::new(self.store.state_dir()).mark(&saved.entry, doc.makes_codes());
-        let face_id_until_ms = copies.as_ref().and_then(|copies| {
-            let text = doc.to_bytes();
-            // The entry is saved; a copy that cannot be made only means the
-            // next open needs the key.
-            match draft.original_path() {
-                None => copies
-                    .put(&saved.entry, &text, &saved.content_id, Duration::from_secs(new_copy_ttl_secs.into()))
-                    .ok()
-                    .flatten(),
-                Some(original) => copies.reseal(original, &saved.entry, &text, &saved.content_id).ok().flatten(),
-            }
-        });
-        Ok(SaveOutcome {
-            entry: saved.entry,
-            previous: saved.previous,
-            content_id: saved.content_id,
-            commits: saved.commits.len() as u32,
-            face_id_until_ms,
-        })
+    ) -> Result<Saved, WriteError> {
+        let store = self.store.with_copies(copies, Duration::from_secs(new_copy_ttl_secs.into()));
+        store.save(&draft.draft())
     }
 
     /// Deletes `entry` (it stays in the git history) and wipes its copy.
-    pub fn delete(&self, entry: String, copies: Option<Arc<CopyCache>>) -> Result<(), WriteError> {
-        self.store.delete(&entry)?;
-        forget_copy(copies.as_ref(), &entry);
-        pairings_moved(&self.store, &entry, None);
-        Ok(())
-    }
-
-    /// Renames or moves `entry` to `name` in `folder` without opening it.
-    /// Refused with `NeedsOpenEntry` if the folder has other recipients:
-    /// use [`Self::move_open_entry`]. Its Face ID copy is dropped: moving it
-    /// would mean opening it, which needs Face ID. Returns the new path.
-    pub fn rename(
-        &self,
-        entry: String,
-        folder: String,
-        name: String,
-        copies: Option<Arc<CopyCache>>,
-    ) -> Result<String, WriteError> {
-        let saved = self.store.rename(&entry, &join(folder.trim_matches('/'), &name), None)?;
-        if saved.previous.is_some() {
-            forget_copy(copies.as_ref(), &entry);
-            pairings_moved(&self.store, &entry, Some(&saved.entry));
-        }
-        Ok(saved.entry)
-    }
-
-    /// Moves the open entry `entry` to `name` in `folder`, re-encrypting it
-    /// for that folder's recipients if they differ. A live Face ID copy
-    /// moves with it.
-    pub fn move_open_entry(
-        &self,
-        entry: String,
-        opened: Arc<OpenedEntry>,
-        folder: String,
-        name: String,
-        copies: Option<Arc<CopyCache>>,
-    ) -> Result<SaveOutcome, WriteError> {
-        let doc = opened.duplicate_doc().ok_or_else(|| WriteError::Failed { message: "the entry was closed".into() })?;
-        let saved = self.store.rename(&entry, &join(folder.trim_matches('/'), &name), Some(&doc))?;
-        if let Some(previous) = &saved.previous {
-            pairings_moved(&self.store, previous, Some(&saved.entry));
-        }
-        let face_id_until_ms = match (&copies, &saved.previous) {
-            (Some(copies), Some(previous)) => copies.reseal(previous, &saved.entry, &doc.to_bytes(), &saved.content_id).ok().flatten(),
-            _ => None,
-        };
-        Ok(SaveOutcome {
-            entry: saved.entry,
-            previous: saved.previous,
-            content_id: saved.content_id,
-            commits: saved.commits.len() as u32,
-            face_id_until_ms,
-        })
+    pub fn delete(&self, entry: String, copies: Option<Arc<CopyCache>>) -> Result<Deleted, WriteError> {
+        self.store.with_copies(copies, Duration::ZERO).delete(&entry)
     }
 
     /// Which keys can open entries in `folder`, and whether paw can save
@@ -428,28 +192,11 @@ impl StoreWriter {
         crate::write::scopes::recipient_scopes(&keyring, self.store.repo(), core::now_secs())
     }
 
-    /// Whether paw can save in `folder` now.
-    pub fn can_save_in(&self, folder: String) -> bool {
-        let Ok(_reading) = self.store.lock().shared() else {
-            return false;
-        };
-        self.store.folder_recipients(&folder).is_ok_and(|r| r.writable())
-    }
-
-    /// Setup, once the store is cloned and the person has seen who can open
-    /// it: records every `.gpg-id` as accepted. Until then nothing can be
-    /// saved; after it, any change to who can open a folder has to be
-    /// accepted for that folder.
-    pub fn accept_all_recipients_at_setup(&self) -> Result<(), WriteError> {
-        // Each keyring change reads, changes and writes the whole file: one
-        // critical section, or two changes at once would lose one.
-        let _held = self.store.exclusive()?;
-        self.store.keyring()?.accept_all_recipients_at_setup(self.store.repo())
-    }
-
     /// After "Who can open … changed": accepts the folder's current
     /// `.gpg-id`.
     pub fn accept_recipients(&self, folder: String) -> Result<(), WriteError> {
+        // Each keyring change reads, changes and writes the whole file: one
+        // critical section, or two changes at once would lose one.
         let _held = self.store.exclusive()?;
         self.store.keyring()?.accept_recipients(self.store.repo(), &folder)
     }
@@ -462,14 +209,6 @@ impl StoreWriter {
         self.store.keyring()?.pin_card_key(key)
     }
 
-    /// Setup, after the test decrypt succeeded: binds the one top-level
-    /// `.gpg-id` line no pinned key satisfies to the card's key. Returns the
-    /// lines bound.
-    pub fn bind_card_after_test_decrypt(&self, card_fingerprint: String) -> Result<Vec<String>, WriteError> {
-        let _held = self.store.exclusive()?;
-        self.store.keyring()?.bind_card_after_test_decrypt(self.store.repo(), &card_fingerprint, core::now_secs())
-    }
-
     /// Records that `line` of a `.gpg-id` means the pinned key `fingerprint`.
     pub fn bind_recipient(&self, line: String, fingerprint: String) -> Result<(), WriteError> {
         let _held = self.store.exclusive()?;
@@ -478,38 +217,20 @@ impl StoreWriter {
 
     /// Reads a public certificate (armored or binary) without keeping it.
     pub fn inspect_certificate(&self, bytes: Vec<u8>) -> Result<Vec<CertificateSummary>, WriteError> {
-        let infos = Self::certificates(&bytes)?;
+        let infos = certificate_infos(&bytes, core::now_secs())?;
         let _reading = self.store.lock().shared()?;
-        self.summaries(&infos)
+        certificate_summaries(self.store.repo(), &infos)
     }
 
     /// Pins the encryption key of each certificate in `bytes`.
     pub fn import_certificate(&self, bytes: Vec<u8>) -> Result<Vec<CertificateSummary>, WriteError> {
-        let infos = Self::certificates(&bytes)?;
+        let infos = certificate_infos(&bytes, core::now_secs())?;
         let _held = self.store.exclusive()?;
         let mut keyring = self.store.keyring()?;
         for info in &infos {
             keyring.pin_certificate(info)?;
         }
-        self.summaries(&infos)
-    }
-
-    /// Forgets a pinned key.
-    pub fn forget_key(&self, fingerprint: String) -> Result<(), WriteError> {
-        let _held = self.store.exclusive()?;
-        self.store.keyring()?.forget(&fingerprint)
-    }
-
-    /// The name and address on paw's commits.
-    pub fn git_identity(&self) -> GitIdentity {
-        core::git_identity(self.store.state_dir())
-    }
-
-    /// Sets the name and address on later commits; `None` goes back to
-    /// "paw".
-    pub fn set_git_identity(&self, identity: Option<GitIdentity>) -> Result<(), WriteError> {
-        let _held = self.store.exclusive()?;
-        core::set_git_identity(self.store.state_dir(), identity.as_ref())
+        certificate_summaries(self.store.repo(), &infos)
     }
 }
 
@@ -517,12 +238,6 @@ impl StoreWriter {
 #[uniffi::export]
 pub fn default_password_policy() -> PasswordPolicy {
     PasswordPolicy::default()
-}
-
-/// A new random password.
-#[uniffi::export]
-pub fn generate_password(policy: PasswordPolicy) -> Result<String, WriteError> {
-    Ok(generate::generate(&policy)?.as_str().to_owned())
 }
 
 /// How strong a password from `policy` is, in bits.

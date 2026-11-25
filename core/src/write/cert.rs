@@ -34,9 +34,8 @@ use pgp::packet::{PubKeyInner, PublicKey, Signature, SignatureType};
 use pgp::types::{KeyDetails, Tag};
 
 use super::WriteError;
-
-/// No certificate file comes close to this.
-const MAX_CERTIFICATE_BYTES: usize = 1 << 20;
+use crate::recipients::hex;
+use crate::store::read::MAX_FILE_BYTES;
 
 /// The key chosen for encrypting to a certificate.
 #[derive(Clone)]
@@ -69,10 +68,6 @@ pub struct CertificateInfo {
     pub encryption: Result<EncryptionChoice, String>,
 }
 
-pub(crate) fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02X}")).collect()
-}
-
 pub(crate) fn fingerprint_of(key: &impl KeyDetails) -> String {
     hex(key.fingerprint().as_bytes())
 }
@@ -81,10 +76,15 @@ fn cert_err(message: impl Into<String>) -> WriteError {
     WriteError::Certificate { message: message.into() }
 }
 
+/// What each certificate in `bytes` offers at `now` ([`evaluate`]).
+pub fn certificate_infos(bytes: &[u8], now: u32) -> Result<Vec<CertificateInfo>, WriteError> {
+    read_certificates(bytes)?.iter().map(|cert| evaluate(cert, now)).collect()
+}
+
 /// Every certificate in `bytes`, armored (`gpg --export --armor`) or
 /// binary (`gpg --export`).
 pub fn read_certificates(bytes: &[u8]) -> Result<Vec<SignedPublicKey>, WriteError> {
-    if bytes.len() > MAX_CERTIFICATE_BYTES {
+    if bytes.len() as u64 > MAX_FILE_BYTES {
         return Err(cert_err("the file is too large to be a public key"));
     }
     let text = bytes.trim_ascii_start();

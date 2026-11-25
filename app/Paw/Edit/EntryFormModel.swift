@@ -379,8 +379,8 @@ final class EntryFormModel {
 
     /// Fields: a key no row has any more is removed; a row that changed
     /// is set. Unchanged rows are left alone, so their lines stay byte for
-    /// byte. A row the core would refuse is checked on a scratch draft
-    /// first and kept out of the real one, whose edits only add up.
+    /// byte. A row the core would refuse is kept out of the draft, whose
+    /// edits only add up.
     private func applyFields(to draft: EntryDraft) {
         var refused: [UUID: String] = [:]
         let current = Set(extraFields.map { Self.fieldKey($0.key) }.filter { !$0.isEmpty })
@@ -393,9 +393,7 @@ final class EntryFormModel {
             if key.isEmpty && field.value.isEmpty { continue }
             let changed = field.originalKey.map(Self.fieldKey) != key || field.originalValue != field.value
             guard changed || appliedFieldKeys.contains(key) else { continue }
-            let probe = writer.newDraft(folder: "")
-            probe.setField(key: field.key, value: field.value)
-            if let problem = probe.problems().first(where: { if case .field = $0.field { true } else { false } }) {
+            if let problem = fieldProblem(key: field.key, value: field.value) {
                 refused[field.id] = problem.message
                 continue
             }
@@ -431,16 +429,16 @@ final class EntryFormModel {
     /// when it couldn't be told. Save waits for `true`.
     var folderWritable: Bool? {
         guard case .success(let recipients)? = recipients else { return nil }
-        return recipients.confirmed && !recipients.changed && recipients.lines.allSatisfy(\.isReady)
+        return recipients.writable
     }
 
     var canSave: Bool {
         problems.isEmpty && fieldProblems.isEmpty && (isEditing ? hasChanges : true) && folderWritable == true
     }
 
-    /// Tries to save. Returns what was saved and the text as saved, or says
-    /// why not in `saveProblem`.
-    func save(copies: CopyCache?) -> (SaveOutcome, String)? {
+    /// Tries to save. Returns what was saved, or says why not in
+    /// `saveProblem`.
+    func save(copies: CopyCache?) -> Saved? {
         guard let draft else { return nil }
         changed()
         guard problems.isEmpty else { return nil }
@@ -450,10 +448,9 @@ final class EntryFormModel {
             // phone, usually to fill it straight in. An edit keeps the
             // copy's deadline, which the core handles.
             let ttl = isEditing ? 0 : AppModel.faceIdWindowSecs
-            let outcome = try BackgroundTime.run("Save") {
+            return try BackgroundTime.run("Save") {
                 try writer.save(draft: draft, copies: copies, newCopyTtlSecs: ttl)
             }
-            return (outcome, isEditing ? draft.text() : "")
         } catch let error as WriteError {
             if case .Invalid(let found) = error {
                 problems = found

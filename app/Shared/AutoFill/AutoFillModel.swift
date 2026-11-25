@@ -195,8 +195,8 @@ final class AutoFillModel {
                 withCode = source.codes?.entries(store: source.store) ?? []
                 switch request {
                 case .list(let services):
-                    found = SiteMatch.entries(in: source.store, for: services, pairings: source.pairings)
-                    matches = found.filter { SiteMatch.isTrusted($0.kind) }.map(\.entry)
+                    found = source.store.matchServices(services: services, pairings: source.pairings)
+                    matches = found.filter { isTrustedMatch(kind: $0.kind) }.map(\.entry)
                     maybe = found.filter { $0.kind == .name(pairing: .unpaired) }.map(\.entry)
                 case .entry(let path, _):
                     matches = SiteMatch.entry(path, in: source.store).map { [$0] } ?? []
@@ -229,7 +229,7 @@ final class AutoFillModel {
             self.matches = matches
             switch request {
             case .list(let services):
-                site = services.lazy.compactMap(SiteMatch.host(of:)).first.map { displayHost(host: $0) }
+                site = services.lazy.compactMap { serviceHost(service: $0) }.first
                 screen = .list
             case .entry:
                 guard let entry = matches.first else {

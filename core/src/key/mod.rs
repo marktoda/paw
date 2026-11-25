@@ -49,7 +49,7 @@ pub use session::KeySession;
 pub use signer::SessionSigner;
 pub use task::KeyTask;
 
-use crate::ffi::OpenedEntry;
+use crate::entry::opened::OpenedEntry;
 
 /// Milliseconds since boot, counting sleep; never goes backwards within one
 /// boot. What the PIN's time in the background is measured with.

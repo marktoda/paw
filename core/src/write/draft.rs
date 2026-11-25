@@ -10,12 +10,11 @@
 //! Nothing is checked as it is typed; [`EntryDraft::problems`] lists what
 //! would stop a save, each with a sentence a person can act on.
 
-use unicode_normalization::UnicodeNormalization;
 use zeroize::Zeroizing;
 
-use crate::entry::EntryDoc;
+use crate::entry::{EntryDoc, FieldRefusal, has_line_break, key_refusal, note_lines, value_refusal};
 use crate::generate::{PasswordPolicy, PolicyError, generate};
-use crate::path::unsafe_path;
+use crate::path::{NameRefusal, case_folded, folder_and_parents, folder_refusal, join, name_refusal, split};
 use crate::store::tree::StoreTree;
 
 /// Which part of the form a problem is about.
@@ -94,83 +93,40 @@ impl std::fmt::Debug for EntryDraft {
     }
 }
 
-/// `folder/name`, or `name` at the top.
-pub(crate) fn join(folder: &str, name: &str) -> String {
-    if folder.is_empty() { name.to_owned() } else { format!("{folder}/{name}") }
-}
-
-/// `(folder, name)` of an entry path.
-pub(crate) fn split(path: &str) -> (&str, &str) {
-    path.rsplit_once('/').unwrap_or(("", path))
-}
-
-/// How a file system that ignores letter case and Unicode normalisation
-/// (APFS on iPhone, by default) sees a name.
-pub(crate) fn canonical(name: &str) -> String {
-    name.nfc().collect::<String>().to_lowercase()
-}
-
 fn place(folder: &str) -> String {
     if folder.is_empty() { "at the top level".into() } else { format!("in {folder}") }
 }
 
 /// Problems with one entry name, as the form words them.
 pub(crate) fn name_problems(name: &str) -> Vec<DraftProblem> {
-    let says = |message: &str| vec![problem(DraftField::Name, message)];
-    if name.trim().is_empty() {
-        return says("Give it a name.");
-    }
-    if name.contains('/') {
-        return says("Names can't contain /.");
-    }
-    if name.starts_with('.') {
-        return says("Names can't start with a dot.");
-    }
-    if name.trim() != name {
-        return says("Names can't start or end with a space.");
-    }
-    if name.chars().any(char::is_control) {
-        return says("Names can't contain line breaks or other control characters.");
-    }
-    if name.contains('\\') {
-        return says("Names can't contain \\.");
-    }
-    if format!("{name}.gpg").len() > 255 {
-        return says("That name is too long.");
-    }
-    if let Some(why) = unsafe_path(name) {
-        return vec![problem(DraftField::Name, format!("paw can't use this name: {why}."))];
-    }
-    Vec::new()
+    let Some(refusal) = name_refusal(name) else { return Vec::new() };
+    let message = match refusal {
+        NameRefusal::Blank => "Give it a name.".into(),
+        NameRefusal::Slash => "Names can't contain /.".into(),
+        NameRefusal::LeadingDot => "Names can't start with a dot.".into(),
+        NameRefusal::OuterSpace => "Names can't start or end with a space.".into(),
+        NameRefusal::Control => "Names can't contain line breaks or other control characters.".into(),
+        NameRefusal::Backslash => "Names can't contain \\.".into(),
+        NameRefusal::TooLong => "That name is too long.".into(),
+        NameRefusal::Unsafe(why) => format!("paw can't use this name: {why}."),
+    };
+    vec![problem(DraftField::Name, message)]
 }
 
 /// Problems with a folder path (`/` separated, empty for the top).
 pub(crate) fn folder_problems(folder: &str) -> Vec<DraftProblem> {
-    if folder.is_empty() {
-        return Vec::new();
-    }
-    let says = |message: String| vec![problem(DraftField::Folder, message)];
-    for component in folder.split('/') {
-        if component.trim().is_empty() {
-            return says("A folder needs a name.".into());
+    let Some(refusal) = folder_refusal(folder) else { return Vec::new() };
+    let message = match refusal {
+        NameRefusal::Blank => "A folder needs a name.".into(),
+        NameRefusal::LeadingDot => "Folder names can't start with a dot.".into(),
+        NameRefusal::OuterSpace => "Folder names can't start or end with a space.".into(),
+        NameRefusal::Slash | NameRefusal::Control | NameRefusal::Backslash => {
+            "Folder names can't contain \\, line breaks or other control characters.".into()
         }
-        if component.starts_with('.') {
-            return says("Folder names can't start with a dot.".into());
-        }
-        if component.trim() != component {
-            return says("Folder names can't start or end with a space.".into());
-        }
-        if component.chars().any(char::is_control) || component.contains('\\') {
-            return says("Folder names can't contain \\, line breaks or other control characters.".into());
-        }
-        if component.len() > 255 {
-            return says("That folder name is too long.".into());
-        }
-    }
-    if let Some(why) = unsafe_path(folder) {
-        return says(format!("paw can't use this folder: {why}."));
-    }
-    Vec::new()
+        NameRefusal::TooLong => "That folder name is too long.".into(),
+        NameRefusal::Unsafe(why) => format!("paw can't use this folder: {why}."),
+    };
+    vec![problem(DraftField::Folder, message)]
 }
 
 /// Whether `path` (an entry or folder, without `.gpg`) collides with
@@ -178,12 +134,12 @@ pub(crate) fn folder_problems(folder: &str) -> Vec<DraftProblem> {
 /// system would see it. Returns the problem to show.
 pub(crate) fn collision(tree: &StoreTree, path: &str, except: Option<&str>) -> Option<DraftProblem> {
     let (folder, name) = split(path);
-    let wanted = canonical(path);
-    let except = except.map(canonical);
+    let wanted = case_folded(path);
+    let except = except.map(case_folded);
     if except.as_deref() == Some(wanted.as_str()) {
         return None;
     }
-    if let Some(existing) = tree.entries().iter().find(|e| canonical(&e.path) == wanted) {
+    if let Some(existing) = tree.entries().iter().find(|e| case_folded(&e.path) == wanted) {
         return Some(problem(
             DraftField::Name,
             format!("There's already an entry called '{}' {}.", existing.name, place(folder)),
@@ -200,7 +156,7 @@ pub(crate) fn collision(tree: &StoreTree, path: &str, except: Option<&str>) -> O
         at = join(&at, component);
         let listing = tree.folder(&parent);
         let other = listing.and_then(|l| {
-            l.folders.iter().find(|f| canonical(&f.name) == canonical(component) && f.name != component)
+            l.folders.iter().find(|f| case_folded(&f.name) == case_folded(component) && f.name != component)
         });
         if let Some(other) = other {
             return Some(problem(
@@ -212,36 +168,36 @@ pub(crate) fn collision(tree: &StoreTree, path: &str, except: Option<&str>) -> O
     None
 }
 
-/// Whether some entry lives in a folder that is `canonical_path` once
-/// letter case and normalisation are ignored.
-fn tree_has_folder(tree: &StoreTree, canonical_path: &str) -> bool {
+/// Whether some entry lives in a folder that is `folded` once letter case
+/// and normalisation are ignored ([`case_folded`]).
+fn tree_has_folder(tree: &StoreTree, folded: &str) -> bool {
     tree.entries().iter().any(|entry| {
-        let mut folder = entry.folder.as_str();
-        while !folder.is_empty() {
-            if canonical(folder) == canonical_path {
-                return true;
-            }
-            folder = split(folder).0;
-        }
-        false
+        folder_and_parents(&entry.folder).take_while(|folder| !folder.is_empty()).any(|folder| case_folded(folder) == folded)
     })
-}
-
-fn line_break(text: &str) -> bool {
-    text.contains(['\n', '\r'])
 }
 
 fn single_line(field: DraftField, what: &str, value: &str) -> Option<DraftProblem> {
-    line_break(value).then(|| problem(field, format!("{what} can't contain a line break.")))
+    has_line_break(value).then(|| problem(field, format!("{what} can't contain a line break.")))
 }
 
 fn value_problem(field: DraftField, what: &str, value: &str) -> Option<DraftProblem> {
-    single_line(field.clone(), what, value).or_else(|| {
-        let trimmed = value.trim_start();
-        let looks_otp = trimmed.get(..10).is_some_and(|s| s.eq_ignore_ascii_case("otpauth://"));
-        (looks_otp || value.trim().starts_with("//"))
-            .then(|| problem(field, format!("{what} can't start with // or be a one-time-code address.")))
-    })
+    let message = match value_refusal(value)? {
+        FieldRefusal::ValueReadsAsOther => format!("{what} can't start with // or be a one-time-code address."),
+        _ => format!("{what} can't contain a line break."),
+    };
+    Some(problem(field, message))
+}
+
+/// The problem with setting the field `key` to `value` (or removing it,
+/// with `None`), as the form words it.
+pub(crate) fn field_problem(key: &str, value: Option<&str>) -> Option<DraftProblem> {
+    let field = || DraftField::Field { key: key.to_owned() };
+    match key_refusal(key) {
+        Some(FieldRefusal::KeyBlank) => Some(problem(field(), "Give the field a name.")),
+        Some(FieldRefusal::KeyLineBreak) => Some(problem(field(), "A field name can't contain a line break.")),
+        Some(_) => Some(problem(field(), "A field name can't contain a colon.")),
+        None => value.and_then(|v| value_problem(field(), &format!("The value of {}", key.trim()), v)),
+    }
 }
 
 impl EntryDraft {
@@ -394,23 +350,14 @@ impl EntryDraft {
             problems.push(p);
         }
         for edit in &self.fields {
-            let (key, value) = match edit {
-                FieldEdit::Set { key, value } => (key, Some(value)),
-                FieldEdit::Remove { key } => (key, None),
+            let found = match edit {
+                FieldEdit::Set { key, value } => field_problem(key, Some(value)),
+                FieldEdit::Remove { key } => field_problem(key, None),
             };
-            let field = || DraftField::Field { key: key.clone() };
-            if key.trim().is_empty() {
-                problems.push(problem(field(), "Give the field a name."));
-            } else if line_break(key) {
-                problems.push(problem(field(), "A field name can't contain a line break."));
-            } else if key.contains(':') {
-                problems.push(problem(field(), "A field name can't contain a colon."));
-            } else if let Some(p) = value.and_then(|v| value_problem(field(), &format!("The value of {}", key.trim()), v)) {
-                problems.push(p);
-            }
+            problems.extend(found);
         }
         if let Some(notes) = &self.notes
-            && notes.replace("\r\n", "\n").contains('\r')
+            && note_lines(notes).is_none()
         {
             problems.push(problem(DraftField::Notes, "Notes can't contain a lone carriage return."));
         }
@@ -482,7 +429,7 @@ impl EntryDraft {
             }
         }
         if let Some(notes) = &self.notes {
-            doc.set_notes(&notes.replace("\r\n", "\n")).map_err(fail(DraftField::Notes))?;
+            doc.set_notes(notes).map_err(fail(DraftField::Notes))?;
         }
         match &self.otp {
             Some(OtpEdit::Set(setup)) => {

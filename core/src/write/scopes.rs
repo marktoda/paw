@@ -18,9 +18,11 @@ use std::path::Path;
 
 use super::WriteError;
 use super::keyring::{KeySource, Keyring, LineStatus};
+use crate::path::folder_of_gpg_id;
 use crate::recipients::{Recipient, entry_recipients};
-use crate::store::gpg_id::{governing_gpg_id, parse_gpg_id};
-use crate::store::read::read_entry;
+use crate::path::GPG_ID;
+use crate::store::gpg_id::{governing_gpg_id, key_digits, parse_gpg_id};
+use crate::store::read::{read_entry, read_file};
 use crate::store::tree::StoreTree;
 
 /// One key a `.gpg-id` names, as the screen shows it.
@@ -60,26 +62,14 @@ pub struct RecipientScope {
     pub unsure_entries: u32,
 }
 
-fn compact(text: &str) -> String {
-    let trimmed = text.trim();
-    let bare = trimmed.strip_suffix('!').unwrap_or(trimmed);
-    let bare = bare.strip_prefix("0x").or_else(|| bare.strip_prefix("0X")).unwrap_or(bare);
-    bare.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_ascii_uppercase()
-}
-
 /// The 64-bit key ID a recipient packet would name for a key with this
 /// fingerprint or long ID (16, 40 or 64 hex digits).
 fn key_id(text: &str) -> Option<String> {
-    let hex = compact(text);
-    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
+    let digits = key_digits(text)?;
+    if digits.len() == 16 {
+        return Some(digits);
     }
-    match hex.len() {
-        16 => Some(hex),
-        40 => Some(hex[24..].to_owned()),
-        64 => Some(hex[..16].to_owned()),
-        _ => None,
-    }
+    crate::recipients::key_id(&digits).map(str::to_owned)
 }
 
 /// How a packet's recipient reads as a key ID.
@@ -89,11 +79,6 @@ fn packet_key_id(recipient: &Recipient) -> Option<String> {
         Recipient::Fingerprint { fingerprint } => key_id(fingerprint),
         Recipient::Hidden => None,
     }
-}
-
-/// The folder a `.gpg-id` path is in.
-fn folder_of(gpg_id: &str) -> String {
-    gpg_id.strip_suffix(".gpg-id").unwrap_or(gpg_id).trim_end_matches('/').to_owned()
 }
 
 /// Every `.gpg-id` of the store at `root`, top first, with what it says.
@@ -115,16 +100,15 @@ pub fn recipient_scopes(keyring: &Keyring, root: &Path, now: u32) -> Result<Vec<
     }
     // `.gpg-id` files that govern no entry still say who could open one.
     let mut files: BTreeSet<String> = governed.keys().cloned().collect();
-    if root.join(".gpg-id").is_file() {
-        files.insert(".gpg-id".into());
-    }
+    files.insert(GPG_ID.into());
     if let Ok(paths) = super::keyring::gpg_id_paths(root) {
-        files.extend(paths.into_iter().filter(|p| root.join(p).is_file()));
+        files.extend(paths);
     }
 
     let mut scopes = Vec::new();
     for gpg_id in files {
-        let Ok(bytes) = std::fs::read(root.join(&gpg_id)) else { continue };
+        // Not in the working copy, or not a file paw reads (a link).
+        let Ok(Some(bytes)) = read_file(root, &gpg_id) else { continue };
         let text = String::from_utf8_lossy(&bytes);
         let lines = parse_gpg_id(&text);
         let mut known: HashSet<String> = HashSet::new();
@@ -184,7 +168,7 @@ pub fn recipient_scopes(keyring: &Keyring, root: &Path, now: u32) -> Result<Vec<
         }
         other_key_entries.sort();
         scopes.push(RecipientScope {
-            folder: folder_of(&gpg_id),
+            folder: folder_of_gpg_id(&gpg_id).to_owned(),
             gpg_id,
             keys,
             entry_count: entries.len() as u32,
@@ -210,12 +194,5 @@ mod tests {
         );
         assert_eq!(key_id("you@example.com"), None);
         assert_eq!(key_id("ABCD1234"), None);
-    }
-
-    #[test]
-    fn folders_of_gpg_ids() {
-        assert_eq!(folder_of(".gpg-id"), "");
-        assert_eq!(folder_of("work/.gpg-id"), "work");
-        assert_eq!(folder_of("a/b/.gpg-id"), "a/b");
     }
 }

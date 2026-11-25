@@ -154,8 +154,8 @@ final class Fixture {
         form.changed()
         await waitFor("who can open \(folder)", file: file, line: line) { form.folderWritable != nil }
         XCTAssertTrue(form.canSave, "\(form.problems)", file: file, line: line)
-        let (outcome, text) = try XCTUnwrap(form.save(copies: model.copies), file: file, line: line)
-        model.saved(outcome, purpose: form.purpose, savedText: text)
+        let outcome = try XCTUnwrap(form.save(copies: model.copies), file: file, line: line)
+        model.saved(outcome, purpose: form.purpose)
     }
 }
 

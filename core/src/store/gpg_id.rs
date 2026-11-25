@@ -9,6 +9,7 @@ use std::path::Path;
 
 use super::read::read_file;
 use crate::PawError;
+use crate::path::{folder_and_parents, gpg_id_in};
 
 /// The key names in a `.gpg-id` file. Like `pass`, this drops everything
 /// from a `#` to the end of a line, and lines that are then blank.
@@ -18,6 +19,17 @@ pub fn parse_gpg_id(text: &str) -> Vec<String> {
         .filter(|line| !line.is_empty())
         .map(str::to_owned)
         .collect()
+}
+
+/// The hex digits of a line that names a key by fingerprint or key ID, in
+/// upper case: without spaces, a `0x` or the `!` that asks GnuPG for exactly
+/// this subkey (it names the same key). `None` for any other line.
+pub(crate) fn key_digits(line: &str) -> Option<String> {
+    let line = line.trim();
+    let bare = line.strip_suffix('!').unwrap_or(line);
+    let compact: String = bare.chars().filter(|c| !c.is_whitespace()).collect();
+    let digits = compact.strip_prefix("0x").or_else(|| compact.strip_prefix("0X")).unwrap_or(&compact);
+    (!digits.is_empty() && digits.chars().all(|c| c.is_ascii_hexdigit())).then(|| digits.to_ascii_uppercase())
 }
 
 /// The recipients for entries in `folder` (`/` separated, empty for the top
@@ -32,17 +44,10 @@ pub fn recipients_for(root: &Path, folder: &str) -> Result<Vec<String>, PawError
 /// The `.gpg-id` file that decides the recipients for entries in `folder`:
 /// its path in the store (e.g. `work/.gpg-id`) and its bytes.
 pub fn governing_gpg_id(root: &Path, folder: &str) -> Result<(String, Vec<u8>), PawError> {
-    let mut at = folder;
-    loop {
-        let file = if at.is_empty() { ".gpg-id".to_owned() } else { format!("{at}/.gpg-id") };
+    for file in folder_and_parents(folder).map(gpg_id_in) {
         if let Some(bytes) = read_file(root, &file)? {
             return Ok((file, bytes));
         }
-        if at.is_empty() {
-            return Err(PawError::Store(
-                "this store has no .gpg-id file, so it does not say which keys it is for".into(),
-            ));
-        }
-        at = at.rsplit_once('/').map_or("", |(parent, _)| parent);
     }
+    Err(PawError::Store("this store has no .gpg-id file, so it does not say which keys it is for".into()))
 }

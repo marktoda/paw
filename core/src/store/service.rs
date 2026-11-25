@@ -42,20 +42,12 @@
 //! with this domain, not yet paired, or paired only with other domains of
 //! the same name (a lookalike: the app does not offer it).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::pairings::Pairing;
 use super::tree::EntryRef;
-use crate::ffi::OpenedEntry;
-
-/// An entry that may hold the login for a service.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct ServiceMatch {
-    pub entry: EntryRef,
-    /// A part of the path is exactly the host asked for. Otherwise it is
-    /// another host of the same registrable domain.
-    pub exact: bool,
-}
+use crate::entry::opened::OpenedEntry;
 
 fn is_host(text: &str) -> bool {
     !text.is_empty()
@@ -171,12 +163,51 @@ pub fn site_name(host: &str) -> Option<String> {
     squeeze(label)
 }
 
-/// The registrable domain a service identifier is on, for pairing:
+/// The registrable domain a service identifier is on:
 /// `bankofamerica.com` for `https://www.bankofamerica.com/login`. `None`
-/// where there is none.
-pub fn registrable_domain(service: &str) -> Option<String> {
-    let host = host_of(service)?;
+/// where there is none: a bare word, an IP address, a public suffix.
+#[uniffi::export]
+pub fn registrable_domain(service: String) -> Option<String> {
+    let host = host_of(&service)?;
     registrable(&host).map(str::to_owned)
+}
+
+/// The host of a service identifier as AutoFill names the site, the way
+/// [`display_host`] shows it: `github.com` for `https://GitHub.com/login`.
+#[uniffi::export]
+pub fn service_host(service: String) -> Option<String> {
+    host_of(&service)
+}
+
+/// Whether `part` is a plain ASCII host name with a dot: letters, digits
+/// and inner `-` in each label, and a last label with a letter (so no IP
+/// address).
+fn is_plain_host(part: &str) -> bool {
+    if part.len() > 253 || part.starts_with('.') || part.ends_with('.') {
+        return false;
+    }
+    let labels: Vec<&str> = part.split('.').collect();
+    labels.len() >= 2
+        && labels.iter().all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
+        && labels.last().is_some_and(|last| last.chars().any(|c| c.is_ascii_alphabetic()))
+}
+
+/// The domain the suggestions above the keyboard give the entry at `path`:
+/// the last part of its path that is a plain ASCII host name with a dot
+/// (`web/github.com`, `github.com/alice`), in lower case, if that is a
+/// registrable domain or a name under one. `None` for names like `GitHub`,
+/// IP addresses, and public suffixes (`co.uk`, `github.io`), which iOS
+/// might offer on every site under them.
+#[uniffi::export]
+pub fn suggestion_domain(path: String) -> Option<String> {
+    let part = path.split('/').rev().find(|part| is_plain_host(part))?.to_ascii_lowercase();
+    registrable(&part).is_some().then_some(part)
 }
 
 /// Folder names that sort entries by kind rather than name a site:
@@ -232,36 +263,6 @@ fn fit(part: &str, host: &str, host_domain: Option<&str>) -> Option<u8> {
     (Some(domain) == host_domain).then_some(1)
 }
 
-/// The entries to offer for `service` (a host name or a web address), best
-/// first: exact hosts, then the same registrable domain; within each, the
-/// shorter path, then alphabetically.
-pub fn match_service(entries: &[EntryRef], service: &str) -> Vec<ServiceMatch> {
-    let Some(host) = host_of(service) else {
-        return Vec::new();
-    };
-    let host_domain = registrable(&host);
-
-    let mut matches: Vec<(u8, &EntryRef)> = entries
-        .iter()
-        .filter_map(|entry| {
-            let best = entry.path.split('/').filter_map(|part| fit(part, &host, host_domain)).min()?;
-            Some((best, entry))
-        })
-        .collect();
-    matches.sort_by(|a, b| {
-        (a.0, a.1.path.chars().count(), a.1.path.to_lowercase(), &a.1.path).cmp(&(
-            b.0,
-            b.1.path.chars().count(),
-            b.1.path.to_lowercase(),
-            &b.1.path,
-        ))
-    });
-    matches
-        .into_iter()
-        .map(|(fit, entry)| ServiceMatch { entry: entry.clone(), exact: fit == 0 })
-        .collect()
-}
-
 /// Whether a name match is one the person has confirmed on this site.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum NamePairing {
@@ -305,11 +306,18 @@ fn rank(kind: &MatchKind) -> u8 {
     }
 }
 
-/// Every entry that matches `service` by host ([`match_service`]) or by
-/// name, best first: exact host, same registrable domain, then name
-/// matches paired here, not yet paired, and paired only elsewhere. Within
-/// each, the shorter path, then alphabetically. `pairings` are the
-/// confirmed pairings ([`super::pairings`]).
+/// Whether a match fills without asking: by host, or by a name already
+/// filled on this domain.
+#[uniffi::export]
+pub fn is_trusted_match(kind: MatchKind) -> bool {
+    rank(&kind) <= 2
+}
+
+/// Every entry that matches `service` by host or by name, best first:
+/// exact host, same registrable domain, then name matches paired here, not
+/// yet paired, and paired only elsewhere. Within each, the shorter path,
+/// then alphabetically. `pairings` are the confirmed pairings
+/// ([`super::pairings`]).
 pub fn match_site(entries: &[EntryRef], service: &str, pairings: &[Pairing]) -> Vec<MatchedEntry> {
     let Some(host) = host_of(service) else {
         return Vec::new();
@@ -341,6 +349,37 @@ pub fn match_site(entries: &[EntryRef], service: &str, pairings: &[Pairing]) -> 
         key(a).cmp(&key(b)).then_with(|| a.entry.path.cmp(&b.entry.path))
     });
     matches
+}
+
+/// Whether a service may be matched automatically at all: printable ASCII
+/// only, and a host with a dot. [`match_site`] matches a dotless host
+/// (`http://github/`, an intranet name anyone can register) exactly
+/// against an entry called `GitHub`; AutoFill does not offer that.
+fn is_plain(service: &str) -> bool {
+    !service.is_empty()
+        && service.bytes().all(|b| (0x21..0x7F).contains(&b))
+        && host_of(service).is_some_and(|host| host.contains('.'))
+}
+
+/// The entries AutoFill offers for `services` (the web addresses or hosts
+/// iOS names), by [`match_site`] for each plain one ([`is_plain`]): each
+/// entry once, as its best match, best first, and in the order found within
+/// a kind.
+pub fn match_services(entries: &[EntryRef], services: &[String], pairings: &[Pairing]) -> Vec<MatchedEntry> {
+    let mut best: HashMap<String, (usize, MatchedEntry)> = HashMap::new();
+    let mut order = 0;
+    for service in services.iter().filter(|service| is_plain(service)) {
+        for found in match_site(entries, service, pairings) {
+            order += 1;
+            if best.get(&found.entry.path).is_some_and(|(_, known)| rank(&known.kind) <= rank(&found.kind)) {
+                continue;
+            }
+            best.insert(found.entry.path.clone(), (order, found));
+        }
+    }
+    let mut found: Vec<(usize, MatchedEntry)> = best.into_values().collect();
+    found.sort_by_key(|(order, found)| (rank(&found.kind), *order));
+    found.into_iter().map(|(_, found)| found).collect()
 }
 
 /// How `path`, a name match for the site `site` named `name`, stands with
@@ -388,15 +427,6 @@ pub enum UrlCheck {
     Differs { url: String, site: String },
 }
 
-/// Field keys read as the entry's web address, compared in lower case
-/// without spaces, `-` and `_`: `url`, `URL`, `Login URL`, `website`…
-const URL_KEYS: &[&str] = &["url", "uri", "link", "website", "web", "site", "loginurl", "siteurl", "websiteurl"];
-
-fn is_url_key(key: &str) -> bool {
-    let key: String = key.chars().filter(|c| !matches!(c, ' ' | '-' | '_')).flat_map(char::to_lowercase).collect();
-    URL_KEYS.contains(&key.as_str())
-}
-
 /// The site an address field names: the registrable domain of its host,
 /// or the host itself where there is none (an IP address). Tolerant of how
 /// people write them: `northwind.example`, `HTTPS://Login.Northwind.Example:8443/x`,
@@ -426,7 +456,7 @@ pub fn url_site(value: &str) -> Option<String> {
 /// Compares address field values (`url: …` lines) with the sites being
 /// filled ([`check_entry_url`]): [`UrlCheck::Same`] when any address is on
 /// the registrable domain of any of `services`.
-pub fn check_urls(values: &[String], services: &[String]) -> UrlCheck {
+pub fn check_urls(values: &[&str], services: &[String]) -> UrlCheck {
     let urls: Vec<String> = values.iter().filter_map(|value| url_site(value)).collect();
     let sites: Vec<String> = services
         .iter()
@@ -442,47 +472,23 @@ pub fn check_urls(values: &[String], services: &[String]) -> UrlCheck {
     UrlCheck::Differs { url: display_host(url.clone()), site: display_host(site.clone()) }
 }
 
-/// Checks an opened entry's own address fields (`url:`, `website:`,
-/// `site:`, `Login URL:`… in any case, every such line) against the sites
-/// being filled, for AutoFill before it hands the password over. Reads the
-/// fields only; keeps nothing.
+/// Checks an opened entry's own address fields ([`EntryDoc::addresses`])
+/// against the sites being filled, for AutoFill before it hands the
+/// password over. Reads the fields only; keeps nothing.
+///
+/// [`EntryDoc::addresses`]: crate::entry::EntryDoc::addresses
 #[uniffi::export]
 pub fn check_entry_url(entry: Arc<OpenedEntry>, services: Vec<String>) -> UrlCheck {
-    // `url()` is the first address line; the view lists every other field.
-    let mut values: Vec<String> = entry.url().into_iter().collect();
-    for field in entry.view().fields {
-        if is_url_key(&field.key)
-            && let Some(value) = entry.field_value(field.id)
-        {
-            values.push(value);
-        }
-    }
-    check_urls(&values, &services)
+    entry.read(|doc| check_urls(&doc.addresses(), &services)).unwrap_or(UrlCheck::NoUrl)
 }
 
-/// Keys read as the user name, in order of preference, as in
-/// [`crate::entry`].
-const USERNAME_KEYS: [&str; 4] = ["login", "username", "user", "email"];
-
 /// The user name AutoFill fills for the entry at `path`: the entry's own
-/// `login:` line, else `username:`, `user:` or `email:` (the first that is
-/// not empty), else the path's guess ([`path_user`]). The entry's line
-/// always wins over the path.
+/// ([`EntryDoc::filled_username`]), else the path's guess ([`path_user`]).
+///
+/// [`EntryDoc::filled_username`]: crate::entry::EntryDoc::filled_username
 #[uniffi::export]
 pub fn fill_username(entry: Arc<OpenedEntry>, path: String) -> Option<String> {
-    let first = entry.username().filter(|user| !user.trim().is_empty());
-    let from_body = first.or_else(|| {
-        // The first user name line was empty: the other user name lines
-        // are among the view's fields.
-        let fields = entry.view().fields;
-        USERNAME_KEYS.iter().find_map(|wanted| {
-            fields
-                .iter()
-                .filter(|field| field.key.to_lowercase() == *wanted)
-                .find_map(|field| entry.field_value(field.id).filter(|user| !user.trim().is_empty()))
-        })
-    });
-    from_body.map(|user| user.trim().to_owned()).or_else(|| path_user(&path))
+    entry.read(|doc| doc.filled_username().map(str::to_owned)).flatten().or_else(|| path_user(&path))
 }
 
 /// The user name a path gives in a `site/user` layout: the entry's name

@@ -9,9 +9,8 @@
 //! nothing else. Never the secret, never a code.
 //!
 //! The file is `one-time-codes.json` in the store's state directory, next
-//! to `site-pairings.json` and written the same way ([`super::pairings`]):
-//! not synced, removed with the store, each write a whole file renamed over
-//! the old one. Two processes writing in the same instant can lose one
+//! to `site-pairings.json` and written the same way
+//! ([`super::state_file`]). Two processes writing in the same instant can lose one
 //! mark, which costs one entry missing from the code list until it is
 //! opened again. Bounded to [`MAX_ENTRIES`] paths, the least recently
 //! marked dropped first.
@@ -24,16 +23,12 @@
 //! nothing is written or read, and turning it off deletes the file.
 
 use std::collections::HashSet;
-use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use serde::{Deserialize, Serialize};
-
 use super::PassStore;
-use super::pairings::write_atomic;
+use super::state_file::{ListFile, ListKind, MAX_PATH_BYTES, remove_if_there};
 use crate::PawError;
-use crate::ffi::OpenedEntry;
 
 /// The file, in the state directory.
 pub const FILE: &str = "one-time-codes.json";
@@ -41,55 +36,44 @@ pub const FILE: &str = "one-time-codes.json";
 pub const ON_MARKER: &str = "one-time-codes-on";
 /// The most entries kept.
 pub const MAX_ENTRIES: usize = 1000;
-/// A longer path is not kept.
-const MAX_PATH_BYTES: usize = 512;
-/// A larger file is not read.
-const MAX_FILE_BYTES: u64 = 1024 * 1024;
-const VERSION: u32 = 1;
-const TEMP_PREFIX: &str = ".one-time-codes.tmp-";
 
-#[derive(Serialize, Deserialize)]
-struct Book {
-    version: u32,
-    /// Least recently marked first.
-    entries: Vec<String>,
-}
-
-/// Threads of this process write one at a time.
-static WRITING: Mutex<()> = Mutex::new(());
+static LIST: ListKind = ListKind {
+    file: FILE,
+    key: "entries",
+    temp_prefix: ".one-time-codes.tmp-",
+    max_items: MAX_ENTRIES,
+    writing: Mutex::new(()),
+};
 
 /// The one-time-code marks of one store.
-#[derive(Debug, Clone)]
 pub struct CodeFile {
-    state_dir: PathBuf,
+    list: ListFile,
 }
 
 impl CodeFile {
     pub fn new(state_dir: &Path) -> Self {
-        Self { state_dir: state_dir.to_path_buf() }
+        Self { list: ListFile::new(state_dir, &LIST) }
     }
 
     pub fn path(&self) -> PathBuf {
-        self.state_dir.join(FILE)
+        self.list.path()
     }
 
     /// Whether the person turned the list on.
     pub fn enabled(&self) -> bool {
-        self.state_dir.join(ON_MARKER).exists()
+        self.list.state_dir().join(ON_MARKER).exists()
     }
 
     /// Turns the list on or off. Either way it starts empty: on clears
     /// what a write racing an earlier off may have left; off removes the
     /// marker first, so no new mark is kept, then the file.
     pub fn set_enabled(&self, enabled: bool) -> std::io::Result<()> {
-        let _turn = WRITING.lock().unwrap_or_else(|e| e.into_inner());
-        let marker = self.state_dir.join(ON_MARKER);
+        let _turn = self.list.turn();
+        let marker = self.list.state_dir().join(ON_MARKER);
         if enabled {
-            if !self.state_dir.is_dir() {
-                return Err(std::io::Error::new(ErrorKind::NotFound, "the store's folder is gone"));
-            }
+            self.list.require_dir()?;
             remove_if_there(&self.path())?;
-            return write_atomic(&self.state_dir, TEMP_PREFIX, &marker, b"");
+            return self.list.write_beside(&marker, b"");
         }
         let unmarked = remove_if_there(&marker);
         let removed = remove_if_there(&self.path());
@@ -102,53 +86,14 @@ impl CodeFile {
         if !self.enabled() {
             return Vec::new();
         }
-        let Ok(file) = std::fs::File::open(self.path()) else { return Vec::new() };
-        let mut bytes = Vec::new();
-        if file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes).is_err() || bytes.len() as u64 > MAX_FILE_BYTES {
-            return Vec::new();
-        }
-        let Ok(book) = serde_json::from_slice::<Book>(&bytes) else { return Vec::new() };
-        if book.version != VERSION {
-            return Vec::new();
-        }
-        let mut seen = HashSet::new();
-        let mut entries: Vec<String> = book
-            .entries
-            .into_iter()
-            .filter(|e| !e.is_empty() && e.len() <= MAX_PATH_BYTES)
-            .filter(|e| seen.insert(e.clone()))
-            .collect();
-        let extra = entries.len().saturating_sub(MAX_ENTRIES);
-        entries.drain(..extra);
-        entries
+        self.list.load()
     }
 
     /// Reads, changes and writes the file; nothing is written if `change`
     /// says it changed nothing, or while the list is off. Refuses if the
     /// state directory is gone.
     fn update(&self, change: impl FnOnce(&mut Vec<String>) -> bool) -> std::io::Result<bool> {
-        let _turn = WRITING.lock().unwrap_or_else(|e| e.into_inner());
-        if !self.state_dir.is_dir() {
-            return Err(std::io::Error::new(ErrorKind::NotFound, "the store's folder is gone"));
-        }
-        if !self.enabled() {
-            return Ok(false);
-        }
-        let mut entries = self.load();
-        if !change(&mut entries) {
-            return Ok(false);
-        }
-        let extra = entries.len().saturating_sub(MAX_ENTRIES);
-        entries.drain(..extra);
-        let bytes = serde_json::to_vec(&Book { version: VERSION, entries })
-            .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))?;
-        write_atomic(&self.state_dir, TEMP_PREFIX, &self.path(), &bytes)?;
-        // The other process turned the list off while this one wrote.
-        if !self.enabled() {
-            remove_if_there(&self.path())?;
-            return Ok(false);
-        }
-        Ok(true)
+        self.list.update(|| self.enabled(), change)
     }
 
     /// Keeps whether `entry` has a code. True if that changed the file. A
@@ -189,15 +134,7 @@ impl CodeFile {
 
     /// Forgets every mark.
     pub fn clear(&self) -> std::io::Result<()> {
-        let _turn = WRITING.lock().unwrap_or_else(|e| e.into_inner());
-        remove_if_there(&self.path())
-    }
-}
-
-fn remove_if_there(path: &Path) -> std::io::Result<()> {
-    match std::fs::remove_file(path) {
-        Err(e) if e.kind() != ErrorKind::NotFound => Err(e),
-        _ => Ok(()),
+        self.list.clear()
     }
 }
 
@@ -221,17 +158,10 @@ impl OneTimeCodeEntries {
         Arc::new(Self { file: CodeFile::new(Path::new(&state_dir)) })
     }
 
-    /// `opened`, the entry at `entry`, was just opened: keeps whether it
-    /// has a one-time code that works. True if that changed what is kept
-    /// (the suggestions above the keyboard are then out of date). False,
-    /// and nothing kept, once `opened` is closed or while the list is off.
-    pub fn note_opened(&self, entry: String, opened: Arc<OpenedEntry>) -> Result<bool, PawError> {
-        let Some(has_code) = opened.makes_codes() else { return Ok(false) };
-        self.file.mark(&entry, has_code).map_err(failed)
-    }
-
-    /// `note_opened` with the answer already read from the entry
-    /// (`OpenedEntry.makes_one_time_codes`), for after the entry is wiped.
+    /// The entry at `entry` was opened or saved: keeps whether it has a
+    /// one-time code that works (`OpenedEntry.makes_one_time_codes`). True
+    /// if that changed what is kept (the suggestions above the keyboard are
+    /// then out of date). False, and nothing kept, while the list is off.
     pub fn note(&self, entry: String, has_code: bool) -> Result<bool, PawError> {
         self.file.mark(&entry, has_code).map_err(failed)
     }
@@ -265,6 +195,7 @@ impl OneTimeCodeEntries {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::entry::opened::OpenedEntry;
 
     const WITH_CODE: &[u8] = b"pw\notpauth://totp/GitHub:you?secret=JBSWY3DPEHPK3PXP&issuer=GitHub\n";
     const BROKEN_CODE: &[u8] = b"pw\notpauth://totp/GitHub:you?secret=!!!\n";
@@ -295,7 +226,7 @@ mod tests {
         let d = dir();
         let codes = OneTimeCodeEntries::open(d.path().to_str().unwrap().into());
         assert!(!codes.enabled());
-        assert!(!codes.note_opened("web/github.com".into(), opened(WITH_CODE)).unwrap());
+        assert!(!codes.note("web/github.com".into(), opened(WITH_CODE).makes_one_time_codes()).unwrap());
         assert!(!codes.note("web/github.com".into(), true).unwrap());
         assert!(!d.path().join(FILE).exists(), "nothing is written while off");
         // A file left by a write that raced an off is not read.
@@ -340,10 +271,10 @@ mod tests {
     fn opening_marks_an_entry_with_a_working_code_and_nothing_else() {
         let d = dir();
         let codes = codes(&d);
-        assert!(codes.note_opened("web/github.com".into(), opened(WITH_CODE)).unwrap());
-        assert!(!codes.note_opened("web/github.com".into(), opened(WITH_CODE)).unwrap(), "no change, no write");
-        assert!(!codes.note_opened("web/gitlab.com".into(), opened(b"pw\nlogin: you\n")).unwrap());
-        assert!(!codes.note_opened("web/broken.com".into(), opened(BROKEN_CODE)).unwrap());
+        assert!(codes.note("web/github.com".into(), opened(WITH_CODE).makes_one_time_codes()).unwrap());
+        assert!(!codes.note("web/github.com".into(), opened(WITH_CODE).makes_one_time_codes()).unwrap(), "no change, no write");
+        assert!(!codes.note("web/gitlab.com".into(), opened(b"pw\nlogin: you\n").makes_one_time_codes()).unwrap());
+        assert!(!codes.note("web/broken.com".into(), opened(BROKEN_CODE).makes_one_time_codes()).unwrap());
         assert_eq!(codes.file.load(), ["web/github.com"]);
         let text = std::fs::read_to_string(d.path().join(FILE)).unwrap();
         assert!(!text.contains("JBSW") && !text.contains("otpauth") && !text.contains("pw"), "{text}");
@@ -353,8 +284,8 @@ mod tests {
     fn a_code_removed_since_unmarks_it() {
         let d = dir();
         let codes = codes(&d);
-        codes.note_opened("a".into(), opened(WITH_CODE)).unwrap();
-        assert!(codes.note_opened("a".into(), opened(b"pw\n")).unwrap());
+        codes.note("a".into(), opened(WITH_CODE).makes_one_time_codes()).unwrap();
+        assert!(codes.note("a".into(), opened(b"pw\n").makes_one_time_codes()).unwrap());
         assert!(codes.file.load().is_empty());
     }
 
@@ -364,7 +295,7 @@ mod tests {
         let codes = codes(&d);
         let entry = opened(WITH_CODE);
         entry.close();
-        assert!(!codes.note_opened("a".into(), entry).unwrap());
+        assert!(!codes.note("a".into(), entry.makes_one_time_codes()).unwrap());
         assert!(!d.path().join(FILE).exists());
     }
 
@@ -398,7 +329,7 @@ mod tests {
         let d = dir();
         let file = file_on(d.path());
         let many: Vec<String> = (0..MAX_ENTRIES + 5).map(|i| format!("e{i}")).collect();
-        let bytes = serde_json::to_vec(&Book { version: VERSION, entries: many }).unwrap();
+        let bytes = serde_json::to_vec(&serde_json::json!({ "version": 1, "entries": many })).unwrap();
         std::fs::write(file.path(), bytes).unwrap();
         let loaded = file.load();
         assert_eq!(loaded.len(), MAX_ENTRIES);

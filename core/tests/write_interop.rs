@@ -422,5 +422,5 @@ fn certificate_import_reports_what_it_would_satisfy_before_pinning() {
     assert_eq!(preview[0].encryption_fingerprint.as_deref(), Some(gpg.fingerprints(&primary)[1].as_str()));
     // Inspecting pins nothing.
     assert!(Keyring::open(&store.state).unwrap().keys().iter().all(|k| k.primary.is_none()));
-    assert!(!store.writer().can_save_in(String::new()));
+    assert!(!store.writer().folder_recipients(String::new()).is_ok_and(|r| r.writable));
 }

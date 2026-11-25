@@ -121,7 +121,8 @@ fn header(bytes: &[u8], at: usize) -> Result<(u8, Length, usize), PawError> {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
+/// `bytes` as upper-case hex, the way fingerprints and key IDs are written.
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02X}")).collect()
 }
 
@@ -205,10 +206,24 @@ pub fn entry_recipients(bytes: &[u8]) -> Result<EntryRecipients, PawError> {
     }
 }
 
-/// The 64-bit key ID of a v4 key: the low 64 bits of its fingerprint.
-fn key_id_of(fingerprint: &str) -> Option<&str> {
-    let start = fingerprint.len().checked_sub(16)?;
-    fingerprint.get(start..)
+/// The 64-bit key ID of the key with `fingerprint` (hex): the low 64 bits
+/// of a v4 fingerprint (40 digits), the high 64 bits of a v6 one (64).
+pub(crate) fn key_id(fingerprint: &str) -> Option<&str> {
+    match fingerprint.len() {
+        40 => fingerprint.get(24..),
+        64 => fingerprint.get(..16),
+        _ => None,
+    }
+}
+
+/// Whether one of `recipients` names the key with `fingerprint` (upper-case
+/// hex, no spaces): by that fingerprint, or by its key ID.
+pub(crate) fn names_key(recipients: &[Recipient], fingerprint: &str) -> bool {
+    recipients.iter().any(|recipient| match recipient {
+        Recipient::KeyId { id } => key_id(fingerprint) == Some(id.as_str()),
+        Recipient::Fingerprint { fingerprint: named } => named == fingerprint,
+        Recipient::Hidden => false,
+    })
 }
 
 /// Decides whether the key whose decryption (sub)key has `card_fingerprint`
@@ -222,19 +237,12 @@ pub fn access_for(recipients: &EntryRecipients, card_fingerprint: &str) -> Acces
         .filter(|c| !c.is_whitespace())
         .map(|c| c.to_ascii_uppercase())
         .collect();
-    let card_id = key_id_of(&card);
-
     if recipients.keys.is_empty() {
         return Access::Unreadable {
             reason: "it is locked with a passphrase, not for a key".into(),
         };
     }
-    let named = recipients.keys.iter().any(|recipient| match recipient {
-        Recipient::KeyId { id } => Some(id.as_str()) == card_id,
-        Recipient::Fingerprint { fingerprint } => *fingerprint == card,
-        Recipient::Hidden => false,
-    });
-    if named {
+    if names_key(&recipients.keys, &card) {
         Access::CanOpen
     } else if recipients.keys.contains(&Recipient::Hidden) {
         Access::MightOpen

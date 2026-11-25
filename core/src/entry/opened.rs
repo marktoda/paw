@@ -1,6 +1,6 @@
-//! An opened entry, as Swift holds it.
+//! An opened entry: the decrypted text and the file it came from.
 //!
-//! The plaintext stays here. Swift gets a description with no secret in it
+//! The plaintext stays in the core. Swift gets a description with no secret in it
 //! ([`EntryView`]) and asks for one value at a time, when the person taps
 //! copy or reveal. A string that has crossed to Swift cannot be wiped, so
 //! the fewer and the later, the better.
@@ -56,24 +56,62 @@ impl std::fmt::Debug for OtpCode {
 #[derive(uniffi::Object)]
 pub struct OpenedEntry {
     doc: Mutex<Option<EntryDoc>>,
+    /// The content id ([`crate::copies::content_id`]) of the file the text
+    /// was decrypted from, if known.
+    content_id: Option<Vec<u8>>,
+}
+
+impl std::fmt::Debug for OpenedEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "OpenedEntry {{ contents withheld }}")
+    }
+}
+
+/// The fields of `doc` that are neither the user name nor the web address,
+/// without values.
+fn field_views(doc: &EntryDoc) -> Vec<FieldView> {
+    doc.other_fields()
+        .iter()
+        .map(|field| FieldView { id: field.line as u32, key: field.key.to_owned(), starts_hidden: field.looks_secret() })
+        .collect()
 }
 
 impl OpenedEntry {
+    /// `doc`, decrypted from a file whose content id is `content_id`.
+    pub fn new(doc: EntryDoc, content_id: Vec<u8>) -> Arc<Self> {
+        Arc::new(Self { doc: Mutex::new(Some(doc)), content_id: Some(content_id) })
+    }
+
+    /// Decrypted bytes of a file whose content id is `content_id`.
+    pub fn decrypted(plaintext: Vec<u8>, content_id: Vec<u8>) -> Result<Arc<Self>, PawError> {
+        Ok(Self::new(EntryDoc::parse(plaintext)?, content_id))
+    }
+
+    /// Text that is already decrypted, from no known file: for tests.
+    pub fn from_plaintext(plaintext: Vec<u8>) -> Result<Arc<Self>, PawError> {
+        let doc = EntryDoc::parse(plaintext)?;
+        Ok(Arc::new(Self { doc: Mutex::new(Some(doc)), content_id: None }))
+    }
+
     fn doc(&self) -> MutexGuard<'_, Option<EntryDoc>> {
         // A panic while the lock was held cannot leave the text half
         // written: nothing here edits it.
         self.doc.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// A copy of the text, for starting an edit. `None` once closed.
-    pub(crate) fn duplicate_doc(&self) -> Option<EntryDoc> {
-        self.doc().as_ref().map(EntryDoc::duplicate)
+    /// What `read` makes of the text; `None` once closed.
+    pub(crate) fn read<T>(&self, read: impl FnOnce(&EntryDoc) -> T) -> Option<T> {
+        self.doc().as_ref().map(read)
     }
 
-    /// Whether the entry has a one-time-code line that makes codes. `None`
-    /// once closed.
-    pub(crate) fn makes_codes(&self) -> Option<bool> {
-        self.doc().as_ref().map(EntryDoc::makes_codes)
+    /// A copy of the text, for starting an edit. `None` once closed.
+    pub(crate) fn duplicate_doc(&self) -> Option<EntryDoc> {
+        self.read(EntryDoc::duplicate)
+    }
+
+    /// The content id of the file the text was decrypted from, if known.
+    pub(crate) fn content_id(&self) -> Option<&[u8]> {
+        self.content_id.as_deref()
     }
 }
 
@@ -83,15 +121,7 @@ impl OpenedEntry {
     /// `OneTimeCodeEntries.note`. Nothing is read from disk. `false` once
     /// closed.
     pub fn makes_one_time_codes(&self) -> bool {
-        self.makes_codes() == Some(true)
-    }
-
-    /// Wraps text that is already decrypted. `open_entry` on the store is
-    /// the usual way in; this is for previews and tests.
-    #[uniffi::constructor]
-    pub fn from_plaintext(plaintext: Vec<u8>) -> Result<Arc<Self>, PawError> {
-        let doc = EntryDoc::parse(plaintext)?;
-        Ok(Arc::new(Self { doc: Mutex::new(Some(doc)) }))
+        self.read(EntryDoc::makes_codes) == Some(true)
     }
 
     /// What to draw. Everything is `false` and empty once closed.
@@ -113,15 +143,7 @@ impl OpenedEntry {
             has_url: doc.url().is_some(),
             has_otp: doc.has_otp(),
             has_notes: !doc.notes().is_empty(),
-            fields: doc
-                .other_fields()
-                .iter()
-                .map(|field| FieldView {
-                    id: field.line as u32,
-                    key: field.key.to_owned(),
-                    starts_hidden: field.looks_secret(),
-                })
-                .collect(),
+            fields: field_views(doc),
         }
     }
 

@@ -175,11 +175,12 @@ fn lists_five_thousand_entries_quickly() {
 
     let started = Instant::now();
     let hits = store.search("entry 042 group".into(), 50);
-    let offered = store.match_service("https://entry-042.example.com/login".into());
+    let offered = store.match_site("https://entry-042.example.com/login".into(), None);
     let searched = started.elapsed();
     assert_eq!(hits.len(), 50);
     assert_eq!(offered.len(), 5000);
-    assert!(offered[..50].iter().all(|m| m.exact) && !offered[50].exact);
+    let exact = |m: &paw_core::store::service::MatchedEntry| m.kind == paw_core::store::service::MatchKind::ExactHost;
+    assert!(offered[..50].iter().all(exact) && !exact(&offered[50]));
 
     // Generous: a debug build on a busy machine takes a small part of this.
     assert!(scanned < Duration::from_secs(2), "scan took {scanned:?}");
@@ -287,11 +288,10 @@ fn nothing_outside_the_store_is_read_through_the_store_object() {
     let store = PassStore::open(planted.store().to_str().unwrap().into()).unwrap();
 
     assert_eq!(store.entry_count(), 1);
-    assert_eq!(store.skipped().len(), 6);
+    assert_eq!(StoreTree::scan(&planted.store()).unwrap().skipped().len(), 6);
     for path in ["linked-file", "linked-folder/inner", "web/linked-folder/secret", "../outside/secret"] {
         let refused = store.read_entry(path).unwrap_err();
         assert!(matches!(refused, PawError::UnsafePath(_)), "{path}: {refused:?}");
-        assert!(matches!(store.entry_recipients(path.into()), Err(PawError::UnsafePath(_))));
         // The reason names the path and never the linked file's contents.
         let paw_core::recipients::Access::Unreadable { reason } =
             store.access(path.into(), "0123456789ABCDEF0123456789ABCDEF01234567".into())

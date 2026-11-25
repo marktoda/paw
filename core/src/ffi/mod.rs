@@ -42,11 +42,9 @@ pub fn is_store_busy(message: String) -> bool {
 }
 
 mod copies;
-mod entry;
 pub mod github;
 pub mod sync;
 mod key;
 pub mod write;
 
 pub use copies::FaceIdOpen;
-pub use entry::{EntryView, FieldView, OpenedEntry};

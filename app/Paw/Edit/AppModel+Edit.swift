@@ -28,19 +28,18 @@ extension AppModel {
 
     /// A save went through. A new entry needs the key to open, like any
     /// other; an edited one stays on screen with the text just saved.
-    func saved(_ outcome: SaveOutcome, purpose: EntryFormPurpose, savedText: String) {
+    func saved(_ outcome: Saved, purpose: EntryFormPurpose) {
         let renamed = outcome.previous.map { (from: $0, to: outcome.entry) }
         reloadAfterWrite(renamed: renamed)
         if case .edit(let id, _) = purpose {
-            do {
-                let opened = try OpenedEntry.fromPlaintext(plaintext: Data(savedText.utf8))
+            if let opened = outcome.opened {
                 replaceSession(id, ref: EntryRef(path: outcome.entry), entry: opened)
-            } catch {
+            } else {
                 // Saved, but the screen can't show the new text: close it.
                 path.removeAll { $0 == .entry(id) }
             }
         }
-        toast = outcome.commits == 0 ? "Nothing changed." : "Saved. Not sent yet."
+        toast = outcome.commits.isEmpty ? "Nothing changed." : "Saved. Not sent yet."
     }
 
     /// Delete after its inline confirm: back to the list, with Undo.
@@ -48,7 +47,7 @@ extension AppModel {
         guard let edits else { return }
         edits.confirmingDelete = nil
         do {
-            try BackgroundTime.run("Delete") { try edits.writer.delete(entry: session.ref.path, copies: copies) }
+            _ = try BackgroundTime.run("Delete") { try edits.writer.delete(entry: session.ref.path, copies: copies) }
         } catch let error as WriteError {
             notice = Notice(
                 problem: editProblem(error, folder: session.ref.folder).problem,

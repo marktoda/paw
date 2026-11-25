@@ -11,6 +11,8 @@
 //! `Display`, and its `Debug` prints no contents. Nothing here writes to disk
 //! or to a log.
 
+pub mod opened;
+
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::PawError;
@@ -20,7 +22,74 @@ use crate::otp::{OtpProblem, Totp};
 const USERNAME_KEYS: [&str; 4] = ["login", "username", "user", "email"];
 /// Keys read as the web address, in order of preference.
 const URL_KEYS: [&str; 5] = ["url", "link", "website", "web", "site"];
+/// Keys AutoFill also takes for a web address when it compares an entry's
+/// addresses with the site ([`EntryDoc::addresses`]). The entry's own view
+/// shows these as ordinary fields.
+const MORE_ADDRESS_KEYS: [&str; 4] = ["uri", "loginurl", "siteurl", "websiteurl"];
 const OTP_SCHEME: &str = "otpauth://";
+
+/// `key` in lower case without spaces, `-` and `_`: `Login URL` is `loginurl`.
+fn folded_key(key: &str) -> String {
+    key.chars().filter(|c| !matches!(c, ' ' | '-' | '_')).flat_map(char::to_lowercase).collect()
+}
+
+/// Whether `key` names a web address, in any of the ways
+/// [`EntryDoc::addresses`] reads.
+fn is_address_key(key: &str) -> bool {
+    let key = folded_key(key);
+    URL_KEYS.iter().chain(&MORE_ADDRESS_KEYS).any(|known| *known == key)
+}
+
+pub(crate) fn has_line_break(text: &str) -> bool {
+    text.contains(['\n', '\r'])
+}
+
+/// Why a field cannot be written as `key: value`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FieldRefusal {
+    KeyBlank,
+    KeyLineBreak,
+    KeyColon,
+    ValueLineBreak,
+    /// The value would read back as something else: a one-time-code
+    /// address, or (starting `//`) a link in a note.
+    ValueReadsAsOther,
+}
+
+/// Why `key` cannot be a field's key, checked in this order.
+pub(crate) fn key_refusal(key: &str) -> Option<FieldRefusal> {
+    if key.trim().is_empty() {
+        Some(FieldRefusal::KeyBlank)
+    } else if has_line_break(key) {
+        Some(FieldRefusal::KeyLineBreak)
+    } else if key.contains(':') {
+        Some(FieldRefusal::KeyColon)
+    } else {
+        None
+    }
+}
+
+/// Why `value` cannot be a field's value.
+pub(crate) fn value_refusal(value: &str) -> Option<FieldRefusal> {
+    if has_line_break(value) {
+        Some(FieldRefusal::ValueLineBreak)
+    } else if is_otp(value) || value.trim().starts_with("//") {
+        Some(FieldRefusal::ValueReadsAsOther)
+    } else {
+        None
+    }
+}
+
+/// The lines of notes as typed: `\r\n` ends a line as `\n` does. `None` if
+/// another `\r` is left, which no note line may hold.
+pub(crate) fn note_lines(notes: &str) -> Option<Vec<&str>> {
+    let mut lines: Vec<&str> = notes.split('\n').collect();
+    let last = lines.len() - 1;
+    for line in &mut lines[..last] {
+        *line = line.strip_suffix('\r').unwrap_or(line);
+    }
+    (!lines.iter().any(|line| line.contains('\r'))).then_some(lines)
+}
 
 /// How a line ended in the file. Kept per line, because a file edited on
 /// several machines can mix them.
@@ -55,9 +124,7 @@ enum Kind<'a> {
 }
 
 fn is_otp(text: &str) -> bool {
-    text.trim_start()
-        .get(..OTP_SCHEME.len())
-        .is_some_and(|start| start.eq_ignore_ascii_case(OTP_SCHEME))
+    crate::otp::is_address(text.trim_start())
 }
 
 /// Splits `key: value`. A line whose colon starts `://` is an address, not
@@ -118,7 +185,7 @@ impl std::fmt::Debug for EntryDoc {
 }
 
 fn no_line_break(what: &str, text: &str) -> Result<(), PawError> {
-    if text.contains(['\n', '\r']) {
+    if has_line_break(text) {
         return Err(PawError::InvalidField(format!("{what} cannot contain a line break")));
     }
     Ok(())
@@ -193,6 +260,22 @@ impl EntryDoc {
     /// The web address: `url`, else `link`, `website`, `web` or `site`.
     pub fn url(&self) -> Option<&str> {
         self.first_of(&URL_KEYS).map(|field| field.value)
+    }
+
+    /// The user name to fill: the first user-name field ([`Self::username`]
+    /// order) that is not empty.
+    pub fn filled_username(&self) -> Option<&str> {
+        USERNAME_KEYS.iter().find_map(|wanted| {
+            self.all_fields().filter(|field| same_key(field.key, wanted)).map(|field| field.value).find(|v| !v.is_empty())
+        })
+    }
+
+    /// Every value AutoFill reads as a web address: [`Self::url`], then each
+    /// other field whose key names an address, with letter case, spaces,
+    /// `-` and `_` ignored (`URL`, `Login URL`, `uri`, `website_url`…).
+    pub fn addresses(&self) -> Vec<&str> {
+        let others = self.other_fields().into_iter().filter(|field| is_address_key(field.key));
+        self.url().into_iter().chain(others.map(|field| field.value)).collect()
     }
 
     /// Whether the entry carries a one-time-code secret. The address itself
@@ -280,19 +363,21 @@ impl EntryDoc {
     /// keeping the key and the spacing after its colon as written. If there
     /// is no such field, one is added as a new last line.
     pub fn set_field(&mut self, key: &str, value: &str) -> Result<(), PawError> {
-        no_line_break("a field", key)?;
-        no_line_break("a field", value)?;
+        let refusal = key_refusal(key).or_else(|| value_refusal(value));
+        let why = match refusal {
+            None => None,
+            Some(FieldRefusal::KeyLineBreak | FieldRefusal::ValueLineBreak) => Some("a field cannot contain a line break"),
+            Some(FieldRefusal::KeyBlank | FieldRefusal::KeyColon) => {
+                Some("a field needs a name, and the name cannot contain a colon")
+            }
+            Some(FieldRefusal::ValueReadsAsOther) => {
+                Some("a field's value cannot start with `//` or be a one-time-code address")
+            }
+        };
+        if let Some(why) = why {
+            return Err(PawError::InvalidField(why.into()));
+        }
         let key = key.trim();
-        if key.is_empty() || key.contains(':') {
-            return Err(PawError::InvalidField(
-                "a field needs a name, and the name cannot contain a colon".into(),
-            ));
-        }
-        if is_otp(value) || value.starts_with("//") {
-            return Err(PawError::InvalidField(
-                "a field's value cannot start with `//` or be a one-time-code address".into(),
-            ));
-        }
         let value = value.trim();
 
         let existing = self.all_fields().find(|field| same_key(field.key, key)).map(|f| f.line);
@@ -432,14 +517,12 @@ impl EntryDoc {
     /// A note line that looks like `key: value` reads back as a field: that
     /// is the pass convention, not something paw can change.
     pub fn set_notes(&mut self, notes: &str) -> Result<(), PawError> {
-        let wanted: Vec<&str> = notes.split('\n').map(|line| line.trim_end_matches('\r')).collect();
+        let wanted = note_lines(notes)
+            .ok_or_else(|| PawError::InvalidField("notes cannot contain a lone carriage return".into()))?;
         let blank = |line: &&str| line.trim().is_empty();
         let start = wanted.iter().position(|line| !blank(line)).unwrap_or(wanted.len());
         let end = wanted.iter().rposition(|line| !blank(line)).map_or(start, |last| last + 1);
         let wanted = &wanted[start..end];
-        if wanted.iter().any(|line| line.contains('\r')) {
-            return Err(PawError::InvalidField("notes cannot contain a lone carriage return".into()));
-        }
         let current = self.notes();
         if current.split('\n').filter(|_| !current.is_empty()).eq(wanted.iter().copied()) {
             return Ok(());
