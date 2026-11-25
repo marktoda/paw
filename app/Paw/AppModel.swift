@@ -147,6 +147,8 @@ final class AppModel {
     private(set) var faceIdOpening: String?
     /// Tells AutoFill's suggestions about the store; set for a set-up store only.
     @ObservationIgnored var publishIdentities: (@MainActor (PassStore) -> Void)?
+    /// Keeps whether an opened entry has a one-time code, for AutoFill.
+    @ObservationIgnored var noteCode: (@MainActor (OpenedEntry, String) -> Void)?
 
     /// Every core task whose end has not been seen yet: the one the sheet
     /// follows, and any it let go of (Cancel, Lock now) that may still
@@ -604,6 +606,7 @@ final class AppModel {
             return
         }
         noteOpened(request.entry.path)
+        noteCode?(opened, request.entry.path)
         refreshCopies()
         let session = OpenSession(
             ref: request.entry, entry: opened, view: opened.view(), hadCopy: faceIdUntil(outcome) != nil)
@@ -707,6 +710,7 @@ final class AppModel {
         switch result {
         case .success(.opened(let opened)):
             noteOpened(entry.path)
+            noteCode?(opened, entry.path)
             let session = OpenSession(
                 ref: entry, entry: opened, view: opened.view(), hadCopy: liveCopy(entry.path) != nil)
             sessions[session.id] = session
