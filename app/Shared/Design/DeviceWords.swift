@@ -34,7 +34,15 @@ enum Device {
     }()
 
     /// `text` written for an iPhone with Face ID, in this device's words.
+    /// Saying it twice changes nothing.
     static func words(_ text: String) -> String {
+        words(text, name: name, biometrics: biometrics)
+    }
+
+    /// `text` in the words of a device called `name` ("iPhone", "iPad")
+    /// that unlocks with `biometrics` ("Face ID", "Touch ID"): "this iPhone"
+    /// becomes "this iPad", "your iPhone passcode" "your iPad passcode".
+    static func words(_ text: String, name: String, biometrics: String) -> String {
         var text = text
         if name != "iPhone" {
             text = text.replacingOccurrences(of: "iPhone", with: name)
