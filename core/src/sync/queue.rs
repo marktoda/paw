@@ -175,10 +175,8 @@ fn encrypted_for_exactly(found: &crate::recipients::EntryRecipients, keys: &[pgp
 /// nothing paw saved was then pinned to them.
 ///
 /// What to do with one: its text has to be encrypted again for the new
-/// recipients, which needs the key. Accept the new recipients, then open
-/// the entry and save it again (or take the change back with [`discard`]
-/// and make it again); the old waiting change has to be discarded either
-/// way, since pushing it would put the old ciphertext in the history.
+/// recipients, which needs the key. Accept the new recipients, then
+/// [`reencrypt_each`] (or take the change back with [`discard`]).
 pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncError> {
     let failed = |e: crate::write::WriteError| SyncError::Failed { message: e.to_string() };
     let _reading = StoreLock::for_repo(dir).shared()?;
@@ -566,10 +564,10 @@ pub fn reencrypt_each(
         progress(done, total);
 
         // 2. Opened with no lock held, unless the same ciphertext already was.
-        if !texts.contains_key(&blob) {
+        if let std::collections::hash_map::Entry::Vacant(slot) = texts.entry(blob) {
             match open(&item, &bytes) {
                 Ok(text) => {
-                    texts.insert(blob, text);
+                    slot.insert(text);
                 }
                 Err(OpenFailure::Skip(reason)) => {
                     skipped.insert((path, blob), reason);

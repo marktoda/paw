@@ -511,9 +511,8 @@ impl StoreSync {
     /// `.gpg-id` changed, or the change is not accepted yet). While any is
     /// listed, a send fetches and integrates but pushes nothing and ends
     /// `Waiting`. Show each entry with who it is encrypted for and who it
-    /// should be for; the person accepts the new recipients, then saves the
-    /// entry again (re-encrypting it, which needs the key) and discards the
-    /// old waiting change, or discards it outright.
+    /// should be for; the person accepts the new recipients, then
+    /// re-encrypts them with `reencrypt_with_key`, or discards one outright.
     pub fn held_back(&self) -> Result<Vec<HeldBack>, SyncError> {
         queue::held_back(&self.repo(), &self.state_dir)
     }
