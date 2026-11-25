@@ -120,6 +120,7 @@ Things that are easy to lose track of because nothing fails when they are missin
 | Three entries in the owner's store are encrypted to old keys | paw cannot open them; needs the owner |
 | Swift unit tests cover the models (67); screens are still tested by clicking through the simulator | slow |
 | Background-time wrapping, file protection, keyboard refusal, auto-close on lock | built, never observed on the device |
+| Once in CI (run 45551662841) the app stopped running when the folder picker in the new-password form was tapped; it did not repeat | no crash report was kept then; CI keeps them now |
 
 Merged 2026-11-24: plain repository list in the picker; per-process Face ID enrolment record; name matching with remembered site pairings (`site-pairings.json`, no screen to view or clear them yet); a lost PIN told apart from a missed touch; the key log.
 
