@@ -4,8 +4,7 @@ import XCTest
 /// Re-encrypting held-back changes by hand, on the sync model: another
 /// computer gives `work/` a second key, the change saved there is held back,
 /// and once the new list is accepted "Re-encrypt" opens it with the key and
-/// it can be sent. The UI tests cannot reach this state: the simulated
-/// host's `gpgid` change keeps the same key, which needs no re-encrypting.
+/// it can be sent. `HeldBackTests` clicks through the same on the simulator.
 @MainActor
 final class HeldBackModelTests: XCTestCase {
     private func passPin(_ sync: SyncModel, file: StaticString = #filePath, line: UInt = #line) async {

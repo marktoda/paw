@@ -44,6 +44,10 @@ final class EntryFormModel {
     let hadOneTimeCode: Bool
     /// Folders that exist, for the picker.
     let folders: [String]
+    /// Whether paw has every key each folder is encrypted for, read off the
+    /// main thread when the form opens and when the store changes. A folder
+    /// not in it yet is offered; Save still checks.
+    private(set) var folderOpenable: [String: Bool] = [:]
 
     var name = ""
     /// The chosen existing folder, "" for the top.
@@ -79,6 +83,11 @@ final class EntryFormModel {
     var confirmingDiscard = false
 
     @ObservationIgnored private let writer: StoreWriter
+    /// The names Home and search hold, for "already used". Without it (some
+    /// tests) the writer reads the store on each change.
+    @ObservationIgnored private var store: PassStore?
+    @ObservationIgnored private var recipientsTask: Task<Void, Never>?
+    @ObservationIgnored private var openableTask: Task<Void, Never>?
     @ObservationIgnored private var draft: EntryDraft?
     @ObservationIgnored private var original = Original()
     /// Setters already called on the draft, so a value changed back is
@@ -90,25 +99,31 @@ final class EntryFormModel {
     @ObservationIgnored private var recipientsFolder: String?
 
     /// A blank form in `folder`.
-    init(adding folder: String, writer: StoreWriter, folders: [String]) {
+    init(adding folder: String, writer: StoreWriter, folders: [String], store: PassStore? = nil) {
         purpose = .add(folder: folder)
         isEditing = false
         hadOneTimeCode = false
         self.writer = writer
         self.folders = folders
+        self.store = store
         self.folder = folder
         original.folder = folder
         draft = writer.newDraft(folder: folder)
         changed()
+        loadFolderOpenable()
     }
 
     /// The open entry `session`, filled in. Throws if it was closed.
-    init(editing session: OpenSession, focusName: Bool, writer: StoreWriter, folders: [String]) throws {
+    init(
+        editing session: OpenSession, focusName: Bool, writer: StoreWriter, folders: [String],
+        store: PassStore? = nil
+    ) throws {
         purpose = .edit(sessionID: session.id, focusName: focusName)
         isEditing = true
         hadOneTimeCode = session.view.hasOtp
         self.writer = writer
         self.folders = folders
+        self.store = store
         let opened = session.entry
         draft = try writer.editDraft(opened: opened, entry: session.ref.path)
         original = Original(
@@ -129,6 +144,7 @@ final class EntryFormModel {
         }
         openedFieldKeys = Set(extraFields.compactMap { $0.originalKey.map(Self.fieldKey) })
         changed()
+        loadFolderOpenable()
     }
 
     // MARK: Typing
@@ -275,11 +291,65 @@ final class EntryFormModel {
         } else {
             draft.setOneTimeCode(setup: setupKey)
         }
-        problems = (try? writer.validate(draft: draft)) ?? draft.problems()
-        if recipientsFolder != effectiveFolder {
-            recipientsFolder = effectiveFolder
-            recipients = Result { try writer.folderRecipients(folder: effectiveFolder) }
+        // From the names in memory: the writer would wait for the store's
+        // lock. Save checks again with the lock held.
+        if let store {
+            problems = draft.problemsIn(store: store)
+        } else {
+            problems = (try? writer.validate(draft: draft)) ?? draft.problems()
         }
+        if recipientsFolder != effectiveFolder {
+            loadRecipients()
+        }
+    }
+
+    /// Who can open the folder the entry goes in, read off the main thread:
+    /// it takes the store's lock, which a sync can hold for seconds. While a
+    /// new folder is typed, once the typing pauses. A late answer for a
+    /// folder no longer chosen is dropped.
+    private func loadRecipients() {
+        let folder = effectiveFolder
+        let pause = newFolder != nil
+        let writer = writer
+        recipientsFolder = folder
+        recipients = nil
+        recipientsTask?.cancel()
+        recipientsTask = Task { [weak self] in
+            if pause {
+                try? await Task.sleep(for: .milliseconds(300))
+                if Task.isCancelled { return }
+            }
+            let result = await Task.detached(priority: .userInitiated) {
+                Result { try writer.folderRecipients(folder: folder) }
+            }.value
+            guard !Task.isCancelled, let self, self.recipientsFolder == folder else { return }
+            self.recipients = result
+        }
+    }
+
+    /// Which folders paw can save in, for the picker, read off the main
+    /// thread (each one takes the store's lock).
+    private func loadFolderOpenable() {
+        let folders = folders
+        let writer = writer
+        openableTask?.cancel()
+        openableTask = Task { [weak self] in
+            let found = await Task.detached(priority: .userInitiated) {
+                Dictionary(folders.map { ($0, writer.folderOpenable($0)) }, uniquingKeysWith: { first, _ in first })
+            }.value
+            guard !Task.isCancelled, let self else { return }
+            self.folderOpenable = found
+        }
+    }
+
+    /// The app read the store again (a sync, a change undone): check the
+    /// name against the new names and read the folders' keys again.
+    func storeChanged(_ store: PassStore) {
+        guard self.store !== store, draft != nil else { return }
+        self.store = store
+        recipientsFolder = nil
+        changed()
+        loadFolderOpenable()
     }
 
     private func setIfChanged(_ key: String, _ value: String, _ original: String, _ set: (String) -> Void) {
@@ -375,9 +445,7 @@ final class EntryFormModel {
             } else {
                 saveProblem = editProblem(error, folder: effectiveFolder)
             }
-            recipientsFolder = nil
-            recipients = Result { try writer.folderRecipients(folder: effectiveFolder) }
-            recipientsFolder = effectiveFolder
+            loadRecipients()
             return nil
         } catch {
             saveProblem = EditProblem(problem: "Couldn't save this", nextStep: "Nothing was changed. \(describe(error))")
@@ -423,6 +491,8 @@ final class EntryFormModel {
         generated = nil
         original = Original()
         draft = nil
+        recipientsTask?.cancel()
+        openableTask?.cancel()
     }
 }
 
