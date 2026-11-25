@@ -43,6 +43,16 @@ pub(crate) type After = Box<dyn FnOnce(&Arc<KeySession>) -> Result<(), KeyError>
 /// thread. It reports progress and ends the task.
 pub(crate) type Work = Box<dyn FnOnce(&Arc<TaskCore>, SessionSigner) -> Result<Option<KeyOutcome>, Halt> + Send>;
 
+/// Deciphers one ciphertext with the session's key, in a decrypting
+/// task's thread: the PIN is asked once, the key is touched for each.
+pub(crate) type Opener<'a> = dyn FnMut(&[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>, Halt> + 'a;
+
+/// What a decrypting task does with its [`Opener`], in the task's thread.
+/// It reports progress, checks for cancel between ciphertexts, and returns
+/// how the task ends.
+pub(crate) type DecryptWork =
+    Box<dyn FnOnce(&Arc<TaskCore>, &mut Opener<'_>) -> Result<Option<KeyOutcome>, Halt> + Send>;
+
 /// What an open does once the entry has decrypted.
 enum Then {
     /// Hands the entry over, keeping a Face ID copy if given a cache.
@@ -250,6 +260,36 @@ impl KeyPort {
                 task.set(KeyTaskState::Working { progress: None });
                 let signer = SessionSigner::new(task.clone(), session.clone())?;
                 work(task, signer)
+            },
+        )
+    }
+
+    /// A task that deciphers several ciphertexts with the key and hands
+    /// each one's text to `work` (re-encrypting held-back changes). Refused
+    /// before the PIN on a key with no decryption key.
+    pub(crate) fn decrypt_then(
+        self: &Arc<Self>,
+        purpose: KeyPurpose,
+        listener: Arc<dyn KeyTaskListener>,
+        work: DecryptWork,
+    ) -> Arc<KeyTask> {
+        let expected = self.expected();
+        self.start(
+            purpose,
+            listener,
+            expected,
+            |session| session.decryption_key().map(drop),
+            move |task, session| {
+                let key = session.decryption_key()?.clone();
+                let mut open = |ciphertext: &[u8]| -> Result<zeroize::Zeroizing<Vec<u8>>, Halt> {
+                    let plan = Plan::new(ciphertext, &key)?;
+                    let session_key = task.unlocked(session, |job| plan.decipher(job, task, &key))?;
+                    if task.cancelled() {
+                        return Err(Halt::Fail(KeyError::Cancelled));
+                    }
+                    Ok(plan.finish(session_key)?)
+                };
+                work(task, &mut open)
             },
         )
     }
