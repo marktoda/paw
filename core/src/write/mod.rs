@@ -153,9 +153,18 @@ pub(crate) fn author(state_dir: &Path) -> Author {
 
 /// Encrypts an entry to every key in `keys`, as `pass` does with
 /// `gpg -e -r ... -r ...`: SEIPD v1 with AES-256, one recipient packet per
-/// key, no compression (as [`crate::encrypt_to_keys`]). The plaintext is
-/// streamed from the caller's buffer rather than copied into a new one.
+/// key, no compression. The plaintext is streamed from the caller's buffer
+/// rather than copied into a new one.
 pub(crate) fn encrypt(keys: &[PublicKey], plaintext: &[u8]) -> Result<Vec<u8>, WriteError> {
+    encrypt_with(OsRng, keys, plaintext)
+}
+
+/// [`encrypt`], drawing its randomness from `rng`.
+pub(crate) fn encrypt_with<R: rand::Rng + rand::CryptoRng>(
+    mut rng: R,
+    keys: &[PublicKey],
+    plaintext: &[u8],
+) -> Result<Vec<u8>, WriteError> {
     use pgp::composed::MessageBuilder;
     use pgp::crypto::sym::SymmetricKeyAlgorithm;
 
@@ -163,7 +172,6 @@ pub(crate) fn encrypt(keys: &[PublicKey], plaintext: &[u8]) -> Result<Vec<u8>, W
         return Err(WriteError::Failed { message: "there is no key to encrypt to".into() });
     }
     let failed = |e: pgp::errors::Error| WriteError::Failed { message: format!("could not encrypt: {e}") };
-    let mut rng = OsRng;
     let mut builder = MessageBuilder::from_reader("", plaintext).seipd_v1(&mut rng, SymmetricKeyAlgorithm::AES256);
     for key in keys {
         builder.encrypt_to_key(&mut rng, key).map_err(failed)?;
