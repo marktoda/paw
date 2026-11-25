@@ -114,7 +114,7 @@ enum BackgroundRefresh {
             forName: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil, queue: .main
         ) { _ in stop.stop() }
         queue.async {
-            let run = readable ? runNow(stop: stop) : skipped("iPhone was locked")
+            let run = readable ? runNow(stop: stop) : skipped(Device.words("iPhone was locked"))
             let store = run.changed && !stop.isStopped() ? openStore() : nil
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {

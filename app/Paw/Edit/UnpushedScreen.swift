@@ -134,7 +134,7 @@ struct UnpushedScreen: View {
     static func discardDetail(_ item: QueueItem) -> String {
         let name = name(item.entry)
         switch item.kind {
-        case .added: return "\(name) is removed from this iPhone."
+        case .added: return "\(name) is removed from this \(Device.name)."
         case .edited: return "\(name) goes back to how it was."
         case .deleted: return "\(name) comes back."
         case .renamed: return "\(name) gets its old name back."
