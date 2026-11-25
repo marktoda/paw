@@ -103,11 +103,11 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 | Item | Status |
 |---|---|
 | Three-column layout, form sheets, keyboard shortcuts; Developer Mode on the iPad | done on the iPad simulator (its own CI part); device checks below |
-| Device words on iPad ("iPhone", "Face ID" on a Touch ID iPad) | in progress, batch 5 |
+| Device words on iPad ("iPhone", "Face ID" on a Touch ID iPad) | done in batch 5; Touch ID wording never seen on a real Touch ID iPad |
 
 ### After the first version
 
-Several recipients (the owner's backup key), TOTP, import from other managers, creating a store from scratch, NFC, keys without a YubiKey, public App Store release.
+Several recipients (the owner's backup key), one-time codes in AutoFill and by QR code, import from other managers, creating a store from scratch, NFC, keys without a YubiKey, public App Store release.
 
 ## Known gaps
 
@@ -116,7 +116,7 @@ Things that are easy to lose track of because nothing fails when they are missin
 | Gap | Why it matters |
 |---|---|
 | The Release build ran on the phone for the first time 2026-11-24 (run 45525329289) | the owner has not yet reported on it |
-| Held-back changes are not re-encrypted automatically after recipients change | a manual action in the sync sheet is in progress, batch 5 |
+| Held-back changes are re-encrypted only by hand ("Re-encrypt N changes" in the sync sheet, one touch each) | never tried with a real key or a real recipients change |
 | Three entries in the owner's store are encrypted to old keys | paw cannot open them; needs the owner |
 | Swift unit tests cover the models (67); screens are still tested by clicking through the simulator | slow |
 | Background-time wrapping, file protection, keyboard refusal, auto-close on lock | built, never observed on the device |
@@ -126,6 +126,8 @@ Merged 2026-11-24: plain repository list in the picker; per-process Face ID enro
 Merged 2026-11-24, batch 3 (one build, run 45500441073, all green): Release device build without the simulated key, scanned in CI; legacy PIN-taking exports and the test screen removed; background refresh scheduled (skips while the iPhone is locked: the store is unreadable then); held-back re-encryption in the core (no UI yet); Settings: who can open, Face ID switch, sites used, server keys with forget, copy diagnostics, licences, build stamp; AutoFill: `url` cross-check, international names (always shown as `xn--`), username from the body; the paw icon; Sync, Gallery and Enclave tests on the shared helpers; iPad three-column layout with its own CI part.
 
 Merged 2026-11-24, batch 4 (main `1231999`, installed on the iPhone as run 45525329289): fixes from two reviews (a locked background launch no longer offers to delete the store; server-key change warning; whole fingerprints; iPad folder selection; held-back flip-flop; Face ID switch ordering; clipboard expiry); a copy pass over Settings, sync, AutoFill and diagnostics; Swift unit tests (`PawTests`) in CI, and the seven UI tests they replace removed.
+
+Batch 5 (2026-11-24): one-time codes (pass-otp compatible: a code row with a countdown on the entry, "Setup key" in the editor; not in AutoFill yet, no QR scanning); "Re-encrypt N changes" for held-back changes; signed-out GitHub card; no "Build unknown"; device words on iPad. Reviewed before the build; findings fixed.
 
 Not built: saving a password from the extension (needs iOS 26.2; minimum is 26.0); replace key (design only: both keys in turn, one touch per password); "iPad"/"Touch ID" wording on iPad. libgit2's bundled xdiff is LGPL: decide before any App Store listing.
 
@@ -146,6 +148,7 @@ Not built: saving a password from the extension (needs iOS 26.2; minimum is 26.0
 | Background check row in the sync sheet after a few hours in the background | waiting |
 | Who can open these passwords shows the three old-key entries | waiting |
 | Settings › Key diagnostics › Key log shows the app's and AutoFill's lines; what the key answers after a touch timeout and to the PIN check after it | waiting |
+| One-time code on an entry matches another authenticator app; the countdown ticks; `pass otp` on the desktop reads a setup key added on the phone | waiting |
 | iPad: the key opens an entry over USB-C, and AutoFill fills with it | waiting |
 | iPad: three columns in landscape, the right column first in portrait; Slide Over and a narrow window fall back to the iPhone layout without losing the open folder or entry | waiting |
 | iPad: opening a second entry closes the first (nothing of it left in the right column); auto-close after locking and after 2 minutes away; the app-switcher cover | waiting |

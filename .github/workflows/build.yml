@@ -219,7 +219,7 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: 1
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
-          brew install xcodegen
+          brew install xcodegen || { sleep 30; brew install xcodegen; }
           scripts/make-xcframework.sh
       - name: Run the UI tests
         env:
@@ -263,7 +263,7 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: 1
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
-          brew install xcodegen
+          brew install xcodegen || { sleep 30; brew install xcodegen; }
           scripts/make-xcframework.sh
       - name: Build for devices in Release, unsigned
         env:
