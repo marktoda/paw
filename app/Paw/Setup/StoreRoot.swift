@@ -189,6 +189,8 @@ final class StoreRootModel {
                 remove: { [weak self] in self?.removeStore() },
                 fileProtection: { [location] in location.protectionSummary() })
             model.publishIdentities = { CredentialIdentities.publish($0) }
+            let codes = OneTimeCodeEntries.open(stateDir: location.stateDir.path)
+            model.noteCode = { CredentialIdentities.noteOpened($0, path: $1, codes: codes) }
             CredentialIdentities.publish(store)
             phase = .home(model, controls)
         } catch {
@@ -246,6 +248,7 @@ final class StoreRootModel {
         CredentialIdentities.clear()
         // Gone with the folder below too; cleared first in case that fails.
         try? SitePairings.open(stateDir: location.stateDir.path).clearPairings(entry: nil)
+        try? OneTimeCodeEntries.open(stateDir: location.stateDir.path).clear()
         do {
             try location.removeAll()
             try location.prepare()

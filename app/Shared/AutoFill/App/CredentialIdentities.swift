@@ -10,7 +10,10 @@ import Foundation
 /// (`bankofamerica`) gets one only for each domain it has filled on after
 /// the person confirmed it (`SitePairings`): never for a domain merely
 /// named like it. Nothing learned by decrypting is used
-/// (design.md 5.6 rule 6). The list is replaced whole after setup, on each
+/// (design.md 5.6 rule 6), with one exception: an entry seen with a
+/// one-time code when last opened (`OneTimeCodeEntries`, a yes per entry)
+/// also gets a one-time-code identity for each of its sites, so iOS offers
+/// it in a code field. The list is replaced whole after setup, on each
 /// launch, after a save, rename, delete or refresh; removing the store
 /// clears it. App target only (not compiled into the extension).
 enum CredentialIdentities {
@@ -56,6 +59,20 @@ enum CredentialIdentities {
     /// The pairings of the store paw set up, if there is one.
     static func standardPairings() -> SitePairings? {
         (try? StoreLocation.standard()).map { SitePairings.open(stateDir: $0.stateDir.path) }
+    }
+
+    /// Which entries of the store paw set up have a one-time code.
+    static func standardCodes() -> OneTimeCodeEntries? {
+        (try? StoreLocation.standard()).map { OneTimeCodeEntries.open(stateDir: $0.stateDir.path) }
+    }
+
+    /// An entry was opened in the app: keeps whether it has a one-time
+    /// code, and publishes again when that changed, so its code suggestion
+    /// appears or goes.
+    @MainActor
+    static func noteOpened(_ opened: OpenedEntry, path: String, codes: OneTimeCodeEntries) {
+        guard (try? codes.noteOpened(entry: path, opened: opened)) == true, let current else { return }
+        publish(current)
     }
 
     /// Whether `domain` is a registrable domain or a name under one, by the
@@ -133,10 +150,17 @@ enum CredentialIdentities {
     }
 
     private static func replace(with store: PassStore) async {
-        let identities = make(from: store, pairings: standardPairings()).map { identity -> ASCredentialIdentity in
+        let made = make(from: store, pairings: standardPairings())
+        let withCode = Set(standardCodes()?.entries(store: store) ?? [])
+        var identities: [ASCredentialIdentity] = made.map { identity -> ASCredentialIdentity in
             ASPasswordCredentialIdentity(
                 serviceIdentifier: ASCredentialServiceIdentifier(identifier: identity.domain, type: .domain),
                 user: identity.user, recordIdentifier: identity.path)
+        }
+        identities += made.filter { withCode.contains($0.path) }.map { identity -> ASCredentialIdentity in
+            ASOneTimeCodeCredentialIdentity(
+                serviceIdentifier: ASCredentialServiceIdentifier(identifier: identity.domain, type: .domain),
+                label: identity.user, recordIdentifier: identity.path)
         }
         #if !targetEnvironment(simulator)
         let identityStore = ASCredentialIdentityStore.shared

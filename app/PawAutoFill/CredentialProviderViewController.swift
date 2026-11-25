@@ -2,9 +2,10 @@ import AuthenticationServices
 import SwiftUI
 
 /// The AutoFill extension (design.md 2.10). It reads the store paw set up
-/// and fills a password by its Face ID copy or with the key. It never
-/// writes the store, opens no network connection, never shows a password
-/// and never uses the pasteboard. The screens and their model live in
+/// and fills a password, or a one-time code made from the entry, by its
+/// Face ID copy or with the key. It never writes the store, opens no
+/// network connection, never shows a password or code and never uses the
+/// pasteboard. The screens and their model live in
 /// `app/Shared/AutoFill`, where the app's debug harness drives them too.
 final class CredentialProviderViewController: ASCredentialProviderViewController, AutoFillCompletion {
     private var model: AutoFillModel?
@@ -13,6 +14,12 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     /// The key icon, or "Passwords…" in the bar: a list for these sites.
     override func prepareCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {
         show(.list(services: serviceIdentifiers.map(\.identifier)))
+    }
+
+    /// The key icon in a one-time-code field: the same list, of the
+    /// site's entries known to have a code.
+    override func prepareOneTimeCodeCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {
+        show(.list(services: serviceIdentifiers.map(\.identifier)), kind: .oneTimeCode)
     }
 
     /// A suggestion above the keyboard. Every copy is sealed behind Face
@@ -24,13 +31,13 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     }
 
     /// After `userInteractionRequired`: Face ID or the key sheet for that
-    /// one entry.
+    /// one entry, for its password or its code.
     override func prepareInterfaceToProvideCredential(for credentialRequest: ASCredentialRequest) {
-        guard let path = Self.path(of: credentialRequest) else {
+        guard let path = Self.path(of: credentialRequest), let kind = Self.kind(of: credentialRequest) else {
             end(.credentialIdentityNotFound)
             return
         }
-        show(.entry(path: path, service: Self.service(of: credentialRequest)))
+        show(.entry(path: path, service: Self.service(of: credentialRequest)), kind: kind)
     }
 
     /// Every way the provider can go away ends its key tasks and drops the
@@ -51,22 +58,39 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         }
     }
 
+    /// What a suggestion fills: a password or a one-time code, from paw's
+    /// own identities only (`CredentialIdentities`). Passkeys: none.
+    private static func kind(of request: ASCredentialRequest) -> AutoFillKind? {
+        switch request.type {
+        case .password where request.credentialIdentity is ASPasswordCredentialIdentity:
+            return .password
+        case .oneTimeCode where request.credentialIdentity is ASOneTimeCodeCredentialIdentity:
+            return .oneTimeCode
+        default:
+            return nil
+        }
+    }
+
+    /// The suggestion's identity, if it is one paw publishes.
+    private static func identity(of request: ASCredentialRequest) -> (any ASCredentialIdentity)? {
+        Self.kind(of: request) == nil ? nil : request.credentialIdentity
+    }
+
     private static func path(of request: ASCredentialRequest) -> String? {
-        guard let identity = request.credentialIdentity as? ASPasswordCredentialIdentity,
-              let path = identity.recordIdentifier, !path.isEmpty else { return nil }
+        guard let path = Self.identity(of: request)?.recordIdentifier, !path.isEmpty else { return nil }
         return path
     }
 
     /// The site the suggestion was published for, which the entry's own
     /// `url:` line is checked against.
     private static func service(of request: ASCredentialRequest) -> String? {
-        guard let identity = request.credentialIdentity as? ASPasswordCredentialIdentity else { return nil }
+        guard let identity = Self.identity(of: request) else { return nil }
         let service = identity.serviceIdentifier.identifier
         return service.isEmpty ? nil : service
     }
 
-    private func show(_ request: AutoFillRequest) {
-        let model = AutoFillModel(request: request, completion: self, open: { StoreForAutoFill.open() })
+    private func show(_ request: AutoFillRequest, kind: AutoFillKind = .password) {
+        let model = AutoFillModel(request: request, kind: kind, completion: self, open: { StoreForAutoFill.open() })
         self.model = model
         let host = UIHostingController(rootView: AutoFillRootView(model: model))
         self.host?.willMove(toParent: nil)
@@ -85,6 +109,13 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     func fill(user: String, password: String) {
         let credential = ASPasswordCredential(user: user, password: password)
         extensionContext.completeRequest(withSelectedCredential: credential, completionHandler: nil)
+        model?.shutDown()
+        model = nil
+    }
+
+    func fill(oneTimeCode: String) {
+        let credential = ASOneTimeCodeCredential(code: oneTimeCode)
+        extensionContext.completeOneTimeCodeRequest(using: credential, completionHandler: nil)
         model?.shutDown()
         model = nil
     }

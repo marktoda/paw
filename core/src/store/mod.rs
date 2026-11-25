@@ -5,6 +5,7 @@
 //! network. The directory is treated as hostile input throughout: see
 //! [`read`] for how paw stays inside it.
 
+pub mod codes;
 pub mod gpg_id;
 pub mod pairings;
 pub mod read;

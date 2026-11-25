@@ -12,6 +12,7 @@ use std::time::Duration;
 use super::{Adapter, CardConnection, FieldView, OpenedEntry};
 use crate::copies::{CopyCache, content_id};
 use crate::generate::{self, PasswordPolicy};
+use crate::store::codes::CodeFile;
 use crate::store::pairings::PairingFile;
 use crate::store::tree::StoreTree;
 use crate::write::cert::{CertificateInfo, evaluate, read_certificates};
@@ -261,6 +262,8 @@ fn pairings_moved(store: &WriteStore, from: &str, to: Option<&str>) {
         Some(to) => file.moved(from, to),
         None => file.clear(Some(from)),
     };
+    // So does whether it has a one-time code.
+    let _ = CodeFile::new(store.state_dir()).moved(from, to);
 }
 
 fn forget_copy(copies: Option<&Arc<CopyCache>>, entry: &str) {
@@ -320,6 +323,9 @@ impl StoreWriter {
         if let Some(previous) = &saved.previous {
             pairings_moved(&self.store, previous, Some(&saved.entry));
         }
+        // AutoFill learns of a code added or removed here without the
+        // entry being opened again. Failing only leaves the mark as it was.
+        let _ = CodeFile::new(self.store.state_dir()).mark(&saved.entry, doc.makes_codes());
         let face_id_until_ms = copies.as_ref().and_then(|copies| {
             let text = doc.to_bytes();
             // The entry is saved; a copy that cannot be made only means the

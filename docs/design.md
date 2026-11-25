@@ -392,6 +392,8 @@ Pairings involve no decrypted content, so rule 6 holds. The core can list and cl
 - Search: the site's sections first, then "Other passwords"; nothing found: "No matches."
 - An entry with no password: "<name> has no password" / "Pick another entry."
 
+**One-time codes** (built 2026-11-25; iOS 18 `ProvidesOneTimeCodes`). The key icon in a code field opens the same sheet for a code: same matching, the same confirm rules ("Fill github.com's code here?" / "This code isn't saved for this site."), the same lookalike refusal, Face ID from the copy or the key sheet ("Fill code for github.com"). The code is made from the entry at that moment and handed to iOS; neither it nor the secret is kept. paw only knows an entry has a code once it has been opened (or saved) on this iPhone, so it keeps a yes per entry path (`one-time-codes.json` in the state directory, `OneTimeCodeEntries`: not synced, removed with the store, follows renames and deletes). The list shows only the site's entries known to have one; otherwise "No codes for this site.", and search finds the rest. The app publishes an `ASOneTimeCodeCredentialIdentity` next to each password identity of such an entry. This yes is the one thing learned from a decrypted entry that is written outside a sealed copy (an exception to 5.6 rule 6, for the owner to confirm): it reveals which entries have a second factor, never the factor.
+
 **Not built** (roadmap M7): the choice screen and the hand-off below, for when the extension can't reach the key. Whether the in-extension key path is worth keeping is decided after the device spike.
 
 **Hand-off screen** (not built), titled "github.com needs your key":

@@ -105,13 +105,15 @@ targets:
       path: PawAutoFill/Info.plist
       properties:
         CFBundleDisplayName: Paw
-        NSFaceIDUsageDescription: "Face ID fills passwords you recently opened with your key. Your passcode cannot be used instead."
+        NSFaceIDUsageDescription: "Face ID fills passwords and codes you recently opened with your key. Your passcode cannot be used instead."
         NSExtension:
           NSExtensionPointIdentifier: com.apple.authentication-services-credential-provider-ui
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).CredentialProviderViewController
           NSExtensionAttributes:
             ASCredentialProviderExtensionCapabilities:
               ProvidesPasswords: true
+              # iOS 18 one-time-code AutoFill: the key icon in a code field.
+              ProvidesOneTimeCodes: true
     entitlements:
       path: PawAutoFill/PawAutoFill.entitlements
       properties:

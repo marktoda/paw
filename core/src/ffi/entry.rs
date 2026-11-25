@@ -69,6 +69,12 @@ impl OpenedEntry {
     pub(crate) fn duplicate_doc(&self) -> Option<EntryDoc> {
         self.doc().as_ref().map(EntryDoc::duplicate)
     }
+
+    /// Whether the entry has a one-time-code line that makes codes. `None`
+    /// once closed.
+    pub(crate) fn makes_codes(&self) -> Option<bool> {
+        self.doc().as_ref().map(EntryDoc::makes_codes)
+    }
 }
 
 #[uniffi::export]

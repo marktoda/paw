@@ -19,6 +19,8 @@ enum AutoFillRequest: Equatable, Sendable {
 @MainActor
 protocol AutoFillCompletion: AnyObject {
     func fill(user: String, password: String)
+    /// The current one-time code, for a one-time-code request.
+    func fill(oneTimeCode: String)
     func end(_ reason: AutoFillEnd)
 }
 
@@ -69,8 +71,9 @@ private struct Carry<Value>: @unchecked Sendable {
 /// the completion injected.
 ///
 /// The password never reaches a view: it goes from the opened entry
-/// straight to the completion, and the entry is wiped at once. File and
-/// card work runs off the main thread.
+/// straight to the completion, and the entry is wiped at once. So does a
+/// one-time code, made from the entry at that moment: neither the code nor
+/// its secret is kept. File and card work runs off the main thread.
 @MainActor @Observable
 final class AutoFillModel {
     enum Screen: Equatable {
@@ -98,6 +101,9 @@ final class AutoFillModel {
     static let faceIdWindowSecs: UInt32 = 8 * 60 * 60
 
     let request: AutoFillRequest
+    /// A password, or a one-time code: the same entries, rules and steps,
+    /// and only what is handed over differs.
+    let kind: AutoFillKind
     private(set) var screen: Screen = .loading
     /// The site the list is for, e.g. `github.com`. `nil` for an app iOS
     /// gives no site for.
@@ -110,6 +116,9 @@ final class AutoFillModel {
     /// paired only with other domains (a lookalike) is in neither list and
     /// is found by search only.
     private(set) var maybe: [EntryRef] = []
+    /// Entries known to have a one-time code (`OneTimeCodeEntries`): seen
+    /// with one when last opened on this iPhone.
+    private(set) var withCode: Set<String> = []
     /// Every match for the site by path, lookalikes included, with why.
     @ObservationIgnored private var found: [String: MatchedEntry] = [:]
     /// The name match the person confirmed for this domain, recorded once
@@ -159,9 +168,10 @@ final class AutoFillModel {
     @ObservationIgnored private let work = DispatchQueue(label: "paw-autofill", qos: .userInitiated)
     @ObservationIgnored private let cardQueue = DispatchQueue(label: "paw-card", qos: .userInitiated)
 
-    init(request: AutoFillRequest, completion: AutoFillCompletion,
+    init(request: AutoFillRequest, kind: AutoFillKind = .password, completion: AutoFillCompletion,
          open: @escaping @Sendable () -> AutoFillOpening) {
         self.request = request
+        self.kind = kind
         self.completion = completion
         self.open = open
     }
@@ -179,8 +189,10 @@ final class AutoFillModel {
             var matches: [EntryRef] = []
             var maybe: [EntryRef] = []
             var found: [MatchedEntry] = []
+            var withCode: [String] = []
             if case .ready(let source) = opening {
                 live = ((try? source.copies?.list()) ?? []).map(\.entry)
+                withCode = source.codes?.entries(store: source.store) ?? []
                 switch request {
                 case .list(let services):
                     found = SiteMatch.entries(in: source.store, for: services, pairings: source.pairings)
@@ -190,11 +202,12 @@ final class AutoFillModel {
                     matches = SiteMatch.entry(path, in: source.store).map { [$0] } ?? []
                 }
             }
-            let carried = Carry(value: (opening, live, matches, found, maybe))
+            let carried = Carry(value: (opening, live, matches, found, maybe, withCode))
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { [weak self] in
                     self?.found = Dictionary(carried.value.3.map { ($0.entry.path, $0) }) { first, _ in first }
                     self?.maybe = carried.value.4
+                    self?.withCode = Set(carried.value.5)
                     self?.opened(carried.value.0, live: carried.value.1, matches: carried.value.2)
                 }
             }
@@ -250,6 +263,17 @@ final class AutoFillModel {
         hits = trimmed.isEmpty ? [] : source.store.search(query: trimmed, limit: 100)
     }
 
+    /// The site's own entries the list shows: for a code, only those known
+    /// to have one. Search still finds the rest.
+    var listedMatches: [EntryRef] {
+        kind == .password ? matches : matches.filter { withCode.contains($0.path) }
+    }
+
+    /// The name matches the list shows, likewise.
+    var listedMaybe: [EntryRef] {
+        kind == .password ? maybe : maybe.filter { withCode.contains($0.path) }
+    }
+
     var isSearching: Bool {
         !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -268,10 +292,12 @@ final class AutoFillModel {
 
     /// What a fill says it does: "Fill github.com", or with the site when
     /// the entry's name does not already say it, "Fill fastmail on
-    /// example.com". The key sheet and the Face ID prompt both say this.
+    /// example.com"; for a code, "Fill code for github.com". The key sheet
+    /// and the Face ID prompt both say this.
     func purpose(_ entry: EntryRef) -> String {
-        guard let site, site != entry.name.lowercased() else { return "Fill \(entry.name)" }
-        return "Fill \(entry.name) on \(site)"
+        let verb = kind == .oneTimeCode ? "Fill code for" : "Fill"
+        guard let site, site != entry.name.lowercased() else { return "\(verb) \(entry.name)" }
+        return "\(verb) \(entry.name) on \(site)"
     }
 
     /// A tap on an entry. One that is not this site's asks first (design
@@ -678,12 +704,17 @@ final class AutoFillModel {
     /// entry is wiped unread and the person is asked. Filling anyway opens
     /// it again (Face ID, from the copy the key just kept).
     private func fill(_ opened: OpenedEntry, entry: EntryRef) {
+        noteCode(opened, entry: entry)
         if let warning = urlWarning(opened, entry: entry) {
             opened.close()
             source?.keyPort.session()?.forgetPin()
             guard !finished else { return }
             pairing = nil
             screen = .confirm(entry, warning)
+            return
+        }
+        if kind == .oneTimeCode {
+            fillCode(opened, entry: entry)
             return
         }
         let password = opened.password()
@@ -701,6 +732,39 @@ final class AutoFillModel {
         screen = .filled
         recordPairing(entry)
         completion?.fill(user: user, password: password)
+    }
+
+    /// The current code, made now and handed over; the entry is wiped at
+    /// once. One with no code, or a code line that makes none, says so.
+    private func fillCode(_ opened: OpenedEntry, entry: EntryRef) {
+        let code = opened.otpCode(nowMs: Int64(Date().timeIntervalSince1970 * 1000))?.code
+        let problem = code == nil ? opened.otpProblem() : nil
+        opened.close()
+        source?.keyPort.session()?.forgetPin()
+        guard let code, !code.isEmpty else {
+            withCode.remove(entry.path)
+            if let problem {
+                screen = .problem("\(entry.name)'s code doesn't work", problem, backToList: !isSuggestion)
+            } else {
+                screen = isSuggestion
+                    ? .problem("\(entry.name) has no one-time code", "Add one in paw, then try again.", backToList: false)
+                    : .problem("\(entry.name) has no one-time code", "Pick another entry.", backToList: true)
+            }
+            return
+        }
+        guard !finished else { return }
+        finished = true
+        screen = .filled
+        recordPairing(entry)
+        completion?.fill(oneTimeCode: code)
+    }
+
+    /// Keeps whether the entry just opened has a one-time code, so a code
+    /// request lists it next time. A yes per entry, never the code or its
+    /// secret; a failure only leaves it as it was.
+    private func noteCode(_ opened: OpenedEntry, entry: EntryRef) {
+        guard let codes = source?.codes else { return }
+        _ = try? codes.noteOpened(entry: entry.path, opened: opened)
     }
 
     /// The warning to show before filling `entry` on this site, from its
