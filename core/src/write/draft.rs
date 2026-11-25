@@ -12,7 +12,7 @@
 
 use zeroize::Zeroizing;
 
-use crate::entry::EntryDoc;
+use crate::entry::{EntryDoc, FieldRefusal, has_line_break, key_refusal, note_lines, value_refusal};
 use crate::generate::{PasswordPolicy, PolicyError, generate};
 use crate::path::{NameRefusal, case_folded, folder_and_parents, folder_refusal, join, name_refusal, split};
 use crate::store::tree::StoreTree;
@@ -176,21 +176,28 @@ fn tree_has_folder(tree: &StoreTree, folded: &str) -> bool {
     })
 }
 
-fn line_break(text: &str) -> bool {
-    text.contains(['\n', '\r'])
-}
-
 fn single_line(field: DraftField, what: &str, value: &str) -> Option<DraftProblem> {
-    line_break(value).then(|| problem(field, format!("{what} can't contain a line break.")))
+    has_line_break(value).then(|| problem(field, format!("{what} can't contain a line break.")))
 }
 
 fn value_problem(field: DraftField, what: &str, value: &str) -> Option<DraftProblem> {
-    single_line(field.clone(), what, value).or_else(|| {
-        let trimmed = value.trim_start();
-        let looks_otp = trimmed.get(..10).is_some_and(|s| s.eq_ignore_ascii_case("otpauth://"));
-        (looks_otp || value.trim().starts_with("//"))
-            .then(|| problem(field, format!("{what} can't start with // or be a one-time-code address.")))
-    })
+    let message = match value_refusal(value)? {
+        FieldRefusal::ValueReadsAsOther => format!("{what} can't start with // or be a one-time-code address."),
+        _ => format!("{what} can't contain a line break."),
+    };
+    Some(problem(field, message))
+}
+
+/// The problem with setting the field `key` to `value` (or removing it,
+/// with `None`), as the form words it.
+pub(crate) fn field_problem(key: &str, value: Option<&str>) -> Option<DraftProblem> {
+    let field = || DraftField::Field { key: key.to_owned() };
+    match key_refusal(key) {
+        Some(FieldRefusal::KeyBlank) => Some(problem(field(), "Give the field a name.")),
+        Some(FieldRefusal::KeyLineBreak) => Some(problem(field(), "A field name can't contain a line break.")),
+        Some(_) => Some(problem(field(), "A field name can't contain a colon.")),
+        None => value.and_then(|v| value_problem(field(), &format!("The value of {}", key.trim()), v)),
+    }
 }
 
 impl EntryDraft {
@@ -343,23 +350,14 @@ impl EntryDraft {
             problems.push(p);
         }
         for edit in &self.fields {
-            let (key, value) = match edit {
-                FieldEdit::Set { key, value } => (key, Some(value)),
-                FieldEdit::Remove { key } => (key, None),
+            let found = match edit {
+                FieldEdit::Set { key, value } => field_problem(key, Some(value)),
+                FieldEdit::Remove { key } => field_problem(key, None),
             };
-            let field = || DraftField::Field { key: key.clone() };
-            if key.trim().is_empty() {
-                problems.push(problem(field(), "Give the field a name."));
-            } else if line_break(key) {
-                problems.push(problem(field(), "A field name can't contain a line break."));
-            } else if key.contains(':') {
-                problems.push(problem(field(), "A field name can't contain a colon."));
-            } else if let Some(p) = value.and_then(|v| value_problem(field(), &format!("The value of {}", key.trim()), v)) {
-                problems.push(p);
-            }
+            problems.extend(found);
         }
         if let Some(notes) = &self.notes
-            && notes.replace("\r\n", "\n").contains('\r')
+            && note_lines(notes).is_none()
         {
             problems.push(problem(DraftField::Notes, "Notes can't contain a lone carriage return."));
         }
@@ -431,7 +429,7 @@ impl EntryDraft {
             }
         }
         if let Some(notes) = &self.notes {
-            doc.set_notes(&notes.replace("\r\n", "\n")).map_err(fail(DraftField::Notes))?;
+            doc.set_notes(notes).map_err(fail(DraftField::Notes))?;
         }
         match &self.otp {
             Some(OtpEdit::Set(setup)) => {

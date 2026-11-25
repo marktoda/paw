@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use paw_core::store::PassStore;
 use paw_core::store::pairings::{FILE, MAX_ENTRIES, MAX_SITES, PairedSite, Pairing, PairingFile, SitePairings};
-use paw_core::store::service::{MatchKind, NamePairing, match_service, match_site, name_key, site_name};
+use paw_core::store::service::{MatchKind, NamePairing, match_site, name_key, site_name};
 use paw_core::store::tree::EntryRef;
 
 fn entries(paths: &[&str]) -> Vec<EntryRef> {
@@ -223,18 +223,13 @@ fn names_and_site_names_are_squeezed_the_same_way() {
 #[test]
 fn host_matches_are_unchanged_and_come_first() {
     let all = entries(STORE);
-    let tier_one: Vec<String> = match_service(&all, "https://github.com").into_iter().map(|m| m.entry.path).collect();
     let site = match_site(&all, "https://github.com", &[]);
-    let hosts: Vec<String> = site
-        .iter()
-        .filter(|m| matches!(m.kind, MatchKind::ExactHost | MatchKind::SameDomain))
-        .map(|m| m.entry.path.clone())
-        .collect();
-    assert_eq!(hosts, tier_one);
+    let hosts = site.iter().filter(|m| matches!(m.kind, MatchKind::ExactHost | MatchKind::SameDomain)).count();
+    assert!(hosts > 0);
     assert_eq!(site.iter().map(|m| m.site.as_str()).collect::<HashSet<_>>(), HashSet::from(["github.com"]));
     // Name matches follow every host match.
     let first_name = site.iter().position(|m| matches!(m.kind, MatchKind::Name { .. })).unwrap();
-    assert_eq!(first_name, tier_one.len());
+    assert_eq!(first_name, hosts);
 }
 
 fn pairing(entry: &str, sites: &[&str]) -> Pairing {

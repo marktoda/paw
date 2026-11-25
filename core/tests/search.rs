@@ -2,7 +2,7 @@
 //! are pure functions of the entry list, tested as tables.
 
 use paw_core::store::search::{HighlightRange, search};
-use paw_core::store::service::{host_of, match_service, registrable_domain};
+use paw_core::store::service::{MatchKind, MatchedEntry, host_of, match_site, registrable_domain};
 use paw_core::store::tree::EntryRef;
 
 fn entries(paths: &[&str]) -> Vec<EntryRef> {
@@ -220,11 +220,21 @@ const SITES: &[&str] = &[
 ];
 
 fn offered(service: &str) -> Vec<(String, bool)> {
-    match_service(&entries(SITES), service)
+    host_matches(match_site(&entries(SITES), service, &[]))
+}
+
+/// The host matches of `found`, in order, as (path, exact host).
+fn host_matches(found: Vec<MatchedEntry>) -> Vec<(String, bool)> {
+    found
         .into_iter()
-        .map(|m| (m.entry.path, m.exact))
+        .filter_map(|m| match m.kind {
+            MatchKind::ExactHost => Some((m.entry.path, true)),
+            MatchKind::SameDomain => Some((m.entry.path, false)),
+            MatchKind::Name { .. } => None,
+        })
         .collect()
 }
+
 
 #[test]
 fn entries_are_offered_for_their_host_then_for_its_registrable_domain() {
@@ -325,13 +335,10 @@ fn an_ipv4_address_in_any_form_matches_only_itself_as_written() {
     let paths: Vec<String> = addresses.iter().map(|a| format!("home/{a}")).collect();
     let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
     for address in addresses {
-        assert_eq!(registrable_domain(&format!("http://{address}/")), None, "{address}");
-        let offered: Vec<(String, bool)> = match_service(&entries(&paths), &format!("http://{address}/"))
-            .into_iter()
-            .map(|m| (m.entry.path, m.exact))
-            .collect();
+        assert_eq!(registrable_domain(format!("http://{address}/")), None, "{address}");
+        let offered = host_matches(match_site(&entries(&paths), &format!("http://{address}/"), &[]));
         assert_eq!(offered, [(format!("home/{address}"), true)], "{address}");
     }
     // A hex-looking label that is not last is part of a name.
-    assert_eq!(registrable_domain("https://0x1.example.com").as_deref(), Some("example.com"));
+    assert_eq!(registrable_domain("https://0x1.example.com".into()).as_deref(), Some("example.com"));
 }

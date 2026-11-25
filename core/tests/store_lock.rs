@@ -239,7 +239,7 @@ fn save_in(writer: &WriteStore, name: &str) -> Result<paw_core::write::Saved, Wr
     let mut draft = EntryDraft::new("lock");
     draft.set_name(name);
     draft.set_password(&format!("pw-{name}"));
-    writer.save(&draft).map(|(saved, _)| saved)
+    writer.save(&draft)
 }
 
 fn git_lock_files(git: &Path) -> Vec<PathBuf> {
@@ -843,8 +843,6 @@ fn every_mutating_entry_point_returns_even_when_its_thread_holds_the_lock() {
 
             let ffi_writer = paw_core::ffi::write::StoreWriter::open(w.state().to_string_lossy().into_owned());
             note("accept_recipients", ffi_writer.accept_recipients(String::new()).map_err(|e| text(&e)));
-            note("accept_all_recipients_at_setup", ffi_writer.accept_all_recipients_at_setup().map_err(|e| text(&e)));
-            note("set_git_identity", ffi_writer.set_git_identity(None).map_err(|e| text(&e)));
             note("pin_card_key", ffi_writer.pin_card_key(w.key.clone().as_connection()).map(drop).map_err(|e| text(&e)));
             let sync_api = StoreSync::open(w.state().to_string_lossy().into_owned()).unwrap();
             note("store_sync.discard_all", sync_api.discard_all().map_err(|e| text(&e)));

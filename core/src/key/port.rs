@@ -18,7 +18,7 @@ use super::task::{Body, KeyTask, TaskCore};
 use super::{KeyError, KeyOutcome, KeyPurpose, KeyTaskListener, KeyTaskState, LoginPurpose};
 use crate::{ApduTransport, PawError};
 use crate::copies::{Clock, CopyCache, content_id};
-use crate::ffi::OpenedEntry;
+use crate::entry::opened::OpenedEntry;
 use crate::store::PassStore;
 
 struct State {
@@ -359,7 +359,7 @@ impl KeyPort {
                     copies.put(&entry, &plaintext, &content_id(&ciphertext), ttl).ok().flatten()
                 });
                 let mut plaintext = plaintext;
-                let entry = OpenedEntry::from_plaintext(std::mem::take(&mut *plaintext))
+                let entry = OpenedEntry::decrypted(std::mem::take(&mut *plaintext), content_id(&ciphertext))
                     .map_err(entry_unreadable)?;
                 Ok(Some(KeyOutcome::Opened { entry, face_id_until_ms }))
             },

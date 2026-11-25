@@ -218,13 +218,9 @@ pub struct FolderRecipients {
     pub accepted_gpg_id: Option<String>,
     /// Its key lines as accepted.
     pub accepted_lines: Vec<String>,
-}
-
-impl FolderRecipients {
-    /// Whether paw can save in the folder now.
-    pub fn writable(&self) -> bool {
-        self.confirmed && !self.changed && self.lines.iter().all(|l| matches!(l.status, LineStatus::Ready { .. }))
-    }
+    /// Whether paw can save in the folder now: confirmed, unchanged, and
+    /// every line ready.
+    pub writable: bool,
 }
 
 /// A `.gpg-id` as the person accepted it.
@@ -500,13 +496,6 @@ impl Keyring {
         self.save()
     }
 
-    /// Forgets a pinned key and every binding to it.
-    pub fn forget(&mut self, fingerprint: &str) -> Result<(), WriteError> {
-        self.keys.retain(|key| key.fingerprint != fingerprint);
-        self.bindings.retain(|(_, fpr)| fpr != fingerprint);
-        self.save()
-    }
-
     /// How `line` is satisfied at `now` (seconds since 1970).
     pub fn line_status(&self, line: &str, now: u32) -> LineStatus {
         let trimmed = line.trim();
@@ -568,14 +557,17 @@ impl Keyring {
         });
         let changed = self.accepted.is_some()
             && accepted.is_none_or(|a| a.path != gpg_id || a.sha != sha256_hex(&bytes));
-        let lines = parse_gpg_id(&text)
+        let lines: Vec<RecipientLine> = parse_gpg_id(&text)
             .into_iter()
             .map(|line| RecipientLine { status: self.line_status(&line, now), line })
             .collect();
+        let confirmed = self.accepted.is_some();
+        let ready = lines.iter().all(|l| matches!(l.status, LineStatus::Ready { .. }));
         Ok(FolderRecipients {
             gpg_id,
+            writable: confirmed && !changed && ready,
             lines,
-            confirmed: self.accepted.is_some(),
+            confirmed,
             changed,
             accepted_gpg_id: accepted.map(|a| a.path.clone()),
             accepted_lines: accepted.map(|a| parse_gpg_id(&a.text)).unwrap_or_default(),
@@ -727,33 +719,6 @@ impl Keyring {
             }
             _ => Err(WriteError::MissingRecipients { gpg_id: recipients.gpg_id, missing: open }),
         }
-    }
-
-    /// Binds the one line of the top-level
-    /// `.gpg-id` that no pinned key satisfies to the card's key
-    /// `card_fingerprint` (already pinned). Returns the lines bound: none if
-    /// every line was already satisfied, or if a line already means the
-    /// card's key (the open ones are then other recipients, whose keys
-    /// have to be imported). If several lines are unsatisfied,
-    /// paw cannot tell which is the card's, and the person has to choose
-    /// ([`Self::bind`]); that is [`WriteError::MissingRecipients`].
-    ///
-    /// It does not know which entry the card opened, so with a top-level
-    /// line naming another key and a folder below naming the owner it binds
-    /// the wrong line. Setup uses [`Self::bind_card_for_opened_entry`];
-    /// this stays for the exported `StoreWriter.bind_card_after_test_decrypt`.
-    pub fn bind_card_after_test_decrypt(
-        &mut self,
-        root: &Path,
-        card_fingerprint: &str,
-        now: u32,
-    ) -> Result<Vec<String>, WriteError> {
-        let card_fingerprint = card_fingerprint.trim().to_ascii_uppercase();
-        if !self.keys.iter().any(|k| k.fingerprint == card_fingerprint && k.source == KeySource::Card) {
-            return Err(WriteError::NotPinned { fingerprint: card_fingerprint });
-        }
-        let recipients = self.folder_recipients(root, "", now)?;
-        self.bind_one_open_line(recipients, &card_fingerprint)
     }
 }
 

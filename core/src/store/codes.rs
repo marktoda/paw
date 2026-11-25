@@ -29,7 +29,6 @@ use std::sync::{Arc, Mutex};
 use super::PassStore;
 use super::state_file::{ListFile, ListKind, MAX_PATH_BYTES, remove_if_there};
 use crate::PawError;
-use crate::ffi::OpenedEntry;
 
 /// The file, in the state directory.
 pub const FILE: &str = "one-time-codes.json";
@@ -159,17 +158,10 @@ impl OneTimeCodeEntries {
         Arc::new(Self { file: CodeFile::new(Path::new(&state_dir)) })
     }
 
-    /// `opened`, the entry at `entry`, was just opened: keeps whether it
-    /// has a one-time code that works. True if that changed what is kept
-    /// (the suggestions above the keyboard are then out of date). False,
-    /// and nothing kept, once `opened` is closed or while the list is off.
-    pub fn note_opened(&self, entry: String, opened: Arc<OpenedEntry>) -> Result<bool, PawError> {
-        let Some(has_code) = opened.makes_codes() else { return Ok(false) };
-        self.file.mark(&entry, has_code).map_err(failed)
-    }
-
-    /// `note_opened` with the answer already read from the entry
-    /// (`OpenedEntry.makes_one_time_codes`), for after the entry is wiped.
+    /// The entry at `entry` was opened or saved: keeps whether it has a
+    /// one-time code that works (`OpenedEntry.makes_one_time_codes`). True
+    /// if that changed what is kept (the suggestions above the keyboard are
+    /// then out of date). False, and nothing kept, while the list is off.
     pub fn note(&self, entry: String, has_code: bool) -> Result<bool, PawError> {
         self.file.mark(&entry, has_code).map_err(failed)
     }
@@ -203,6 +195,7 @@ impl OneTimeCodeEntries {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::entry::opened::OpenedEntry;
 
     const WITH_CODE: &[u8] = b"pw\notpauth://totp/GitHub:you?secret=JBSWY3DPEHPK3PXP&issuer=GitHub\n";
     const BROKEN_CODE: &[u8] = b"pw\notpauth://totp/GitHub:you?secret=!!!\n";
@@ -233,7 +226,7 @@ mod tests {
         let d = dir();
         let codes = OneTimeCodeEntries::open(d.path().to_str().unwrap().into());
         assert!(!codes.enabled());
-        assert!(!codes.note_opened("web/github.com".into(), opened(WITH_CODE)).unwrap());
+        assert!(!codes.note("web/github.com".into(), opened(WITH_CODE).makes_one_time_codes()).unwrap());
         assert!(!codes.note("web/github.com".into(), true).unwrap());
         assert!(!d.path().join(FILE).exists(), "nothing is written while off");
         // A file left by a write that raced an off is not read.
@@ -278,10 +271,10 @@ mod tests {
     fn opening_marks_an_entry_with_a_working_code_and_nothing_else() {
         let d = dir();
         let codes = codes(&d);
-        assert!(codes.note_opened("web/github.com".into(), opened(WITH_CODE)).unwrap());
-        assert!(!codes.note_opened("web/github.com".into(), opened(WITH_CODE)).unwrap(), "no change, no write");
-        assert!(!codes.note_opened("web/gitlab.com".into(), opened(b"pw\nlogin: you\n")).unwrap());
-        assert!(!codes.note_opened("web/broken.com".into(), opened(BROKEN_CODE)).unwrap());
+        assert!(codes.note("web/github.com".into(), opened(WITH_CODE).makes_one_time_codes()).unwrap());
+        assert!(!codes.note("web/github.com".into(), opened(WITH_CODE).makes_one_time_codes()).unwrap(), "no change, no write");
+        assert!(!codes.note("web/gitlab.com".into(), opened(b"pw\nlogin: you\n").makes_one_time_codes()).unwrap());
+        assert!(!codes.note("web/broken.com".into(), opened(BROKEN_CODE).makes_one_time_codes()).unwrap());
         assert_eq!(codes.file.load(), ["web/github.com"]);
         let text = std::fs::read_to_string(d.path().join(FILE)).unwrap();
         assert!(!text.contains("JBSW") && !text.contains("otpauth") && !text.contains("pw"), "{text}");
@@ -291,8 +284,8 @@ mod tests {
     fn a_code_removed_since_unmarks_it() {
         let d = dir();
         let codes = codes(&d);
-        codes.note_opened("a".into(), opened(WITH_CODE)).unwrap();
-        assert!(codes.note_opened("a".into(), opened(b"pw\n")).unwrap());
+        codes.note("a".into(), opened(WITH_CODE).makes_one_time_codes()).unwrap();
+        assert!(codes.note("a".into(), opened(b"pw\n").makes_one_time_codes()).unwrap());
         assert!(codes.file.load().is_empty());
     }
 
@@ -302,7 +295,7 @@ mod tests {
         let codes = codes(&d);
         let entry = opened(WITH_CODE);
         entry.close();
-        assert!(!codes.note_opened("a".into(), entry).unwrap());
+        assert!(!codes.note("a".into(), entry.makes_one_time_codes()).unwrap());
         assert!(!d.path().join(FILE).exists());
     }
 

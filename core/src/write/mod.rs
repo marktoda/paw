@@ -29,7 +29,7 @@ use crate::store::state_file::{read_bounded, write_atomic};
 use crate::sync::Author;
 pub use draft::{DraftField, DraftProblem, EntryDraft};
 pub use keyring::{FolderRecipients, KeySource, Keyring, LineStatus, RecipientLine};
-pub use ops::{Saved, WriteStore};
+pub use ops::{Deleted, FollowUp, FollowUpFailure, Saved, WriteStore};
 pub use scopes::{RecipientScope, ScopeKey};
 
 /// Why a change was not made. In every case nothing in the store changed.

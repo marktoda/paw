@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use paw_core::copies::{CopyCache, CopyStatus, content_id};
 use paw_core::entry::EntryDoc;
-use paw_core::ffi::OpenedEntry;
+use paw_core::entry::opened::OpenedEntry;
 use paw_core::ffi::write::StoreWriter;
 use paw_core::recipients::{Recipient, entry_recipients};
 use paw_core::sim::SimulatedKey;
@@ -214,7 +214,7 @@ fn contains(haystack: &[u8], needle: &str) -> bool {
 fn a_folder_whose_gpg_id_names_the_pinned_card_key_can_be_saved_in() {
     let s = store();
     let recipients = s.write().folder_recipients("Work").unwrap();
-    assert!(recipients.writable());
+    assert!(recipients.writable);
     assert_eq!(
         recipients.lines[0].status,
         LineStatus::Ready { fingerprint: card().fingerprint_hex(), source: KeySource::Card, bound: false }
@@ -244,7 +244,7 @@ fn saving_is_refused_naming_every_recipient_without_a_key() {
     }
     assert_eq!(s.head(), head);
     assert!(!s.repo.join("x.gpg").exists());
-    assert!(!s.write().folder_recipients("").unwrap().writable());
+    assert!(!s.write().folder_recipients("").unwrap().writable);
 }
 
 #[test]
@@ -259,8 +259,8 @@ fn a_gpg_id_naming_the_primary_key_needs_the_setup_binding_for_the_card() {
         WriteError::MissingRecipients { missing, .. } if missing == [primary.clone()]
     ));
 
-    // Setup, after the test decrypt succeeded.
-    let bound = s.keyring().bind_card_after_test_decrypt(&s.repo, &card().fingerprint_hex(), 0).unwrap();
+    // Setup, after the test decrypt of an entry for the card succeeded.
+    let bound = s.keyring().bind_card_for_opened_entry(&s.repo, &card().fingerprint_hex(), "x", &encrypted("pw\n"), 0).unwrap();
     assert_eq!(bound, std::slice::from_ref(&primary));
     assert_eq!(
         s.write().folder_recipients("").unwrap().lines[0].status,
@@ -279,7 +279,7 @@ fn a_binding_must_name_a_pinned_key_and_the_card_binding_needs_one_open_line() {
     assert!(matches!(s.keyring().bind("AAAA1111", "00FF"), Err(WriteError::NotPinned { .. })));
     // Two lines no key satisfies: paw cannot tell which is the card's.
     assert!(matches!(
-        s.keyring().bind_card_after_test_decrypt(&s.repo, &card().fingerprint_hex(), 0),
+        s.keyring().bind_card_for_opened_entry(&s.repo, &card().fingerprint_hex(), "x", &encrypted("pw\n"), 0),
         Err(WriteError::MissingRecipients { missing, .. }) if missing.len() == 2
     ));
     // The person picks; then the other line is still missing.
@@ -377,7 +377,7 @@ fn a_gpg_id_a_pull_adds_deeper_stops_saving_in_that_subtree_until_accepted() {
                 if gpg_id == "Work/.gpg-id" && was == ".gpg-id" && *before == [fpr.clone()] && *after == [fpr[24..].to_owned()]),
             "{folder}: {error:?}"
         );
-        assert!(!s.write().folder_recipients(folder).unwrap().writable());
+        assert!(!s.write().folder_recipients(folder).unwrap().writable);
     }
     // Folders the new file does not govern are as they were.
     s.write().save(&new_entry("Personal", "b", "pw")).unwrap();
@@ -419,7 +419,7 @@ fn nothing_is_saved_before_setup_accepts_who_can_open_the_store() {
     s.keyring().pin_card_key(&card_key()).unwrap();
     let head = s.head();
     assert!(matches!(s.write().save(&new_entry("Work", "a", "pw")).unwrap_err(), WriteError::RecipientsNotConfirmed));
-    assert!(!s.write().folder_recipients("Work").unwrap().writable());
+    assert!(!s.write().folder_recipients("Work").unwrap().writable);
     // Saving does not accept anything by itself, and accepting one folder
     // is not setup.
     assert!(matches!(s.keyring().accept_recipients(&s.repo, "Work").unwrap_err(), WriteError::RecipientsNotConfirmed));
@@ -514,7 +514,7 @@ fn adding_commits_one_file_with_pass_wording_as_paw() {
     draft.set_username("you@example.com");
     draft.set_url("https://gitlab.com");
 
-    let (saved, _) = s.write().save(&draft).unwrap();
+    let saved = s.write().save(&draft).unwrap();
 
     assert_eq!(saved.entry, "Work/gitlab.com");
     assert_eq!(saved.commits.len(), 1);
@@ -612,7 +612,7 @@ fn an_edit_rewrites_only_the_changed_line_and_commits_it_as_an_edit() {
     let mut draft = open(&s, "Work/github.com");
     draft.set_password("new-pw");
 
-    let (saved, _) = s.write().save(&draft).unwrap();
+    let saved = s.write().save(&draft).unwrap();
 
     assert_eq!(saved.commits.len(), 1);
     assert_eq!(s.decrypt("Work/github.com"), "new-pw\nlogin: you@example.com\notpauth://totp/x?secret=A\nnote\n");
@@ -627,7 +627,7 @@ fn an_edit_rewrites_only_the_changed_line_and_commits_it_as_an_edit() {
 fn an_unchanged_edit_commits_nothing() {
     let s = store();
     let head = s.head();
-    let (saved, _) = s.write().save(&open(&s, "Work/github.com")).unwrap();
+    let saved = s.write().save(&open(&s, "Work/github.com")).unwrap();
     assert!(saved.commits.is_empty());
     assert_eq!(saved.content_id, content_id(&s.file("Work/github.com")));
     assert_eq!(s.head(), head);
@@ -653,7 +653,7 @@ fn an_edit_that_also_renames_is_a_rename_then_an_edit() {
     draft.set_name("github");
     draft.set_password("new-pw");
 
-    let (saved, _) = s.write().save(&draft).unwrap();
+    let saved = s.write().save(&draft).unwrap();
 
     assert_eq!(saved.previous.as_deref(), Some("Work/github.com"));
     assert_eq!(saved.commits.len(), 2);
@@ -929,8 +929,52 @@ fn writer(s: &Store) -> Arc<StoreWriter> {
     StoreWriter::open(s.state.to_str().unwrap().into())
 }
 
+/// `entry` as a key open gives it: with the content id of its file.
 fn opened(s: &Store, entry: &str) -> Arc<OpenedEntry> {
-    OpenedEntry::from_plaintext(s.decrypt(entry).into_bytes()).unwrap()
+    OpenedEntry::decrypted(s.decrypt(entry).into_bytes(), content_id(&s.file(entry))).unwrap()
+}
+
+#[test]
+fn an_edit_is_refused_if_the_file_changed_between_opening_and_editing() {
+    let s = store();
+    let entry = opened(&s, "Work/github.com");
+    s.desktop("Work/github.com.gpg", &encrypted("theirs\n"));
+
+    let draft = writer(&s).edit_draft(entry, "Work/github.com".into()).unwrap();
+    draft.set_password("mine".into());
+
+    assert!(matches!(writer(&s).save(draft, None, 0).unwrap_err(), WriteError::ChangedSinceOpened { .. }));
+    assert_eq!(s.decrypt("Work/github.com"), "theirs\n");
+}
+
+#[test]
+fn a_save_returns_the_entry_as_saved_open() {
+    let s = store();
+    let draft = writer(&s).edit_draft(opened(&s, "Work/github.com"), "Work/github.com".into()).unwrap();
+    draft.set_password("new-pw".into());
+
+    let saved = writer(&s).save(draft, None, 0).unwrap();
+
+    let entry = saved.opened.unwrap();
+    assert_eq!(entry.password().as_deref(), Some("new-pw"));
+    assert_eq!(entry.username().as_deref(), Some("you@example.com"));
+    assert!(saved.follow_up_failures.is_empty());
+    // Editing it again is guarded by the file it was saved as.
+    let again = writer(&s).edit_draft(entry, "Work/github.com".into()).unwrap();
+    again.set_password("newer-pw".into());
+    writer(&s).save(again, None, 0).unwrap();
+    assert!(s.decrypt("Work/github.com").starts_with("newer-pw\n"));
+}
+
+#[test]
+fn one_field_row_is_checked_as_the_form_checks_it() {
+    use paw_core::ffi::write::field_problem;
+    assert_eq!(field_problem("a:b".into(), "x".into()).unwrap().message, "A field name can't contain a colon.");
+    assert_eq!(
+        field_problem("pin".into(), "otpauth://totp/x?secret=A".into()).unwrap().message,
+        "The value of pin can't start with // or be a one-time-code address."
+    );
+    assert!(field_problem("pin".into(), "1234".into()).is_none());
 }
 
 #[test]
@@ -989,7 +1033,7 @@ fn delete_wipes_the_copy_and_a_plain_rename_drops_it() {
     }
 
     writer(&s).delete("Work/Jira".into(), Some(c.cache.clone())).unwrap();
-    writer(&s).rename("Work/github.com".into(), "Work".into(), "github".into(), Some(c.cache.clone())).unwrap();
+    s.write().with_copies(Some(c.cache.clone()), std::time::Duration::ZERO).rename("Work/github.com", "Work/github", None).unwrap();
 
     assert!(c.cache.list().unwrap().is_empty());
 }
@@ -1002,8 +1046,11 @@ fn a_move_of_an_open_entry_takes_its_copy_along() {
         .put("Work/github.com", b"old", &content_id(&s.file("Work/github.com")), std::time::Duration::from_secs(3600))
         .unwrap();
 
-    let outcome = writer(&s)
-        .move_open_entry("Work/github.com".into(), opened(&s, "Work/github.com"), "Shared".into(), "github.com".into(), Some(c.cache.clone()))
+    let doc = EntryDoc::parse(s.decrypt("Work/github.com").into_bytes()).unwrap();
+    let outcome = s
+        .write()
+        .with_copies(Some(c.cache.clone()), std::time::Duration::ZERO)
+        .rename("Work/github.com", "Shared/github.com", Some(&doc))
         .unwrap();
 
     assert_eq!(outcome.face_id_until_ms, Some(1_790_000_000_000 + 3_600_000));
@@ -1026,8 +1073,8 @@ fn the_ffi_draft_reports_problems_and_the_writer_checks_the_name_is_free() {
     draft.set_name("jira-2".into());
     assert!(draft.problems_in(names).is_empty());
     draft.set_name("Jira".into());
-    assert!(writer(&s).can_save_in("Work".into()));
-    let FolderRecipients { lines, .. } = writer(&s).folder_recipients("Work".into()).unwrap();
+    let FolderRecipients { lines, writable, .. } = writer(&s).folder_recipients("Work".into()).unwrap();
+    assert!(writable);
     assert_eq!(lines.len(), 1);
 }
 
@@ -1045,7 +1092,7 @@ fn site_pairings_follow_a_rename_a_move_and_an_edit_and_go_with_a_delete() {
     pairings.record("Work/Jira", "jira.com", None).unwrap();
     pairings.record("Work/github.com", "github.com", None).unwrap();
 
-    writer(&s).rename("Work/Jira".into(), "Work".into(), "jira".into(), None).unwrap();
+    s.write().rename("Work/Jira", "Work/jira", None).unwrap();
     assert!(paired().contains(&("Work/jira".to_owned(), jira())), "{:?}", paired());
 
     // An edit that moves it.
@@ -1087,7 +1134,7 @@ fn one_time_code_marks_follow_saves_renames_and_deletes() {
     writer(&s).save(draft, None, 0).unwrap();
     assert_eq!(codes.load(), ["Work/Linear"]);
 
-    writer(&s).rename("Work/Linear".into(), "Work".into(), "linear".into(), None).unwrap();
+    s.write().rename("Work/Linear", "Work/linear", None).unwrap();
     assert_eq!(codes.load(), ["Work/linear"]);
 
     let draft = writer(&s).edit_draft(opened(&s, "Work/linear"), "Work/linear".into()).unwrap();

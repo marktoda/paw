@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use key_common::{Driver, finish, is_touch};
-use paw_core::ffi::OpenedEntry;
+use paw_core::entry::opened::OpenedEntry;
 use paw_core::key::{KeyError, KeyOutcome, KeyPort, KeyTaskState};
 use paw_core::recipients::{Access, Recipient};
 use paw_core::sim::SimulatedKey;
@@ -21,6 +21,7 @@ use paw_core::sim::fixture::{
 };
 use paw_core::store::service::{MatchKind, NamePairing};
 use paw_core::store::PassStore;
+use paw_core::store::tree::StoreTree;
 use paw_core::{PawError, card_decryption_key, card_info, decrypt_entry, encrypt_to_keys};
 
 const PIN: &str = "123456";
@@ -97,7 +98,7 @@ fn files(dir: &Path) -> Vec<(String, Vec<u8>)> {
 
 #[test]
 fn the_fixture_is_a_small_store_with_folders_and_top_level_entries() {
-    let (_dir, store) = fixture();
+    let (dir, store) = fixture();
     let home = store.home();
 
     let folders: Vec<_> = home.folders.iter().map(|f| (f.name.as_str(), f.entry_count)).collect();
@@ -117,7 +118,7 @@ fn the_fixture_is_a_small_store_with_folders_and_top_level_entries() {
     let top: Vec<_> = home.entries.iter().map(|e| e.name.as_str()).collect();
     assert_eq!(top, ["Home Wi-Fi", "phone-pin"]);
     assert_eq!(store.entry_count(), 29);
-    assert!(store.skipped().is_empty());
+    assert!(StoreTree::scan(dir.path()).unwrap().skipped().is_empty());
 
     let servers = store.folder("servers".into()).unwrap();
     assert_eq!(servers.folders[0].path, "servers/example.net");
@@ -146,9 +147,10 @@ fn the_fixture_can_be_searched_and_matched_to_sites() {
     assert_eq!(hits, ["web/Zürich Tourism"]);
 
     let offered: Vec<_> = store
-        .match_service("https://www.example.net/".into())
+        .match_site("https://www.example.net/".into(), None)
         .into_iter()
-        .map(|m| (m.entry.path, m.exact))
+        .filter(|m| !matches!(m.kind, MatchKind::Name { .. }))
+        .map(|m| (m.entry.path, m.kind == MatchKind::ExactHost))
         .collect();
     assert_eq!(
         offered,
@@ -178,7 +180,8 @@ fn the_card_can_open_everything_but_the_archive() {
         let access = store.access(entry.path.clone(), card.clone());
         if entry.folder == OTHER_KEY_FOLDER {
             assert_eq!(access, Access::NotForThisKey { recipients: vec![other_id.clone()] }, "{}", entry.path);
-            assert_eq!(store.entry_recipients(entry.path.clone()).unwrap().keys, std::slice::from_ref(&other_id));
+            let found = paw_core::recipients::entry_recipients(&store.read_entry(&entry.path).unwrap()).unwrap();
+            assert_eq!(found.keys, std::slice::from_ref(&other_id));
         } else {
             assert_eq!(access, Access::CanOpen, "{}", entry.path);
         }
@@ -381,8 +384,7 @@ fn the_sites_the_autofill_tests_use_gain_no_name_matches_from_the_fixture() {
         "https://paypa1.example",
     ];
     for site in sites {
-        let tier_one: Vec<_> = store.match_service(site.into()).into_iter().map(|m| m.entry.path).collect();
-        let all: Vec<_> = store.match_site(site.into(), None).into_iter().map(|m| m.entry.path).collect();
-        assert_eq!(all, tier_one, "{site}");
+        let found = store.match_site(site.into(), None);
+        assert!(found.iter().all(|m| !matches!(m.kind, MatchKind::Name { .. })), "{site}");
     }
 }

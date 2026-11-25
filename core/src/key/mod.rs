@@ -44,7 +44,7 @@ pub use session::KeySession;
 pub use signer::SessionSigner;
 pub use task::KeyTask;
 
-use crate::ffi::OpenedEntry;
+use crate::entry::opened::OpenedEntry;
 
 /// paw forgets the PIN once it has spent this long in the background
 /// (owner's decision; locking the phone alone does not count).

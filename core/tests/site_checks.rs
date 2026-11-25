@@ -1,10 +1,10 @@
 //! What AutoFill checks besides an entry's name: international domain
 //! names, the entry's own `url:` lines, and the user name it fills.
 
-use paw_core::ffi::OpenedEntry;
+use paw_core::entry::opened::OpenedEntry;
 use paw_core::store::service::{
-    MatchKind, UrlCheck, check_entry_url, display_host, fill_username, host_of, match_service, match_site,
-    path_user, url_site,
+    MatchKind, NamePairing, UrlCheck, check_entry_url, display_host, fill_username, host_of, is_trusted_match, match_services,
+    match_site, path_user, service_host, suggestion_domain, url_site,
 };
 use paw_core::store::tree::EntryRef;
 
@@ -37,7 +37,11 @@ const IDN_STORE: &[&str] = &[
 ];
 
 fn hosts(service: &str) -> Vec<String> {
-    match_service(&entries(IDN_STORE), service).into_iter().map(|m| m.entry.path).collect()
+    match_site(&entries(IDN_STORE), service, &[])
+        .into_iter()
+        .filter(|m| matches!(m.kind, MatchKind::ExactHost | MatchKind::SameDomain))
+        .map(|m| m.entry.path)
+        .collect()
 }
 
 #[test]
@@ -268,4 +272,68 @@ fn path_user_reads_site_user_layouts() {
     for (path, want) in cases {
         assert_eq!(path_user(path).as_deref(), *want, "{path}");
     }
+}
+
+#[test]
+fn autofill_names_a_site_by_its_host_in_lower_case_without_a_trailing_dot() {
+    let host = |service: &str| service_host(service.into());
+    assert_eq!(host("https://GitHub.com/login").as_deref(), Some("github.com"));
+    assert_eq!(host("github.com/login").as_deref(), Some("github.com"));
+    assert_eq!(host("example.com.:8443").as_deref(), Some("example.com"));
+    assert_eq!(host("   "), None);
+    assert_eq!(host("https://"), None);
+}
+
+#[test]
+fn only_plain_addresses_with_a_dot_are_matched_automatically() {
+    let all = entries(&["github.com", "GitHub", "paypal.com", "example.com"]);
+    let offered = |services: &[&str]| -> Vec<String> {
+        let services: Vec<String> = services.iter().map(|s| (*s).to_owned()).collect();
+        match_services(&all, &services, &[]).into_iter().map(|m| m.entry.path).collect()
+    };
+    assert!(offered(&["https://github.com/login"]).contains(&"github.com".to_owned()));
+    // A dotless host anyone can register would match an entry by name.
+    assert!(!match_site(&all, "http://github/", &[]).is_empty());
+    assert!(offered(&["http://github/"]).is_empty());
+    assert!(offered(&["https://p\u{0430}ypal.com"]).is_empty(), "lookalike letters");
+    assert!(offered(&["https://exa mple.com"]).is_empty());
+    assert!(offered(&[""]).is_empty());
+}
+
+#[test]
+fn several_services_offer_each_entry_once_as_its_best_match() {
+    let all = entries(&["github.com", "GitHub"]);
+    let services = ["https://www.github.com".to_owned(), "https://github.com".to_owned()];
+    let found: Vec<(String, MatchKind)> =
+        match_services(&all, &services, &[]).into_iter().map(|m| (m.entry.path, m.kind)).collect();
+    assert_eq!(
+        found,
+        [
+            ("github.com".to_owned(), MatchKind::ExactHost),
+            ("GitHub".to_owned(), MatchKind::Name { pairing: NamePairing::Unpaired }),
+        ]
+    );
+}
+
+#[test]
+fn only_a_host_or_a_name_already_filled_here_fills_without_asking() {
+    assert!(is_trusted_match(MatchKind::ExactHost));
+    assert!(is_trusted_match(MatchKind::SameDomain));
+    assert!(is_trusted_match(MatchKind::Name { pairing: NamePairing::Paired }));
+    assert!(!is_trusted_match(MatchKind::Name { pairing: NamePairing::Unpaired }));
+    assert!(!is_trusted_match(MatchKind::Name {
+        pairing: NamePairing::PairedElsewhere { sites: vec!["bankofamerica.co".into()] }
+    }));
+}
+
+#[test]
+fn a_suggestion_names_the_last_part_of_the_path_that_is_a_registrable_host() {
+    let domain = |path: &str| suggestion_domain(path.into());
+    assert_eq!(domain("web/GitHub.com").as_deref(), Some("github.com"));
+    assert_eq!(domain("github.com/alice").as_deref(), Some("github.com"));
+    assert_eq!(domain("servers/10.0.0.1"), None, "an IP address is no site");
+    assert_eq!(domain("GitHub"), None);
+    assert_eq!(domain("web/-bad.com"), None);
+    assert_eq!(domain("web/co.uk"), None, "a public suffix");
+    assert_eq!(domain("pages/alice.github.io").as_deref(), Some("alice.github.io"));
 }

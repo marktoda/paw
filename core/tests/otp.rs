@@ -2,7 +2,7 @@
 //! authenticator apps write, and that nothing about the secret leaks.
 
 use paw_core::entry::EntryDoc;
-use paw_core::ffi::OpenedEntry;
+use paw_core::entry::opened::OpenedEntry;
 use paw_core::otp::{Algorithm, OtpProblem, Totp, setup_line};
 use proptest::prelude::*;
 

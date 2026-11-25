@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 use super::PassStore;
-use super::service::{host_of, names_site, registrable, registrable_domain, site_name};
+use super::service::{MatchKind, NamePairing, host_of, match_site, names_site, registrable, site_name};
 use super::state_file::{ListFile, ListItem, ListKind, MAX_PATH_BYTES};
 use crate::PawError;
 
@@ -180,12 +180,6 @@ pub struct SitePairings {
     file: PairingFile,
 }
 
-impl SitePairings {
-    pub fn file(&self) -> &PairingFile {
-        &self.file
-    }
-}
-
 #[uniffi::export]
 impl SitePairings {
     /// The pairings of the store whose state directory is `state_dir`.
@@ -204,20 +198,15 @@ impl SitePairings {
     /// and a fill there never makes it trusted. Clearing the entry's
     /// pairings is the only way to trust a second domain of one name.
     pub fn record_pairing(&self, store: Arc<PassStore>, entry: String, service: String) -> Result<bool, PawError> {
-        let Some(host) = host_of(&service) else { return Ok(false) };
-        let (Some(name), Some(site)) = (site_name(&host), registrable_domain(&service)) else {
+        let entries = store.entries();
+        let Some(found) = entries.iter().find(|e| e.path == entry) else { return Ok(false) };
+        let matched = match_site(std::slice::from_ref(found), &service, &self.file.load()).into_iter().next();
+        let Some(site) = matched.and_then(|m| match m.kind {
+            MatchKind::Name { pairing: NamePairing::Paired | NamePairing::Unpaired } => Some(m.site),
+            _ => None,
+        }) else {
             return Ok(false);
         };
-        let entries = store.entries();
-        if !entries.iter().any(|e| e.path == entry) || !names_site(&entry, &name) {
-            return Ok(false);
-        }
-        let lookalike = self.file.load().into_iter().filter(|p| p.entry == entry).flat_map(|p| p.sites).any(|known| {
-            known != site && site_name(&known).as_deref() == Some(name.as_str())
-        });
-        if lookalike {
-            return Ok(false);
-        }
         let existing: HashSet<&str> = entries.iter().map(|e| e.path.as_str()).collect();
         self.file.record(&entry, &site, Some(&existing)).map_err(failed)?;
         Ok(true)
