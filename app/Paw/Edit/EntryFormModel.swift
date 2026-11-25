@@ -40,8 +40,8 @@ final class EntryFormModel {
         case .edit(_, let focusName): focusName
         }
     }
-    /// The opened entry has a one-time-code line; it is kept as it is.
-    let keepsOneTimeCode: Bool
+    /// The opened entry has a one-time-code line.
+    let hadOneTimeCode: Bool
     /// Folders that exist, for the picker.
     let folders: [String]
 
@@ -56,6 +56,11 @@ final class EntryFormModel {
     var notes = ""
     var extraFields: [ExtraField] = []
     var showsPassword = false
+    /// A base32 setup key or an otpauth:// address; replaces the entry's
+    /// one-time code when it is saved.
+    var setupKey = ""
+    /// The entry's one-time code goes when it is saved.
+    private(set) var removingOneTimeCode = false
 
     /// The generator's options. Length and the two switches are the ones
     /// offered; the rest stay as the core's default policy has them.
@@ -88,7 +93,7 @@ final class EntryFormModel {
     init(adding folder: String, writer: StoreWriter, folders: [String]) {
         purpose = .add(folder: folder)
         isEditing = false
-        keepsOneTimeCode = false
+        hadOneTimeCode = false
         self.writer = writer
         self.folders = folders
         self.folder = folder
@@ -101,7 +106,7 @@ final class EntryFormModel {
     init(editing session: OpenSession, focusName: Bool, writer: StoreWriter, folders: [String]) throws {
         purpose = .edit(sessionID: session.id, focusName: focusName)
         isEditing = true
-        keepsOneTimeCode = session.view.hasOtp
+        hadOneTimeCode = session.view.hasOtp
         self.writer = writer
         self.folders = folders
         let opened = session.entry
@@ -164,6 +169,12 @@ final class EntryFormModel {
 
     func removeField(_ id: UUID) {
         extraFields.removeAll { $0.id == id }
+        changed()
+    }
+
+    /// Remove, or keep after all, the opened entry's one-time code.
+    func setRemovingOneTimeCode(_ removing: Bool) {
+        removingOneTimeCode = removing
         changed()
     }
 
@@ -257,6 +268,13 @@ final class EntryFormModel {
             setIfChanged("password", password, original.password) { draft.setPassword(password: $0) }
         }
         applyFields(to: draft)
+        // One slot in the draft, replaced each time: a key typed wins over
+        // Remove, and a blank one leaves the line as it was.
+        if removingOneTimeCode && setupKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            draft.removeOneTimeCode()
+        } else {
+            draft.setOneTimeCode(setup: setupKey)
+        }
         problems = (try? writer.validate(draft: draft)) ?? draft.problems()
         if recipientsFolder != effectiveFolder {
             recipientsFolder = effectiveFolder
@@ -318,6 +336,7 @@ final class EntryFormModel {
                     : field.originalKey != field.key || field.originalValue != field.value
             }
             || openedFieldKeys.count != extraFields.filter { $0.originalKey != nil }.count
+            || !setupKey.isEmpty || removingOneTimeCode
     }
 
     /// Whether the folder can be saved in now; `nil` while not known.
@@ -382,6 +401,7 @@ final class EntryFormModel {
         case .url: "website"
         case .notes: "notes"
         case .field(let key): "key-\(key)"
+        case .oneTimeCode: "setup-key"
         }
     }
 
@@ -398,6 +418,8 @@ final class EntryFormModel {
         website = ""
         notes = ""
         extraFields = []
+        setupKey = ""
+        removingOneTimeCode = false
         generated = nil
         original = Original()
         draft = nil

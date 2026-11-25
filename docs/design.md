@@ -264,7 +264,7 @@ Title: the entry name. Subtitle: the folder path.
 | **Username** (`login`, `username` or `user`) | Tap to copy |
 | **Website** (`url`) | Tap to copy; an arrow opens Safari |
 | Other `key: value` lines | Tap to copy. Keys containing "pass", "secret", "pin" or "answer" start hidden |
-| `otpauth://` line | "One-time code · coming later". Never shown raw, always preserved on edit |
+| `otpauth://` line | "One-time code": the code in mono as "123 456" with a thin countdown ring; tap the copy button to copy it (same clipboard rules and toast as the password). Made from the open entry, no extra touch; refreshes each second. A line that can't make codes (`hotp`, a bad key) shows the reason. Never shown raw; edited only through "Setup key" |
 | Notes (lines without a key) | Selectable text |
 | Footer | "Open with Face ID until 18:40" or "Needs your key each time"; "Changed 3 Nov on laptop" from the git log |
 
@@ -1412,7 +1412,7 @@ Rule 6 excludes remembering the `login` and `url` of opened entries for the Auto
 | age / passage | Leave a seam | `pgp` in one file, opaque key handles, store-format names confined to `store/` |
 | HTTPS token; device key for push | Leave a seam | Second `Connector`; `push_auth` field |
 | Field-level compare of two kept versions | Leave a seam | Both versions exist as entries; a compare view needs both open |
-| TOTP | Leave a seam | `Line::Otp` parsed, preserved, hidden; a code follows the same copy and key rules |
+| TOTP | Built | `core/src/otp.rs` (RFC 6238, SHA1/256/512, 6 to 8 digits, pass-otp's `otpauth://totp` line); `OpenedEntry::otp_code(now_ms)` and `otp_problem()`; the editor's "Setup key" takes a base32 key or an address. No QR scanning yet; AutoFill does not offer codes |
 | Passkeys | Leave a seam | `FillRequest` enum in the extension model; reach is recorded per request type because the one hang report was for passkey requests |
 | Password generator options | Leave a seam | `generate()` takes a policy later |
 | Unblock the PIN with the admin PIN on the phone | Leave a seam | See the appendix |

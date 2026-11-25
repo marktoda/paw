@@ -67,7 +67,7 @@ struct EntryFormSheet: View {
 }
 
 private enum FormFocus: Hashable {
-    case name, newFolder, username, password, website, notes
+    case name, newFolder, username, password, website, notes, setupKey
     case fieldKey(UUID), fieldValue(UUID)
 }
 
@@ -98,6 +98,7 @@ private struct EntryFormView: View {
                 loginSection
                 websiteSection
                 fieldsSection
+                oneTimeCodeSection
                 notesSection
                 footerSection
             }
@@ -328,19 +329,51 @@ private struct EntryFormView: View {
             }
             .accessibilityIdentifier("form-add-field")
             .pawListRow()
-            if form.keepsOneTimeCode {
-                Text("The one-time code line is kept as it is.")
-                    .font(PawFont.footnote)
-                    .foregroundStyle(PawColor.labelSecondary)
-                    .frame(minHeight: PawMetrics.tapMin, alignment: .leading)
-                    .pawListRow()
-            }
         } header: {
             PawSectionHeader("Other fields")
         } footer: {
             Text("Saved as lines like \u{201C}pin: 1234\u{201D}.")
                 .font(PawFont.footnote)
                 .foregroundStyle(PawColor.labelSecondary)
+        }
+    }
+
+    /// The setup key, and Remove for a code the entry already has.
+    private var oneTimeCodeSection: some View {
+        Section {
+            if form.hadOneTimeCode {
+                HStack(spacing: PawMetrics.Spacing.s) {
+                    Text(form.removingOneTimeCode ? "Removed when you save" : "Has a one-time code")
+                        .font(PawFont.body)
+                        .foregroundStyle(form.removingOneTimeCode ? PawColor.labelSecondary : PawColor.label)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("form-otp-state")
+                    if form.removingOneTimeCode {
+                        Button("Keep") { form.setRemovingOneTimeCode(false) }
+                            .font(PawFont.body.weight(.semibold))
+                            .foregroundStyle(PawColor.label)
+                            .buttonStyle(.borderless)
+                            .frame(minWidth: PawMetrics.tapMin, minHeight: PawMetrics.tapMin)
+                            .accessibilityLabel("Keep the one-time code")
+                            .accessibilityIdentifier("form-otp-keep")
+                    } else {
+                        PawIconButton(
+                            symbol: "minus.circle", label: "Remove the one-time code",
+                            identifier: "form-otp-remove") {
+                                form.setRemovingOneTimeCode(true)
+                            }
+                    }
+                }
+                .frame(minHeight: PawMetrics.tapMin)
+                .pawListRow()
+            }
+            FormTextRow(
+                label: "Setup key", prompt: "Key or otpauth:// address",
+                text: form.binding(\.setupKey, field: "setup-key"),
+                identifier: "form-setup-key", problem: shown(.oneTimeCode, "setup-key"))
+                .focused($focus, equals: .setupKey)
+        } header: {
+            PawSectionHeader("One-time code")
         }
     }
 
