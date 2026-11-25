@@ -356,13 +356,15 @@ final class AppModel {
     /// to the key when the copy has ended.
     private func openWithFaceId(_ entry: EntryRef) {
         guard let copies else { return }
-        faceId.open(entry, store: store, copies: copies, reason: "Open \(entry.name)") { [weak self] result in
+        faceId.open(
+            entry, store: store, copies: copies, reason: "Open \(entry.name)",
+            answered: { [weak self] in self?.refreshCopies() }
+        ) { [weak self] result in
             self?.faceIdFinished(entry, result: result)
         }
     }
 
     private func faceIdFinished(_ entry: EntryRef, result: Result<FaceIdOpen, Error>) {
-        refreshCopies()
         switch result {
         case .success(.opened(let opened)):
             noteOpened(entry.path)
