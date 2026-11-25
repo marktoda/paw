@@ -57,8 +57,9 @@ private struct SyncIntro: View {
 
 /// Waiting changes paw will not send as they are: each one's ciphertext is
 /// for other keys than its folder's list says now. For each, who it is
-/// encrypted for and who it should be for, and the ways out. Sending it as
-/// it is is never offered.
+/// encrypted for and who it should be for, and the ways out: accept the new
+/// list, then re-encrypt them all with the key, or discard one. Sending it
+/// as it is is never offered.
 struct HeldBackScreen: View {
     let model: AppModel
     let syncing: SyncModel
@@ -70,7 +71,21 @@ struct HeldBackScreen: View {
                 SyncIntro(
                     headline: "These changes weren't sent",
                     text: "Who can open the folder changed after you saved, so these are encrypted for the old "
-                        + "list of keys. Review the new list, then open each one and save it again.")
+                        + "list of keys. Review the new list, then re-encrypt them.")
+            }
+            if !syncing.heldBack.isEmpty, syncing.reencryptReady > 0 {
+                Section {
+                    Button {
+                        syncing.startReencrypt(app: model)
+                    } label: {
+                        KeyActionLabel(reencryptTitle(syncing.reencryptReady))
+                    }
+                    .buttonStyle(.pawPrimary)
+                    .disabled(syncing.running != nil)
+                    .accessibilityIdentifier("held-back-reencrypt")
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                }
             }
             if syncing.heldBack.isEmpty {
                 Section {
@@ -109,24 +124,14 @@ struct HeldBackScreen: View {
                     ? "Can't read this folder's list of keys."
                     : item.recipients.map(RecipientsReviewScreen.grouped).joined(separator: "\n"),
                 prose: item.recipients.isEmpty,
-                note: item.accepted ? nil : Device.words("Not accepted on this iPhone yet."),
+                note: item.accepted
+                    ? syncing.reencryptLeft[item.entry].flatMap(reencryptWords)
+                    : Device.words("Not accepted on this iPhone yet."),
                 identifier: "held-back-should-be-for-\(entry.name)")
             if !item.accepted {
                 actionButton("Review who can open \(place)", identifier: "held-back-review-\(entry.name)") {
                     model.path.append(.sync(.review(folder: folder)))
                 }
-            }
-            if item.accepted {
-                Button {
-                    model.openWithKey(entry)
-                } label: {
-                    KeyActionLabel("Open and save again")
-                        .font(PawFont.body.weight(.semibold))
-                        .foregroundStyle(PawColor.label)
-                        .frame(maxWidth: .infinity, minHeight: PawMetrics.tapMin, alignment: .leading)
-                }
-                .accessibilityIdentifier("held-back-open-\(entry.name)")
-                .pawListRow()
             }
             if confirming == item.id {
                 InlineConfirmRow(
@@ -158,7 +163,7 @@ struct HeldBackScreen: View {
                 .accessibilityIdentifier("held-back-\(entry.name)")
         } footer: {
             if !item.accepted {
-                Text("After you accept the list, open it and save it again. Then discard this older change.")
+                Text("Accept the new list to re-encrypt this change.")
                     .font(PawFont.footnote)
                     .foregroundStyle(PawColor.labelSecondary)
             }

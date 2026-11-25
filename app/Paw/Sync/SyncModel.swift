@@ -225,6 +225,12 @@ final class SyncModel {
     private(set) var replaced: Replaced?
     private(set) var refused: [RefusedPath] = []
     private(set) var heldBack: [HeldBack] = []
+    /// Held-back changes "Re-encrypt" can do now: their folder's new list
+    /// is accepted and paw has every key on it.
+    private(set) var reencryptReady = 0
+    /// Why held-back changes can't be re-encrypted, by entry: what the core
+    /// sees now, and what the last re-encrypt found when it tried.
+    private(set) var reencryptLeft: [String: LeftReason] = [:]
     var summary: SyncSummary?
     /// Taking a replaced history is under way, or why it failed.
     private(set) var accepting = false
@@ -250,6 +256,8 @@ final class SyncModel {
     @ObservationIgnored private var pendingRoute: Route?
     @ObservationIgnored private var pendingSettings = false
     @ObservationIgnored private var backgroundWatch: NSObjectProtocol?
+    /// What the last re-encrypt left, and why (only what it found trying).
+    @ObservationIgnored private var lastLeft: [LeftHeldBack] = []
     private let workQueue = DispatchQueue(label: "paw-sync", qos: .userInitiated)
 
     init(sync: StoreSync, repoDir: String) {
@@ -316,6 +324,7 @@ final class SyncModel {
         switch kind {
         case .send: base = unpushed == 1 ? "Sending 1 change\u{2026}" : "Sending \(unpushed) changes\u{2026}"
         case .refresh: base = "Checking for changes\u{2026}"
+        case .reencrypt: base = "Re-encrypting\u{2026}"
         }
         guard let progress, progress.total > 0 else { return base }
         return "\(base) \(progress.done) of \(progress.total)"
@@ -351,6 +360,27 @@ final class SyncModel {
         guard running == nil, !accepting else { return }
         heldBack = (try? sync.heldBack()) ?? []
         refused = (try? sync.refusedRemote()) ?? []
+        recomputeReencrypt()
+    }
+
+    /// `reencryptReady` and `reencryptLeft` from the core, without the key.
+    private func recomputeReencrypt() {
+        let check: ReencryptCheck? = heldBack.isEmpty ? nil : (try? sync.reencryptCheck())
+        reencryptReady = Int(check?.ready ?? 0)
+        let held = Set(heldBack.map(\.entry))
+        var left: [String: LeftReason] = [:]
+        for item in lastLeft + (check?.left ?? []) where held.contains(item.entry) {
+            left[item.entry] = item.reason
+        }
+        reencryptLeft = left
+    }
+
+    /// "Re-encrypt 3 changes": the key sheet, then the core's task that
+    /// opens each held-back change with the key (a touch each) and encrypts
+    /// it for its folder's new list. Only ever started by a tap.
+    func startReencrypt(app: AppModel) {
+        guard reencryptReady > 0 else { return }
+        start(.reencrypt, app: app)
     }
 
     // MARK: Running a send or a check
@@ -397,6 +427,7 @@ final class SyncModel {
         switch kind {
         case .send: tasks[taskID] = sync.sendWithKey(port: app.keyPort, listener: listener)
         case .refresh: tasks[taskID] = sync.refreshWithKey(port: app.keyPort, listener: listener)
+        case .reencrypt: tasks[taskID] = sync.reencryptWithKey(port: app.keyPort, listener: listener)
         }
         BackgroundTime.hold("Sync", while: tasks[taskID])
         taskChanged(taskID)
@@ -438,10 +469,24 @@ final class SyncModel {
                 failure = SyncFailure.cancelled(during: kind, unpushed: app?.edits?.unpushed.count ?? 0)
             }
             running = nil
+            if kind == .reencrypt {
+                reloadAfterReencrypt()
+            }
         }
         sheet = nil
         pinEntry = ""
         keyPathNote = nil
+    }
+
+    /// The queue after a re-encrypt that stopped part-way: those done are
+    /// kept, and the core may still be writing the last one.
+    private func reloadAfterReencrypt() {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard let self, self.running == nil else { return }
+            self.app?.reloadAfterWrite()
+            self.recomputeLocal()
+        }
     }
 
     /// The sheet went away: go where it said to.
@@ -501,8 +546,14 @@ final class SyncModel {
             signedIn = true
             stage = .touch
         case .working(let progress):
-            self.progress = progress
-            stage = .working(message: workingMessage(kind, unpushed: unpushed), progress: progress.map(Self.progressLine))
+            if kind == .reencrypt {
+                // The key's answer clears it; the count goes on.
+                if let progress { self.progress = progress }
+                stage = .working(message: workingMessage(kind, unpushed: unpushed), progress: nil)
+            } else {
+                self.progress = progress
+                stage = .working(message: workingMessage(kind, unpushed: unpushed), progress: progress.map(Self.progressLine))
+            }
         case .done:
             stage = .done
             finished(kind, sheetID: sheet.id)
@@ -523,6 +574,9 @@ final class SyncModel {
             let words = syncKeyWords(error, during: kind, unpushed: unpushed)
             stage = .failed(problem: words.problem, nextStep: words.nextStep)
             running = nil
+            if kind == .reencrypt {
+                reloadAfterReencrypt()
+            }
             #if targetEnvironment(simulator)
             SimRemoteHandle.shared.syncFailed()
             #endif
@@ -535,13 +589,16 @@ final class SyncModel {
     }
 
     private func workingMessage(_ kind: SyncKind, unpushed: Int) -> String {
+        if kind == .reencrypt {
+            return "Re-encrypting\u{2026}"
+        }
         if !signedIn, progress == nil {
             return "Connecting to \(host)\u{2026}"
         }
         switch kind {
         case .send:
             return unpushed == 1 ? "Sending 1 change\u{2026}" : "Sending \(unpushed) changes\u{2026}"
-        case .refresh:
+        case .refresh, .reencrypt:
             return "Checking for changes\u{2026}"
         }
     }
@@ -563,7 +620,11 @@ final class SyncModel {
     private func failedElsewhere(_ kind: SyncKind, unpushed: Int) -> Bool {
         let error: Error
         do {
-            _ = try sync.lastTaskResult()
+            if kind == .reencrypt {
+                _ = try sync.lastReencrypt()
+            } else {
+                _ = try sync.lastTaskResult()
+            }
             return false
         } catch let found {
             error = found
@@ -591,7 +652,9 @@ final class SyncModel {
     /// held-back changes): then it turns into the status page that says so.
     private func finished(_ kind: SyncKind, sheetID: UUID) {
         running = nil
-        let needsLook = absorb((try? sync.lastTaskResult()) ?? nil, kind: kind)
+        let needsLook = kind == .reencrypt
+            ? reencrypted((try? sync.lastReencrypt()) ?? nil)
+            : absorb((try? sync.lastTaskResult()) ?? nil, kind: kind)
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(1))
             guard let self, self.sheet?.id == sheetID, case .key(_, _, .done)? = self.sheet?.mode else { return }
@@ -632,6 +695,19 @@ final class SyncModel {
         refreshSimSummary()
         #endif
         return needsLook
+    }
+
+    /// A re-encrypt that ran to the end. The queue was rewritten in place,
+    /// so its list is read again. Always back to the status page after:
+    /// what is left held back is said there, and Send is there once none is.
+    private func reencrypted(_ report: ReencryptReport?) -> Bool {
+        lastLeft = report?.left ?? []
+        app?.reloadAfterWrite()
+        recomputeLocal()
+        if let report, report.reencrypted > 0 {
+            app?.toast = "Re-encrypted. Not sent yet."
+        }
+        return true
     }
 
     // MARK: After a background check

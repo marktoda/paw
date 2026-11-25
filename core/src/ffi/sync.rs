@@ -17,8 +17,8 @@ use std::time::Instant;
 
 use super::{Adapter, CardConnection};
 use crate::key::{
-    After, Halt, KeyError, KeyIdentity, KeyOutcome, KeyPort, KeyPurpose, KeySession, KeyTask, KeyTaskListener,
-    LoginPurpose, SessionSigner, TaskCore, Work,
+    After, DecryptWork, Halt, KeyError, KeyIdentity, KeyOutcome, KeyPort, KeyPurpose, KeySession, KeyTask,
+    KeyTaskListener, KeyTaskState, LoginPurpose, SessionSigner, TaskCore, TaskProgress, Work,
 };
 use crate::setup::address::StoreAddress;
 use crate::setup::touch::{TouchClock, TouchExpectation};
@@ -28,7 +28,7 @@ use crate::sync::{Cloned, Connection};
 use crate::{KeyTouch, PawError};
 use crate::sync::hosts::pin_for;
 use crate::sync::operation::{self, SyncReport};
-use crate::sync::queue::{self, HeldBack, QueueItem};
+use crate::sync::queue::{self, HeldBack, LeftReason, OpenFailure, QueueItem, ReencryptCheck, ReencryptReport};
 use crate::sync::{IntegrateReport, RefusedPath, SyncError, TransferProgress, accept_replaced_remote};
 
 /// First-run setup; see [`crate::setup`]. Each call is one step and returns
@@ -297,6 +297,8 @@ pub struct StoreSync {
     last_login: Mutex<Option<Instant>>,
     /// How the last `*_with_key` task's sync went, once it has.
     last_result: Mutex<Option<Result<SyncReport, SyncError>>>,
+    /// How the last `reencrypt_with_key` went, once it has.
+    last_reencrypt: Mutex<Option<Result<ReencryptReport, SyncError>>>,
 }
 
 impl StoreSync {
@@ -388,7 +390,13 @@ impl StoreSync {
     pub fn open(state_dir: String) -> Result<Arc<Self>, SyncError> {
         let state_dir = PathBuf::from(state_dir);
         let address = crate::setup::saved_address(&state_dir)?;
-        Ok(Arc::new(Self { state_dir, address, last_login: Mutex::new(None), last_result: Mutex::new(None) }))
+        Ok(Arc::new(Self {
+            state_dir,
+            address,
+            last_login: Mutex::new(None),
+            last_result: Mutex::new(None),
+            last_reencrypt: Mutex::new(None),
+        }))
     }
 
     /// The store's address, as shown in Settings.
@@ -503,11 +511,77 @@ impl StoreSync {
     /// `.gpg-id` changed, or the change is not accepted yet). While any is
     /// listed, a send fetches and integrates but pushes nothing and ends
     /// `Waiting`. Show each entry with who it is encrypted for and who it
-    /// should be for; the person accepts the new recipients, then saves the
-    /// entry again (re-encrypting it, which needs the key) and discards the
-    /// old waiting change, or discards it outright.
+    /// should be for; the person accepts the new recipients, then
+    /// re-encrypts them with `reencrypt_with_key`, or discards one outright.
     pub fn held_back(&self) -> Result<Vec<HeldBack>, SyncError> {
         queue::held_back(&self.repo(), &self.state_dir)
+    }
+
+    /// How many held-back changes "Re-encrypt" can do now (their folder's
+    /// new list is accepted and paw has every key on it), and why each
+    /// other one can't be done. No key, no network.
+    pub fn reencrypt_check(&self) -> Result<ReencryptCheck, SyncError> {
+        queue::reencrypt_check(&self.repo(), &self.state_dir)
+    }
+
+    /// "Re-encrypt" as a key task (`Reencrypt`): opens each held-back
+    /// change that is ready with the key (the PIN once, a touch each) and
+    /// encrypts it for its folder's new list, in place in the queue. Shows
+    /// `Working` with (done, total) before each one, then `Touch`. Each one
+    /// is written as soon as it is done, so cancel (or a key error) part-way
+    /// keeps those and leaves the rest held back; running it again goes on
+    /// from there. Nothing is sent: afterwards they are ordinary waiting
+    /// changes. `Done` means it ran to the end; read `last_reencrypt` for
+    /// what it did and what it left.
+    pub fn reencrypt_with_key(self: Arc<Self>, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
+        *lock(&self.last_reencrypt) = None;
+        let count = queue::reencrypt_check(&self.repo(), &self.state_dir).map(|c| c.ready).unwrap_or(0);
+        let sync = self.clone();
+        let work: DecryptWork = Box::new(move |task, opener| {
+            let mut halted: Option<Halt> = None;
+            let mut open = |_: &HeldBack, ciphertext: &[u8]| {
+                let stop = |halted: &mut Option<Halt>, halt: Halt| {
+                    *halted = Some(halt);
+                    Err(OpenFailure::Stop(SyncError::Failed { message: "stopped".into() }))
+                };
+                if task.cancelled() {
+                    return stop(&mut halted, Halt::Fail(KeyError::Cancelled));
+                }
+                match opener(ciphertext) {
+                    Ok(text) => Ok(text),
+                    Err(Halt::Fail(KeyError::NotForThisKey { .. })) => Err(OpenFailure::Skip(LeftReason::NotForThisKey)),
+                    Err(Halt::Fail(KeyError::EntryUnreadable { .. } | KeyError::DecryptFailed { .. })) => {
+                        Err(OpenFailure::Skip(LeftReason::Unreadable))
+                    }
+                    Err(halt) => stop(&mut halted, halt),
+                }
+            };
+            let mut progress = |done: u32, total: u32| {
+                task.set(KeyTaskState::Working { progress: Some(TaskProgress { done, total }) });
+            };
+            let result = queue::reencrypt_each(&sync.repo(), &sync.state_dir, &mut open, &mut progress);
+            if let Some(halt) = halted {
+                return Err(halt);
+            }
+            if task.cancelled() {
+                return Err(Halt::Fail(KeyError::Cancelled));
+            }
+            let halt = result.as_ref().err().map(elsewhere);
+            *lock(&sync.last_reencrypt) = Some(result);
+            match halt {
+                Some(halt) => Err(halt),
+                None => Ok(Some(KeyOutcome::Reencrypted)),
+            }
+        });
+        port.decrypt_then(KeyPurpose::Reencrypt { count }, listener, work)
+    }
+
+    /// After `reencrypt_with_key`: what it did and what it left, or the
+    /// error it failed with if not the key's. `None` if it did not run to
+    /// the end (cancelled, or the key failed); `reencrypt_check` then says
+    /// what is left.
+    pub fn last_reencrypt(&self) -> Result<Option<ReencryptReport>, SyncError> {
+        lock(&self.last_reencrypt).clone().transpose()
     }
 
     pub fn discard(&self, id: String) -> Result<Vec<QueueItem>, SyncError> {

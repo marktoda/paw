@@ -1,9 +1,12 @@
 import Foundation
 
-/// Sending local changes, or checking the git remote for new ones.
+/// Sending local changes, checking the git remote for new ones, or
+/// encrypting held-back changes again for their folder's new list (no
+/// network).
 enum SyncKind: Equatable {
     case send
     case refresh
+    case reencrypt
 }
 
 /// Why the last send or check stopped, in words: what happened, what is
@@ -52,10 +55,12 @@ struct SyncFailure: Equatable {
     }
 
     static func cancelled(during kind: SyncKind, unpushed: Int) -> SyncFailure {
-        SyncFailure(
-            kind: .cancelled, during: kind,
-            problem: kind == .send ? "Sending was cancelled." : "Checking was cancelled.",
-            nextStep: "", pill: "")
+        let problem = switch kind {
+        case .send: "Sending was cancelled."
+        case .refresh: "Checking was cancelled."
+        case .reencrypt: "Re-encrypting was cancelled."
+        }
+        return SyncFailure(kind: .cancelled, during: kind, problem: problem, nextStep: "", pill: "")
     }
 
 }
@@ -64,7 +69,11 @@ extension SyncFailure {
     /// A sync error from the core's `last_task_result`.
     init(_ error: SyncError, during kind: SyncKind, unpushed: Int, host: String) {
         let waiting = Self.waiting(unpushed)
-        let notDone = kind == .send ? "Not sent" : "Not checked"
+        let notDone = switch kind {
+        case .send: "Not sent"
+        case .refresh: "Not checked"
+        case .reencrypt: "Not re-encrypted"
+        }
         self.during = kind
         switch error {
         case .Network(let message):
@@ -139,7 +148,11 @@ extension SyncFailure {
                 pill = "\(notDone) \u{00B7} store not found"
             } else {
                 self.kind = .other
-                problem = kind == .send ? "Couldn't send your changes" : "Couldn't check for changes"
+                problem = switch kind {
+                case .send: "Couldn't send your changes"
+                case .refresh: "Couldn't check for changes"
+                case .reencrypt: "Couldn't re-encrypt your changes"
+                }
                 nextStep = Self.sentences("Try again.", waiting)
                 pill = notDone
             }
@@ -165,15 +178,42 @@ extension SyncFailure {
 /// How the key sheet words a key failure during a sync: the shared words
 /// (`KeyErrorWords`), and that the waiting changes are still here.
 func syncKeyWords(_ error: KeyError, during kind: SyncKind, unpushed: Int) -> KeyErrorWords {
-    let words = KeyErrorWords(error, entry: "your store", purpose: kind == .send ? .send : .check)
+    let purpose: KeyErrorWords.Purpose = switch kind {
+    case .send: .send
+    case .refresh: .check
+    case .reencrypt: .open
+    }
+    let words = KeyErrorWords(error, entry: "your store", purpose: purpose)
     switch error {
     case .TouchTimeout, .KeyRemoved:
         return KeyErrorWords(
             problem: words.problem,
-            nextStep: SyncFailure.sentences(words.nextStep, kind == .send ? SyncFailure.waiting(unpushed) : ""))
+            nextStep: SyncFailure.sentences(words.nextStep, kind == .refresh ? "" : SyncFailure.waiting(unpushed)))
     default:
         return words
     }
+}
+
+/// Why a held-back change can't be re-encrypted, in a few words; `nil`
+/// where the held-back screen already says it.
+func reencryptWords(_ reason: LeftReason) -> String? {
+    switch reason {
+    case .notAccepted, .noList:
+        return nil
+    case .missingKeys(let missing):
+        return missing.count == 1
+            ? "Can't re-encrypt: paw doesn't have one of the new keys."
+            : "Can't re-encrypt: paw doesn't have \(missing.count) of the new keys."
+    case .notForThisKey:
+        return "Can't re-encrypt: your key can't open it."
+    case .unreadable:
+        return "Can't re-encrypt: it didn't open."
+    }
+}
+
+/// "Re-encrypt 3 changes", the button and the key sheet's title.
+func reencryptTitle(_ count: Int) -> String {
+    count == 1 ? "Re-encrypt 1 change" : "Re-encrypt \(count) changes"
 }
 
 /// "just now", "2 min ago", "at 14:02", "on Mon", "on 3 Nov".

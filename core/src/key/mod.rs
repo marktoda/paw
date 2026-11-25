@@ -37,7 +37,7 @@ pub use enrolment::{KeyIdentity, KeyMismatch};
 pub use kdf::PinKdfStatus;
 pub use keylog::{KeyLogLine, clear_key_log, key_log, key_log_text};
 pub use port::KeyPort;
-pub(crate) use port::{After, Work};
+pub(crate) use port::{After, DecryptWork, Work};
 pub(crate) use session::Halt;
 pub(crate) use task::TaskCore;
 pub use session::KeySession;
@@ -124,6 +124,9 @@ pub enum KeyPurpose {
     /// Key diagnostics: one signature nobody is meant to touch for, to see
     /// what the key answers when a touch times out.
     CheckTouchTimeout,
+    /// Opens `count` held-back changes, one touch each, to encrypt them
+    /// again for their folder's new list.
+    Reencrypt { count: u32 },
 }
 
 /// Why a git login is being signed.
@@ -153,6 +156,9 @@ pub enum KeyOutcome {
     /// `CheckTouchTimeout`: the key signed, so it was touched, or its
     /// authentication slot asks for no touch.
     SignedIn,
+    /// The held-back changes were encrypted again (see the store's
+    /// `last_reencrypt`).
+    Reencrypted,
 }
 
 impl std::fmt::Debug for KeyOutcome {
@@ -165,6 +171,7 @@ impl std::fmt::Debug for KeyOutcome {
                 .finish(),
             Self::KeyChecked => f.write_str("KeyChecked"),
             Self::SignedIn => f.write_str("SignedIn"),
+            Self::Reencrypted => f.write_str("Reencrypted"),
         }
     }
 }
