@@ -17,7 +17,7 @@ use paw_core::ffi::sync::Setup;
 use paw_core::key::{KeyError, KeyPort, KeyTaskState, KeyTouch};
 use paw_core::setup::address::StoreAddress;
 use paw_core::setup::outcome::RemoteReason;
-use paw_core::setup::touch::{TouchClock, TouchExpectation};
+use paw_core::key::touch_clock::{TouchClock, TouchExpectation};
 use paw_core::setup::{SetupError, SetupFlow, SetupState};
 use paw_core::sim::{SimTouch, SimulatedKey};
 use paw_core::ssh::SshPublicKey;

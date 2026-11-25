@@ -28,7 +28,6 @@
 
 pub mod address;
 pub mod outcome;
-pub mod touch;
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -44,7 +43,7 @@ use crate::write::{Keyring, LineStatus, WriteError};
 use crate::PawError;
 use address::StoreAddress;
 use outcome::{RemoteMessage, RemoteReason, says_repository_missing};
-use touch::{TouchClock, TouchExpectation};
+use crate::key::touch_clock::{TouchClock, TouchExpectation};
 
 const STATE_FILE: &str = "setup";
 const KNOWN_HOSTS: &str = "known_hosts";

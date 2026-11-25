@@ -8,7 +8,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::key::KeyTouch;
+use super::KeyTouch;
 
 /// How long a cached touch lasts on a YubiKey.
 const CACHE: Duration = Duration::from_secs(15);

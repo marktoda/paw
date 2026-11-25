@@ -20,7 +20,7 @@ use crate::key::{
     KeyTaskListener, KeyTaskState, KeyTouch, LoginPurpose, SessionSigner, TaskCore, TaskProgress, Work,
 };
 use crate::setup::address::StoreAddress;
-use crate::setup::touch::{TouchClock, TouchExpectation};
+use crate::key::touch_clock::{TouchClock, TouchExpectation};
 use crate::setup::{SetupError, SetupFlow, SetupState, SetupWriteReadiness};
 use crate::store::PassStore;
 use crate::sync::{Cloned, Connection};

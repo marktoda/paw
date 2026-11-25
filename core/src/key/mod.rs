@@ -30,6 +30,7 @@ mod session;
 mod signer;
 mod task;
 mod touch;
+pub mod touch_clock;
 mod wire;
 
 use std::sync::Arc;
