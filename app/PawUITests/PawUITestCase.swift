@@ -189,18 +189,21 @@ class PawUITestCase: XCTestCase {
         // repeated: `exists` is known from the wait, then from each swipe.
         var exists = waitToExist(found, timeout: 5)
         // A swipe up can fling a long list past the row, which then no
-        // longer exists: past one that was there before the swipe, or,
-        // after three swipes, one in the middle never seen. Then come back
-        // up slowly, a screen at a time.
+        // longer exists: past one that was there before the swipe, or one in
+        // the middle never seen. For the first, come back up slowly at once.
+        // For the second, go on to the foot of the list first (six swipes
+        // reach it in every screen; a row near the foot must not be given
+        // up on early, and coming back up from the top pulls a sheet shut),
+        // then come back up slowly, a screen at a time.
         var flungPast = false
         var swipes = 0
-        while !(exists && found.isHittable && !underKeyboard(found)) && swipes < 8 {
+        while !(exists && found.isHittable && !underKeyboard(found)) && swipes < 12 {
             // A coasting list can drop a lazy row between two looks: read
             // its frame from a snapshot, which says "gone" instead of failing.
             if exists, let top = (try? found.snapshot())?.frame.maxY, top < app.frame.height * 0.2 {
                 flungPast = false
                 app.swipeDown()
-            } else if !exists && (flungPast || swipes >= 3) {
+            } else if !exists && (flungPast || swipes >= 6) {
                 app.swipeDown(velocity: .slow)
             } else {
                 flungPast = exists
