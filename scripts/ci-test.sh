@@ -85,6 +85,12 @@ if [ -d build/result.xcresult ]; then
     > "$report/tests.json" 2>/dev/null || true
   xcrun xcresulttool export attachments --path build/result.xcresult \
     --output-path "$report/screenshots" > /dev/null 2>&1 || true
+# Crash reports of the app or the extension from this run, if any: a test
+# that ends with "is not running" says nothing about why.
+mkdir -p "$report/crashes"
+find ~/Library/Logs/DiagnosticReports -maxdepth 1 \( -name "Paw*.ips" -o -name "Paw*.crash" \) -mmin -120 \
+  -exec cp {} "$report/crashes/" \; 2>/dev/null || true
+ls "$report/crashes" | sed "s/^/--- crash report: /" || true
 fi
 
 echo "--- errors"; cat "$report/errors.txt"
