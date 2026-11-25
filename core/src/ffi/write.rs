@@ -91,6 +91,21 @@ impl EntryDraft {
         self.draft().set_notes(&notes);
     }
 
+    /// A base32 setup key or an `otpauth://` address for the one-time code,
+    /// replacing any the entry has. Blank undoes an earlier set or remove.
+    pub fn set_one_time_code(&self, setup: String) {
+        self.draft().set_one_time_code(&setup);
+    }
+
+    pub fn remove_one_time_code(&self) {
+        self.draft().remove_one_time_code();
+    }
+
+    /// Whether the entry as it would be saved has a one-time-code line.
+    pub fn has_one_time_code(&self) -> bool {
+        self.draft().preview().has_otp()
+    }
+
     /// The "Text" toggle: replaces the whole entry with `text`.
     pub fn set_text(&self, text: String) {
         self.draft().set_text(&text);

@@ -23,6 +23,7 @@ pub mod setup;
 pub mod key;
 pub mod generate;
 pub mod lock;
+pub mod otp;
 pub mod github;
 pub mod write;
 

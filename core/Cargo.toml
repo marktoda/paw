@@ -50,6 +50,9 @@ serde_json = "1"
 # C compiler alone, aws-lc also wants cmake on some targets.
 russh = { version = "0.65.4", default-features = false, features = ["ring"] }
 sha1 = "0.11.0"
+# One-time codes (src/otp.rs): the SHA-1 that hmac 0.12 takes. Already in the
+# tree through pgp.
+sha1_hmac = { package = "sha1", version = "0.10" }
 sha2 = "0.10"
 thiserror = "2.0.21"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time"] }
