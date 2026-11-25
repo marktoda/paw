@@ -198,7 +198,7 @@ func describe(_ error: Swift.Error) -> String {
     case .FaceIdChanged:
         return Device.words("Face ID changed on this iPhone, so opened passwords were cleared.")
     case .CopyFailed(let message):
-        return Device.words("Could not keep this password for Face ID: \(message)")
+        return Device.words("Could not keep this password for Face ID: ") + message
     }
 }
 

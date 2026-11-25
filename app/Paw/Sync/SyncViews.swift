@@ -435,10 +435,12 @@ private struct SyncStatusSheet: View {
     private func backgroundValue(now: Date) -> String {
         guard let run = syncing.backgroundRun else { return "Not yet" }
         let when = syncAgo(run.at, now: now)
+        // Kept in the iPhone's words; said in this device's.
+        let result = Device.words(run.result)
         if let checked = syncing.lastChecked, syncAgo(checked, now: now) == when {
-            return run.result
+            return result
         }
-        return "\(when.capitalizedFirst) \u{00B7} \(run.result)"
+        return "\(when.capitalizedFirst) \u{00B7} \(result)"
     }
 
     var body: some View {
