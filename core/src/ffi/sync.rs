@@ -19,13 +19,13 @@ use crate::key::{
     After, DecryptWork, Halt, KeyError, KeyIdentity, KeyOutcome, KeyPort, KeyPurpose, KeySession, KeyTask,
     KeyTaskListener, KeyTaskState, KeyTouch, LoginPurpose, SessionSigner, TaskCore, TaskProgress, Work,
 };
-use crate::setup::address::StoreAddress;
 use crate::key::touch_clock::{TouchClock, TouchExpectation};
 use crate::setup::{SetupError, SetupFlow, SetupState, SetupWriteReadiness};
 use crate::store::PassStore;
 use crate::sync::{Cloned, Connection};
 use crate::PawError;
-use crate::sync::hosts::pin_for;
+use crate::sync::address::{StoreAddress, saved_address};
+use crate::sync::hosts::{KnownHosts, is_bundled};
 use crate::sync::operation::{self, SyncReport};
 use crate::sync::queue::{self, HeldBack, LeftReason, OpenFailure, QueueItem, ReencryptCheck, ReencryptReport};
 use crate::sync::{IntegrateReport, RefusedPath, SyncError, TransferProgress, accept_replaced_remote};
@@ -297,14 +297,17 @@ pub struct StoreSync {
 
 impl StoreSync {
     fn repo(&self) -> PathBuf {
-        crate::setup::repo_dir(&self.state_dir)
+        crate::layout::repo_dir(&self.state_dir)
+    }
+
+    fn known_hosts(&self) -> KnownHosts {
+        KnownHosts::of(&self.state_dir)
     }
 
     fn remote(&self) -> Result<crate::sync::Remote, SyncError> {
-        let host = self.address.connect_host();
-        let pin = pin_for(&crate::setup::known_hosts(&self.state_dir), host, self.address.port)?
-            .ok_or_else(|| SyncError::Failed { message: format!("{host} has no saved key; set the store up again") })?;
-        Ok(self.address.remote(pin))
+        self.known_hosts().remote(&self.address)?.ok_or_else(|| SyncError::Failed {
+            message: format!("{} has no saved key; set the store up again", self.address.connect_host()),
+        })
     }
 
     fn clock(&self, policy: KeyTouch) -> TouchClock {
@@ -384,7 +387,7 @@ impl StoreSync {
     #[uniffi::constructor]
     pub fn open(state_dir: String) -> Result<Arc<Self>, SyncError> {
         let state_dir = PathBuf::from(state_dir);
-        let address = crate::setup::saved_address(&state_dir)?;
+        let address = saved_address(&state_dir)?;
         Ok(Arc::new(Self {
             state_dir,
             address,
@@ -410,11 +413,11 @@ impl StoreSync {
     /// connection is confirmed.
     pub fn server_keys(&self) -> Result<ServerKeys, SyncError> {
         let host = self.address.connect_host();
-        let pin = pin_for(&crate::setup::known_hosts(&self.state_dir), host, self.address.port)?;
+        let pin = self.known_hosts().pin(host, self.address.port)?;
         Ok(ServerKeys {
             host: host.to_owned(),
             port: self.address.port,
-            bundled: crate::sync::hosts::is_bundled(host, self.address.port),
+            bundled: is_bundled(host, self.address.port),
             keys: pin
                 .map(|pin| {
                     pin.described()
@@ -443,30 +446,21 @@ impl StoreSync {
     /// fingerprint. Refused for a host whose keys ship with paw, and for a
     /// host that already has a saved key (forget it first).
     pub fn trust_server_key(&self, fingerprint: String) -> Result<(), SyncError> {
-        let host = self.address.connect_host();
-        if crate::sync::hosts::is_bundled(host, self.address.port) {
-            return Err(SyncError::Failed { message: crate::setup::bundled_refusal(host) });
-        }
-        let presented = crate::sync::scan_host_key(host, self.address.port)?;
-        if presented.fingerprint() != fingerprint.trim() {
+        let (host, port) = (self.address.connect_host(), self.address.port);
+        let scan = || crate::sync::scan_host_key(host, port);
+        if !self.known_hosts().trust(host, port, scan, &fingerprint)? {
             return Err(SyncError::Failed {
                 message: format!("{host} now shows a different key from the one you checked"),
             });
         }
-        let line = presented.line()?;
-        Ok(crate::setup::known_hosts(&self.state_dir).add(host, self.address.port, &line)?)
+        Ok(())
     }
 
     /// Settings › Store › Forget server key. The next setup or sync of a
     /// host that is not bundled asks to confirm its key again. A bundled
     /// host's keys (github.com's, ...) cannot be forgotten: `Failed`.
     pub fn forget_host_key(&self) -> Result<(), SyncError> {
-        let host = self.address.connect_host();
-        if crate::sync::hosts::is_bundled(host, self.address.port) {
-            return Err(SyncError::Failed { message: crate::setup::bundled_refusal(host) });
-        }
-        let known = crate::setup::known_hosts(&self.state_dir);
-        Ok(known.forget(host, self.address.port)?)
+        Ok(self.known_hosts().forget(self.address.connect_host(), self.address.port)?)
     }
 
     /// Whether the next login will wait for a touch, given the slot's policy.

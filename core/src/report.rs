@@ -108,10 +108,9 @@ fn plain(text: &str) -> String {
 }
 
 fn store_lines(state_dir: &Path, out: &mut Vec<String>) {
-    let set_up = std::fs::read_to_string(state_dir.join("setup"))
-        .is_ok_and(|text| text.lines().next() == Some("step=done"));
+    let set_up = crate::layout::is_set_up(state_dir);
     out.push(format!("Store: {}", if set_up { "set up" } else { "not set up" }));
-    let repo = crate::setup::repo_dir(state_dir);
+    let repo = crate::layout::repo_dir(state_dir);
     match StoreTree::scan(&repo) {
         Ok(tree) => {
             let mut folders: Vec<&str> = Vec::new();

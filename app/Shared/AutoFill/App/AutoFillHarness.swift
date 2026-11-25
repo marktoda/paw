@@ -424,7 +424,7 @@ enum MatchTable {
     static func run() -> (summary: String, failures: [String]) {
         let base = FileManager.default.temporaryDirectory
             .appendingPathComponent("paw-match-\(UUID().uuidString)", isDirectory: true)
-        let root = base.appendingPathComponent("repo", isDirectory: true)
+        let root = URL(fileURLWithPath: storeRepoDir(stateDir: base.path), isDirectory: true)
         defer { try? FileManager.default.removeItem(at: base) }
         let store: PassStore
         do {

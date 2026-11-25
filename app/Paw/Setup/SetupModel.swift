@@ -335,7 +335,7 @@ final class SetupModel {
 
     /// The host of the address set, for sentences: "github.com".
     var host: String {
-        Self.host(of: addressSet)
+        storeAddressHost(address: addressSet)
     }
 
     /// The address setup has, else the one typed.
@@ -362,18 +362,6 @@ final class SetupModel {
             line += " Its fingerprint is built in."
         }
         return line
-    }
-
-    static func host(of address: String) -> String {
-        var rest = Substring(address.trimmingCharacters(in: .whitespaces))
-        if let scheme = rest.range(of: "://") {
-            rest = rest[scheme.upperBound...]
-        }
-        if let at = rest.lastIndex(of: "@") {
-            rest = rest[rest.index(after: at)...]
-        }
-        let end = rest.firstIndex { $0 == ":" || $0 == "/" } ?? rest.endIndex
-        return String(rest[..<end])
     }
 
     // MARK: Moving through the steps
@@ -468,7 +456,7 @@ final class SetupModel {
         addressProblem = nil
         problem = nil
         let typed = addressText
-        let host = Self.host(of: typed)
+        let host = storeAddressHost(address: typed)
         run("Checking \(host.isEmpty ? "the address" : host)\u{2026}", during: .checkingHost) { setup in
             _ = try setup.setAddress(address: typed)
             return try setup.checkHost()

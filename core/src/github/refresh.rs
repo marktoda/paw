@@ -39,12 +39,10 @@ use super::transport::{Failure, HttpsRemote, explain};
 use super::{GitHubError, Secret};
 use crate::PawError;
 use crate::lock::{Exclusive, Fetching, StoreLock};
-use crate::setup::address::StoreAddress;
+use crate::sync::address::{StoreAddress, github_repository, saved_address};
 use crate::sync::integrate::{IntegrateReport, RecipientsChange, Replaced};
 use crate::sync::operation::{SyncReport, SyncState};
 use crate::sync::{RefusedPath, SyncError, TransferProgress};
-
-const LINK_FILE: &str = "github";
 
 /// The longest a background refresh waits for the store lock or for
 /// another fetch of the store: past it the run ends `Busy`, having changed
@@ -71,17 +69,17 @@ impl GitHubLink {
             self.id,
             self.ssh_address.replace(['\n', '\r'], "")
         );
-        let temporary = state_dir.join(format!("{LINK_FILE}.tmp"));
+        let temporary = state_dir.join(format!("{}.tmp", crate::layout::GITHUB_LINK));
         std::fs::write(&temporary, text).map_err(failed)?;
-        std::fs::rename(&temporary, state_dir.join(LINK_FILE)).map_err(failed)
+        std::fs::rename(&temporary, state_dir.join(crate::layout::GITHUB_LINK)).map_err(failed)
     }
 
     pub(crate) fn load(state_dir: &Path) -> Option<Self> {
-        let text = std::fs::read_to_string(state_dir.join(LINK_FILE)).ok()?;
+        let text = std::fs::read_to_string(state_dir.join(crate::layout::GITHUB_LINK)).ok()?;
         let value = |name: &str| text.lines().find_map(|l| l.strip_prefix(name)?.strip_prefix('=')).map(str::to_owned);
         let full_name = value("repository")?;
         // The HTTPS path is built from it: GitHub's rules for names only.
-        StoreAddress::parse(&full_name).ok().filter(|p| p.address.host == "github.com")?;
+        github_repository(&full_name)?;
         Some(Self { full_name, id: value("id")?.parse().ok()?, ssh_address: value("ssh")? })
     }
 
@@ -89,15 +87,24 @@ impl GitHubLink {
     /// setup was given for it, or GitHub's SSH address of the same
     /// `owner/name` (port 22, or GitHub's port 443 host).
     fn is_store(&self, store: &StoreAddress) -> bool {
-        if StoreAddress::parse(&self.ssh_address).is_ok_and(|linked| linked.address == *store) {
-            return true;
-        }
-        let host = store.connect_host().to_ascii_lowercase();
-        let github = (host == "github.com" && store.port == 22) || (host == "ssh.github.com" && store.port == 443);
-        let path = store.path.trim_start_matches('/');
-        let path = path.strip_suffix(".git").unwrap_or(path);
-        github && path.eq_ignore_ascii_case(&self.full_name)
+        is_repository(store, &self.full_name, &self.ssh_address)
     }
+}
+
+/// Whether `store` is the GitHub repository `full_name` (`owner/name`)
+/// whose SSH address is `ssh_address`: that address, or GitHub's SSH
+/// address of the same `owner/name` on either of its ports.
+fn is_repository(store: &StoreAddress, full_name: &str, ssh_address: &str) -> bool {
+    StoreAddress::parse(ssh_address).is_ok_and(|linked| linked.address == *store)
+        || store.github_name().is_some_and(|name| name.eq_ignore_ascii_case(full_name))
+}
+
+/// Whether the store address `address` is the GitHub repository
+/// `full_name` (`owner/name`) whose SSH address is `ssh_address`: what a
+/// refresh with the sign-in checks before it sends anything.
+#[uniffi::export]
+pub fn is_github_repository(address: String, full_name: String, ssh_address: String) -> bool {
+    StoreAddress::parse(&address).is_ok_and(|store| is_repository(&store.address, &full_name, &ssh_address))
 }
 
 /// The steps of a token refresh, for stopping between them.
@@ -194,13 +201,13 @@ impl From<FetchError> for SyncError {
 
 impl GitHubAccount {
     fn repo_dir(&self) -> PathBuf {
-        crate::setup::repo_dir(&self.state_dir)
+        crate::layout::repo_dir(&self.state_dir)
     }
 
     /// The chosen repository, if the store's remote is it. Reads files only.
     fn checked_link(&self) -> Result<GitHubLink, GitHubError> {
         let link = GitHubLink::load(&self.state_dir).ok_or(GitHubError::NotLinked)?;
-        let store = crate::setup::saved_address(&self.state_dir)
+        let store = saved_address(&self.state_dir)
             .map_err(|e| GitHubError::Failed { message: e.to_string() })?;
         if !link.is_store(&store) {
             return Err(GitHubError::WrongRepository { store: store.display(), granted: link.full_name });

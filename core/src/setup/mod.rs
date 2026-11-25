@@ -12,15 +12,7 @@
 //! [`SetupFlow::open`] picks up where it stopped; a download that was
 //! interrupted is removed and starts again.
 //!
-//! The state directory holds:
-//! - `setup` — the saved step (this module);
-//! - `known_hosts` — host keys the person confirmed ([`crate::sync::hosts`]);
-//! - `remote` — the store's address, once a clone succeeded;
-//! - `enrolled-key` — the key's identity, once the test decrypt succeeded
-//!   ([`crate::key::enrolment`]);
-//! - `recipients` — the pinned keys and accepted `.gpg-id` files
-//!   ([`crate::write::keyring`]), written by the same step;
-//! - `repo/` — the store itself.
+//! What it keeps where in the state directory is in [`crate::layout`].
 //!
 //! The steps that need the key run as key tasks on the key session, which
 //! share the PIN typed once (see `ffi::sync`); they go through the
@@ -37,18 +29,13 @@ use crate::key::{CardInfo, KeyIdentity, KeyTouch};
 use crate::recipients::Access;
 use crate::ssh::SshPublicKey;
 use crate::store::PassStore;
-use crate::sync::hosts::{KnownHosts, is_bundled, pin_for};
+use crate::sync::address::StoreAddress;
+use crate::sync::hosts::{self, KnownHosts};
 use crate::sync::{self, Cloned, Connection, PresentedHostKey, RefusedPath};
 use crate::write::{Keyring, LineStatus, WriteError};
 use crate::PawError;
-use address::StoreAddress;
 use outcome::{RemoteMessage, RemoteReason, says_repository_missing};
 use crate::key::touch_clock::{TouchClock, TouchExpectation};
-
-const STATE_FILE: &str = "setup";
-const KNOWN_HOSTS: &str = "known_hosts";
-const REMOTE_FILE: &str = "remote";
-const REPO_DIR: &str = "repo";
 
 /// The key as setup shows it on "Your key". Public data only.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -118,12 +105,6 @@ pub enum SetupError {
 fn failed(error: impl std::fmt::Display) -> SetupError {
     SetupError::Failed { message: error.to_string() }
 }
-
-/// Another way in to a host whose usual port a network may block: from
-/// (host, port) to (host, port), with the same bundled keys. GitHub's page
-/// "Using SSH over the HTTPS port"
-/// (<https://docs.github.com/en/authentication/troubleshooting-ssh/using-ssh-over-the-https-port>).
-const PORT_FALLBACKS: [(&str, u16, &str, u16); 1] = [("github.com", 22, "ssh.github.com", 443)];
 
 /// Offered when a host could not be reached on its usual port: "Port 22
 /// seems blocked. Try GitHub's port 443?"
@@ -319,7 +300,7 @@ impl SetupFlow {
     /// be, and resumes where it stopped.
     pub fn open(state_dir: &Path) -> Result<Self, SetupError> {
         std::fs::create_dir_all(state_dir).map_err(failed)?;
-        let saved = match std::fs::read_to_string(state_dir.join(STATE_FILE)) {
+        let saved = match std::fs::read_to_string(state_dir.join(crate::layout::SETUP)) {
             Ok(text) => Saved::from_text(&text),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Saved::fresh(),
             Err(e) => return Err(failed(e)),
@@ -353,16 +334,16 @@ impl SetupFlow {
 
     /// Where the store is cloned to.
     pub fn repo_dir(&self) -> PathBuf {
-        self.dir.join(REPO_DIR)
+        crate::layout::repo_dir(&self.dir)
     }
 
-    pub fn known_hosts(&self) -> KnownHosts {
-        KnownHosts::new(&self.dir.join(KNOWN_HOSTS))
+    fn known_hosts(&self) -> KnownHosts {
+        KnownHosts::of(&self.dir)
     }
 
     fn save(&self) -> Result<(), SetupError> {
-        let path = self.dir.join(STATE_FILE);
-        let temporary = self.dir.join(format!("{STATE_FILE}.tmp"));
+        let path = self.dir.join(crate::layout::SETUP);
+        let temporary = self.dir.join(format!("{}.tmp", crate::layout::SETUP));
         std::fs::write(&temporary, self.saved.to_text()).map_err(failed)?;
         std::fs::rename(&temporary, &path).map_err(failed)
     }
@@ -519,7 +500,7 @@ impl SetupFlow {
         let address = self.address()?;
         let host = address.connect_host().to_owned();
         self.remote_message = None;
-        match pin_for(&self.known_hosts(), &host, address.port).map_err(failed)? {
+        match self.known_hosts().pin(&host, address.port).map_err(failed)? {
             Some(_) => self.ask_host(),
             None => {
                 let scanned = sync::scan_host_key(&host, address.port);
@@ -544,43 +525,36 @@ impl SetupFlow {
         let Some(key) = self.unconfirmed.take() else {
             return Err(SetupError::WrongStep { message: "no host key is waiting to be confirmed".into() });
         };
-        if key.fingerprint() != fingerprint.trim() {
-            self.unconfirmed = Some(key);
-            return Err(SetupError::HostKeyNotConfirmed { host: address.host });
+        let trusted = self.known_hosts().trust(address.connect_host(), address.port, || Ok(key.clone()), fingerprint);
+        match trusted {
+            Ok(true) => self.ask_host(),
+            Ok(false) => {
+                self.unconfirmed = Some(key);
+                Err(SetupError::HostKeyNotConfirmed { host: address.host })
+            }
+            Err(e) => Err(failed(e)),
         }
-        let line = key.line().map_err(failed)?;
-        self.known_hosts()
-            .add(address.connect_host(), address.port, &line)
-            .map_err(failed)?;
-        self.ask_host()
     }
 
     /// "I expected this change": forgets the key pinned for the store's
     /// host, so the next [`Self::check_host`] shows the key it presents now
     /// for confirmation, as on first use. For the changed-host-key screen,
     /// after it has shown both fingerprints; setup stays where it is.
-    ///
-    /// A host whose keys ship with paw (github.com and the others in
-    /// [`crate::sync::hosts::BUNDLED`]) cannot be forgotten: a different
-    /// key from one of them is always refused.
+    /// Refused for a host whose keys ship with paw ([`KnownHosts::forget`]).
     pub fn forget_host_key(&mut self) -> Result<SetupState, SetupError> {
         self.expect(&[Step::CheckHost, Step::NeedPin], "forget the host's key")?;
         let address = self.address()?;
-        let host = address.connect_host();
-        if is_bundled(host, address.port) {
-            return Err(failed(bundled_refusal(host)));
-        }
-        self.known_hosts().forget(host, address.port).map_err(failed)?;
+        self.known_hosts().forget(address.connect_host(), address.port).map_err(failed)?;
         self.remote_message = None;
         self.go(Step::CheckHost)
     }
 
     fn remote(&self) -> Result<sync::Remote, SetupError> {
         let address = self.address()?;
-        let pin = pin_for(&self.known_hosts(), address.connect_host(), address.port)
+        self.known_hosts()
+            .remote(&address)
             .map_err(failed)?
-            .ok_or_else(|| SetupError::WrongStep { message: "the host has not been checked".into() })?;
-        Ok(address.remote(pin))
+            .ok_or_else(|| SetupError::WrongStep { message: "the host has not been checked".into() })
     }
 
     /// The setup error for a failed connection or git command, noting what
@@ -645,16 +619,14 @@ impl SetupFlow {
             return None;
         }
         let address = self.address().ok()?;
-        let (_, _, host, port) = PORT_FALLBACKS
-            .iter()
-            .find(|(h, p, _, _)| address.connect_host().eq_ignore_ascii_case(h) && address.port == *p)?;
+        let (host, port) = hosts::port_fallback(address.connect_host(), address.port)?;
         let to = StoreAddress {
             user: address.user.clone(),
-            host: (*host).to_owned(),
-            port: *port,
+            host: host.to_owned(),
+            port,
             path: format!("/{}", address.path.trim_start_matches('/')),
         };
-        Some(PortFallback { from_host: address.connect_host().to_owned(), from_port: address.port, host: (*host).to_owned(), port: *port, address: to.display() })
+        Some(PortFallback { from_host: address.connect_host().to_owned(), from_port: address.port, host: host.to_owned(), port, address: to.display() })
     }
 
     /// Switches the store's address to [`Self::port_fallback`]'s, keeping
@@ -763,7 +735,7 @@ impl SetupFlow {
         let address = self.saved.address.clone().unwrap_or_default();
         {
             let _held = self.exclusive()?;
-            std::fs::write(self.dir.join(REMOTE_FILE), format!("{address}\n")).map_err(failed)?;
+            std::fs::write(self.dir.join(crate::layout::REMOTE), format!("{address}\n")).map_err(failed)?;
         }
         self.go(Step::TestDecrypt)
     }
@@ -927,26 +899,13 @@ fn ssh_key(key: &KeySummary) -> Result<SshPublicKey, SetupError> {
     Ok(key)
 }
 
-/// Why a bundled host's key is not forgotten.
-pub(crate) fn bundled_refusal(host: &str) -> String {
-    format!(
-        "{host}'s keys come with paw and can't be forgotten. A different key means this connection isn't reaching the real {host}: try another network"
-    )
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// The store address saved by a finished download, for sync.
-pub fn saved_address(state_dir: &Path) -> Result<StoreAddress, PawError> {
-    let text = std::fs::read_to_string(state_dir.join(REMOTE_FILE))
-        .map_err(|e| PawError::Store(format!("no store is set up here: {e}")))?;
-    StoreAddress::parse(&text).map(|parsed| parsed.address).map_err(PawError::Store)
-}
-
-/// Where the store of `state_dir` is checked out.
-pub fn repo_dir(state_dir: &Path) -> PathBuf {
-    state_dir.join(REPO_DIR)
-}
-
-/// The known-hosts file of `state_dir`.
-pub fn known_hosts(state_dir: &Path) -> KnownHosts {
-    KnownHosts::new(&state_dir.join(KNOWN_HOSTS))
+    #[test]
+    fn a_finished_setup_starts_with_the_line_layout_reads() {
+        let done = Saved { step: Step::Done, ..Saved::fresh() };
+        assert_eq!(done.to_text().lines().next(), Some(crate::layout::SETUP_DONE));
+    }
 }

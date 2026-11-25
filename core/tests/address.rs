@@ -2,7 +2,8 @@
 //! tidied, what is refused, and properties over generated input.
 
 use paw_core::setup::SetupError;
-use paw_core::setup::address::{StoreAddress, read_store_address};
+use paw_core::setup::address::read_store_address;
+use paw_core::sync::address::StoreAddress;
 use proptest::prelude::*;
 
 fn github(owner: &str, repo: &str) -> String {

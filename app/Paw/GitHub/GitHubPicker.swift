@@ -185,7 +185,7 @@ final class GitHubPicker: Identifiable {
         case .success(.repositories(let repositories, let installUrl)):
             if case .link(let address, _) = purpose {
                 if let store = repositories.first(where: {
-                    GitHubAccess.isRepository(address, fullName: $0.fullName, sshAddress: $0.sshAddress)
+                    isGithubRepository(address: address, fullName: $0.fullName, sshAddress: $0.sshAddress)
                 }) {
                     choose(store)
                 } else {

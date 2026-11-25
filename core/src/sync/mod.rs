@@ -9,6 +9,7 @@
 //! A push only ever fast-forwards. If the remote has moved, [`push`] fails
 //! with [`PawError::NotFastForward`] and changes nothing.
 
+pub mod address;
 pub(crate) mod guard;
 mod history;
 pub mod hosts;

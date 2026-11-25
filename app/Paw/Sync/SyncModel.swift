@@ -294,7 +294,7 @@ final class SyncModel {
     }
 
     var host: String {
-        SetupModel.host(of: address)
+        storeAddressHost(address: address)
     }
 
     // MARK: What the pill says

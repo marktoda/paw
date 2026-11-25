@@ -154,8 +154,7 @@ impl Endpoints {
         {
             return Some(address.clone());
         }
-        let parsed = crate::setup::address::StoreAddress::parse(full_name).ok()?;
-        (parsed.address.host == "github.com").then(|| parsed.address.display())
+        crate::sync::address::github_repository(full_name).map(|address| address.display())
     }
 }
 

@@ -36,6 +36,8 @@ final class StoreEdits {
     /// The queue lives on the sync object; `nil` if it could not be opened,
     /// and then the unpushed list says so.
     let sync: StoreSync?
+    /// The core's state directory of the store.
+    let stateDir: String
     /// Where the store is checked out, to read it again after a change.
     let repoDir: String
     /// No longer shown: sending is built (`Sync/`). Kept so the callers
@@ -56,9 +58,11 @@ final class StoreEdits {
     var confirmingDelete: UUID?
     var undoOffer: UndoOffer?
 
-    init(writer: StoreWriter, sync: StoreSync?, repoDir: String, sendingNote: String?, keepAlive: AnyObject? = nil) {
+    init(writer: StoreWriter, sync: StoreSync?, stateDir: String, sendingNote: String?, keepAlive: AnyObject? = nil) {
         self.writer = writer
         self.sync = sync
+        self.stateDir = stateDir
+        let repoDir = storeRepoDir(stateDir: stateDir)
         self.repoDir = repoDir
         self.sendingNote = sendingNote
         self.keepAlive = keepAlive

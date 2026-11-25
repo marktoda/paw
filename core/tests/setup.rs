@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use key_common::{Driver, PIN, WAIT, finish, is_touch, port_with};
 use paw_core::ffi::sync::Setup;
 use paw_core::key::{KeyError, KeyPort, KeyTaskState, KeyTouch};
-use paw_core::setup::address::StoreAddress;
+use paw_core::sync::address::StoreAddress;
 use paw_core::setup::outcome::RemoteReason;
 use paw_core::key::touch_clock::{TouchClock, TouchExpectation};
 use paw_core::setup::{SetupError, SetupFlow, SetupState};
@@ -205,7 +205,7 @@ fn setup_reads_the_key_checks_the_host_downloads_and_opens_one_entry() {
     assert!(fields.iter().all(|(_, value)| *value != PIN), "{saved}");
     assert!(saved.contains("step=done"), "{saved}");
     // Sync can find the store.
-    assert_eq!(paw_core::setup::saved_address(rig.dir.path()).unwrap().display(), address(&server));
+    assert_eq!(paw_core::sync::address::saved_address(rig.dir.path()).unwrap().display(), address(&server));
 }
 
 #[test]
@@ -215,7 +215,7 @@ fn a_confirmed_host_is_pinned_and_not_asked_about_again() {
     let mut rig = Rig::new(&sim, &server);
     rig.at_need_pin();
 
-    let pinned = KnownHosts::new(&rig.dir.path().join("known_hosts"))
+    let pinned = KnownHosts::of(rig.dir.path())
         .lookup("127.0.0.1", server.remote().port)
         .unwrap()
         .unwrap();
@@ -645,7 +645,7 @@ fn a_host_with_several_keys_presents_the_pinned_one() {
 #[test]
 fn a_known_hosts_entry_is_only_replaced_by_forgetting_it() {
     let dir = tempfile::tempdir().unwrap();
-    let known = KnownHosts::new(&dir.path().join("known_hosts"));
+    let known = KnownHosts::of(dir.path());
     known.add("git.example.org", 22, &support::ed25519_host_key()).unwrap();
 
     assert!(known.add("git.example.org", 22, &support::ecdsa_host_key()).is_err());

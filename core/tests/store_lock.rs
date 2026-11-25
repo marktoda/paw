@@ -833,7 +833,7 @@ fn every_mutating_entry_point_returns_even_when_its_thread_holds_the_lock() {
             note("discard_all", queue::discard_all(&repo).map_err(|e| text(&e)));
             note("integrate", sync::integrate(&repo).map(drop).map_err(|e| text(&e)));
             note("accept_replaced_remote", sync::accept_replaced_remote(&repo, true).map(drop).map_err(|e| text(&e)));
-            let hosts = paw_core::sync::hosts::KnownHosts::new(&w.state().join("known_hosts"));
+            let hosts = paw_core::sync::hosts::KnownHosts::of(w.state());
             note("known_hosts.forget", hosts.forget("elsewhere.example", 22).map_err(|e| text(&e)));
 
             let ffi_writer = paw_core::ffi::write::StoreWriter::open(w.state().to_string_lossy().into_owned());

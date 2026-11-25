@@ -466,18 +466,21 @@ fn a_bundled_hosts_key_cannot_be_forgotten() {
         let session = w.port.session().unwrap();
         w.setup.read_key_from_session(session).unwrap();
         w.setup.set_address(address.into()).unwrap();
-        let known = paw_core::setup::known_hosts(w.dir.path());
+        let known = paw_core::sync::hosts::KnownHosts::of(w.dir.path());
         let host = if address.contains("ssh.github") { "ssh.github.com" } else { address.split(['@', ':']).nth(1).unwrap() };
         let port = if address.contains(":443") { 443 } else { 22 };
-        // Even a key someone managed to save for it beside the bundled ones.
-        known.add(host, port, &support::some_other_host_key()).unwrap();
+        // Even a key someone managed to save for it beside the bundled ones
+        // (paw itself refuses to).
+        assert!(known.add(host, port, &support::some_other_host_key()).is_err());
+        let line = format!("{host} {port} {}\n", support::some_other_host_key());
+        std::fs::write(w.dir.path().join("known_hosts"), line).unwrap();
 
         let error = w.setup.forget_host_key().unwrap_err();
 
         assert!(matches!(&error, SetupError::Failed { message } if message.contains("can't be forgotten")), "{error:?}");
         assert!(known.lookup(host, port).unwrap().is_some());
         // The bundled keys are what counts for it, whatever was saved.
-        let pinned = paw_core::sync::hosts::pin_for(&known, host, port).unwrap().unwrap();
+        let pinned = known.pin(host, port).unwrap().unwrap();
         assert_eq!(pinned.fingerprints(), paw_core::sync::hosts::bundled(host, port).unwrap().fingerprints());
     }
 }

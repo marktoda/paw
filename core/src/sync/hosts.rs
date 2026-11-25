@@ -18,7 +18,8 @@
 
 use std::path::{Path, PathBuf};
 
-use super::transport::HostKeyPin;
+use super::address::StoreAddress;
+use super::transport::{HostKeyPin, PresentedHostKey, Remote};
 use crate::PawError;
 
 /// github.com's SSH host keys, ed25519 first, with their fingerprints.
@@ -93,25 +94,41 @@ pub const BITBUCKET_HOST_KEYS: [(&str, &str); 3] = [
 /// its documentation gives for it.
 pub type HostKeys = &'static [(&'static str, &'static str)];
 
-/// The host and port each set of keys is bundled for.
-///
-/// `ssh.github.com:443` is GitHub's SSH endpoint on the HTTPS port, for
-/// networks that block port 22. GitHub's page "Using SSH over the HTTPS
-/// port"
+/// GitHub's SSH endpoint, and the same host on the HTTPS port for networks
+/// that block port 22. GitHub's page "Using SSH over the HTTPS port"
 /// (<https://docs.github.com/en/authentication/troubleshooting-ssh/using-ssh-over-the-https-port>,
-/// fetched 2026-11-23) shows it presenting the ed25519 fingerprint above and
-/// says to accept it if it matches one of GitHub's published fingerprints:
-/// it has the same keys.
+/// fetched 2026-11-23) shows the second presenting the ed25519 fingerprint
+/// above and says to accept it if it matches one of GitHub's published
+/// fingerprints: it has the same keys.
+pub(crate) const GITHUB_SSH: (&str, u16) = ("github.com", 22);
+const GITHUB_SSH_443: (&str, u16) = ("ssh.github.com", 443);
+
+/// The host and port each set of keys is bundled for.
 pub const BUNDLED: [(&str, u16, HostKeys); 4] = [
-    ("github.com", 22, &GITHUB_HOST_KEYS),
-    ("ssh.github.com", 443, &GITHUB_HOST_KEYS),
+    (GITHUB_SSH.0, GITHUB_SSH.1, &GITHUB_HOST_KEYS),
+    (GITHUB_SSH_443.0, GITHUB_SSH_443.1, &GITHUB_HOST_KEYS),
     ("gitlab.com", 22, &GITLAB_HOST_KEYS),
     ("bitbucket.org", 22, &BITBUCKET_HOST_KEYS),
 ];
 
+fn is(endpoint: (&str, u16), host: &str, port: u16) -> bool {
+    host.eq_ignore_ascii_case(endpoint.0) && port == endpoint.1
+}
+
+/// Whether `host` on `port` is GitHub's SSH endpoint, on either port.
+pub(crate) fn is_github(host: &str, port: u16) -> bool {
+    is(GITHUB_SSH, host, port) || is(GITHUB_SSH_443, host, port)
+}
+
+/// Another way in to a host whose usual port a network may block, with the
+/// same bundled keys: for github.com on port 22, ssh.github.com on 443.
+pub(crate) fn port_fallback(host: &str, port: u16) -> Option<(&'static str, u16)> {
+    is(GITHUB_SSH, host, port).then_some(GITHUB_SSH_443)
+}
+
 /// The keys that ship with paw for `host` on `port`, if any.
 pub fn bundled(host: &str, port: u16) -> Option<HostKeyPin> {
-    let (_, _, keys) = BUNDLED.iter().find(|(h, p, _)| host.eq_ignore_ascii_case(h) && port == *p)?;
+    let (_, _, keys) = BUNDLED.iter().find(|(h, p, _)| is((h, *p), host, port))?;
     let lines: Vec<&str> = keys.iter().map(|(line, _)| *line).collect();
     HostKeyPin::parse_all(&lines).ok()
 }
@@ -119,13 +136,20 @@ pub fn bundled(host: &str, port: u16) -> Option<HostKeyPin> {
 /// Whether paw ships keys for `host` on `port`: such a host is never
 /// confirmed by the person, and its keys cannot be forgotten.
 pub fn is_bundled(host: &str, port: u16) -> bool {
-    BUNDLED.iter().any(|(h, p, _)| host.eq_ignore_ascii_case(h) && port == *p)
+    BUNDLED.iter().any(|(h, p, _)| is((h, *p), host, port))
+}
+
+/// Why a bundled host's key is not forgotten or replaced.
+fn bundled_refusal(host: &str) -> PawError {
+    PawError::Store(format!(
+        "{host}'s keys come with paw and can't be forgotten. A different key means this connection isn't reaching the real {host}: try another network"
+    ))
 }
 
 /// Host keys confirmed by the person, one host per line:
-/// `host port algorithm base64`. Lives in the store's state directory.
+/// `host port algorithm base64`, in the store's state directory.
 pub struct KnownHosts {
-    path: PathBuf,
+    state_dir: PathBuf,
 }
 
 fn io_err(e: std::io::Error) -> PawError {
@@ -133,19 +157,22 @@ fn io_err(e: std::io::Error) -> PawError {
 }
 
 impl KnownHosts {
-    pub fn new(path: &Path) -> Self {
-        Self { path: path.to_path_buf() }
+    /// The known hosts of the store kept in `state_dir`.
+    pub fn of(state_dir: &Path) -> Self {
+        Self { state_dir: state_dir.to_path_buf() }
     }
 
-    /// The lock of the store whose state directory holds the file: a
-    /// change reads, changes and writes the whole file.
+    fn path(&self) -> PathBuf {
+        self.state_dir.join(crate::layout::KNOWN_HOSTS)
+    }
+
+    /// The store's lock: a change reads, changes and writes the whole file.
     fn lock(&self) -> Result<crate::lock::Exclusive, PawError> {
-        let dir = self.path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
-        crate::lock::StoreLock::for_state_dir(dir).exclusive()
+        crate::lock::StoreLock::for_state_dir(&self.state_dir).exclusive()
     }
 
     fn read(&self) -> Result<Vec<(String, u16, String)>, PawError> {
-        let text = match std::fs::read_to_string(&self.path) {
+        let text = match std::fs::read_to_string(self.path()) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(e) => return Err(io_err(e)),
@@ -167,12 +194,13 @@ impl KnownHosts {
             .iter()
             .map(|(host, port, key)| format!("{host} {port} {key}\n"))
             .collect();
-        let temporary = self.path.with_extension("tmp");
+        let path = self.path();
+        let temporary = path.with_extension("tmp");
         std::fs::write(&temporary, text).map_err(io_err)?;
-        std::fs::rename(&temporary, &self.path).map_err(io_err)
+        std::fs::rename(&temporary, &path).map_err(io_err)
     }
 
-    /// The pinned key for `host`, if one was confirmed.
+    /// The confirmed key for `host`, if one was confirmed.
     pub fn lookup(&self, host: &str, port: u16) -> Result<Option<HostKeyPin>, PawError> {
         let lines: Vec<String> = self
             .read()?
@@ -187,9 +215,35 @@ impl KnownHosts {
         HostKeyPin::parse_all(&lines).map(Some)
     }
 
+    /// The keys `host` must present: the bundled ones, else a confirmed
+    /// one, else `None` (the host must be confirmed first).
+    pub fn pin(&self, host: &str, port: u16) -> Result<Option<HostKeyPin>, PawError> {
+        match bundled(host, port) {
+            Some(pin) => Ok(Some(pin)),
+            None => self.lookup(host, port),
+        }
+    }
+
+    /// The remote at `address`, held to its host's keys; `None` while the
+    /// host is not confirmed.
+    pub fn remote(&self, address: &StoreAddress) -> Result<Option<Remote>, PawError> {
+        let pin = self.pin(address.connect_host(), address.port)?;
+        Ok(pin.map(|host_key| Remote {
+            host: address.connect_host().to_owned(),
+            port: address.port,
+            user: address.user.clone(),
+            path: address.path.clone(),
+            host_key,
+        }))
+    }
+
     /// Pins `key_line` for `host`, replacing nothing: a host that already
-    /// has a pinned key must be forgotten first.
+    /// has a pinned key must be forgotten first. Refused for a host whose
+    /// keys ship with paw.
     pub fn add(&self, host: &str, port: u16, key_line: &str) -> Result<(), PawError> {
+        if is_bundled(host, port) {
+            return Err(bundled_refusal(host));
+        }
         if key_line.contains(['\n', '\r']) || host.contains([' ', '\n', '\r']) {
             return Err(PawError::Store("not a host key line".into()));
         }
@@ -202,20 +256,39 @@ impl KnownHosts {
         self.write(&entries)
     }
 
-    /// Forgets the key pinned for `host`: Settings › Store › Forget server key.
+    /// The person compared the fingerprint `checked` and trusts it: pins
+    /// the key `presented` gives, if it is the one with that fingerprint.
+    /// `Ok(false)`, pinning nothing, if it is another. Refused, before
+    /// `presented` is asked, for a host whose keys ship with paw.
+    pub fn trust(
+        &self,
+        host: &str,
+        port: u16,
+        presented: impl FnOnce() -> Result<PresentedHostKey, PawError>,
+        checked: &str,
+    ) -> Result<bool, PawError> {
+        if is_bundled(host, port) {
+            return Err(bundled_refusal(host));
+        }
+        let presented = presented()?;
+        if presented.fingerprint() != checked.trim() {
+            return Ok(false);
+        }
+        self.add(host, port, &presented.line()?)?;
+        Ok(true)
+    }
+
+    /// Forgets the key pinned for `host`: Settings › Store › Forget server
+    /// key, or "I expected this change" in setup. Refused for a host whose
+    /// keys ship with paw: a different key from one of them is always
+    /// refused.
     pub fn forget(&self, host: &str, port: u16) -> Result<(), PawError> {
+        if is_bundled(host, port) {
+            return Err(bundled_refusal(host));
+        }
         let _held = self.lock()?;
         let mut entries = self.read()?;
         entries.retain(|(h, p, _)| !(h.eq_ignore_ascii_case(host) && *p == port));
         self.write(&entries)
-    }
-}
-
-/// The pin for `host`: the bundled keys, else a confirmed one, else `None`
-/// (the host must be confirmed first).
-pub fn pin_for(known: &KnownHosts, host: &str, port: u16) -> Result<Option<HostKeyPin>, PawError> {
-    match bundled(host, port) {
-        Some(pin) => Ok(Some(pin)),
-        None => known.lookup(host, port),
     }
 }

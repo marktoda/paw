@@ -315,7 +315,7 @@ fn bundled_server_keys_are_typed_and_cannot_be_forgotten() {
 fn a_confirmed_server_key_can_be_forgotten() {
     let state = tempfile::tempdir().unwrap();
     std::fs::write(state.path().join("remote"), "git@git.example.org:me/store.git\n").unwrap();
-    paw_core::setup::known_hosts(state.path()).add("git.example.org", 22, &support::ed25519_host_key()).unwrap();
+    paw_core::sync::hosts::KnownHosts::of(state.path()).add("git.example.org", 22, &support::ed25519_host_key()).unwrap();
     let sync = StoreSync::open(state.path().to_string_lossy().into_owned()).unwrap();
     let keys = sync.server_keys().unwrap();
     assert!(!keys.bundled);

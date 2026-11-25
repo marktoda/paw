@@ -45,22 +45,18 @@ struct StoreLocation {
         StoreLocation(root: try base().appendingPathComponent("paw", isDirectory: true))
     }
 
-    /// Setup finished and the store is on this iPhone. Reads two files and
-    /// writes nothing, so the extension can ask (`Setup.open` would create
-    /// folders and may restart a download).
+    /// Setup finished and the store is on this iPhone. Writes nothing, so
+    /// the extension can ask (`Setup.open` would create folders and may
+    /// restart a download).
     var isSetUp: Bool {
-        let setup = stateDir.appendingPathComponent("setup")
-        guard let text = try? String(contentsOf: setup, encoding: .utf8),
-              text.split(separator: "\n").first == "step=done" else { return false }
-        return FileManager.default.fileExists(atPath: repoDir.appendingPathComponent(".gpg-id").path)
+        storeIsSetUp(stateDir: stateDir.path)
     }
 
-    /// The core's state directory: `setup`, `known_hosts`, `remote`,
-    /// `enrolled-key`, `recipients` and the store itself in `repo/`.
+    /// The core's state directory: its files and the store itself.
     var stateDir: URL { root.appendingPathComponent("store", isDirectory: true) }
 
-    /// The repository inside the state directory (`core/src/setup/mod.rs`).
-    var repoDir: URL { stateDir.appendingPathComponent("repo", isDirectory: true) }
+    /// The repository inside the state directory.
+    var repoDir: URL { URL(fileURLWithPath: storeRepoDir(stateDir: stateDir.path), isDirectory: true) }
 
     /// The Face ID copies, kept apart from the store so the store can be
     /// set up again without touching them, and the other way round.

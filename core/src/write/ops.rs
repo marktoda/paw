@@ -135,7 +135,7 @@ fn check_path(entry: &str) -> Result<(), WriteError> {
 impl WriteStore {
     /// The store set up in `state_dir` (checked out in its `repo/`).
     pub fn open(state_dir: &Path) -> Self {
-        Self::new(state_dir, &crate::setup::repo_dir(state_dir))
+        Self::new(state_dir, &crate::layout::repo_dir(state_dir))
     }
 
     /// A store checked out at `repo` with its state in `state_dir`.

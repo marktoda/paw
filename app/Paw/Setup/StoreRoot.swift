@@ -179,7 +179,7 @@ final class StoreRootModel {
             // works from here with no further step.
             model.edits = StoreEdits(
                 writer: StoreWriter.open(stateDir: location.stateDir.path), sync: sync,
-                repoDir: location.repoDir.path, sendingNote: nil)
+                stateDir: location.stateDir.path, sendingNote: nil)
             model.edits?.syncing?.gitHub = gitHub
             let controls = StoreControls(
                 address: sync?.address() ?? "",

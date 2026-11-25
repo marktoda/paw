@@ -532,7 +532,7 @@ private struct DownloadScreen: View {
     var body: some View {
         SetupPage(
             step: 3, title: "Download your store",
-            message: "\(SetupModel.host(of: address)) accepts your key.",
+            message: "\(storeAddressHost(address: address)) accepts your key.",
             identifier: "setup-download", simulatorActions: simulatorActions
         ) {
             SetupCard {

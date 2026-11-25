@@ -39,18 +39,7 @@ final class GitHubAccess {
     /// anything.
     func covers(address: String) -> Bool {
         guard signedIn, let link else { return false }
-        return Self.isRepository(address, fullName: link.fullName, sshAddress: link.sshAddress)
-    }
-
-    /// Whether `address` (as setup saved it) is the GitHub repository
-    /// `fullName`, whose SSH address is `sshAddress`.
-    nonisolated static func isRepository(_ address: String, fullName: String, sshAddress: String) -> Bool {
-        let typed = address.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if typed == sshAddress.lowercased() { return true }
-        var path = typed
-        if path.hasSuffix(".git") { path.removeLast(4) }
-        let name = fullName.lowercased()
-        return ["github.com:\(name)", "github.com/\(name)", "ssh.github.com:443/\(name)"].contains { path.hasSuffix($0) }
+        return isGithubRepository(address: address, fullName: link.fullName, sshAddress: link.sshAddress)
     }
 
     /// Forgets the sign-in on this iPhone and, with `revoke`, asks GitHub

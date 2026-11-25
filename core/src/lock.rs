@@ -61,7 +61,7 @@ use std::time::{Duration, Instant};
 use crate::PawError;
 
 /// The store lock's file, in the state directory: paw's only file lock.
-pub const STORE_LOCK_FILE: &str = "store.lock";
+pub const STORE_LOCK_FILE: &str = crate::layout::STORE_LOCK;
 /// The longest a change waits for the store lock. Every holder keeps it
 /// for local file work only, so this is far longer than any real wait.
 pub const DEFAULT_WAIT: Duration = Duration::from_secs(15);
@@ -72,8 +72,6 @@ pub const SHARED_WAIT: Duration = Duration::from_secs(30);
 pub const RECORD_WAIT: Duration = Duration::from_secs(120);
 /// The longest a fetch waits for another fetch of the same store to finish.
 pub const FETCH_WAIT: Duration = Duration::from_secs(60);
-/// The repository-name that marks `<state>/repo`.
-const REPO_DIR: &str = "repo";
 /// Where a repository outside a state directory keeps its lock files.
 const GIT_LOCK_DIR: &str = "paw";
 
@@ -160,15 +158,13 @@ impl StoreLock {
     pub fn for_state_dir(state_dir: &Path) -> Self {
         let _ = std::fs::create_dir_all(state_dir);
         let root = canonical(state_dir);
-        Self { files: Some(root.clone()), repo: root.join(REPO_DIR), root }
+        Self { files: Some(root.clone()), repo: crate::layout::repo_dir(&root), root }
     }
 
     /// The lock of the store checked out at `repo`: its state directory's
     /// if `repo` is `<state>/repo`, else the repository's own.
     pub fn for_repo(repo: &Path) -> Self {
-        if repo.file_name().is_some_and(|name| name == REPO_DIR)
-            && let Some(state_dir) = repo.parent().filter(|p| !p.as_os_str().is_empty())
-        {
+        if let Some(state_dir) = crate::layout::state_dir_of(repo) {
             return Self::for_state_dir(state_dir);
         }
         let root = canonical(repo);

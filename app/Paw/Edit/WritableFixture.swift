@@ -98,7 +98,7 @@ enum WritableFixture {
             _ = try sync.lastTaskResult()
         }
         return Prepared(
-            stateDir: stateDir.path, repoDir: stateDir.appendingPathComponent("repo").path,
+            stateDir: stateDir.path, repoDir: storeRepoDir(stateDir: stateDir.path),
             writer: StoreWriter.open(stateDir: stateDir.path), sync: sync, host: host)
     }
 
@@ -108,7 +108,7 @@ enum WritableFixture {
         switch prepared {
         case .success(let prepared):
             model.edits = StoreEdits(
-                writer: prepared.writer, sync: prepared.sync, repoDir: prepared.repoDir, sendingNote: nil)
+                writer: prepared.writer, sync: prepared.sync, stateDir: prepared.stateDir, sendingNote: nil)
         case .failure(let error):
             model.notice = Notice(
                 problem: "Adding passwords isn't available in this test store.", nextStep: describe(error))

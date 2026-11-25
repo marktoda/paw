@@ -70,7 +70,7 @@ struct GitHubSettingsSection: View {
         #if targetEnvironment(simulator)
         return true
         #else
-        return gitHub.signedIn || gitHub.link != nil || SetupModel.host(of: address).lowercased().hasSuffix("github.com")
+        return gitHub.signedIn || gitHub.link != nil || isGithubAddress(address: address)
         #endif
     }
 
