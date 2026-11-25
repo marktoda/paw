@@ -13,9 +13,16 @@ struct TouchTimeoutSection: View {
     let check: KeyTaskDriver
     let finished: () -> Void
 
+    /// Started and not yet ended. After Cancel a command waiting for a
+    /// touch still runs until the key gives up; the check shows it until
+    /// then, and only then reads the key log again.
+    private var running: Bool {
+        check.state.map { !$0.isFinal } ?? false
+    }
+
     var body: some View {
         Section {
-            if check.isFollowing {
+            if running {
                 progress
                 Button("Cancel", role: .cancel) { check.cancel() }
                     .foregroundStyle(PawColor.label)
@@ -36,7 +43,7 @@ struct TouchTimeoutSection: View {
         } header: {
             PawSectionHeader("Touch timeout")
         }
-        .onChange(of: check.isFollowing) { _, running in
+        .onChange(of: running) { _, running in
             if !running { finished() }
         }
     }

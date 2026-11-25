@@ -124,7 +124,8 @@ extension KeyTaskOwner {
 /// Try again) is cancelled, and its end still reaches the owner, once.
 @MainActor @Observable
 final class KeyTaskDriver {
-    /// The state of the task the sheet follows, as the core last gave it.
+    /// The state of the task started last, as the core last gave it: still
+    /// followed after Cancel, until the task has really ended.
     private(set) var state: KeyTaskState?
     /// What is typed in the sheet's PIN field. Handed to the core and
     /// cleared at once on Continue; cleared too whenever the sheet stops
@@ -150,6 +151,7 @@ final class KeyTaskDriver {
 
     private var mapped: KeySheetStage = .busy
     private var followed: UUID?
+    @ObservationIgnored private var latest: UUID?
     /// Each sheet's run of tasks, kept across Try again: Done closes the
     /// sheet only if it is still the same run.
     @ObservationIgnored private var run: UUID?
@@ -210,6 +212,7 @@ final class KeyTaskDriver {
         letGoOfFollowed()
         run = UUID()
         self.begin = begin
+        latest = nil
         state = nil
         show(.busy)
         if waitsForLetGoTasks, !tasks.isEmpty {
@@ -280,6 +283,7 @@ final class KeyTaskDriver {
         tasks[id] = Running(task: task, generation: generation)
         purpose = task.purpose()
         followed = id
+        latest = id
         // A task can start past Plug in; listeners hear only changes.
         changed(id)
     }
@@ -298,6 +302,9 @@ final class KeyTaskDriver {
         guard let running = tasks[id] else { return }
         let state = running.task.state()
         let result = KeyTaskResult(state)
+        if id == latest {
+            self.state = state
+        }
         guard id == followed else {
             if let result {
                 settle(id, running, result)
@@ -315,7 +322,6 @@ final class KeyTaskDriver {
             return
         }
         #endif
-        self.state = state
         if case .failed(.KeyRemoved) = state, reader?.present == true {
             // A transport error ended the session but the reader is still
             // there: read the key again, so Try again finds it.

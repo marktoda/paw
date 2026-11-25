@@ -177,6 +177,27 @@ final class KeyTaskDriverTests: XCTestCase {
         XCTAssertEqual(owner.doneShownCount, 0)
     }
 
+    func testTheStateFollowsACancelledTaskUntilItEnds() async throws {
+        let fixture = try Fixture(touch: true)
+        let owner = Owner()
+        let driver = driver(owner: owner)
+        let port = fixture.model.keyPort
+        driver.start { listener in port.checkTouchTimeout(listener: listener) }
+        await waitForStage(driver, .pin(triesLeft: 3, forgotten: false))
+        driver.pin = Fixture.pin
+        driver.continueWithPin()
+        await waitFor("the touch") { driver.stage == .touch && fixture.key.waitingForTouch() }
+
+        driver.cancel()
+        XCTAssertFalse(driver.isFollowing)
+        XCTAssertEqual(driver.state.map(\.isFinal), false, "The key still waits for a touch")
+
+        fixture.key.touch()
+        await waitFor("the cancelled check to end") { driver.state?.isFinal == true }
+        XCTAssertEqual(driver.pendingTasks, 0)
+        XCTAssertEqual(owner.lateEnds.count, 1)
+    }
+
     func testALateFinishAfterCancelIsHeardAsACancelThenAsLetGo() async throws {
         let fixture = try Fixture()
         let owner = Owner()
