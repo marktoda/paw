@@ -258,12 +258,12 @@ fn a_waiting_change_is_not_pushed_after_its_recipients_changed() {
     assert_eq!(held[0].gpg_id, ".gpg-id");
     assert_eq!(held[0].encrypted_for, [format!("key ID {}", &card_fpr[24..])]);
     assert_eq!(held[0].recipients, [card_fpr.clone(), other_fpr.clone()]);
-    assert!(!held[0].accepted);
+    assert_eq!(held[0].list, queue::HeldBackList::NotAccepted);
 
     // Accepting the new recipients does not make the old ciphertext right.
     Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Work").unwrap();
     let held = queue::held_back(&w.repo(), w.state.path()).unwrap();
-    assert!(held.len() == 1 && held[0].accepted, "{held:?}");
+    assert!(held.len() == 1 && held[0].list == queue::HeldBackList::Accepted, "{held:?}");
     assert_eq!(send().state, SyncState::Waiting { unpushed: 1 });
     assert_eq!(w.server.tip(), desktop_tip);
 

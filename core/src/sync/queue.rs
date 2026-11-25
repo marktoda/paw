@@ -135,16 +135,25 @@ pub struct HeldBack {
     pub id: String,
     pub entry: String,
     /// The `.gpg-id` that governs the entry now, e.g. `work/.gpg-id`; empty
-    /// if none does.
+    /// if it can't be read.
     pub gpg_id: String,
     /// Who the waiting ciphertext is encrypted for, as recipients are
     /// described elsewhere ("key ID 0123...").
     pub encrypted_for: Vec<String>,
     /// The key lines of that `.gpg-id` now.
     pub recipients: Vec<String>,
-    /// The person has accepted those recipients on this device. Until they
-    /// have, paw cannot encrypt to them either.
-    pub accepted: bool,
+    pub list: HeldBackList,
+}
+
+/// Where a held-back change's folder's list of keys stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum HeldBackList {
+    /// The person has accepted it on this device.
+    Accepted,
+    /// Not accepted yet. Until it is, paw cannot encrypt to it either.
+    NotAccepted,
+    /// paw can't read it.
+    Unreadable,
 }
 
 /// Whether `found` names exactly the keys of `keys`, no more, no fewer,
@@ -191,18 +200,18 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
             .as_ref()
             .map(|f| f.keys.iter().map(crate::recipients::Recipient::describe).collect())
             .unwrap_or_default();
-        let hold = |gpg_id: String, recipients: Vec<String>, accepted: bool| HeldBack {
+        let hold = |gpg_id: String, recipients: Vec<String>, list: HeldBackList| HeldBack {
             id: commit.commit.id().to_string(),
             entry: commit.entry(),
             gpg_id,
             encrypted_for: encrypted_for.clone(),
             recipients,
-            accepted,
+            list,
         };
         let recipients = match keyring.folder_recipients(dir, folder, now) {
             Ok(recipients) => recipients,
             Err(_) => {
-                held.push(hold(String::new(), Vec::new(), false));
+                held.push(hold(String::new(), Vec::new(), HeldBackList::Unreadable));
                 continue;
             }
         };
@@ -220,7 +229,8 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
             });
         if !exact {
             let lines = recipients.lines.into_iter().map(|line| line.line).collect();
-            held.push(hold(recipients.gpg_id, lines, accepted));
+            let list = if accepted { HeldBackList::Accepted } else { HeldBackList::NotAccepted };
+            held.push(hold(recipients.gpg_id, lines, list));
         }
     }
     Ok(held)
@@ -343,11 +353,10 @@ fn look(
     let commit = local.commits.iter().find(|c| c.commit.id().to_string() == item.id)?;
     let (path, blob) = commit.change.ciphertext()?;
     let path = path.to_owned();
-    if item.gpg_id.is_empty() {
-        return Some(Look::Left(LeftReason::NoList));
-    }
-    if !item.accepted {
-        return Some(Look::Left(LeftReason::NotAccepted));
+    match item.list {
+        HeldBackList::Unreadable => return Some(Look::Left(LeftReason::NoList)),
+        HeldBackList::NotAccepted => return Some(Look::Left(LeftReason::NotAccepted)),
+        HeldBackList::Accepted => {}
     }
     let folder = crate::path::folder_of(&path);
     Some(match keyring.resolve(dir, folder, now) {
