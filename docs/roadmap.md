@@ -107,7 +107,7 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 
 ### After the first version
 
-Several recipients (the owner's backup key), one-time codes in AutoFill and by QR code, import from other managers, creating a store from scratch, NFC, keys without a YubiKey, public App Store release.
+Several recipients (the owner's backup key), setup keys by QR code, import from other managers, creating a store from scratch, NFC, keys without a YubiKey, public App Store release.
 
 ## Known gaps
 
@@ -120,7 +120,7 @@ Things that are easy to lose track of because nothing fails when they are missin
 | Three entries in the owner's store are encrypted to old keys | paw cannot open them; needs the owner |
 | Swift unit tests cover the models (67); screens are still tested by clicking through the simulator | slow |
 | Background-time wrapping, file protection, keyboard refusal, auto-close on lock | built, never observed on the device |
-| Once in CI (run 45551662841) the app stopped running when the folder picker in the new-password form was tapped; it did not repeat | no crash report was kept then; CI keeps them now |
+| Once in CI (run 45551662841) the app stopped running when the folder picker in the new-password form was tapped; it did not repeat | likely killed while unresponsive: the form read the store on the main thread, fixed in batch 6; CI keeps crash reports now |
 
 Merged 2026-11-24: plain repository list in the picker; per-process Face ID enrolment record; name matching with remembered site pairings (`site-pairings.json`, no screen to view or clear them yet); a lost PIN told apart from a missed touch; the key log.
 
@@ -129,6 +129,8 @@ Merged 2026-11-24, batch 3 (one build, run 45500441073, all green): Release devi
 Merged 2026-11-24, batch 4 (main `1231999`, installed on the iPhone as run 45525329289): fixes from two reviews (a locked background launch no longer offers to delete the store; server-key change warning; whole fingerprints; iPad folder selection; held-back flip-flop; Face ID switch ordering; clipboard expiry); a copy pass over Settings, sync, AutoFill and diagnostics; Swift unit tests (`PawTests`) in CI, and the seven UI tests they replace removed.
 
 Batch 5 (2026-11-24): one-time codes (pass-otp compatible: a code row with a countdown on the entry, "Setup key" in the editor; not in AutoFill yet, no QR scanning); "Re-encrypt N changes" for held-back changes; signed-out GitHub card; no "Build unknown"; device words on iPad. Reviewed before the build; findings fixed.
+
+Batch 6 (2026-11-25): one-time codes in AutoFill (same matching and confirm rules as passwords; suggestions need Settings › AutoFill › "Suggest one-time codes", off by default, because it keeps a list of which passwords have a code); the new-password form no longer reads the store while typing or in the folder picker, and Save waits for the folder's keys; simulator tests for "Re-encrypt N changes". Reviewed before the build; findings fixed.
 
 Not built: saving a password from the extension (needs iOS 26.2; minimum is 26.0); replace key (design only: both keys in turn, one touch per password); "iPad"/"Touch ID" wording on iPad. libgit2's bundled xdiff is LGPL: decide before any App Store listing.
 
@@ -150,6 +152,8 @@ Not built: saving a password from the extension (needs iOS 26.2; minimum is 26.0
 | Who can open these passwords shows the three old-key entries | waiting |
 | Settings › Key diagnostics › Key log shows the app's and AutoFill's lines; what the key answers after a touch timeout and to the PIN check after it | waiting |
 | One-time code on an entry matches another authenticator app; the countdown ticks; `pass otp` on the desktop reads a setup key added on the phone | waiting |
+| One-time code in AutoFill: the key icon in a code field fills the current code; with "Suggest one-time codes" on, a suggestion appears above the keyboard | waiting |
+| Typing in the new-password form and opening its folder picker feel instant, including during a sync | waiting |
 | iPad: the key opens an entry over USB-C, and AutoFill fills with it | waiting |
 | iPad: three columns in landscape, the right column first in portrait; Slide Over and a narrow window fall back to the iPhone layout without losing the open folder or entry | waiting |
 | iPad: opening a second entry closes the first (nothing of it left in the right column); auto-close after locking and after 2 minutes away; the app-switcher cover | waiting |
