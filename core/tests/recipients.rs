@@ -354,6 +354,17 @@ fn reads_version_6_recipients_by_fingerprint() {
 }
 
 #[test]
+fn a_version_6_key_is_named_by_the_first_64_bits_of_its_fingerprint() {
+    let fingerprint = format!("{}{}", "0123456789ABCDEF", "5A".repeat(24));
+    let mut entry = packet(1, &v3_recipient(ID));
+    entry.extend(packet(18, &[2, 9, 2, 0]));
+    assert_eq!(access(&entry, &fingerprint), Access::CanOpen);
+
+    let other = format!("{}{}", "5A".repeat(24), "0123456789ABCDEF");
+    assert!(matches!(access(&entry, &other), Access::NotForThisKey { .. }));
+}
+
+#[test]
 fn garbage_is_unreadable_and_never_a_panic() {
     let mut cut_short = packet(1, &v3_recipient(ID));
     cut_short.truncate(6);

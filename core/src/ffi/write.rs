@@ -16,9 +16,9 @@ use crate::store::codes::CodeFile;
 use crate::store::PassStore;
 use crate::store::pairings::PairingFile;
 use crate::store::tree::StoreTree;
-use crate::write::cert::{CertificateInfo, evaluate, read_certificates};
-use crate::path::{folder_and_parents, join};
-use crate::write::keyring::certificate_named_by;
+use crate::path::join;
+use crate::write::cert::certificate_infos;
+use crate::write::keyring::{CertificateSummary, certificate_summaries};
 use crate::write::{self as core, DraftProblem, FolderRecipients, GitIdentity, WriteError, WriteStore};
 
 /// The add or edit form's contents. Make one with
@@ -185,21 +185,6 @@ pub struct SaveOutcome {
     pub face_id_until_ms: Option<i64>,
 }
 
-/// A public certificate, as the import screen shows it.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct CertificateSummary {
-    pub primary_fingerprint: String,
-    pub user_ids: Vec<String>,
-    /// The key paw would encrypt to; `None` if there is none usable.
-    pub encryption_fingerprint: Option<String>,
-    /// When that key expires, seconds since 1970.
-    pub expires: Option<i64>,
-    /// Why there is no usable key.
-    pub problem: Option<String>,
-    /// The `.gpg-id` lines of this store it satisfies.
-    pub satisfies: Vec<String>,
-}
-
 /// Writing to the store set up in a state directory. Every call works
 /// without the key and without the network.
 #[derive(uniffi::Object)]
@@ -210,50 +195,6 @@ pub struct StoreWriter {
 impl StoreWriter {
     fn tree(&self) -> Result<StoreTree, WriteError> {
         Ok(StoreTree::scan(self.store.repo())?)
-    }
-
-    /// Every `.gpg-id` line in the store, from every folder's `.gpg-id`.
-    fn all_lines(&self) -> Vec<String> {
-        let tree = self.tree().ok();
-        let mut folders = vec![String::new()];
-        if let Some(tree) = &tree {
-            for entry in tree.entries() {
-                folders.extend(folder_and_parents(&entry.folder).map(str::to_owned));
-            }
-        }
-        folders.sort();
-        folders.dedup();
-        let mut lines: Vec<String> = folders
-            .iter()
-            .filter_map(|folder| crate::store::gpg_id::recipients_for(self.store.repo(), folder).ok())
-            .flatten()
-            .collect();
-        lines.sort();
-        lines.dedup();
-        lines
-    }
-
-    fn summaries(&self, infos: &[CertificateInfo]) -> Result<Vec<CertificateSummary>, WriteError> {
-        let lines = self.all_lines();
-        let mut out = Vec::new();
-        for info in infos {
-            let satisfies =
-                lines.iter().filter(|line| certificate_named_by(info, line)).cloned().collect();
-            out.push(CertificateSummary {
-                primary_fingerprint: info.primary.clone(),
-                user_ids: info.user_ids.clone(),
-                encryption_fingerprint: info.encryption.as_ref().ok().map(|c| c.fingerprint.clone()),
-                expires: info.encryption.as_ref().ok().and_then(|c| c.expires).map(i64::from),
-                problem: info.encryption.as_ref().err().cloned(),
-                satisfies,
-            });
-        }
-        Ok(out)
-    }
-
-    fn certificates(bytes: &[u8]) -> Result<Vec<CertificateInfo>, WriteError> {
-        let now = core::now_secs();
-        read_certificates(bytes)?.iter().map(|cert| evaluate(cert, now)).collect()
     }
 }
 
@@ -474,20 +415,20 @@ impl StoreWriter {
 
     /// Reads a public certificate (armored or binary) without keeping it.
     pub fn inspect_certificate(&self, bytes: Vec<u8>) -> Result<Vec<CertificateSummary>, WriteError> {
-        let infos = Self::certificates(&bytes)?;
+        let infos = certificate_infos(&bytes, core::now_secs())?;
         let _reading = self.store.lock().shared()?;
-        self.summaries(&infos)
+        certificate_summaries(self.store.repo(), &infos)
     }
 
     /// Pins the encryption key of each certificate in `bytes`.
     pub fn import_certificate(&self, bytes: Vec<u8>) -> Result<Vec<CertificateSummary>, WriteError> {
-        let infos = Self::certificates(&bytes)?;
+        let infos = certificate_infos(&bytes, core::now_secs())?;
         let _held = self.store.exclusive()?;
         let mut keyring = self.store.keyring()?;
         for info in &infos {
             keyring.pin_certificate(info)?;
         }
-        self.summaries(&infos)
+        certificate_summaries(self.store.repo(), &infos)
     }
 
     /// Forgets a pinned key.

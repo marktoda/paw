@@ -21,6 +21,17 @@ pub fn parse_gpg_id(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// The hex digits of a line that names a key by fingerprint or key ID, in
+/// upper case: without spaces, a `0x` or the `!` that asks GnuPG for exactly
+/// this subkey (it names the same key). `None` for any other line.
+pub(crate) fn key_digits(line: &str) -> Option<String> {
+    let line = line.trim();
+    let bare = line.strip_suffix('!').unwrap_or(line);
+    let compact: String = bare.chars().filter(|c| !c.is_whitespace()).collect();
+    let digits = compact.strip_prefix("0x").or_else(|| compact.strip_prefix("0X")).unwrap_or(&compact);
+    (!digits.is_empty() && digits.chars().all(|c| c.is_ascii_hexdigit())).then(|| digits.to_ascii_uppercase())
+}
+
 /// The recipients for entries in `folder` (`/` separated, empty for the top
 /// of the store). The folder need not exist yet.
 pub fn recipients_for(root: &Path, folder: &str) -> Result<Vec<String>, PawError> {

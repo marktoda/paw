@@ -34,6 +34,7 @@ use pgp::packet::{PubKeyInner, PublicKey, Signature, SignatureType};
 use pgp::types::{KeyDetails, Tag};
 
 use super::WriteError;
+use crate::recipients::hex;
 
 /// No certificate file comes close to this.
 const MAX_CERTIFICATE_BYTES: usize = 1 << 20;
@@ -69,16 +70,17 @@ pub struct CertificateInfo {
     pub encryption: Result<EncryptionChoice, String>,
 }
 
-pub(crate) fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02X}")).collect()
-}
-
 pub(crate) fn fingerprint_of(key: &impl KeyDetails) -> String {
     hex(key.fingerprint().as_bytes())
 }
 
 fn cert_err(message: impl Into<String>) -> WriteError {
     WriteError::Certificate { message: message.into() }
+}
+
+/// What each certificate in `bytes` offers at `now` ([`evaluate`]).
+pub fn certificate_infos(bytes: &[u8], now: u32) -> Result<Vec<CertificateInfo>, WriteError> {
+    read_certificates(bytes)?.iter().map(|cert| evaluate(cert, now)).collect()
 }
 
 /// Every certificate in `bytes`, armored (`gpg --export --armor`) or
