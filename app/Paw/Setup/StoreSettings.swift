@@ -244,6 +244,8 @@ private struct ServerIdentityRows: View {
                         .font(PawFont.subheadline.weight(.semibold))
                         .foregroundStyle(PawColor.danger)
                         .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Different from the key you trusted before")
                         .accessibilityIdentifier("settings-presented-key-differs")
                 } else if !before.isEmpty {
                     Text("Same key as before")
