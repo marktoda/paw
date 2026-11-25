@@ -31,9 +31,9 @@ use super::state_file::{ListFile, ListKind, MAX_PATH_BYTES, remove_if_there};
 use crate::PawError;
 
 /// The file, in the state directory.
-pub const FILE: &str = "one-time-codes.json";
+pub const FILE: &str = crate::layout::ONE_TIME_CODES;
 /// Present while the person has the list on.
-pub const ON_MARKER: &str = "one-time-codes-on";
+pub const ON_MARKER: &str = crate::layout::ONE_TIME_CODES_ON;
 /// The most entries kept.
 pub const MAX_ENTRIES: usize = 1000;
 

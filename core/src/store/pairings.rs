@@ -26,7 +26,7 @@ use super::state_file::{ListFile, ListItem, ListKind, MAX_PATH_BYTES};
 use crate::PawError;
 
 /// The file, in the state directory.
-pub const FILE: &str = "site-pairings.json";
+pub const FILE: &str = crate::layout::SITE_PAIRINGS;
 /// The most entries kept.
 pub const MAX_ENTRIES: usize = 300;
 /// The most sites kept per entry.

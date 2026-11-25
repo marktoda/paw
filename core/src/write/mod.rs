@@ -96,7 +96,7 @@ impl From<crate::generate::PolicyError> for WriteError {
 pub const DEFAULT_AUTHOR_NAME: &str = "paw";
 pub const DEFAULT_AUTHOR_EMAIL: &str = "paw@paw.invalid";
 
-const IDENTITY_FILE: &str = "git-identity";
+const IDENTITY_FILE: &str = crate::layout::GIT_IDENTITY;
 
 /// The name and e-mail address paw's commits carry.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]

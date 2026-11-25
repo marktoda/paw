@@ -40,7 +40,7 @@ pub const RING: usize = 120;
 /// grows past this many bytes (about 400 lines).
 const TRIM_AT_BYTES: u64 = 40 * 1024;
 pub const KEEP_LINES: usize = 200;
-const PREFIX: &str = "key-log.";
+const PREFIX: &str = crate::layout::KEY_LOG_PREFIX;
 
 fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)

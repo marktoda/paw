@@ -20,7 +20,7 @@ use super::CardInfo;
 use crate::PawError;
 
 /// The file in the state directory. Public data only.
-const FILE: &str = "enrolled-key";
+const FILE: &str = crate::layout::ENROLLED_KEY;
 
 /// Who a key is, as read without a PIN. Nothing in it is secret.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]

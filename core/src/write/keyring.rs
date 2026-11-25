@@ -57,7 +57,7 @@ use crate::store::gpg_id::{governing_gpg_id, key_digits, parse_gpg_id};
 use crate::store::read::read_file;
 use crate::store::state_file::{read_bounded, write_atomic};
 
-const FILE: &str = "recipients";
+const FILE: &str = crate::layout::RECIPIENTS;
 const HEADER: &str = "# paw pinned recipients, version 1";
 const TEMP_PREFIX: &str = ".recipients.tmp-";
 
