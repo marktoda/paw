@@ -1070,6 +1070,16 @@ fn one_time_code_marks_follow_saves_renames_and_deletes() {
     let s = store();
     let codes = CodeFile::new(&s.state);
 
+    // Off by default: a save with a code keeps nothing.
+    let draft = writer(&s).new_draft("Work".into());
+    draft.set_name("Off".into());
+    draft.set_password("pw".into());
+    draft.set_one_time_code("JBSWY3DPEHPK3PXP".into());
+    writer(&s).save(draft, None, 0).unwrap();
+    assert!(!s.state.join(paw_core::store::codes::FILE).exists());
+    writer(&s).delete("Work/Off".into(), None).unwrap();
+    codes.set_enabled(true).unwrap();
+
     let draft = writer(&s).new_draft("Work".into());
     draft.set_name("Linear".into());
     draft.set_password("pw".into());

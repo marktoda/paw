@@ -126,6 +126,22 @@ fn an_opened_entry_makes_its_code_from_the_clock_it_is_given() {
     assert_eq!((none.otp_code(0), none.otp_problem()), (None, None));
 }
 
+proptest! {
+    /// AutoFill fills the next code when the current one has under 3
+    /// seconds left: `otp_code(now + seconds_left * 1000 + 1)` is always
+    /// the first code of the next period.
+    #[test]
+    fn a_step_of_seconds_left_lands_in_the_next_period(now_ms in 0i64..4_000_000_000_000) {
+        let opened = OpenedEntry::from_plaintext(b"pw\notpauth://totp/x?secret=JBSWY3DPEHPK3PXP\n".to_vec()).unwrap();
+        let now = opened.otp_code(now_ms).unwrap();
+        let next = opened.otp_code(now_ms + i64::from(now.seconds_left) * 1000 + 1).unwrap();
+        let next_period = (now_ms / 1000 / 30 + 1) * 30;
+        let expected = totp("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP").code_at(next_period as u64);
+        prop_assert_eq!(next.code.as_str(), expected.as_str());
+        prop_assert!(next.seconds_left >= 29, "{}", next.seconds_left);
+    }
+}
+
 #[test]
 fn the_first_one_time_code_line_is_the_one_used() {
     let doc = EntryDoc::parse(

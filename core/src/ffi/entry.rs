@@ -79,6 +79,13 @@ impl OpenedEntry {
 
 #[uniffi::export]
 impl OpenedEntry {
+    /// Whether the entry has a one-time-code line that makes codes, for
+    /// `OneTimeCodeEntries.note`. Nothing is read from disk. `false` once
+    /// closed.
+    pub fn makes_one_time_codes(&self) -> bool {
+        self.makes_codes() == Some(true)
+    }
+
     /// Wraps text that is already decrypted. `open_entry` on the store is
     /// the usual way in; this is for previews and tests.
     #[uniffi::constructor]
