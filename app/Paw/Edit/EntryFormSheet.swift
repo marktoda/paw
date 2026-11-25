@@ -338,12 +338,20 @@ private struct EntryFormView: View {
         }
     }
 
+    /// What saving does to the code the entry has: a key typed replaces it.
+    private var otpState: String {
+        if !form.setupKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Replaced when you save"
+        }
+        return form.removingOneTimeCode ? "Removed when you save" : "Has a one-time code"
+    }
+
     /// The setup key, and Remove for a code the entry already has.
     private var oneTimeCodeSection: some View {
         Section {
             if form.hadOneTimeCode {
                 HStack(spacing: PawMetrics.Spacing.s) {
-                    Text(form.removingOneTimeCode ? "Removed when you save" : "Has a one-time code")
+                    Text(otpState)
                         .font(PawFont.body)
                         .foregroundStyle(form.removingOneTimeCode ? PawColor.labelSecondary : PawColor.label)
                         .frame(maxWidth: .infinity, alignment: .leading)

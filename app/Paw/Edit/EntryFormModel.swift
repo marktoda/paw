@@ -336,7 +336,7 @@ final class EntryFormModel {
                     : field.originalKey != field.key || field.originalValue != field.value
             }
             || openedFieldKeys.count != extraFields.filter { $0.originalKey != nil }.count
-            || !setupKey.isEmpty || removingOneTimeCode
+            || !setupKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || removingOneTimeCode
     }
 
     /// Whether the folder can be saved in now; `nil` while not known.

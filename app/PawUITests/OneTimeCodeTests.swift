@@ -22,7 +22,6 @@ final class OneTimeCodeTests: PawUITestCase {
         let shown = scrollTo("field-one-time-code")
         XCTAssertTrue(shown.exists)
         let code = shownCode()
-        expect("one-time-code-countdown")
         snapshot("one-time-code")
 
         tap("copy-one-time-code")

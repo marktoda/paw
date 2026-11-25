@@ -234,8 +234,9 @@ struct EntryScreen: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("field-one-time-code")
                     .pawListRow()
-                } else {
-                    OneTimeCodeRow(entry: session.entry, clock: model.clock) {
+                } else if model.session(opened.id) != nil {
+                    // Not once the entry has closed: its text is gone.
+                    OneTimeCodeRow(entry: session.entry, clock: model.clock, ticking: scenePhase == .active) {
                         copy($0, what: "One-time code")
                     }
                     .pawListRow()
@@ -281,45 +282,64 @@ struct EntryScreen: View {
     }
 }
 
-/// The entry's one-time code, worked out from the open entry every second:
-/// neither the code nor its secret is kept anywhere else, and it stops when
-/// the entry closes.
+/// The entry's one-time code, worked out from the open entry every second
+/// while paw is active: neither the code nor its secret is kept anywhere
+/// else, and it stops when the entry closes.
 private struct OneTimeCodeRow: View {
     let entry: OpenedEntry
     let clock: Clock
+    /// `false` under the privacy cover: no new code each second.
+    let ticking: Bool
     let onCopy: (String?) -> Void
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { _ in
-            if let code = entry.otpCode(nowMs: clock.wallMs()) {
-                let shown = Self.grouped(code.code)
-                HStack(spacing: PawMetrics.Spacing.xs) {
-                    VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
-                        Text("One-time code")
-                            .font(PawFont.footnote)
-                            .foregroundStyle(PawColor.labelSecondary)
-                        Text(shown)
-                            .font(PawFont.password)
-                            .foregroundStyle(PawColor.label)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("One-time code")
-                    .accessibilityValue(shown)
-                    .accessibilityIdentifier("field-one-time-code")
-                    CountdownRing(secondsLeft: code.secondsLeft, period: code.period)
-                    PawIconButton(
-                        symbol: PawSymbol.copy, label: "Copy one-time code",
-                        identifier: "copy-one-time-code"
-                    ) {
-                        // The code as it is at the tap, not as last drawn.
-                        onCopy(entry.otpCode(nowMs: clock.wallMs())?.code)
-                    }
-                }
-                .padding(.vertical, PawMetrics.Spacing.s)
-                .frame(minHeight: PawMetrics.rowField)
+        if ticking {
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                row
             }
+        } else {
+            row
         }
+    }
+
+    @ViewBuilder private var row: some View {
+        if let code = entry.otpCode(nowMs: clock.wallMs()) {
+            let shown = Self.grouped(code.code)
+            HStack(spacing: PawMetrics.Spacing.xs) {
+                VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
+                    Text("One-time code")
+                        .font(PawFont.footnote)
+                        .foregroundStyle(PawColor.labelSecondary)
+                    Text(shown)
+                        .font(PawFont.password)
+                        .foregroundStyle(PawColor.label)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("One-time code")
+                // Read digit by digit; UI tests still see "123 456".
+                .accessibilityValue(Text(shown).speechSpellsOutCharacters())
+                // The seconds only when asked, so the row isn't read again
+                // each second.
+                .accessibilityCustomContent(Text("Time left"), Text(Self.secondsLeft(code.secondsLeft)))
+                .accessibilityIdentifier("field-one-time-code")
+                CountdownRing(secondsLeft: code.secondsLeft, period: code.period)
+                PawIconButton(
+                    symbol: PawSymbol.copy, label: "Copy one-time code",
+                    identifier: "copy-one-time-code"
+                ) {
+                    // The code as it is at the tap, not as last drawn.
+                    onCopy(entry.otpCode(nowMs: clock.wallMs())?.code)
+                }
+            }
+            .padding(.vertical, PawMetrics.Spacing.s)
+            .frame(minHeight: PawMetrics.rowField)
+        }
+    }
+
+    /// "1 second", "12 seconds".
+    static func secondsLeft(_ seconds: UInt32) -> String {
+        seconds == 1 ? "1 second" : "\(seconds) seconds"
     }
 
     /// "123456" reads as "123 456", "12345678" as "1234 5678".
@@ -346,9 +366,8 @@ private struct CountdownRing: View {
                 .rotationEffect(.degrees(-90))
         }
         .frame(width: size, height: size)
-        .accessibilityElement()
-        .accessibilityLabel("\(secondsLeft) seconds left")
-        .accessibilityIdentifier("one-time-code-countdown")
+        // Said as the code row's "Time left", only when asked.
+        .accessibilityHidden(true)
     }
 }
 
