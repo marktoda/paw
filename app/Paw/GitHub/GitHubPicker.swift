@@ -76,7 +76,7 @@ final class GitHubPicker: Identifiable {
         stage = .starting
         let core = access.core
         access.queue.async { [weak self] in
-            let result = GitHubHandoff(value: Result { try core.startSignIn() })
+            let result = Handoff(value: Result { try core.startSignIn() })
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self?.started(result.value, generation: generation)
@@ -110,7 +110,7 @@ final class GitHubPicker: Identifiable {
                 if case .success(.waiting) = outcome { continue }
                 break
             }
-            let result = GitHubHandoff(value: outcome)
+            let result = Handoff(value: outcome)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self?.polled(result.value, generation: generation)
@@ -168,7 +168,7 @@ final class GitHubPicker: Identifiable {
         stage = .listing
         let core = access.core
         access.queue.async { [weak self] in
-            let result = GitHubHandoff(value: Result { try core.repositories() })
+            let result = Handoff(value: Result { try core.repositories() })
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self?.listed(result.value, generation: generation)
@@ -209,7 +209,7 @@ final class GitHubPicker: Identifiable {
         let core = access.core
         let name = repository.fullName
         access.queue.async { [weak self] in
-            let result = GitHubHandoff(value: Result { try core.selectRepository(fullName: name) })
+            let result = Handoff(value: Result { try core.selectRepository(fullName: name) })
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self?.chosen(result.value, generation: generation)

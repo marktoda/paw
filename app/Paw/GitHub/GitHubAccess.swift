@@ -24,7 +24,7 @@ final class GitHubAccess {
         let core = core
         queue.async { [weak self] in
             let signedIn = (try? core.isSignedIn()) ?? false
-            let link = GitHubHandoff(value: core.linkedRepository())
+            let link = Handoff(value: core.linkedRepository())
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self?.signedIn = signedIn
@@ -47,7 +47,7 @@ final class GitHubAccess {
     func signOut(revoke: Bool, done: @escaping @MainActor (Result<SignOutReport, Error>) -> Void) {
         let core = core
         queue.async { [weak self] in
-            let result = GitHubHandoff(value: Result { try core.signOut(revoke: revoke) })
+            let result = Handoff(value: Result { try core.signOut(revoke: revoke) })
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self?.reload()
@@ -60,11 +60,6 @@ final class GitHubAccess {
 
 extension EnvironmentValues {
     @Entry var gitHubAccess: GitHubAccess? = nil
-}
-
-/// Wraps a value that crosses from a work queue to the main actor once.
-struct GitHubHandoff<Value>: @unchecked Sendable {
-    let value: Value
 }
 
 /// Where the store's GitHub sign-in comes from.

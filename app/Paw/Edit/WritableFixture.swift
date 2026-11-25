@@ -31,11 +31,6 @@ enum WritableFixture {
         let errorDescription: String?
     }
 
-    /// The tasks are followed by polling their state (`finish`).
-    private final class Unheard: KeyTaskListener, @unchecked Sendable {
-        func stateChanged(state: KeyTaskState) {}
-    }
-
     /// Runs a key task to its end on this thread, as the key sheet would,
     /// typing `pin` whenever it asks. The key needs no touch.
     private static func finish(_ task: KeyTask, pin: String, _ what: String) throws {
@@ -83,8 +78,8 @@ enum WritableFixture {
         if case .confirmHost(_, _, let fingerprint) = state {
             state = try setup.confirmHost(fingerprint: fingerprint)
         }
-        try finish(setup.downloadWithKey(port: port, listener: Unheard()), pin: pin, "The download")
-        try finish(setup.testDecryptWithKey(port: port, listener: Unheard()), pin: pin, "The key check")
+        try finish(setup.downloadWithKey(port: port, listener: MainQueueTaskListener {}), pin: pin, "The download")
+        try finish(setup.testDecryptWithKey(port: port, listener: MainQueueTaskListener {}), pin: pin, "The key check")
         state = setup.state()
         guard case .done = state else {
             throw Failure(errorDescription: "Setup stopped at \(state).")
@@ -97,7 +92,7 @@ enum WritableFixture {
             }
             _ = try host.commitFile(
                 path: "work/.gpg-id", contents: Data(lines.utf8), message: "Give work its own list of keys.")
-            try finish(sync.refreshWithKey(port: port, listener: Unheard()), pin: pin, "The refresh")
+            try finish(sync.refreshWithKey(port: port, listener: MainQueueTaskListener {}), pin: pin, "The refresh")
         }
         return Prepared(
             stateDir: stateDir.path, repoDir: storeRepoDir(stateDir: stateDir.path),

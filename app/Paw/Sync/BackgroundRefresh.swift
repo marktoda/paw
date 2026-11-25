@@ -94,9 +94,9 @@ enum BackgroundRefresh {
         // The core stops at its next step or chunk and returns; the task
         // is completed then, never with the store lock still held.
         task.expirationHandler = { stop.stop() }
-        let handoff = TaskHandoff(task: task)
+        let handoff = Handoff(value: task)
         start(stop: stop) { run in
-            handoff.task.setTaskCompleted(success: run.success)
+            handoff.value.setTaskCompleted(success: run.success)
         }
     }
 
@@ -222,10 +222,4 @@ enum BackgroundRefresh {
         defaults.removeObject(forKey: needsLookKey)
         return pending
     }
-}
-
-/// Carries the task to the main queue once; iOS's task object is not
-/// marked `Sendable`.
-private struct TaskHandoff: @unchecked Sendable {
-    let task: BGAppRefreshTask
 }
