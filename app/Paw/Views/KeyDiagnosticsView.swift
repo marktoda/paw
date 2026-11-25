@@ -158,7 +158,7 @@ struct KeyDiagnosticsView: View {
     }
 
     private static func bundleString(_ key: String) -> String {
-        Bundle.main.object(forInfoDictionaryKey: key) as? String ?? "unknown"
+        Bundle.main.object(forInfoDictionaryKey: key) as? String ?? "not recorded"
     }
 
     /// The model identifier, e.g. "iPhone17,1"; the simulator's says which
