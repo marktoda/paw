@@ -42,17 +42,10 @@ final class BackgroundTime {
         guard let task else { return }
         let time = begin(name)
         Task { @MainActor in
-            while !isFinal(task.state()) {
+            while !task.state().isFinal {
                 try? await Task.sleep(nanoseconds: 500_000_000)
             }
             time.end()
-        }
-    }
-
-    private static func isFinal(_ state: KeyTaskState) -> Bool {
-        switch state {
-        case .done, .failed, .syncFailed, .setupFailed, .cancelled: true
-        default: false
         }
     }
 }
