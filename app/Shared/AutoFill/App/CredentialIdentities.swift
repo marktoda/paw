@@ -147,15 +147,9 @@ enum CredentialIdentities {
     private static func replace(with store: PassStore) async {
         let made = make(from: store, pairings: standardPairings())
         let withCode = Set(standardCodes()?.entries(store: store) ?? [])
-        var identities: [ASCredentialIdentity] = made.map { identity -> ASCredentialIdentity in
-            ASPasswordCredentialIdentity(
-                serviceIdentifier: ASCredentialServiceIdentifier(identifier: identity.domain, type: .domain),
-                user: identity.user, recordIdentifier: identity.path)
-        }
-        identities += made.filter { withCode.contains($0.path) }.map { identity -> ASCredentialIdentity in
-            ASOneTimeCodeCredentialIdentity(
-                serviceIdentifier: ASCredentialServiceIdentifier(identifier: identity.domain, type: .domain),
-                label: identity.user, recordIdentifier: identity.path)
+        let identities = AutoFillKind.allCases.flatMap { kind in
+            made.filter { kind.lists($0.path, knownCodes: withCode) }
+                .map { kind.identity(domain: $0.domain, user: $0.user, path: $0.path) }
         }
         #if !targetEnvironment(simulator)
         let identityStore = ASCredentialIdentityStore.shared
