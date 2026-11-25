@@ -258,6 +258,8 @@ final class SyncModel {
     @ObservationIgnored private var backgroundWatch: NSObjectProtocol?
     /// What the last re-encrypt left, and why (only what it found trying).
     @ObservationIgnored private var lastLeft: [LeftHeldBack] = []
+    /// Re-encrypt tasks not yet ended, however the sheet let them go.
+    @ObservationIgnored private var reencryptTasks: Set<UUID> = []
     private let workQueue = DispatchQueue(label: "paw-sync", qos: .userInitiated)
 
     init(sync: StoreSync, repoDir: String) {
@@ -396,6 +398,9 @@ final class SyncModel {
         progress = nil
         signedIn = false
         pinEntry = ""
+        if kind == .reencrypt {
+            lastLeft = []
+        }
         let taskID = UUID()
         let mode = SyncSheet.Mode.key(kind: kind, taskID: taskID, stage: .busy)
         if sheet == nil {
@@ -427,7 +432,9 @@ final class SyncModel {
         switch kind {
         case .send: tasks[taskID] = sync.sendWithKey(port: app.keyPort, listener: listener)
         case .refresh: tasks[taskID] = sync.refreshWithKey(port: app.keyPort, listener: listener)
-        case .reencrypt: tasks[taskID] = sync.reencryptWithKey(port: app.keyPort, listener: listener)
+        case .reencrypt:
+            reencryptTasks.insert(taskID)
+            tasks[taskID] = sync.reencryptWithKey(port: app.keyPort, listener: listener)
         }
         BackgroundTime.hold("Sync", while: tasks[taskID])
         taskChanged(taskID)
@@ -454,6 +461,8 @@ final class SyncModel {
         guard let failure else { return }
         if failure.during == .refresh {
             check(app: app)
+        } else if failure.during == .reencrypt {
+            startReencrypt(app: app)
         } else {
             start(failure.during, app: app)
         }
@@ -469,17 +478,15 @@ final class SyncModel {
                 failure = SyncFailure.cancelled(during: kind, unpushed: app?.edits?.unpushed.count ?? 0)
             }
             running = nil
-            if kind == .reencrypt {
-                reloadAfterReencrypt()
-            }
         }
         sheet = nil
         pinEntry = ""
         keyPathNote = nil
     }
 
-    /// The queue after a re-encrypt that stopped part-way: those done are
-    /// kept, and the core may still be writing the last one.
+    /// The queue after a re-encrypt ended, however it ended: it may have
+    /// rewritten some, and after a cancel the core may still be writing the
+    /// last one.
     private func reloadAfterReencrypt() {
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(300))
@@ -516,6 +523,9 @@ final class SyncModel {
     private func taskChanged(_ id: UUID) {
         guard let task = tasks[id] else { return }
         let state = task.state()
+        if state.isFinal, reencryptTasks.remove(id) != nil {
+            reloadAfterReencrypt()
+        }
         guard var sheet, case .key(let kind, let current, _) = sheet.mode, current == id else {
             // A task the sheet let go of: forget it once it ends.
             if state.isFinal { tasks[id] = nil }
@@ -574,9 +584,6 @@ final class SyncModel {
             let words = syncKeyWords(error, during: kind, unpushed: unpushed)
             stage = .failed(problem: words.problem, nextStep: words.nextStep)
             running = nil
-            if kind == .reencrypt {
-                reloadAfterReencrypt()
-            }
             #if targetEnvironment(simulator)
             SimRemoteHandle.shared.syncFailed()
             #endif
@@ -669,6 +676,7 @@ final class SyncModel {
     /// What a sync that went through brought back, said on the pill, the
     /// status page and the card on Home. `true` if it needs looking at.
     private func absorb(_ report: SyncReport?, kind: SyncKind) -> Bool {
+        lastLeft = []
         lastChecked = Date()
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.checkedKey(repoDir))
         var needsLook = false
@@ -697,13 +705,11 @@ final class SyncModel {
         return needsLook
     }
 
-    /// A re-encrypt that ran to the end. The queue was rewritten in place,
-    /// so its list is read again. Always back to the status page after:
-    /// what is left held back is said there, and Send is there once none is.
+    /// A re-encrypt that ran to the end (`taskChanged` reads the queue
+    /// again). Always back to the status page after: what is left held back
+    /// is said there, and Send is there once none is.
     private func reencrypted(_ report: ReencryptReport?) -> Bool {
         lastLeft = report?.left ?? []
-        app?.reloadAfterWrite()
-        recomputeLocal()
         if let report, report.reencrypted > 0 {
             app?.toast = "Re-encrypted. Not sent yet."
         }

@@ -161,12 +161,6 @@ struct HeldBackScreen: View {
         } header: {
             PawSectionHeader(entry.folder.isEmpty ? entry.name : "\(entry.name) \u{00B7} \(entry.folder)")
                 .accessibilityIdentifier("held-back-\(entry.name)")
-        } footer: {
-            if !item.accepted {
-                Text("Accept the new list to re-encrypt this change.")
-                    .font(PawFont.footnote)
-                    .foregroundStyle(PawColor.labelSecondary)
-            }
         }
     }
 
