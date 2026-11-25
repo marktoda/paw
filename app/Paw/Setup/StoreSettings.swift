@@ -14,12 +14,12 @@ struct StoreSettingsSections: View {
         if let controls {
             if !controls.copiesAvailable {
                 Section {
-                    Text(Device.words("This iPhone can't keep Face ID copies. Every password needs your key."))
+                    Text(Device.words("Not available on this iPhone. Every password needs your key."))
                         .font(PawFont.footnote)
                         .foregroundStyle(PawColor.labelSecondary)
                         .accessibilityIdentifier("settings-no-copies")
                 } header: {
-                    PawSectionHeader(Device.words("Face ID copies"))
+                    PawSectionHeader(Device.biometrics)
                 }
             }
         }

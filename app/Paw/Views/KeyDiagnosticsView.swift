@@ -182,7 +182,7 @@ struct KeyDiagnosticsView: View {
                 ErrorRow(kind: .error, problem: "The key log wasn't cleared", nextStep: logProblem)
             }
             if logLines.isEmpty {
-                Text("Nothing yet. Open a password with your key.")
+                Text("Nothing yet.")
                     .font(PawFont.footnote)
                     .foregroundStyle(PawColor.labelSecondary)
                     .accessibilityIdentifier("key-log-empty")
@@ -208,7 +208,7 @@ struct KeyDiagnosticsView: View {
         } header: {
             PawSectionHeader("Key log")
         } footer: {
-            Text("No PIN, passwords or names.")
+            Text("No PINs, passwords or names.")
                 .font(PawFont.footnote)
                 .foregroundStyle(PawColor.labelSecondary)
         }
