@@ -29,7 +29,13 @@ final class SplitTests: XCTestCase {
     }
 
     func testFoldersComeFirstWhateverTheOrderTheyArrived() {
-        XCTAssertEqual(SplitPath([.entry(a), .folder("web")]).path, [.folder("web"), .entry(a)])
+        XCTAssertEqual(SplitPath([.unpushed, .folder("web")]).path, [.folder("web"), .unpushed])
+    }
+
+    func testPickingAFolderClosesAnEntryWhoseRowIsNoLongerShown() {
+        XCTAssertEqual(SplitPath([.entry(a), .folder("web")]).path, [.folder("web")])
+        XCTAssertEqual(SplitPath([.folder("web"), .entry(a), .folder("bank")]).path, [.folder("bank")])
+        XCTAssertEqual(SplitPath([.folder("web"), .entry(a), .folder("web/sub")]).details, [.entry(a)])
     }
 
     func testNoFolderPicked() {

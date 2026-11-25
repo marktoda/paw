@@ -206,6 +206,6 @@ final class SyncWordsTests: XCTestCase {
 
         let refused = background(.needsDecision, decisions: [.refusedRemote(paths: [])])
         XCTAssertTrue(refused.needsLook)
-        XCTAssertEqual(refused.result, "Paused \u{00B7} needs you")
+        XCTAssertEqual(refused.result, "Paused")
     }
 }

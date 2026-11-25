@@ -48,6 +48,15 @@ final class PolishThreeTests: PawUITestCase {
     func testAServerKeyThatChangedAfterForgetIsFlaggedAndTrustedOnlyOnConfirm() {
         launchFixture()
         // The simulated host presents another key from now on.
+        // The pill first checks with the key; once up to date it opens the sheet.
+        tap("sync-pill")
+        enterPin(Self.pin)
+        let touch = element("touch-prompt")
+        let purpose = element("key-sheet-purpose")
+        _ = waitUntil(timeout: 45) { touch.exists || !purpose.exists }
+        if touch.exists { tapSimulated("simulated-touch") }
+        expectGone("key-sheet-purpose")
+        expectLabel("sync-pill", contains: "Up to date")
         tap("sync-pill")
         expect("sync-sheet-done")
         let row = scrollTo("sim-controls")
