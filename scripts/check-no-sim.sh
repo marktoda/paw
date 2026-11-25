@@ -94,6 +94,7 @@ app_needles=(
   'pawSimRemote'
   'pawSimBackgroundRefresh'
   'pawSimPairings'
+  'pawSimOneTimeCodes'
   'SimulatedSitePairings'
   'FixtureLaunch'
   'WritableFixture'

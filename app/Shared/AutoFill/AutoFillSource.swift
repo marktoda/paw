@@ -49,7 +49,8 @@ enum AutoFillEnd: String, Sendable {
 /// (which creates folders), no sync, no GitHub, no network. The files
 /// it writes besides a Face ID copy are `site-pairings.json`, after a
 /// confirmed fill by name, and `one-time-codes.json`, whether an entry it
-/// opened has a code (each written by rename, safe for two processes). What the core
+/// filled has a code, while the owner has that list on (each written by
+/// rename, safe for two processes). What the core
 /// loads: one walk of the store's folder names (`PassStore`), the enrolled
 /// key's identity (`enrolled-key`, a few lines), and, only when a list is
 /// shown, the copies' small metadata files. Nothing is decrypted.

@@ -156,10 +156,11 @@ private struct AutoFillList: View {
     }
 
     /// Nothing listed for the site. A code is listed once its entry has
-    /// been opened on this iPhone; search finds the others.
+    /// been opened on this iPhone with code suggestions on; search finds
+    /// the others.
     private var emptyLine: String {
         if model.site == nil { return "paw can't tell which site this is." }
-        return model.kind == .oneTimeCode ? "No codes for this site." : "No password for this site."
+        return model.kind == .oneTimeCode ? "No codes for this site. Search for one." : "No password for this site."
     }
 
     /// Named like the site, never filled on it: apart, below the site's

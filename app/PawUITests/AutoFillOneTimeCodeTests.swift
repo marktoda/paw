@@ -7,8 +7,9 @@ import XCTest
 /// one-time-code request. The harness shows a filled code by its length
 /// and the start of its SHA-256, which the test works out itself from the
 /// fixture's setup key. `harness-codes` lists the entries paw knows have a
-/// code. The real code field, the key icon and the bar above the keyboard
-/// are checked by hand on a device.
+/// code. "Suggest one-time codes" is off unless `-pawSimOneTimeCodes 1`
+/// turns it on, as Settings does. The real code field, the key icon and
+/// the bar above the keyboard are checked by hand on a device.
 final class AutoFillOneTimeCodeTests: PawUITestCase {
     /// The fixture web/github.com's setup key, JBSWY3DPEHPK3PXP, decoded.
     private static let secret: [UInt8] = [0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x21, 0xDE, 0xAD, 0xBE, 0xEF]
@@ -27,8 +28,9 @@ final class AutoFillOneTimeCodeTests: PawUITestCase {
         return "filled code-length=6 code-sha=\(digest.prefix(12))"
     }
 
-    private func launchProvider(_ arguments: [String]) {
-        app.launchArguments = ["-pawAppearance", "light"] + keyArguments() + arguments
+    private func launchProvider(_ arguments: [String], suggestingCodes: Bool = true) {
+        let codes = suggestingCodes ? ["-pawSimOneTimeCodes", "1"] : []
+        app.launchArguments = ["-pawAppearance", "light"] + keyArguments() + codes + arguments
         app.launch()
     }
 
@@ -132,6 +134,21 @@ final class AutoFillOneTimeCodeTests: PawUITestCase {
         tap("harness-again")
         expectLabel("autofill-no-match", contains: "github.com.attacker.example")
         expectAbsent(row("web/github.com"), "A lookalike must not be offered github.com's code")
+    }
+
+    func testWithSuggestionsOffNothingIsKeptAndSearchStillFillsACode() {
+        launchProvider(["-pawHostProvider", "code:https://github.com"], suggestingCodes: false)
+        expectLabel("autofill-no-match", contains: "No codes for this site. Search for one.")
+        search("github")
+        tap(row("web/github.com"))
+        fillWithKey()
+        expectGitHubCode()
+        expectValue("harness-codes", "none")
+        waitForKeyTasksToEnd()
+
+        tap("harness-again")
+        expectLabel("autofill-no-match", contains: "No codes for this site.")
+        expectAbsent(row("web/github.com"), "Nothing should be kept while suggestions are off")
     }
 
     func testACodeSuggestionFillsTheCode() {

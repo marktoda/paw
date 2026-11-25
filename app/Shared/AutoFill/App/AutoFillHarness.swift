@@ -16,6 +16,8 @@ import SwiftUI
 ///   one-time-code request instead of a password one, for that run.
 /// - `-pawHostProviderStore none`: no store set up; `busy`: the store is
 ///   busy the first time it is opened.
+/// - `-pawSimOneTimeCodes 1`: "Suggest one-time codes" on, as Settings
+///   turns it on; off by default, as on a phone.
 /// - `-pawMatchTable 1`: the site-matching table (`MatchTableView`).
 ///
 /// The fixture store, the simulated key (`-pawSimPin` and the rest) and a
@@ -110,6 +112,9 @@ private final class HarnessWorld: @unchecked Sendable {
             let pairings = SitePairings.open(stateDir: stateDir.path)
             self.pairings = pairings
             let codes = OneTimeCodeEntries.open(stateDir: stateDir.path)
+            if LaunchArguments.bool("pawSimOneTimeCodes") {
+                try codes.setEnabled(enabled: true)
+            }
             self.codes = codes
             let keystore = SimKeystore()
             switch LaunchArguments.string("pawSimFaceId") {
@@ -163,7 +168,7 @@ private final class HarnessRun: AutoFillCompletion {
         result = "filled user=\(user) password-length=\(password.count) password-sha=\(digest.prefix(12))"
         model?.shutDown()
         model = nil
-        readPairings()
+        readPairingsSoon()
     }
 
     func fill(oneTimeCode: String) {
@@ -171,13 +176,21 @@ private final class HarnessRun: AutoFillCompletion {
         result = "filled code-length=\(oneTimeCode.count) code-sha=\(digest.prefix(12))"
         model?.shutDown()
         model = nil
-        readPairings()
+        readPairingsSoon()
     }
 
     func end(_ reason: AutoFillEnd) {
         result = "ended \(reason.rawValue)"
         model = nil
         readPairings()
+    }
+
+    /// Once the model's fill has returned: it keeps a code mark after
+    /// handing the fill over.
+    private func readPairingsSoon() {
+        Task { @MainActor [weak self] in
+            self?.readPairings()
+        }
     }
 
     private func readPairings() {

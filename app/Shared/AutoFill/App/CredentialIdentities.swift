@@ -10,10 +10,11 @@ import Foundation
 /// (`bankofamerica`) gets one only for each domain it has filled on after
 /// the person confirmed it (`SitePairings`): never for a domain merely
 /// named like it. Nothing learned by decrypting is used
-/// (design.md 5.6 rule 6), with one exception: an entry seen with a
-/// one-time code when last opened (`OneTimeCodeEntries`, a yes per entry)
-/// also gets a one-time-code identity for each of its sites, so iOS offers
-/// it in a code field. The list is replaced whole after setup, on each
+/// (design.md 5.6 rule 6), with one exception the person turns on in
+/// Settings: an entry seen with a one-time code when last opened
+/// (`OneTimeCodeEntries`, a yes per entry) also gets a one-time-code
+/// identity for each of its sites, so iOS offers it in a code field. Off,
+/// the core lists none. The list is replaced whole after setup, on each
 /// launch, after a save, rename, delete or refresh; removing the store
 /// clears it. App target only (not compiled into the extension).
 enum CredentialIdentities {
@@ -67,12 +68,19 @@ enum CredentialIdentities {
     }
 
     /// An entry was opened in the app: keeps whether it has a one-time
-    /// code, and publishes again when that changed, so its code suggestion
-    /// appears or goes.
+    /// code, off the main thread, and publishes again when that changed, so
+    /// its code suggestion appears or goes. Nothing while the list is off.
     @MainActor
     static func noteOpened(_ opened: OpenedEntry, path: String, codes: OneTimeCodeEntries) {
-        guard (try? codes.noteOpened(entry: path, opened: opened)) == true, let current else { return }
-        publish(current)
+        let hasCode = opened.makesOneTimeCodes()
+        Task.detached(priority: .utility) {
+            guard (try? codes.note(entry: path, hasCode: hasCode)) == true else { return }
+            await MainActor.run {
+                if let store = CredentialIdentities.current {
+                    CredentialIdentities.publish(store)
+                }
+            }
+        }
     }
 
     /// Whether `domain` is a registrable domain or a name under one, by the

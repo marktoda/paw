@@ -704,7 +704,6 @@ final class AutoFillModel {
     /// entry is wiped unread and the person is asked. Filling anyway opens
     /// it again (Face ID, from the copy the key just kept).
     private func fill(_ opened: OpenedEntry, entry: EntryRef) {
-        noteCode(opened, entry: entry)
         if let warning = urlWarning(opened, entry: entry) {
             opened.close()
             source?.keyPort.session()?.forgetPin()
@@ -719,12 +718,15 @@ final class AutoFillModel {
         }
         let password = opened.password()
         let user = fillUsername(entry: opened, path: entry.path) ?? ""
+        let hasCode = opened.makesOneTimeCodes()
         opened.close()
         source?.keyPort.session()?.forgetPin()
+        let codes = source?.codes
         guard let password, !password.isEmpty else {
             screen = isSuggestion
                 ? .problem("\(entry.name) has no password", "Add one in paw, then try again.", backToList: false)
                 : .problem("\(entry.name) has no password", "Pick another entry.", backToList: true)
+            noteCode(hasCode, entry: entry, codes: codes)
             return
         }
         guard !finished else { return }
@@ -732,16 +734,26 @@ final class AutoFillModel {
         screen = .filled
         recordPairing(entry)
         completion?.fill(user: user, password: password)
+        noteCode(hasCode, entry: entry, codes: codes)
     }
 
     /// The current code, made now and handed over; the entry is wiped at
-    /// once. One with no code, or a code line that makes none, says so.
+    /// once. With under 3 seconds left, the next one, which is still good
+    /// once the page sends it. One with no code, or a code line that makes
+    /// none, says so.
     private func fillCode(_ opened: OpenedEntry, entry: EntryRef) {
-        let code = opened.otpCode(nowMs: Int64(Date().timeIntervalSince1970 * 1000))?.code
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        var otp = opened.otpCode(nowMs: nowMs)
+        if let current = otp, current.secondsLeft < 3 {
+            otp = opened.otpCode(nowMs: nowMs + Int64(current.secondsLeft) * 1000 + 1)
+        }
+        let code = otp?.code
         let problem = code == nil ? opened.otpProblem() : nil
         opened.close()
         source?.keyPort.session()?.forgetPin()
+        let codes = source?.codes
         guard let code, !code.isEmpty else {
+            noteCode(false, entry: entry, codes: codes)
             withCode.remove(entry.path)
             if let problem {
                 screen = .problem("\(entry.name)'s code doesn't work", problem, backToList: !isSuggestion)
@@ -757,14 +769,17 @@ final class AutoFillModel {
         screen = .filled
         recordPairing(entry)
         completion?.fill(oneTimeCode: code)
+        noteCode(true, entry: entry, codes: codes)
     }
 
     /// Keeps whether the entry just opened has a one-time code, so a code
-    /// request lists it next time. A yes per entry, never the code or its
-    /// secret; a failure only leaves it as it was.
-    private func noteCode(_ opened: OpenedEntry, entry: EntryRef) {
-        guard let codes = source?.codes else { return }
-        _ = try? codes.noteOpened(entry: entry.path, opened: opened)
+    /// request lists it next time: after the fill is handed over, and only
+    /// when that is not what is kept already. A yes per entry, never the
+    /// code or its secret; nothing while the list is off (the core's
+    /// switch); a failure only leaves it as it was.
+    private func noteCode(_ hasCode: Bool, entry: EntryRef, codes: OneTimeCodeEntries?) {
+        guard let codes, hasCode != withCode.contains(entry.path) else { return }
+        _ = try? codes.note(entry: entry.path, hasCode: hasCode)
     }
 
     /// The warning to show before filling `entry` on this site, from its

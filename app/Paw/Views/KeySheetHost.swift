@@ -104,6 +104,7 @@ struct SettingsSheet: View {
                         .foregroundStyle(PawColor.labelSecondary)
                 }
                 AutoFillSettingsSection()
+                OneTimeCodeSettingsSection(model: model)
                 SitesUsedSettingsSection(model: model)
                 FaceIdSettingsSection(model: model)
                 StoreSettingsSections(model: model)
