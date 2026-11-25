@@ -204,6 +204,8 @@ fn the_report_names_the_entries_the_remote_added_changed_and_removed() {
     desktop_write(&w, "bank/new.gpg", "new");
     desktop_write(&w, "web/example.com.gpg", "v2 from the desktop");
     desktop_write(&w, "notes.txt", "not an entry");
+    desktop_write(&w, ".hidden/secret.gpg", "hidden as the listing hides it");
+    desktop_write(&w, "web/.old.gpg", "hidden too");
     desktop_rm(&w, "web/other.gpg");
 
     let report = integrated(&w);

@@ -17,7 +17,7 @@ use std::path::Path;
 use git2::{Oid, Repository};
 
 use super::guard::check_commit;
-use super::history::{KeptBoth, Replay, ReplayNotes, commits_between, ensure_clean, entry_name, move_branch, paw_commits};
+use super::history::{KeptBoth, Replay, ReplayNotes, commits_between, ensure_clean, move_branch, paw_commits};
 use super::queue::waiting;
 use super::{SyncError, current_branch, git_err, refs};
 use crate::store::gpg_id::parse_gpg_id;
@@ -110,8 +110,8 @@ impl IntegrateReport {
                 _ => &mut self.changed,
             };
             let file = if delta.status() == git2::Delta::Deleted { delta.old_file() } else { delta.new_file() };
-            if let Some(path) = path(file).filter(|p| crate::path::is_entry_file(p)) {
-                list.push(entry_name(&path));
+            if let Some(entry) = path(file).as_deref().and_then(crate::path::listed_entry) {
+                list.push(entry.to_owned());
             }
         }
         Ok(())

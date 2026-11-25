@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::PawError;
-use crate::path::{entry_of_file, is_hidden, join, unsafe_path};
+use crate::path::{is_hidden, join, listed_entry, unsafe_path};
 
 /// Deeper folders than this are left out. No real store comes close, and a
 /// hostile one cannot make the walk run out of stack.
@@ -112,7 +112,7 @@ impl StoreTree {
                     Err(_) => self.skipped.push(path),
                 }
             } else if kind.is_file()
-                && let Some(stem) = entry_of_file(&name)
+                && let Some(stem) = listed_entry(&name)
             {
                 count += 1;
                 listing.entries.push(EntryRef {

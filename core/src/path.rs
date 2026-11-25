@@ -44,6 +44,16 @@ pub(crate) fn entry_of_file(file: &str) -> Option<&str> {
     file.strip_suffix(ENTRY_EXTENSION).filter(|stem| !stem.is_empty())
 }
 
+/// The entry the store's listing shows for `file`, a path in the store:
+/// none for a hidden file, one in a hidden folder, a path paw refuses, or a
+/// file that isn't an entry's.
+pub(crate) fn listed_entry(file: &str) -> Option<&str> {
+    if has_hidden_part(file) || unsafe_path(file).is_some() {
+        return None;
+    }
+    entry_of_file(file)
+}
+
 /// Whether `file` (a path) ends in `.gpg`.
 pub(crate) fn is_entry_file(file: &str) -> bool {
     file.ends_with(ENTRY_EXTENSION)
