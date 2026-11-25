@@ -64,16 +64,56 @@ extension EnvironmentValues {
 
 /// Where the store's GitHub sign-in comes from.
 enum GitHubRefresh {
-    /// The sign-in for the store in `stateDir`: the real GitHub on a
-    /// device, the simulated one (if `-pawSimGitHub` asked for it) in the
-    /// simulator.
+    /// The core's sign-in for the store in `stateDir`: the real GitHub on
+    /// a device, the simulated one (if `-pawSimGitHub` asked for it) in the
+    /// simulator. The one place it is opened, from any thread.
+    static func account(stateDir: String) -> GitHubAccount? {
+        #if targetEnvironment(simulator)
+        return SimGitHubLaunch.shared.makeCore(stateDir: stateDir)
+        #else
+        return GitHubAccount.open(stateDir: stateDir, vault: KeychainTokenVault())
+        #endif
+    }
+
+    /// The sign-in for the screens.
     @MainActor
     static func access(stateDir: URL) -> GitHubAccess? {
-        #if targetEnvironment(simulator)
-        return SimGitHubLaunch.shared.makeCore(stateDir: stateDir.path).map { GitHubAccess(core: $0) }
-        #else
-        return GitHubAccess(core: GitHubAccount.open(stateDir: stateDir.path, vault: KeychainTokenVault()))
-        #endif
+        account(stateDir: stateDir.path).map { GitHubAccess(core: $0) }
+    }
+}
+
+/// A check for changes with the GitHub sign-in: no key, no PIN, no Face
+/// ID. One path for both of its triggers: "Check for changes" (`SyncModel`),
+/// which integrates everything and shows what needs a decision, and iOS's
+/// background refresh (`BackgroundRefresh`), which integrates only what
+/// needs none, within its time. Blocks: run it off the main thread. A check
+/// that brought the store up to date is recorded (`LastChecked`).
+struct SignInCheck: Sendable {
+    let core: GitHubAccount
+
+    struct Checked {
+        let result: Result<SyncReport, Error>
+        /// The sign-in is still kept after it: if not, the check goes on
+        /// with the key.
+        let stillSignedIn: Bool
+    }
+
+    /// From a tap. `SyncModel` records it, as it does a check with the key.
+    func run() -> Checked {
+        let result = Result { try core.refreshStore() }
+        let stillSignedIn = (try? core.isSignedIn()) ?? false
+        return Checked(result: result, stillSignedIn: stillSignedIn)
+    }
+
+    /// In the background, for at most `seconds`, until `stop`.
+    func runInBackground(seconds: UInt32, stop: BackgroundStop, repoDir: String) -> BackgroundRun {
+        let report = core.backgroundRefreshStoppable(seconds: seconds, stop: stop)
+        let run = BackgroundRefresh.summary(of: report, at: Date())
+        if run.success, report.integration != nil {
+            // The store matches the server as of now, as after a check.
+            LastChecked.record(run.at, repoDir: repoDir)
+        }
+        return run
     }
 }
 

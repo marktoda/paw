@@ -2,19 +2,53 @@ import BackgroundTasks
 import Foundation
 import UIKit
 
-/// The last background check, as Sync says it: when, and how it went in a
-/// few plain words (never an entry name or an error's text). Kept in the
-/// app's own defaults, which can be read and written while the iPhone is
-/// locked; the store can't (it is `complete`-protected).
+/// The last background check: when, and how it went (never an entry name
+/// or an error's text). Kept in the app's own defaults, which can be read
+/// and written while the iPhone is locked; the store can't (it is
+/// `complete`-protected).
 struct BackgroundRun: Equatable {
+    /// How a run went, kept by name and said by the status page.
+    enum Outcome: String {
+        case locked, noStore, notSignedIn, notLinked, upToDate, broughtIn, paused, signedOut, offline, outOfTime,
+             busy, failed
+
+        /// As Sync says it, in the iPhone's words.
+        var words: String {
+            switch self {
+            case .locked: "iPhone was locked"
+            case .noStore: "No store yet"
+            case .notSignedIn: "Not signed in to GitHub"
+            case .notLinked: "No store chosen"
+            case .upToDate: "Up to date"
+            case .broughtIn: "Brought in changes"
+            case .paused: "Paused"
+            case .signedOut: "GitHub sign-in ended"
+            case .offline: "Couldn't reach GitHub"
+            case .outOfTime: "Ran out of time"
+            case .busy: "Store was busy"
+            case .failed: "Failed"
+            }
+        }
+
+        /// Ended as it should (for `setTaskCompleted`).
+        var success: Bool {
+            switch self {
+            case .offline, .outOfTime, .busy, .failed: false
+            case .locked, .noStore, .notSignedIn, .notLinked, .upToDate, .broughtIn, .paused, .signedOut: true
+            }
+        }
+    }
+
     let at: Date
-    let result: String
+    let outcome: Outcome
     /// Changes came in that the list has not shown yet.
     let changed: Bool
     /// Something only the person can decide was found and left alone.
     let needsLook: Bool
-    /// Ended as it should (for `setTaskCompleted`).
-    let success: Bool
+
+    var success: Bool {
+        outcome.success
+    }
 }
 
 /// The silent pull in the background (design 2.9): a `BGAppRefreshTask`
@@ -39,7 +73,6 @@ enum BackgroundRefresh {
     private static let resultKey = "pawBackgroundRunResult"
     private static let changedKey = "pawBackgroundRunChanged"
     private static let needsLookKey = "pawBackgroundRunNeedsLook"
-    private static let successKey = "pawBackgroundRunSuccess"
 
     // MARK: Registering and scheduling
 
@@ -114,7 +147,7 @@ enum BackgroundRefresh {
             forName: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil, queue: .main
         ) { _ in stop.stop() }
         queue.async {
-            let run = readable ? runNow(stop: stop) : skipped("iPhone was locked")
+            let run = readable ? runNow(stop: stop) : skipped(.locked)
             let store = run.changed && !stop.isStopped() ? openStore() : nil
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
@@ -137,22 +170,12 @@ enum BackgroundRefresh {
     /// The refresh itself. Blocks for at most `budgetSeconds`.
     private static func runNow(stop: BackgroundStop) -> BackgroundRun {
         guard let location = try? StoreLocation.standard(), location.isSetUp else {
-            return skipped("No store yet")
+            return skipped(.noStore)
         }
-        #if targetEnvironment(simulator)
-        guard let core = SimGitHubLaunch.shared.makeCore(stateDir: location.stateDir.path) else {
-            return skipped("Not signed in to GitHub")
+        guard let core = GitHubRefresh.account(stateDir: location.stateDir.path) else {
+            return skipped(.notSignedIn)
         }
-        #else
-        let core = GitHubAccount.open(stateDir: location.stateDir.path, vault: KeychainTokenVault())
-        #endif
-        let report = core.backgroundRefreshStoppable(seconds: budgetSeconds, stop: stop)
-        let run = summary(of: report, at: Date())
-        if run.success, report.integration != nil {
-            // The store matches the server as of now, as after a check.
-            UserDefaults.standard.set(run.at.timeIntervalSince1970, forKey: SyncModel.checkedKey(location.repoDir.path))
-        }
-        return run
+        return SignInCheck(core: core).runInBackground(seconds: budgetSeconds, stop: stop, repoDir: location.repoDir.path)
     }
 
     private static func openStore() -> PassStore? {
@@ -160,11 +183,11 @@ enum BackgroundRefresh {
         return try? PassStore(dir: location.repoDir.path)
     }
 
-    private static func skipped(_ why: String) -> BackgroundRun {
-        BackgroundRun(at: Date(), result: why, changed: false, needsLook: false, success: true)
+    private static func skipped(_ outcome: BackgroundRun.Outcome) -> BackgroundRun {
+        BackgroundRun(at: Date(), outcome: outcome, changed: false, needsLook: false)
     }
 
-    /// The core's report in Sync's words.
+    /// The core's report as a run.
     static func summary(of report: BackgroundRefreshReport, at: Date) -> BackgroundRun {
         let changed = report.integration.map { $0.fastForwarded > 0 || $0.replayed > 0 } ?? false
         // Held-back changes are said on Home already; they stop nothing here.
@@ -172,23 +195,20 @@ enum BackgroundRefresh {
             if case .heldBack = decision { return false }
             return true
         }
-        let run = { (result: String, success: Bool) in
-            BackgroundRun(at: at, result: result, changed: changed, needsLook: needsLook, success: success)
-        }
+        let outcome: BackgroundRun.Outcome
         switch report.outcome {
-        case .notSignedIn: return run("Not signed in to GitHub", true)
-        case .notLinked: return run("No store chosen", true)
-        case .upToDate: return run("Up to date", true)
-        case .updated: return run("Brought in changes", true)
-        case .needsDecision:
-            if needsLook { return run("Paused", true) }
-            return run(changed ? "Brought in changes" : "Up to date", true)
-        case .signedOut: return run("GitHub sign-in ended", true)
-        case .offline: return run("Couldn't reach GitHub", false)
-        case .outOfTime: return run("Ran out of time", false)
-        case .busy: return run("Store was busy", false)
-        case .failed: return run("Failed", false)
+        case .notSignedIn: outcome = .notSignedIn
+        case .notLinked: outcome = .notLinked
+        case .upToDate: outcome = .upToDate
+        case .updated: outcome = .broughtIn
+        case .needsDecision: outcome = needsLook ? .paused : changed ? .broughtIn : .upToDate
+        case .signedOut: outcome = .signedOut
+        case .offline: outcome = .offline
+        case .outOfTime: outcome = .outOfTime
+        case .busy: outcome = .busy
+        case .failed: outcome = .failed
         }
+        return BackgroundRun(at: at, outcome: outcome, changed: changed, needsLook: needsLook)
     }
 
     // MARK: The record
@@ -196,21 +216,22 @@ enum BackgroundRefresh {
     private static func record(_ run: BackgroundRun) {
         let defaults = UserDefaults.standard
         defaults.set(run.at.timeIntervalSince1970, forKey: atKey)
-        defaults.set(run.result, forKey: resultKey)
-        defaults.set(run.success, forKey: successKey)
+        defaults.set(run.outcome.rawValue, forKey: resultKey)
         // What the next open must still do is kept until it has done it.
         if run.changed { defaults.set(true, forKey: changedKey) }
         if run.needsLook { defaults.set(true, forKey: needsLookKey) }
     }
 
-    /// The last run, if there has been one.
+    /// The last run, if there has been one. A record this build can't
+    /// read (an older one's sentence) is none.
     static func lastRun() -> BackgroundRun? {
         let defaults = UserDefaults.standard
         let at = defaults.double(forKey: atKey)
-        guard at > 0, let result = defaults.string(forKey: resultKey) else { return nil }
+        guard at > 0, let outcome = defaults.string(forKey: resultKey).flatMap(BackgroundRun.Outcome.init(rawValue:))
+        else { return nil }
         return BackgroundRun(
-            at: Date(timeIntervalSince1970: at), result: result, changed: defaults.bool(forKey: changedKey),
-            needsLook: defaults.bool(forKey: needsLookKey), success: defaults.bool(forKey: successKey))
+            at: Date(timeIntervalSince1970: at), outcome: outcome, changed: defaults.bool(forKey: changedKey),
+            needsLook: defaults.bool(forKey: needsLookKey))
     }
 
     /// What runs since the last open left for the screens: changes to show,
