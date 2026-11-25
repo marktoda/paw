@@ -12,6 +12,8 @@ import SwiftUI
 ///   copies and the site pairings.
 /// - `-pawHostProviderEntry web/github.com`: a tapped suggestion above the
 ///   keyboard, after what `provideCredentialWithoutUserInteraction` answers.
+/// - `code:` before a site or an entry (`code:https://github.com`): a
+///   one-time-code request instead of a password one, for that run.
 /// - `-pawHostProviderStore none`: no store set up; `busy`: the store is
 ///   busy the first time it is opened.
 /// - `-pawMatchTable 1`: the site-matching table (`MatchTableView`).
@@ -19,21 +21,27 @@ import SwiftUI
 /// The fixture store, the simulated key (`-pawSimPin` and the rest) and a
 /// simulated Face ID (`-pawSimFaceId`) stand in. What a fill hands over is
 /// shown as the user name, the password's length and the start of its
-/// SHA-256, never the password.
+/// SHA-256, never the password; a code likewise, by length and SHA-256.
 enum AutoFillHarnessLaunch {
     static var isRequested: Bool {
         LaunchArguments.string("pawHostProvider") != nil || LaunchArguments.string("pawHostProviderEntry") != nil
             || LaunchArguments.bool("pawMatchTable")
     }
 
-    static func request(run: Int) -> AutoFillRequest {
+    static func request(run: Int) -> (AutoFillRequest, AutoFillKind) {
         if let path = LaunchArguments.string("pawHostProviderEntry") {
-            return .entry(path: path)
+            let (kind, bare) = parse(path)
+            return (.entry(path: bare), kind)
         }
         let sites = (LaunchArguments.string("pawHostProvider") ?? "").split(separator: ",").map(String.init)
-        let site = sites.isEmpty ? "" : sites[min(run, sites.count - 1)]
+        let (kind, site) = parse(sites.isEmpty ? "" : sites[min(run, sites.count - 1)])
         // `app`: an app iOS gives no site for.
-        return .list(services: site == "app" ? [] : [site])
+        return (.list(services: site == "app" ? [] : [site]), kind)
+    }
+
+    /// `code:…` asks for a one-time code; anything else for a password.
+    private static func parse(_ value: String) -> (AutoFillKind, String) {
+        value.hasPrefix("code:") ? (.oneTimeCode, String(value.dropFirst(5))) : (.password, value)
     }
 
     static var colorScheme: ColorScheme? {
@@ -66,6 +74,9 @@ private final class HarnessWorld: @unchecked Sendable {
     private(set) var keyPort: KeyPort?
     /// The site pairings behind `opening`, to show what was recorded.
     private(set) var pairings: SitePairings?
+    /// Which entries are known to have a code, likewise.
+    private(set) var codes: OneTimeCodeEntries?
+    private(set) var store: PassStore?
     private let lock = NSLock()
     private var busyOnce = LaunchArguments.string("pawHostProviderStore") == "busy"
 
@@ -98,6 +109,8 @@ private final class HarnessWorld: @unchecked Sendable {
             try writeNameMatchEntries(dir: storeDir.path)
             let pairings = SitePairings.open(stateDir: stateDir.path)
             self.pairings = pairings
+            let codes = OneTimeCodeEntries.open(stateDir: stateDir.path)
+            self.codes = codes
             let keystore = SimKeystore()
             switch LaunchArguments.string("pawSimFaceId") {
             case "cancel": keystore.setFaceId(answer: .cancel)
@@ -107,12 +120,15 @@ private final class HarnessWorld: @unchecked Sendable {
             let clock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000)).asClock()
             let port = KeyPort(clock: clock)
             keyPort = port
+            let store = try PassStore(dir: storeDir.path)
+            self.store = store
             opening = .ready(AutoFillSource(
-                store: try PassStore(dir: storeDir.path),
+                store: store,
                 copies: CopyCache(dir: copiesDir.path, keystore: keystore.asKeystore(), clock: clock),
                 keyPort: port,
                 connect: { try KeyConnection.openForSession() },
-                pairings: pairings))
+                pairings: pairings,
+                codes: codes))
         } catch {
             opening = .unreadable(String(describing: error))
         }
@@ -126,23 +142,33 @@ private final class HarnessRun: AutoFillCompletion {
     private(set) var quickType: String?
     /// What `SitePairings` holds: "entry=site …", or "none".
     private(set) var pairings = "none"
+    /// The entries `OneTimeCodeEntries` knows have a code, or "none".
+    private(set) var codes = "none"
     @ObservationIgnored private let world = HarnessWorld()
     @ObservationIgnored private var runs = 0
 
     func run() {
         result = "running"
-        let request = AutoFillHarnessLaunch.request(run: runs)
+        let (request, kind) = AutoFillHarnessLaunch.request(run: runs)
         runs += 1
         if case .entry = request {
             quickType = StoreForAutoFill.answerWithoutScreen.rawValue
         }
         let world = world
-        model = AutoFillModel(request: request, completion: self, open: { world.open() })
+        model = AutoFillModel(request: request, kind: kind, completion: self, open: { world.open() })
     }
 
     func fill(user: String, password: String) {
         let digest = SHA256.hash(data: Data(password.utf8)).map { String(format: "%02x", $0) }.joined()
         result = "filled user=\(user) password-length=\(password.count) password-sha=\(digest.prefix(12))"
+        model?.shutDown()
+        model = nil
+        readPairings()
+    }
+
+    func fill(oneTimeCode: String) {
+        let digest = SHA256.hash(data: Data(oneTimeCode.utf8)).map { String(format: "%02x", $0) }.joined()
+        result = "filled code-length=\(oneTimeCode.count) code-sha=\(digest.prefix(12))"
         model?.shutDown()
         model = nil
         readPairings()
@@ -157,6 +183,8 @@ private final class HarnessRun: AutoFillCompletion {
     private func readPairings() {
         let all = (world.pairings?.pairings() ?? []).flatMap { p in p.sites.map { "\(p.entry)=\($0)" } }
         pairings = all.isEmpty ? "none" : all.joined(separator: " ")
+        let known = world.store.map { world.codes?.entries(store: $0) ?? [] } ?? []
+        codes = known.isEmpty ? "none" : known.joined(separator: " ")
     }
 
     /// What the extension's controller does when its view goes away
@@ -205,6 +233,10 @@ private struct AutoFillHarnessView: View {
                         .font(PawFont.footnote.monospaced())
                         .accessibilityValue(run.pairings)
                         .accessibilityIdentifier("harness-pairings")
+                    Text(verbatim: "codes: \(run.codes)")
+                        .font(PawFont.footnote.monospaced())
+                        .accessibilityValue(run.codes)
+                        .accessibilityIdentifier("harness-codes")
                     Button("Touch the simulated key") { KeyConnection.simulateTouch() }
                         .buttonStyle(.pawSecondary)
                         .accessibilityIdentifier("harness-touch-key")

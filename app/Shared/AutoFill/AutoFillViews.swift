@@ -123,10 +123,10 @@ private struct AutoFillList: View {
     }
 
     @ViewBuilder private var siteSection: some View {
-        if model.matches.isEmpty && model.maybe.isEmpty {
+        if model.listedMatches.isEmpty && model.listedMaybe.isEmpty {
             Section {
                 VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
-                    Text(model.site == nil ? "paw can't tell which site this is." : "No password for this site.")
+                    Text(emptyLine)
                         .font(PawFont.body)
                         .foregroundStyle(PawColor.label)
                     if let site = model.site {
@@ -141,9 +141,9 @@ private struct AutoFillList: View {
                 .accessibilityIdentifier("autofill-no-match")
             }
         } else {
-            if !model.matches.isEmpty {
+            if !model.listedMatches.isEmpty {
                 Section {
-                    ForEach(model.matches, id: \.path) { entry in
+                    ForEach(model.listedMatches, id: \.path) { entry in
                         row(entry)
                     }
                 } header: {
@@ -151,8 +151,15 @@ private struct AutoFillList: View {
                         .accessibilityIdentifier("autofill-site-section")
                 }
             }
-            maybeSection(model.maybe.map { MaybeRow(entry: $0) })
+            maybeSection(model.listedMaybe.map { MaybeRow(entry: $0) })
         }
+    }
+
+    /// Nothing listed for the site. A code is listed once its entry has
+    /// been opened on this iPhone; search finds the others.
+    private var emptyLine: String {
+        if model.site == nil { return "paw can't tell which site this is." }
+        return model.kind == .oneTimeCode ? "No codes for this site." : "No password for this site."
     }
 
     /// Named like the site, never filled on it: apart, below the site's
@@ -264,7 +271,7 @@ private struct AutoFillConfirm: View {
         switch reason {
         case .otherSite:
             // The address below names the site.
-            model.site == nil ? "Fill \(entry.name)'s password?" : "Fill \(entry.name)'s password here?"
+            model.site == nil ? "Fill \(entry.name)'s \(thing)?" : "Fill \(entry.name)'s \(thing) here?"
         case .firstTime(let site), .lookalike(let site, _):
             "Use \(entry.name) on \(site)?"
         case .urlDiffers(let url, let site):
@@ -275,7 +282,7 @@ private struct AutoFillConfirm: View {
     private var line: String {
         switch reason {
         case .otherSite:
-            model.site == nil ? "paw can't tell which site this is." : "This password isn't saved for this site."
+            model.site == nil ? "paw can't tell which site this is." : "This \(thing) isn't saved for this site."
         case .firstTime:
             "First time on this site. Check the address is right."
         case .lookalike(_, let known):
@@ -284,6 +291,11 @@ private struct AutoFillConfirm: View {
             // Without a Face ID copy to fill from, Fill opens it again.
             model.opensWithKey(entry) ? "Fill needs your key again." : ""
         }
+    }
+
+    /// What is being filled.
+    private var thing: String {
+        model.kind == .oneTimeCode ? "code" : "password"
     }
 
     private var symbol: String? {
