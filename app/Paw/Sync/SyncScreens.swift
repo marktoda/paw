@@ -124,11 +124,11 @@ struct HeldBackScreen: View {
                     ? "Can't read this folder's list of keys."
                     : item.recipients.map(RecipientsReviewScreen.grouped).joined(separator: "\n"),
                 prose: item.recipients.isEmpty,
-                note: item.accepted
+                note: item.list == .accepted
                     ? syncing.reencryptLeft[item.entry].flatMap(reencryptWords)
                     : Device.words("Not accepted on this iPhone yet."),
                 identifier: "held-back-should-be-for-\(entry.name)")
-            if !item.accepted {
+            if item.list != .accepted {
                 actionButton("Review who can open \(place)", identifier: "held-back-review-\(entry.name)") {
                     model.path.append(.sync(.review(folder: folder)))
                 }
