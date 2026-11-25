@@ -41,8 +41,8 @@ struct SyncFailure: Equatable {
     static func waiting(_ unpushed: Int) -> String {
         switch unpushed {
         case 0: ""
-        case 1: "Your change is saved on this iPhone."
-        default: "Your \(unpushed) changes are saved on this iPhone."
+        case 1: Device.words("Your change is saved on this iPhone.")
+        default: Device.words("Your \(unpushed) changes are saved on this iPhone.")
         }
     }
 
@@ -92,13 +92,13 @@ extension SyncFailure {
             pill = "\(notDone) \u{00B7} try again"
         case .NotPawHistory(let commit, let reason):
             self.kind = .other
-            problem = "This iPhone's store has a change paw didn't make"
+            problem = Device.words("This iPhone's store has a change paw didn't make")
             nextStep = "Nothing was changed or sent."
             details = ["\(commit): \(reason)"]
             pill = "Sync stopped"
         case .UncommittedChanges(let paths):
             self.kind = .other
-            problem = "This iPhone's store has changes paw didn't make"
+            problem = Device.words("This iPhone's store has changes paw didn't make")
             nextStep = "Nothing was overwritten or sent."
             details = paths
             pill = "Sync stopped"

@@ -109,7 +109,7 @@ struct HeldBackScreen: View {
                     ? "Can't read this folder's list of keys."
                     : item.recipients.map(RecipientsReviewScreen.grouped).joined(separator: "\n"),
                 prose: item.recipients.isEmpty,
-                note: item.accepted ? nil : "Not accepted on this iPhone yet.",
+                note: item.accepted ? nil : Device.words("Not accepted on this iPhone yet."),
                 identifier: "held-back-should-be-for-\(entry.name)")
             if !item.accepted {
                 actionButton("Review who can open \(place)", identifier: "held-back-review-\(entry.name)") {
@@ -131,7 +131,7 @@ struct HeldBackScreen: View {
             if confirming == item.id {
                 InlineConfirmRow(
                     question: "Discard this change to \(entry.name)?",
-                    detail: "It's undone on this iPhone and never sent.",
+                    detail: Device.words("It's undone on this iPhone and never sent."),
                     confirmTitle: "Discard", cancelTitle: "Keep",
                     identifier: "held-back-discard-\(entry.name)",
                     onConfirm: {
@@ -290,7 +290,7 @@ struct ReplacedScreen: View {
             Section {
                 SyncIntro(
                     headline: "The store on \(syncing.host) was replaced",
-                    text: "Its history no longer matches this iPhone's. "
+                    text: Device.words("Its history no longer matches this iPhone's. ")
                         + "Not expected? Ask whoever looks after the store first.",
                     identifier: "replaced-intro")
             }

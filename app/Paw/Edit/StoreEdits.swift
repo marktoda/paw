@@ -158,6 +158,6 @@ func editProblem(_ error: WriteError, folder: String) -> EditProblem {
     case .NoEncryptionKey(_, let reason):
         return EditProblem(problem: "A key for this folder can't encrypt", nextStep: reason)
     case .NotPinned:
-        return EditProblem(problem: "A key for this folder isn't saved on this iPhone", nextStep: "Nothing was changed.")
+        return EditProblem(problem: Device.words("A key for this folder isn't saved on this iPhone"), nextStep: "Nothing was changed.")
     }
 }

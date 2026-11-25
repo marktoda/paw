@@ -30,9 +30,9 @@ struct GitHubSettingsSection: View {
                     }
                     .foregroundStyle(PawColor.label)
                     .accessibilityIdentifier("settings-github-sign-in")
-                }
-                if let report {
-                    signedOut(report)
+                    if let report {
+                        signedOut(report)
+                    }
                 }
                 if let problem {
                     ErrorRow(kind: .error, problem: "You're still signed in", nextStep: problem)
@@ -132,19 +132,22 @@ struct GitHubSettingsSection: View {
         }
     }
 
+    /// After a sign-out, only when it asked GitHub to end the sign-in and
+    /// GitHub didn't confirm: the tokens may still work, so offer the page
+    /// that removes paw from the account (paw has no secret to do that
+    /// itself). Otherwise the card is just "Sign in to GitHub".
     @ViewBuilder private func signedOut(_ report: SignOutReport) -> some View {
-        Text(report.revoked
-             ? "Signed out. GitHub ended the sign-in."
-             : revokeAsked ? "Signed out. GitHub didn't confirm it ended the sign-in." : "Signed out.")
-            .font(PawFont.subheadline)
+        if revokeAsked && !report.revoked {
+            Text("GitHub didn't confirm the sign-in ended.")
+                .font(PawFont.subheadline)
+                .foregroundStyle(PawColor.label)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("settings-github-signed-out")
+            Button("Remove paw on GitHub") {
+                if let url = URL(string: report.manageUrl) { openURL(url) }
+            }
             .foregroundStyle(PawColor.label)
-            .fixedSize(horizontal: false, vertical: true)
-            .accessibilityIdentifier("settings-github-signed-out")
-        // Ending the sign-in leaves paw listed on the account.
-        Button("Remove paw on GitHub") {
-            if let url = URL(string: report.manageUrl) { openURL(url) }
+            .accessibilityIdentifier("settings-github-manage")
         }
-        .foregroundStyle(PawColor.label)
-        .accessibilityIdentifier("settings-github-manage")
     }
 }
