@@ -442,8 +442,8 @@ enum MatchTable {
         let pairings = SitePairings.open(stateDir: base.path)
         var failures: [String] = []
         for test in cases {
-            let got = SiteMatch.entries(in: store, for: [test.service], pairings: nil)
-                .filter { SiteMatch.rank($0.kind) <= 1 }.map(\.entry.path)
+            let got = store.matchServices(services: [test.service], pairings: nil)
+                .filter { if case .name = $0.kind { false } else { true } }.map(\.entry.path)
             if got != test.expected {
                 failures.append("\(test.service.debugDescription): got \(got), want \(test.expected)")
             }
@@ -452,7 +452,7 @@ enum MatchTable {
             failures.append("could not pair \(paired.entry)")
         }
         for test in nameCases {
-            let got = SiteMatch.entries(in: store, for: [test.service], pairings: pairings).compactMap { match -> String? in
+            let got = store.matchServices(services: [test.service], pairings: pairings).compactMap { match -> String? in
                 switch match.kind {
                 case .exactHost, .sameDomain: nil
                 case .name(.paired): "\(match.entry.path) paired"

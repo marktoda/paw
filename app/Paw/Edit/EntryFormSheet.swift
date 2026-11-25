@@ -451,11 +451,10 @@ private struct EntryFormView: View {
 
     private func save() {
         focus = nil
-        guard let result = form.save(copies: model.copies) else { return }
-        let (outcome, text) = result
+        guard let outcome = form.save(copies: model.copies) else { return }
         let purpose = form.purpose
         edits.form = nil
-        model.saved(outcome, purpose: purpose, savedText: text)
+        model.saved(outcome, purpose: purpose)
     }
 }
 

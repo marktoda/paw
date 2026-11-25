@@ -32,14 +32,12 @@ enum CredentialIdentities {
     /// offer it on every site under that suffix.
     static func make(from store: PassStore, pairings: SitePairings? = nil) -> [Identity] {
         var identities: [Identity] = []
-        var registrable: [String: Bool] = [:]
         var folders = [store.home()]
         while let listing = folders.popLast(), identities.count < limit {
             for entry in listing.entries {
-                if let site = EntrySite.domain(ofPath: entry.path),
-                   isRegistrable(site.domain, in: store, known: &registrable) {
+                if let domain = suggestionDomain(path: entry.path) {
                     identities.append(Identity(
-                        domain: site.domain, user: EntrySite.suggestionUser(forPath: entry.path), path: entry.path))
+                        domain: domain, user: EntrySite.suggestionUser(forPath: entry.path), path: entry.path))
                 }
             }
             for folder in listing.folders {
@@ -81,17 +79,6 @@ enum CredentialIdentities {
                 }
             }
         }
-    }
-
-    /// Whether `domain` is a registrable domain or a name under one, by the
-    /// core's Public Suffix List: a made-up name one label below it shares
-    /// its registrable domain with `domain` exactly when `domain` is not a
-    /// public suffix, so the core then matches the entry that names it.
-    private static func isRegistrable(_ domain: String, in store: PassStore, known: inout [String: Bool]) -> Bool {
-        if let answer = known[domain] { return answer }
-        let answer = !store.matchService(service: "https://paw-suffix-probe.\(domain)").isEmpty
-        known[domain] = answer
-        return answer
     }
 
     /// The store the last publish used, for Settings to publish again once
