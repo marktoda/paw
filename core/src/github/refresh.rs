@@ -375,14 +375,7 @@ impl GitHubAccount {
             Ok(_) => {}
             Err(e) => return failed(&e),
         }
-        let held_back = match crate::sync::queue::held_back(&dir, &self.state_dir) {
-            Ok(held) => held.len() as u32,
-            Err(e) => return failed(&e),
-        };
-        let unpushed = match crate::sync::queue::unpushed(&dir) {
-            Ok(queue) => queue.len() as u32,
-            Err(e) => return failed(&e),
-        };
+        let Waiting { held_back, unpushed } = Waiting::count(&dir, &self.state_dir);
         if held_back > 0 {
             decisions.push(RefreshDecision::HeldBack { count: held_back });
         }
@@ -416,6 +409,23 @@ impl GitHubAccount {
             BackgroundOutcome::UpToDate
         };
         BackgroundRefreshReport { outcome, integration: Some(integration), decisions, unpushed }
+    }
+}
+
+/// What is waiting to be sent, for the background report. The counts only
+/// inform the person; one that can't be read now counts as none, so the run
+/// still brings in what was fetched.
+struct Waiting {
+    held_back: u32,
+    unpushed: u32,
+}
+
+impl Waiting {
+    fn count(dir: &Path, state_dir: &Path) -> Self {
+        Self {
+            held_back: crate::sync::queue::held_back(dir, state_dir).map_or(0, |held| held.len() as u32),
+            unpushed: crate::sync::queue::unpushed(dir).map_or(0, |queue| queue.len() as u32),
+        }
     }
 }
 

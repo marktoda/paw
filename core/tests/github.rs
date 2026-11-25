@@ -709,6 +709,20 @@ fn local_changes_are_replayed_onto_a_background_fetch() {
     w.assert_consistent();
 }
 
+#[test]
+fn a_background_refresh_still_brings_in_the_remote_when_the_recipients_file_is_unreadable() {
+    let w = world();
+    w.set_up();
+    std::fs::write(w.state_dir().join("recipients"), [0xff, 0xfe, 0xfd]).unwrap();
+    w.remote.commit_file(NEW_ENTRY.into(), b"x".to_vec(), "Add.".into()).unwrap();
+
+    let report = w.account.background_refresh(secs(25));
+
+    assert_eq!(report.outcome, BackgroundOutcome::Updated, "{report:?}");
+    assert_eq!(report.integration.unwrap().fast_forwarded, 1);
+    assert!(w.repo().join(NEW_ENTRY).is_file());
+}
+
 // --- refusing to send the token where it does not belong ---------------------------------
 
 #[test]
