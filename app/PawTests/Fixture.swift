@@ -72,7 +72,7 @@ final class Fixture {
 
     /// The key sheet's stage, `nil` with no sheet.
     var stage: KeySheetStage? {
-        model.keyRequest?.stage
+        model.keyRequest == nil ? nil : model.keyTask.stage
     }
 
     /// The opened entry the stack shows last.
@@ -101,8 +101,8 @@ final class Fixture {
     }
 
     func enterPin(_ pin: String = "123456") {
-        model.pinEntry = pin
-        model.continueWithPin()
+        model.keyTask.pin = pin
+        model.keyTask.continueWithPin()
     }
 
     /// The sheet at Done goes away, as the screen takes it away, and the

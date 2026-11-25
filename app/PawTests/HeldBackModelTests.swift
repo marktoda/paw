@@ -9,11 +9,11 @@ import XCTest
 final class HeldBackModelTests: XCTestCase {
     private func passPin(_ sync: SyncModel, file: StaticString = #filePath, line: UInt = #line) async {
         await waitFor("the PIN", file: file, line: line) {
-            if case .key(_, _, .pin)? = sync.sheet?.mode { return true }
+            if case .key? = sync.sheet?.mode, case .pin = sync.keyTask.stage { return true }
             return false
         }
-        sync.pinEntry = Fixture.pin
-        sync.continueWithPin()
+        sync.keyTask.pin = Fixture.pin
+        sync.keyTask.continueWithPin()
     }
 
     func testAHeldBackChangeIsReencryptedOnlyWhenAskedAndCanThenBeSent() async throws {
@@ -47,7 +47,7 @@ final class HeldBackModelTests: XCTestCase {
         XCTAssertNil(sync.running, "Nothing starts by itself")
 
         sync.startReencrypt(app: model)
-        guard case .key(.reencrypt, _, _)? = sync.sheet?.mode else {
+        guard case .key(.reencrypt)? = sync.sheet?.mode else {
             return XCTFail("Re-encrypt should open the key sheet, it is \(String(describing: sync.sheet?.mode))")
         }
         await waitFor("the re-encrypt to end", timeout: 30) {

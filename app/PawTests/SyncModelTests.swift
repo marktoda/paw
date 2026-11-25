@@ -14,8 +14,8 @@ final class SyncModelTests: XCTestCase {
         await waitFor("the PIN, the sheet is at \(String(describing: sync.keyStage))", file: file, line: line) {
             sync.keyStage == .pin(triesLeft: 3, forgotten: false)
         }
-        sync.pinEntry = Fixture.pin
-        sync.continueWithPin()
+        sync.keyTask.pin = Fixture.pin
+        sync.keyTask.continueWithPin()
     }
 
     /// The task ends: Done, or the status page after a failure.
@@ -44,7 +44,7 @@ final class SyncModelTests: XCTestCase {
         let fixture = try Fixture(writable: true)
         let sync = try syncModel(fixture)
         sync.pillTapped(app: fixture.model)
-        guard case .key(.refresh, _, _)? = sync.sheet?.mode else {
+        guard case .key(.refresh)? = sync.sheet?.mode else {
             return XCTFail("The pill should start a check with the key, the sheet is \(String(describing: sync.sheet?.mode))")
         }
         XCTAssertEqual(sync.pillState(unpushed: 0), .working("Checking for changes\u{2026}"))
@@ -140,7 +140,7 @@ final class SyncModelTests: XCTestCase {
 private extension SyncModel {
     /// The key sheet's stage, `nil` when the sheet is not following a task.
     var keyStage: KeySheetStage? {
-        if case .key(_, _, let stage)? = sheet?.mode { return stage }
+        if case .key? = sheet?.mode { return keyTask.stage }
         return nil
     }
 }

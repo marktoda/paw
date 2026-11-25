@@ -126,9 +126,9 @@ final class ClosingTests: XCTestCase {
 
         // The next open finishes past the point where Cancel can stop it,
         // as if Cancel came just as the card answered.
-        model.simulatesLateCancelNext = true
+        model.keyTask.simulatesLateCancelNext = true
         model.open(EntryRef(path: "web/gitlab.com"))
-        await waitFor("the open to end") { model.pendingKeyTasks == 0 }
+        await waitFor("the open to end") { model.keyTask.pendingTasks == 0 }
         XCTAssertNil(model.keyRequest)
         model.keySheetDismissed()
         XCTAssertEqual(model.path, [], "A late finish after Cancel opens nothing")
