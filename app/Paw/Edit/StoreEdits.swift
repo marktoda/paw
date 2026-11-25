@@ -29,7 +29,8 @@ struct UndoOffer: Identifiable, Equatable {
 
 /// The write side of the store as the screens use it: the core's writer,
 /// the unpushed queue, and what the edit screens show now. Saving,
-/// deleting and undoing need no key and no network.
+/// deleting and undoing need no key and no network. Each write is
+/// announced on the live store, which every reader of the store follows.
 @MainActor @Observable
 final class StoreEdits {
     let writer: StoreWriter
@@ -38,15 +39,7 @@ final class StoreEdits {
     let sync: StoreSync?
     /// The core's state directory of the store.
     let stateDir: String
-    /// Where the store is checked out, to read it again after a change.
-    let repoDir: String
-    /// No longer shown: sending is built (`Sync/`). Kept so the callers
-    /// that pass it need no change yet.
-    let sendingNote: String?
-    /// Sending and checking for changes; `nil` without the sync object.
-    let syncing: SyncModel?
-    /// Kept alive with the store, e.g. the simulated git host.
-    @ObservationIgnored private let keepAlive: AnyObject?
+    @ObservationIgnored private let live: LiveStore
 
     /// Newest first.
     private(set) var unpushed: [QueueItem] = []
@@ -58,16 +51,17 @@ final class StoreEdits {
     var confirmingDelete: UUID?
     var undoOffer: UndoOffer?
 
-    init(writer: StoreWriter, sync: StoreSync?, stateDir: String, sendingNote: String?, keepAlive: AnyObject? = nil) {
+    init(writer: StoreWriter, sync: StoreSync?, stateDir: String, live: LiveStore) {
         self.writer = writer
         self.sync = sync
         self.stateDir = stateDir
-        let repoDir = storeRepoDir(stateDir: stateDir)
-        self.repoDir = repoDir
-        self.sendingNote = sendingNote
-        self.keepAlive = keepAlive
-        syncing = sync.map { SyncModel(sync: $0, repoDir: repoDir) }
+        self.live = live
         refreshQueue()
+        live.changed.subscribe(self) { edits, changed in
+            if changed.change.rewritesEntries {
+                edits.refreshQueue()
+            }
+        }
     }
 
     func refreshQueue() {
@@ -86,6 +80,52 @@ final class StoreEdits {
     /// "3 changes not sent".
     var bannerTitle: String {
         unpushed.count == 1 ? "1 change not sent" : "\(unpushed.count) changes not sent"
+    }
+
+    // MARK: Writes
+
+    /// Saves the form's entry; `nil` if the form refused or said why not.
+    func save(_ form: EntryFormModel, copies: CopyCache?) -> Saved? {
+        guard let saved = form.save(copies: copies) else { return nil }
+        let renamed = saved.previous.map { StoreChange.Renamed(from: $0, to: saved.entry) }
+        live.announce(.wrote(entries: [saved.previous, saved.entry].compactMap { $0 }, renamed: renamed))
+        return saved
+    }
+
+    func delete(_ entry: String, copies: CopyCache?) throws {
+        _ = try BackgroundTime.run("Delete") { try writer.delete(entry: entry, copies: copies) }
+        live.announce(.wrote(entries: [entry], renamed: nil))
+    }
+
+    /// Takes back the newest change. Nothing without the queue. `task`
+    /// names the time asked of iOS to finish it.
+    func undoLast(task: String = "Undo") throws {
+        guard let sync else { return }
+        let undone = try BackgroundTime.run(task) { try sync.undoLast() }
+        announce(undone)
+    }
+
+    func discard(_ id: String) throws {
+        guard let sync else { return }
+        let discarded = try BackgroundTime.run("Change") { try sync.discard(id: id) }
+        announce(discarded)
+    }
+
+    func discardAll() throws {
+        guard let sync else { return }
+        let entries = unpushed.map(\.entry)
+        try BackgroundTime.run("Change") { try sync.discardAll() }
+        live.announce(.wrote(entries: entries, renamed: nil))
+    }
+
+    /// "Accept the new list" for `folder`.
+    func acceptRecipients(folder: String) throws {
+        try writer.acceptRecipients(folder: folder)
+        live.announce(.recipientsAccepted(folder: folder))
+    }
+
+    private func announce(_ changes: [QueueItem]) {
+        live.announce(.wrote(entries: changes.flatMap { [$0.previous, $0.entry].compactMap { $0 } }, renamed: nil))
     }
 }
 

@@ -65,7 +65,7 @@ extension AppModel {
     func setSplitView(_ on: Bool) {
         usesSplitView = on
         if on {
-            pathChanged()
+            setPath(path)
         }
     }
 
@@ -94,7 +94,6 @@ extension AppModel {
         guard usesSplitView else { return }
         let split = SplitPath(path)
         guard split.details.contains(where: \.showsEntry) else { return }
-        path = split.folders + split.details.filter { !$0.showsEntry }
-        pathChanged()
+        setPath(split.folders + split.details.filter { !$0.showsEntry })
     }
 }

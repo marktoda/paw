@@ -36,7 +36,7 @@ struct FolderScreen: View {
                 Section {
                     ForEach(listing.folders, id: \.path) { folder in
                         FolderRow(name: folder.name, count: Int(folder.entryCount), tint: tint) {
-                            model.path.append(.folder(folder.path))
+                            model.show(.folder(folder.path))
                         }
                         .pawListRow()
                     }

@@ -136,7 +136,7 @@ struct HomeScreen: View {
                 Section {
                     ForEach(model.home.folders, id: \.path) { folder in
                         FolderRow(name: folder.name, count: Int(folder.entryCount)) {
-                            model.path.append(.folder(folder.path))
+                            model.show(.folder(folder.path))
                         }
                         .pawListRow()
                         .splitSelected(inSidebar && SplitPath(model.path).folders.first == .folder(folder.path))

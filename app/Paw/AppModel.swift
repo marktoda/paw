@@ -46,41 +46,28 @@ struct Notice: Equatable {
     var keyEntry: EntryRef? = nil
 }
 
-/// The one model of the app: owns the store, the Face ID copies and the key
-/// port, and gives views plain values. The PIN lives in the core's key
-/// session, never here. Card and Face ID calls block for seconds, so they
-/// run off the main thread and their results are published here.
+/// The one model of the screens: navigation, the key sheet, open entries
+/// and what Home shows, over a finished `StoreSession`. Gives views plain
+/// values. The PIN lives in the core's key session, never here. Card and
+/// Face ID calls block for seconds, so they run off the main thread and
+/// their results are published here.
 @MainActor @Observable
 final class AppModel {
     /// An open entry survives this long with paw in the background.
     static let openEntryBackgroundLimitMs: Int64 = 2 * 60 * 1000
 
-    /// Replaced after each save, delete or undo (`storeChanged`).
-    private(set) var store: PassStore
-    /// `nil` where Face ID copies cannot be kept: on a device until the
-    /// Secure Enclave keystore exists. Every open then uses the key.
-    let copies: CopyCache?
-    /// Held for the app's life: plug-ins and removals, and every key task.
-    let keyPort: KeyPort
-    /// The key going in and out, and reading it.
-    let reader: KeyReader
+    let storeSession: StoreSession
     /// The key sheet's task: opening an entry with the key.
     let keyTask: KeyTaskDriver
     let faceId: FaceIdOpener
-    /// Debug-only controls for the simulated hardware, `nil` on a device.
-    let simulator: SimulatorControls?
-    /// The copies' clock: Face ID deadlines, the PIN's 15 minutes and an
-    /// open entry's 2 minutes in the background are all measured on it.
-    let clock: Clock
 
-    var path: [Route] = []
+    /// The navigation stack. Changed only through `setPath`, `show` and
+    /// `leave`, which close what leaves it.
+    private(set) var path: [Route] = []
     /// iPad in regular width: `path` is shown as columns (`SplitPath`).
     var usesSplitView = false
     private(set) var home: FolderListing
     private(set) var entryCount: Int
-    /// Adding, editing and deleting, and the unpushed changes; `nil` where
-    /// the store cannot be written (see `AppModel+Edit.swift`).
-    var edits: StoreEdits?
     private(set) var liveCopies: [LiveCopy] = []
     /// Entry paths opened in this run, most recent first.
     private(set) var recentPaths: [String] = []
@@ -99,10 +86,6 @@ final class AppModel {
     /// An entry's large type is up (a full-screen cover on iPad), so the
     /// keyboard shortcuts stay off.
     var largeTypeUp = false
-    /// Tells AutoFill's suggestions about the store; set for a set-up store only.
-    @ObservationIgnored var publishIdentities: (@MainActor (PassStore) -> Void)?
-    /// Keeps whether an opened entry has a one-time code, for AutoFill.
-    @ObservationIgnored var noteCode: (@MainActor (OpenedEntry, String) -> Void)?
 
     @ObservationIgnored private var pendingRoute: Route?
     /// Bumped by each key read: which access answer is the latest.
@@ -111,43 +94,67 @@ final class AppModel {
     @ObservationIgnored var backgroundedAtMs: Int64?
     @ObservationIgnored var deviceLockWatch: NSObjectProtocol?
 
-    /// `clock` is the one the copies use: the PIN's 15 minutes in the
-    /// background are measured on it.
-    /// `keyPort` is setup's when Home follows setup, so the PIN typed there
-    /// is still held.
-    init(store: PassStore, copies: CopyCache?, clock: Clock, connect: @escaping KeyReader.Connect,
-         simulator: SimulatorControls?, keyPort: KeyPort? = nil) {
-        self.store = store
-        self.copies = copies
-        self.simulator = simulator
-        self.clock = clock
-        let port = keyPort ?? KeyPort(clock: clock)
-        self.keyPort = port
-        let reader = KeyReader(port: port, connect: connect)
-        self.reader = reader
-        keyTask = KeyTaskDriver(reader: reader)
+    /// `notice` is said on Home from the start.
+    init(session: StoreSession, notice: Notice? = nil) {
+        storeSession = session
+        keyTask = KeyTaskDriver(reader: session.reader)
         faceId = FaceIdOpener()
+        let store = session.live.store
         home = store.home()
         entryCount = Int(store.entryCount())
+        self.notice = notice
         keyTask.owner = self
-        reader.onRead = { [weak self] session in
-            self?.learnAccess(session)
+        session.reader.onRead = { [weak self] keySession in
+            self?.learnAccess(keySession)
         }
-        #if DEBUG && targetEnvironment(simulator)
-        if let simulator {
-            reader.plugsInSimulatedKey = simulator.plugIn
+        session.live.changed.subscribe(self) { model, changed in
+            model.storeChanged(changed)
         }
-        #endif
-        Clipboard.useClock(clock)
+        session.requests.subscribe(self) { model, request in
+            model.asked(request)
+        }
         sweepCopies()
         watchDeviceLock()
-        reader.watch(startsUnplugged: simulator?.startsUnplugged == true)
-        #if targetEnvironment(simulator)
-        // A session already open (setup's) is kept, with the PIN it holds.
-        if reader.present {
-            reader.read()
-        }
-        #endif
+    }
+
+    /// The store as it is now: read again after each change.
+    var store: PassStore {
+        storeSession.live.store
+    }
+
+    /// `nil` where Face ID copies cannot be kept: on a device until the
+    /// Secure Enclave keystore exists. Every open then uses the key.
+    var copies: CopyCache? {
+        storeSession.copies
+    }
+
+    /// Held for the app's life: plug-ins and removals, and every key task.
+    var keyPort: KeyPort {
+        storeSession.keyPort
+    }
+
+    var reader: KeyReader {
+        storeSession.reader
+    }
+
+    /// The copies' clock: Face ID deadlines, the PIN's 15 minutes and an
+    /// open entry's 2 minutes in the background are all measured on it.
+    var clock: Clock {
+        storeSession.clock
+    }
+
+    var simulator: SimulatorControls? {
+        storeSession.simulator
+    }
+
+    /// Adding, editing and deleting, and the unpushed changes; `nil` where
+    /// the store cannot be written (see `AppModel+Edit.swift`).
+    var edits: StoreEdits? {
+        storeSession.edits
+    }
+
+    var syncing: SyncModel? {
+        storeSession.syncing
     }
 
     // MARK: Lists
@@ -301,7 +308,7 @@ final class AppModel {
         guard keyRequest == nil else { return }
         closeSplitEntryForNextOpen()
         if keyPort.session() != nil, case .notForThisKey = accessByPath[entry.path] {
-            path.append(.anotherKey(entry.path))
+            show(.anotherKey(entry.path))
             return
         }
         pendingRoute = nil
@@ -325,7 +332,7 @@ final class AppModel {
     func keySheetDismissed() {
         if let route = pendingRoute {
             pendingRoute = nil
-            path.append(route)
+            show(route)
         }
     }
 
@@ -336,7 +343,7 @@ final class AppModel {
         if let fingerprint = keyPort.session()?.info().decryptionFingerprint {
             accessByPath[entry.path] = store.access(entry: entry.path, cardFingerprint: fingerprint)
         }
-        path.append(.anotherKey(entry.path))
+        show(.anotherKey(entry.path))
     }
 
     /// "This key: serial 12 345 678, ends 77B0 9F3A. ..."
@@ -367,12 +374,11 @@ final class AppModel {
     private func faceIdFinished(_ entry: EntryRef, result: Result<FaceIdOpen, Error>) {
         switch result {
         case .success(.opened(let opened)):
-            noteOpened(entry.path)
-            noteCode?(opened, entry.path)
+            noteOpened(opened, path: entry.path)
             let session = OpenSession(
                 ref: entry, entry: opened, view: opened.view(), hadCopy: liveCopy(entry.path) != nil)
             sessions[session.id] = session
-            path.append(.entry(session.id))
+            show(.entry(session.id))
         case .success(.needsKey):
             openWithKey(entry)
         case .failure(let error):
@@ -407,9 +413,10 @@ final class AppModel {
         }
     }
 
-    private func noteOpened(_ path: String) {
+    private func noteOpened(_ opened: OpenedEntry, path: String) {
         recentPaths.removeAll { $0 == path }
         recentPaths.insert(path, at: 0)
+        storeSession.live.opened.send(EntryOpened(entry: opened, path: path))
     }
 
     func session(_ id: UUID) -> OpenSession? {
@@ -438,14 +445,29 @@ final class AppModel {
         }
     }
 
-    /// The store on disk changed (a save, a delete, an undo): lists and
-    /// search read it again. Recent entries follow a rename and drop
-    /// entries that are gone.
-    func storeChanged(_ store: PassStore, renamed: (from: String, to: String)? = nil) {
-        self.store = store
+    /// The store on disk changed (a save, a delete, an undo, a sync):
+    /// lists and search read it again. Recent entries follow a rename and
+    /// drop entries that are gone. A removal locks first.
+    private func storeChanged(_ changed: StoreChanged) {
+        let renamed: StoreChange.Renamed?
+        switch changed.change {
+        case .wrote(_, let rename):
+            renamed = rename
+        case .synced, .reencrypted:
+            renamed = nil
+        case .recipientsAccepted:
+            return
+        case .removed:
+            lockNow()
+            return
+        }
+        if let problem = changed.readProblem {
+            notice = Notice(problem: "Couldn't read the list again", nextStep: describe(problem))
+            return
+        }
+        let store = changed.store
         home = store.home()
         entryCount = Int(store.entryCount())
-        publishIdentities?(store)
         let exists = Set(allEntryPaths())
         recentPaths = recentPaths
             .map { $0 == renamed?.from ? (renamed?.to ?? $0) : $0 }
@@ -460,8 +482,41 @@ final class AppModel {
         refreshCopies()
     }
 
+    // MARK: Navigation
+
+    /// The one way the stack changes: by a screen's back, a column, or a
+    /// feature asking. Every opened entry that leaves it is closed.
+    func setPath(_ routes: [Route]) {
+        path = routes
+        pathChanged()
+    }
+
+    func show(_ route: Route) {
+        setPath(path + [route])
+    }
+
+    func leave(_ route: Route) {
+        setPath(path.filter { $0 != route })
+    }
+
+    /// What a feature asked the screens for.
+    private func asked(_ request: ScreenRequest) {
+        switch request {
+        case .show(let route): show(route)
+        case .leave(let route): leave(route)
+        case .toast(let words): toast = words
+        case .settings: showsSettings = true
+        }
+    }
+
+    /// The key sheet, Settings, an entry's large type, or a feature's
+    /// sheet is up.
+    var sheetIsUp: Bool {
+        keyRequest != nil || showsSettings || largeTypeUp || storeSession.sheetIsUp
+    }
+
     /// Closes every opened entry that is no longer on the navigation stack.
-    func pathChanged() {
+    private func pathChanged() {
         if usesSplitView {
             // Arrives as appended to the stack; the columns want it in order.
             let columns = SplitPath(path).path
@@ -504,8 +559,7 @@ final class AppModel {
         // app: it leaves nothing behind.
         faceId.forget()
         pendingRoute = nil
-        path = []
-        pathChanged()
+        setPath([])
         Clipboard.clearIfOurs()
         refreshCopies()
         toast = ended == 1 ? "Locked. 1 password needs your key again." : "Locked. \(ended) passwords need your key again."
@@ -529,8 +583,7 @@ final class AppModel {
                 }
             }
             keyPort.session()?.noteForegrounded()
-            publishIdentities?(store)
-            edits?.syncing?.cameForward(app: self)
+            storeSession.cameForward()
             Clipboard.clearIfExpired()
             sweepCopies()
             reader.readIfNeeded()
@@ -621,8 +674,7 @@ extension AppModel: KeyTaskOwner {
     /// The entry is open: it is pushed once the sheet has gone.
     private func opened(_ outcome: KeyOutcome, entry: EntryRef) {
         guard case .opened(let opened, let faceIdUntilMs, _) = outcome else { return }
-        noteOpened(entry.path)
-        noteCode?(opened, entry.path)
+        noteOpened(opened, path: entry.path)
         refreshCopies()
         let session = OpenSession(ref: entry, entry: opened, view: opened.view(), hadCopy: faceIdUntilMs != nil)
         sessions[session.id] = session

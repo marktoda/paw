@@ -6,7 +6,7 @@ struct SyncRouteScreen: View {
     let route: SyncRoute
 
     var body: some View {
-        if let edits = model.edits, let syncing = edits.syncing {
+        if let edits = model.edits, let syncing = model.syncing {
             switch route {
             case .heldBack:
                 HeldBackScreen(model: model, syncing: syncing)
@@ -15,9 +15,8 @@ struct SyncRouteScreen: View {
             case .replaced:
                 ReplacedScreen(model: model, syncing: syncing)
             case .review(let folder):
-                RecipientsReviewScreen(writer: edits.writer, folder: folder) {
-                    model.path.removeAll { $0 == .sync(.review(folder: folder)) }
-                    syncing.recomputeLocal()
+                RecipientsReviewScreen(edits: edits, folder: folder) {
+                    model.leave(.sync(.review(folder: folder)))
                 }
             }
         } else {
@@ -76,7 +75,7 @@ struct HeldBackScreen: View {
             if !syncing.heldBack.isEmpty, syncing.reencryptReady > 0 {
                 Section {
                     Button {
-                        syncing.startReencrypt(app: model)
+                        syncing.startReencrypt()
                     } label: {
                         KeyActionLabel(reencryptTitle(syncing.reencryptReady))
                     }
@@ -130,7 +129,7 @@ struct HeldBackScreen: View {
                 identifier: "held-back-should-be-for-\(entry.name)")
             if item.list != .accepted {
                 actionButton("Review who can open \(place)", identifier: "held-back-review-\(entry.name)") {
-                    model.path.append(.sync(.review(folder: folder)))
+                    model.show(.sync(.review(folder: folder)))
                 }
             }
             if confirming == item.id {
@@ -142,7 +141,6 @@ struct HeldBackScreen: View {
                     onConfirm: {
                         confirming = nil
                         model.discardChange(item.id)
-                        syncing.recomputeLocal()
                     },
                     onCancel: { confirming = nil })
                     .pawListRow()
@@ -250,7 +248,7 @@ struct RefusedRemoteScreen: View {
             }
             Section {
                 Button {
-                    syncing.start(.refresh, app: model)
+                    syncing.start(.refresh)
                 } label: {
                     KeyActionLabel("Check again")
                 }
@@ -327,7 +325,7 @@ struct ReplacedScreen: View {
             Section {
                 Button {
                     confirmingDiscard = false
-                    syncing.acceptReplaced(keepChanges: true, app: model)
+                    syncing.acceptReplaced(keepChanges: true)
                 } label: {
                     Text(unpushed > 0 ? "Use the new store, keep my \(changes)" : "Use the new store")
                 }
@@ -347,7 +345,7 @@ struct ReplacedScreen: View {
                             identifier: "replaced-discard",
                             onConfirm: {
                                 confirmingDiscard = false
-                                syncing.acceptReplaced(keepChanges: false, app: model)
+                                syncing.acceptReplaced(keepChanges: false)
                             },
                             onCancel: { confirmingDiscard = false })
                             .pawListRow()
@@ -367,7 +365,7 @@ struct ReplacedScreen: View {
             }
             Section {
                 Button("Not now") {
-                    syncing.notNow(app: model)
+                    syncing.notNow()
                 }
                 .buttonStyle(.pawSecondary)
                 .accessibilityIdentifier("replaced-not-now")

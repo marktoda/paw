@@ -49,7 +49,7 @@ struct EntryFormSheet: View {
         switch purpose {
         case .add(let folder):
             form = EntryFormModel(
-                adding: folder, writer: edits.writer, folders: model.allFolders, store: model.store)
+                adding: folder, writer: edits.writer, folders: model.allFolders, live: model.storeSession.live)
         case .edit(let id, let focusName):
             guard let session = model.session(id) else {
                 openProblem = "It was closed. Open it again, then tap Edit."
@@ -58,7 +58,7 @@ struct EntryFormSheet: View {
             do {
                 form = try EntryFormModel(
                     editing: session, focusName: focusName, writer: edits.writer, folders: model.allFolders,
-                    store: model.store)
+                    live: model.storeSession.live)
             } catch let error as WriteError {
                 openProblem = editProblem(error, folder: session.ref.folder).nextStep
             } catch {
@@ -123,7 +123,7 @@ private struct EntryFormView: View {
                 }
             }
             .navigationDestination(isPresented: $reviewing) {
-                RecipientsReviewScreen(writer: edits.writer, folder: form.effectiveFolder) {
+                RecipientsReviewScreen(edits: edits, folder: form.effectiveFolder) {
                     reviewing = false
                     form.recipientsAccepted()
                 }
@@ -133,9 +133,6 @@ private struct EntryFormView: View {
                     focus = nil
                     withAnimation { scroller.scrollTo("top", anchor: .top) }
                 }
-            }
-            .onChange(of: ObjectIdentifier(model.store)) {
-                form.storeChanged(model.store)
             }
             .onChange(of: form.saveProblem) {
                 if form.saveProblem != nil {
@@ -451,10 +448,8 @@ private struct EntryFormView: View {
 
     private func save() {
         focus = nil
-        guard let outcome = form.save(copies: model.copies) else { return }
-        let purpose = form.purpose
+        guard model.save(form) else { return }
         edits.form = nil
-        model.saved(outcome, purpose: purpose)
     }
 }
 

@@ -83,9 +83,12 @@ final class EntryFormModel {
     var confirmingDiscard = false
 
     @ObservationIgnored private let writer: StoreWriter
-    /// The names Home and search hold, for "already used". Without it (some
-    /// tests) the writer reads the store on each change.
+    /// The names Home and search hold, for "already used", followed as the
+    /// store changes. Without it (some tests) the writer reads the store on
+    /// each change.
     @ObservationIgnored private var store: PassStore?
+    /// Saved: the store changes no longer concern it.
+    @ObservationIgnored private var done = false
     @ObservationIgnored private var recipientsTask: Task<Void, Never>?
     @ObservationIgnored private var openableTask: Task<Void, Never>?
     @ObservationIgnored private var draft: EntryDraft?
@@ -101,31 +104,32 @@ final class EntryFormModel {
     @ObservationIgnored private var answeredFolder: String?
 
     /// A blank form in `folder`.
-    init(adding folder: String, writer: StoreWriter, folders: [String], store: PassStore? = nil) {
+    init(adding folder: String, writer: StoreWriter, folders: [String], live: LiveStore? = nil) {
         purpose = .add(folder: folder)
         isEditing = false
         hadOneTimeCode = false
         self.writer = writer
         self.folders = folders
-        self.store = store
+        store = live?.store
         self.folder = folder
         original.folder = folder
         draft = writer.newDraft(folder: folder)
         changed()
         loadFolderOpenable()
+        follow(live)
     }
 
     /// The open entry `session`, filled in. Throws if it was closed.
     init(
         editing session: OpenSession, focusName: Bool, writer: StoreWriter, folders: [String],
-        store: PassStore? = nil
+        live: LiveStore? = nil
     ) throws {
         purpose = .edit(sessionID: session.id, focusName: focusName)
         isEditing = true
         hadOneTimeCode = session.view.hasOtp
         self.writer = writer
         self.folders = folders
-        self.store = store
+        store = live?.store
         let opened = session.entry
         draft = try writer.editDraft(opened: opened, entry: session.ref.path)
         original = Original(
@@ -147,6 +151,13 @@ final class EntryFormModel {
         openedFieldKeys = Set(extraFields.compactMap { $0.originalKey.map(Self.fieldKey) })
         changed()
         loadFolderOpenable()
+        follow(live)
+    }
+
+    private func follow(_ live: LiveStore?) {
+        live?.changed.subscribe(self) { form, changed in
+            form.storeChanged(changed.store)
+        }
     }
 
     // MARK: Typing
@@ -360,10 +371,10 @@ final class EntryFormModel {
         }
     }
 
-    /// The app read the store again (a sync, a change undone): check the
-    /// name against the new names and read the folders' keys again.
-    func storeChanged(_ store: PassStore) {
-        guard self.store !== store, draft != nil else { return }
+    /// The store was read again (a sync, a change undone): check the name
+    /// against the new names and read the folders' keys again.
+    private func storeChanged(_ store: PassStore) {
+        guard self.store !== store, draft != nil, !done else { return }
         self.store = store
         recipientsFolder = nil
         changed()
@@ -448,9 +459,13 @@ final class EntryFormModel {
             // phone, usually to fill it straight in. An edit keeps the
             // copy's deadline, which the core handles.
             let ttl = isEditing ? 0 : FaceIdOpener.windowSecs
-            return try BackgroundTime.run("Save") {
+            let saved = try BackgroundTime.run("Save") {
                 try writer.save(draft: draft, copies: copies, newCopyTtlSecs: ttl)
             }
+            // Its own save must not show as a name already used while
+            // the sheet closes.
+            done = true
+            return saved
         } catch let error as WriteError {
             if case .Invalid(let found) = error {
                 problems = found

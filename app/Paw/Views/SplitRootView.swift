@@ -88,7 +88,7 @@ struct SplitRootView: View {
             set: { stack in
                 guard trimmedQuery.isEmpty else { return }
                 let split = SplitPath(model.path)
-                model.path = Array(split.folders.prefix(1)) + stack + split.details
+                model.setPath(Array(split.folders.prefix(1)) + stack + split.details)
             })
     }
 
@@ -98,7 +98,7 @@ struct SplitRootView: View {
             get: { Array(SplitPath(model.path).details.dropFirst()) },
             set: { stack in
                 let split = SplitPath(model.path)
-                model.path = split.folders + Array(split.details.prefix(1)) + stack
+                model.setPath(split.folders + Array(split.details.prefix(1)) + stack)
             })
     }
 
@@ -108,7 +108,7 @@ struct SplitRootView: View {
     /// nothing while a sheet is up.
     private var actions: PawActions {
         let model = model
-        let syncing = model.edits?.syncing
+        let syncing = model.syncing
         if model.sheetIsUp {
             return PawActions()
         }
@@ -119,8 +119,8 @@ struct SplitRootView: View {
                 model.startAdd(folder: model.splitFolder)
             },
             check: syncing == nil || syncing?.running != nil ? nil : {
-                guard !model.sheetIsUp, let syncing = model.edits?.syncing, syncing.running == nil else { return }
-                syncing.check(app: model)
+                guard !model.sheetIsUp, let syncing = model.syncing, syncing.running == nil else { return }
+                syncing.check()
             },
             lock: {
                 guard !model.sheetIsUp else { return }
@@ -130,14 +130,6 @@ struct SplitRootView: View {
                 guard !model.sheetIsUp else { return }
                 model.showsSettings = true
             })
-    }
-}
-
-extension AppModel {
-    /// The key sheet, the editor, the sync sheet, Settings or an entry's
-    /// large type is up.
-    var sheetIsUp: Bool {
-        keyRequest != nil || showsSettings || largeTypeUp || edits?.form != nil || edits?.syncing?.sheet != nil
     }
 }
 

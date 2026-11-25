@@ -12,7 +12,7 @@ final class EntryFormStoreTests: XCTestCase {
         let edits = try XCTUnwrap(fixture.model.edits)
         let writer = CountingWriter(edits.writer)
         let folders = fixture.model.allFolders
-        let form = EntryFormModel(adding: "", writer: writer, folders: folders, store: fixture.model.store)
+        let form = EntryFormModel(adding: "", writer: writer, folders: folders, live: fixture.model.storeSession.live)
 
         await waitFor("the folders' keys") { form.folderOpenable.count == folders.count }
         XCTAssertEqual(form.folderOpenable["web"], true)
@@ -47,7 +47,8 @@ final class EntryFormStoreTests: XCTestCase {
         let fixture = try Fixture(writable: true)
         let edits = try XCTUnwrap(fixture.model.edits)
         let form = EntryFormModel(
-            adding: "web", writer: edits.writer, folders: fixture.model.allFolders, store: fixture.model.store)
+            adding: "web", writer: edits.writer, folders: fixture.model.allFolders,
+            live: fixture.model.storeSession.live)
         form.binding(\.name, field: "name").wrappedValue = "new.example"
         form.binding(\.password, field: "password").wrappedValue = "Typed-pass-42"
         await waitFor("who can open web") { form.folderWritable != nil }
@@ -62,7 +63,6 @@ final class EntryFormStoreTests: XCTestCase {
 
         // The store read again: the answer for email stays while it is asked again.
         try await fixture.add("other.example", folder: "web")
-        form.storeChanged(fixture.model.store)
         XCTAssertNotNil(form.recipients)
         XCTAssertTrue(form.canSave)
     }

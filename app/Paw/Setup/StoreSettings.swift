@@ -7,12 +7,16 @@ import SwiftUI
 /// `RemoveStoreSection`, last in Settings.
 struct StoreSettingsSections: View {
     let model: AppModel
-    @Environment(\.storeControls) private var controls
     @State private var showsDiagnostics = false
 
+    /// The set-up store's address; `nil` for a fixture.
+    private var setUpAddress: String? {
+        model.storeSession.setUp == nil ? nil : (model.edits?.sync?.address() ?? "")
+    }
+
     var body: some View {
-        if let controls {
-            if !controls.copiesAvailable {
+        if model.storeSession.setUp != nil {
+            if model.copies == nil {
                 Section {
                     Text(Device.words("Not available on this iPhone. Every password needs your key."))
                         .font(PawFont.footnote)
@@ -24,7 +28,7 @@ struct StoreSettingsSections: View {
             }
         }
         storeSection
-        GitHubSettingsSection()
+        GitHubSettingsSection(address: setUpAddress)
         Section {
             Button {
                 showsDiagnostics = true
@@ -58,9 +62,9 @@ struct StoreSettingsSections: View {
     @ViewBuilder private var storeSection: some View {
         let sync = model.edits?.sync
         let writer = model.edits?.writer
-        if controls != nil || sync != nil || writer != nil {
+        if model.storeSession.setUp != nil || sync != nil || writer != nil {
             Section {
-                if let address = controls?.address ?? sync?.address() {
+                if let address = setUpAddress ?? sync?.address() {
                     LabeledContent {
                         Text(address)
                             .font(PawFont.footnote.monospaced())
@@ -93,22 +97,22 @@ struct StoreSettingsSections: View {
 }
 
 /// Settings' last section on a set-up store: Remove, after an inline
-/// confirmation that says what would be lost.
+/// confirmation that says what would be lost, counted as it is now.
 struct RemoveStoreSection: View {
-    @Environment(\.storeControls) private var controls
+    let model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var confirmingRemove = false
     @State private var removeProblem: String?
 
     var body: some View {
-        if let controls {
+        if let setUp = model.storeSession.setUp {
             Section {
                 if confirmingRemove {
                     InlineConfirmRow(
-                        question: "Remove this store?", detail: removeWarning(controls),
+                        question: "Remove this store?", detail: warning,
                         confirmTitle: "Remove", cancelTitle: "Keep it",
                         identifier: "settings-remove", questionIdentifier: "settings-remove-warning",
-                        onConfirm: { remove(controls) },
+                        onConfirm: { remove(setUp) },
                         onCancel: { confirmingRemove = false })
                 } else {
                     Button(Device.words("Remove store from this iPhone\u{2026}")) { confirmingRemove = true }
@@ -122,19 +126,21 @@ struct RemoveStoreSection: View {
         }
     }
 
-    private func removeWarning(_ controls: StoreControls) -> String {
+    /// What Remove deletes, and the changes it would lose as they are now.
+    var warning: String {
+        let unpushed = model.edits?.unpushed.count ?? 0
         var text = Device.words("Deletes the store, its Face ID copies and your key's record from this iPhone. ")
             + "The store on the server is not touched."
-        if controls.unpushed == 1 {
+        if unpushed == 1 {
             text += " 1 change not sent yet will be lost."
-        } else if controls.unpushed > 1 {
-            text += " \(controls.unpushed) changes not sent yet will be lost."
+        } else if unpushed > 1 {
+            text += " \(unpushed) changes not sent yet will be lost."
         }
         return text
     }
 
-    private func remove(_ controls: StoreControls) {
-        if let problem = controls.remove() {
+    private func remove(_ setUp: SetUpStore) {
+        if let problem = setUp.remove() {
             removeProblem = problem
         } else {
             dismiss()

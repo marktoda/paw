@@ -6,7 +6,7 @@ import XCTest
 @MainActor
 final class SyncModelTests: XCTestCase {
     private func syncModel(_ fixture: Fixture, file: StaticString = #filePath, line: UInt = #line) throws -> SyncModel {
-        try XCTUnwrap(fixture.model.edits?.syncing, "The fixture store should sync", file: file, line: line)
+        try XCTUnwrap(fixture.model.syncing, "The fixture store should sync", file: file, line: line)
     }
 
     /// The sheet asks for the PIN and gets it.
@@ -36,14 +36,14 @@ final class SyncModelTests: XCTestCase {
 
         // With a change waiting the pill shows the status page; with none
         // and no check yet, it goes straight to the key.
-        sync.pillTapped(app: fixture.model)
+        sync.pillTapped()
         XCTAssertEqual(sync.sheet?.mode, .status)
     }
 
     func testThePillGoesStraightToTheKeyBeforeTheFirstCheck() throws {
         let fixture = try Fixture(writable: true)
         let sync = try syncModel(fixture)
-        sync.pillTapped(app: fixture.model)
+        sync.pillTapped()
         guard case .key(.refresh)? = sync.sheet?.mode else {
             return XCTFail("The pill should start a check with the key, the sheet is \(String(describing: sync.sheet?.mode))")
         }
@@ -61,7 +61,7 @@ final class SyncModelTests: XCTestCase {
         let edits = try XCTUnwrap(model.edits)
         try await fixture.add("sent.example", folder: "web")
 
-        sync.start(.send, app: model)
+        sync.start(.send)
         await passPin(sync)
         await waitForTheEnd(sync)
         XCTAssertNil(sync.failure)
@@ -75,7 +75,7 @@ final class SyncModelTests: XCTestCase {
         // A second send in the same run: the PIN is still held.
         try await fixture.add("again.example", folder: "web")
         model.toast = nil
-        sync.start(.send, app: model)
+        sync.start(.send)
         var askedForPin = false
         await waitFor("the second send to end", timeout: 30) {
             if case .pin? = sync.keyStage { askedForPin = true }
@@ -90,7 +90,7 @@ final class SyncModelTests: XCTestCase {
         let model = fixture.model
         let sync = try syncModel(fixture)
         try await fixture.add("cancel.example", folder: "web")
-        sync.start(.send, app: model)
+        sync.start(.send)
         await waitFor("the PIN") { sync.keyStage == .pin(triesLeft: 3, forgotten: false) }
         sync.cancelSheet()
         XCTAssertNil(sync.sheet)
@@ -108,7 +108,7 @@ final class SyncModelTests: XCTestCase {
         defer { SimRemoteHandle.shared.setRefusesPushes(false) }
         try await fixture.add("refused.example", folder: "web")
 
-        sync.start(.send, app: model)
+        sync.start(.send)
         await passPin(sync)
         await waitForTheEnd(sync)
         let failure = try XCTUnwrap(sync.failure)
@@ -126,7 +126,7 @@ final class SyncModelTests: XCTestCase {
         let sync = try syncModel(fixture)
         _ = try SimRemoteHandle.shared.apply(.add)
 
-        sync.check(app: model)
+        sync.check()
         await passPin(sync)
         await waitFor("the summary", timeout: 30) { sync.summary != nil }
         XCTAssertNil(sync.failure)

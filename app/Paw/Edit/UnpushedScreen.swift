@@ -12,7 +12,7 @@ struct UnpushedSection: View {
                     reason: .waiting, title: edits.bannerTitle,
                     detail: "Saved on this iPhone."
                 ) {
-                    model.path.append(.unpushed)
+                    model.show(.unpushed)
                 }
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Color.clear)
