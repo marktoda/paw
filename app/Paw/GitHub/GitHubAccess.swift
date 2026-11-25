@@ -8,12 +8,12 @@ import SwiftUI
 /// call into the core runs on `queue`, never on the main thread.
 @MainActor @Observable
 final class GitHubAccess {
-    let core: GitHub
+    let core: GitHubAccount
     private(set) var signedIn = false
     private(set) var link: GitHubLink?
     let queue = DispatchQueue(label: "paw-github", qos: .userInitiated)
 
-    init(core: GitHub) {
+    init(core: GitHubAccount) {
         self.core = core
         reload()
     }
@@ -67,23 +67,8 @@ struct GitHubHandoff<Value>: @unchecked Sendable {
     let value: Value
 }
 
-/// What a background task will call to bring in changes with the GitHub
-/// sign-in, with nobody present. Not called yet: it needs a registered
-/// background task and the store in the App Group container first.
+/// Where the store's GitHub sign-in comes from.
 enum GitHubRefresh {
-    /// Blocks for at most `seconds`: call it off the main thread. `nil` if
-    /// paw's folder can't be found (or, in the simulator, there is no
-    /// simulated GitHub).
-    static func runBackground(seconds: UInt32 = 25) -> BackgroundRefreshReport? {
-        guard let location = try? StoreLocation.standard() else { return nil }
-        #if targetEnvironment(simulator)
-        guard let core = SimGitHubLaunch.shared.makeCore(stateDir: location.stateDir.path) else { return nil }
-        #else
-        let core = GitHub.open(stateDir: location.stateDir.path, vault: KeychainTokenVault())
-        #endif
-        return core.backgroundRefresh(seconds: seconds)
-    }
-
     /// The sign-in for the store in `stateDir`: the real GitHub on a
     /// device, the simulated one (if `-pawSimGitHub` asked for it) in the
     /// simulator.
@@ -92,7 +77,7 @@ enum GitHubRefresh {
         #if targetEnvironment(simulator)
         return SimGitHubLaunch.shared.makeCore(stateDir: stateDir.path).map { GitHubAccess(core: $0) }
         #else
-        return GitHubAccess(core: GitHub.open(stateDir: stateDir.path, vault: KeychainTokenVault()))
+        return GitHubAccess(core: GitHubAccount.open(stateDir: stateDir.path, vault: KeychainTokenVault()))
         #endif
     }
 }

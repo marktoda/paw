@@ -1,7 +1,6 @@
 //! When github.com cannot be reached on port 22, setup offers GitHub's
 //! port-443 endpoint, and uses it only when asked. github.com is played by
-//! a closed port and by the simulated host, through a process-wide
-//! redirect, so this file is its own test binary and runs as one test.
+//! a closed port and by the simulated host, through setup's routes.
 
 #![cfg(feature = "sim")]
 
@@ -16,15 +15,15 @@ use paw_core::key::KeyPort;
 use paw_core::setup::outcome::RemoteReason;
 use paw_core::setup::{PortFallback, SetupError, SetupState};
 use paw_core::sim::SimTouch;
-use paw_core::sim::remote::{SimRemote, redirect_connections};
+use paw_core::sim::remote::{SimRemote, SimRoutes};
 
 /// A port nothing listens on.
 fn closed_port() -> u16 {
     TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port()
 }
 
-fn at_check_host(dir: &std::path::Path, port: &Arc<KeyPort>, address: &str) -> Arc<Setup> {
-    let setup = Setup::open(dir.to_string_lossy().into_owned()).unwrap();
+fn at_check_host(routes: &SimRoutes, dir: &std::path::Path, port: &Arc<KeyPort>, address: &str) -> Arc<Setup> {
+    let setup = routes.open_setup(dir.to_string_lossy().into_owned()).unwrap();
     setup.read_key_from_session(port.session().unwrap()).unwrap();
     setup.set_address(address.into()).unwrap();
     setup
@@ -35,11 +34,12 @@ fn port_443_is_offered_only_when_port_22_cannot_be_reached_and_used_only_when_as
     let key = key_common::sim(SimTouch::Off, SimTouch::Off, WAIT);
     let port = port_with(&key);
     let host = SimRemote::start(key.clone()).unwrap();
+    let routes = SimRoutes::new();
 
     // Port 22 refuses connections.
-    redirect_connections("github.com", 22, Some(closed_port()));
+    routes.redirect("github.com", 22, Some(closed_port()));
     let dir = tempfile::tempdir().unwrap();
-    let setup = at_check_host(dir.path(), &port, "you/store");
+    let setup = at_check_host(&routes, dir.path(), &port, "you/store");
 
     let error = setup.check_host().unwrap_err();
 
@@ -70,7 +70,7 @@ fn port_443_is_offered_only_when_port_22_cannot_be_reached_and_used_only_when_as
     // ssh.github.com:443 is held to GitHub's bundled keys: a host with any
     // other key (here, the simulated one) is refused, with no confirmation
     // offered and nothing sent.
-    redirect_connections("ssh.github.com", 443, Some(host.port()));
+    routes.redirect("ssh.github.com", 443, Some(host.port()));
     let error = setup.check_host().unwrap_err();
     assert!(matches!(&error, SetupError::HostKeyChanged { host, .. } if host == "ssh.github.com"), "{error:?}");
     assert_eq!(setup.port_fallback(), None);
@@ -79,9 +79,9 @@ fn port_443_is_offered_only_when_port_22_cannot_be_reached_and_used_only_when_as
 
     // A host that answers on port 22 with another key is not a blocked
     // port: no offer.
-    redirect_connections("github.com", 22, Some(host.port()));
+    routes.redirect("github.com", 22, Some(host.port()));
     let dir = tempfile::tempdir().unwrap();
-    let setup = at_check_host(dir.path(), &port, "git@github.com:you/store.git");
+    let setup = at_check_host(&routes, dir.path(), &port, "git@github.com:you/store.git");
     assert!(matches!(setup.check_host().unwrap_err(), SetupError::HostKeyChanged { .. }));
     assert_eq!(setup.port_fallback(), None);
 
@@ -93,16 +93,13 @@ fn port_443_is_offered_only_when_port_22_cannot_be_reached_and_used_only_when_as
             drop(stream);
         }
     });
-    redirect_connections("github.com", 22, Some(hang_up_port));
+    routes.redirect("github.com", 22, Some(hang_up_port));
     assert!(matches!(setup.check_host().unwrap_err(), SetupError::HostUnreachable { .. }));
     assert_eq!(setup.port_fallback(), None);
 
     // Another host's blocked port has nothing to offer.
     let dir = tempfile::tempdir().unwrap();
-    let setup = at_check_host(dir.path(), &port, &format!("ssh://git@127.0.0.1:{}/store.git", closed_port()));
+    let setup = at_check_host(&routes, dir.path(), &port, &format!("ssh://git@127.0.0.1:{}/store.git", closed_port()));
     assert!(matches!(setup.check_host().unwrap_err(), SetupError::HostUnreachable { .. }));
     assert_eq!(setup.port_fallback(), None);
-
-    redirect_connections("github.com", 22, None);
-    redirect_connections("ssh.github.com", 443, None);
 }

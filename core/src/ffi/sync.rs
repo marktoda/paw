@@ -22,7 +22,7 @@ use crate::key::{
 use crate::key::touch_clock::{TouchClock, TouchExpectation};
 use crate::setup::{SetupError, SetupFlow, SetupState, SetupWriteReadiness};
 use crate::store::PassStore;
-use crate::sync::{Cloned, Connection};
+use crate::sync::{Cloned, Connection, Route};
 use crate::PawError;
 use crate::sync::address::{StoreAddress, saved_address};
 use crate::sync::hosts::{KnownHosts, is_bundled};
@@ -54,6 +54,12 @@ fn elsewhere(error: &impl std::fmt::Display) -> Halt {
 }
 
 impl Setup {
+    /// Connections go where `route` says (a simulation playing a host).
+    #[cfg(feature = "sim")]
+    pub(crate) fn set_route(&self, route: Route) {
+        self.flow().set_route(route);
+    }
+
     fn flow(&self) -> MutexGuard<'_, SetupFlow> {
         // A panic in a step cannot leave the saved state half written: it is
         // written whole, by rename.
@@ -434,7 +440,7 @@ impl StoreSync {
     /// to compare before [`Self::trust_server_key`]. Network only.
     pub fn check_server_key(&self) -> Result<ServerKey, SyncError> {
         let host = self.address.connect_host();
-        let presented = crate::sync::scan_host_key(host, self.address.port)?;
+        let presented = crate::sync::scan_host_key(host, self.address.port, &Route::default())?;
         Ok(ServerKey {
             key_type: crate::sync::key_type_words(&presented.algorithm()),
             fingerprint: presented.fingerprint(),
@@ -447,7 +453,7 @@ impl StoreSync {
     /// host that already has a saved key (forget it first).
     pub fn trust_server_key(&self, fingerprint: String) -> Result<(), SyncError> {
         let (host, port) = (self.address.connect_host(), self.address.port);
-        let scan = || crate::sync::scan_host_key(host, port);
+        let scan = || crate::sync::scan_host_key(host, port, &Route::default());
         if !self.known_hosts().trust(host, port, scan, &fingerprint)? {
             return Err(SyncError::Failed {
                 message: format!("{host} now shows a different key from the one you checked"),

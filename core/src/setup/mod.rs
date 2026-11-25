@@ -285,6 +285,7 @@ pub struct SetupFlow {
     /// The last failure made no connection at all (see
     /// [`Self::port_fallback`]).
     no_connection: bool,
+    route: sync::Route,
 }
 
 fn remove_dir(path: &Path, _held: &crate::lock::Exclusive) -> Result<(), SetupError> {
@@ -317,6 +318,7 @@ impl SetupFlow {
             refused: Vec::new(),
             remote_message: None,
             no_connection: false,
+            route: sync::Route::default(),
         };
         if let Some(problem) = flow.saved.problem.filter(|_| flow.saved.step == Step::Address) {
             flow.note_remote(problem, None);
@@ -503,7 +505,7 @@ impl SetupFlow {
         match self.known_hosts().pin(&host, address.port).map_err(failed)? {
             Some(_) => self.ask_host(),
             None => {
-                let scanned = sync::scan_host_key(&host, address.port);
+                let scanned = sync::scan_host_key(&host, address.port, &self.route);
                 let key = scanned.map_err(|e| match e {
                     PawError::Network(detail) => {
                         self.note_remote(RemoteReason::Unreachable, None);
@@ -551,10 +553,16 @@ impl SetupFlow {
 
     fn remote(&self) -> Result<sync::Remote, SetupError> {
         let address = self.address()?;
-        self.known_hosts()
-            .remote(&address)
-            .map_err(failed)?
-            .ok_or_else(|| SetupError::WrongStep { message: "the host has not been checked".into() })
+        let remote = self.known_hosts().remote(&address).map_err(failed)?;
+        let mut remote = remote.ok_or_else(|| SetupError::WrongStep { message: "the host has not been checked".into() })?;
+        remote.route = self.route.clone();
+        Ok(remote)
+    }
+
+    /// Connections go where `route` says (a simulation playing a host).
+    #[cfg(feature = "sim")]
+    pub(crate) fn set_route(&mut self, route: sync::Route) {
+        self.route = route;
     }
 
     /// The setup error for a failed connection or git command, noting what

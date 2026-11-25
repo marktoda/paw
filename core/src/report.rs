@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use crate::key::KeyTouch;
 use crate::copies::CopyCache;
-use crate::ffi::github::GitHub;
+use crate::github::GitHubAccount;
 use crate::key::KeyPort;
 use crate::store::tree::StoreTree;
 
@@ -140,7 +140,7 @@ pub fn diagnostics_text(
     facts: DiagnosticsFacts,
     state_dir: Option<String>,
     port: Arc<KeyPort>,
-    github: Option<Arc<GitHub>>,
+    github: Option<Arc<GitHubAccount>>,
     copies: Option<Arc<CopyCache>>,
 ) -> String {
     let mut out = vec![

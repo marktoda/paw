@@ -148,6 +148,7 @@ struct Progress {
 }
 
 /// One device sign-in. See the module comment.
+#[derive(uniffi::Object)]
 pub struct DeviceSignIn {
     http: Http,
     keeper: Arc<TokenKeeper>,
@@ -228,10 +229,6 @@ impl DeviceSignIn {
         })
     }
 
-    pub fn code(&self) -> DeviceCode {
-        self.code.clone()
-    }
-
     /// The seconds paw waits between polls now (after any `slow_down`).
     pub fn interval(&self) -> Duration {
         self.progress.lock().unwrap_or_else(|p| p.into_inner()).interval
@@ -240,6 +237,16 @@ impl DeviceSignIn {
     /// How many times GitHub has been asked for the token.
     pub fn polls(&self) -> u32 {
         self.progress.lock().unwrap_or_else(|p| p.into_inner()).polls
+    }
+}
+
+/// One device sign-in, as the GitHub picker drives it: `poll` in a loop on
+/// a background thread while it returns `Waiting`; `cancel` from any thread.
+#[uniffi::export]
+impl DeviceSignIn {
+    /// The code to show and where to type it.
+    pub fn code(&self) -> DeviceCode {
+        self.code.clone()
     }
 
     /// Ends the sign-in: a `poll` waiting now, or any later, returns

@@ -42,7 +42,6 @@ pub fn is_store_busy(message: String) -> bool {
 }
 
 mod copies;
-pub mod github;
 pub mod sync;
 mod key;
 pub mod write;

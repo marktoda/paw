@@ -8,7 +8,7 @@
 //! - expiring tokens with refresh and rotation (each refresh token works
 //!   once and takes its access token with it), and revocation;
 //! - `/user/installations`, `/user/installations/{id}/repositories` with
-//!   paging, `/repos/{owner}/{repo}/contents/.gpg-id`, `/credentials/revoke`;
+//!   paging, `/credentials/revoke`;
 //! - git's smart HTTP (`info/refs`, `git-upload-pack`; no push) serving the
 //!   repository a [`SimRemote`] serves over SSH, with basic auth
 //!   `x-access-token:<token>`.
@@ -29,8 +29,11 @@ use base64::Engine;
 use git2::Oid;
 use serde_json::json;
 
-use super::remote::{AGENT, FLUSH, SimRemote, advertisement, branches, build_pack, known_commits, parse_oid, pkt_line};
+use super::remote::{
+    AGENT, FLUSH, Pkt, SimRemote, advertisement, branches, build_pack, known_commits, parse_oid, pkt_line, split_pkt,
+};
 use crate::PawError;
+use crate::github::GitHubAccount;
 use crate::github::device::{Cancel, PollClock};
 use crate::github::session::{TokenVault, VaultError};
 
@@ -345,7 +348,6 @@ struct Shared {
     client_id: Mutex<String>,
     state: Mutex<State>,
     web: Mutex<String>,
-    probes: AtomicU64,
     stall: Arc<Stall>,
 }
 
@@ -386,7 +388,6 @@ impl SimGitHub {
                 expires_in: 900,
             }),
             web: Mutex::new(String::new()),
-            probes: AtomicU64::new(0),
             stall: Arc::new(Stall::default()),
         });
         let record = Arc::new(Mutex::new(Vec::new()));
@@ -431,11 +432,6 @@ impl SimGitHub {
         crate::github::Endpoints::simulated(&url, &url, &lock(&self.shared.client_id), Some((store, self.shared.ssh_address.clone())))
     }
 
-    /// How many `.gpg-id` checks the picker made.
-    pub fn store_probes(&self) -> u64 {
-        self.shared.probes.load(Ordering::SeqCst)
-    }
-
     /// Sets the poll interval and code lifetime the next code gets.
     pub fn set_timing(&self, interval: u64, expires_in: u64) {
         let mut state = lock(&self.shared.state);
@@ -457,6 +453,48 @@ impl SimGitHub {
         Self::start_for(&remote, &repository)
     }
 
+    /// The sign-in for the store in `state_dir`, kept in `vault`, against
+    /// this simulated GitHub.
+    pub fn open_account(&self, state_dir: String, vault: Arc<dyn TokenVault>) -> Arc<GitHubAccount> {
+        Arc::new(GitHubAccount::with(
+            self.endpoints(),
+            std::path::Path::new(&state_dir),
+            vault,
+            Arc::new(crate::github::SystemPollClock::default()),
+            crate::github::session::system_wall_clock(),
+        ))
+    }
+
+    pub fn set_device_outcome(&self, outcome: SimDeviceOutcome) {
+        lock(&self.shared.state).outcome = outcome;
+    }
+
+    /// The person typed the code and pressed Authorise.
+    pub fn authorise_pending(&self) {
+        if let Some(pending) = &mut lock(&self.shared.state).pending {
+            pending.decided = Some(true);
+        }
+    }
+
+    /// Whether the app is installed on the repository.
+    pub fn set_installed(&self, installed: bool) {
+        lock(&self.shared.state).installed = installed;
+    }
+
+    /// Adds this many other repositories (not stores) to the installation.
+    pub fn set_extra_repositories(&self, count: u32) {
+        lock(&self.shared.state).extra_repositories = count;
+    }
+
+    /// The person revoked paw at GitHub: nothing issued works any more.
+    pub fn revoke_authorisation(&self) {
+        let mut state = lock(&self.shared.state);
+        state.access.clear();
+        state.refresh.clear();
+    }
+}
+
+impl SimGitHub {
     /// `http://127.0.0.1:<port>`: both the web and the API address.
     pub fn url(&self) -> String {
         self.server.url()
@@ -471,17 +509,6 @@ impl SimGitHub {
         *lock(&self.shared.client_id) = client_id;
     }
 
-    pub fn set_device_outcome(&self, outcome: SimDeviceOutcome) {
-        lock(&self.shared.state).outcome = outcome;
-    }
-
-    /// The person typed the code and pressed Authorise.
-    pub fn authorise_pending(&self) {
-        if let Some(pending) = &mut lock(&self.shared.state).pending {
-            pending.decided = Some(true);
-        }
-    }
-
     /// The person pressed Cancel.
     pub fn deny_pending(&self) {
         if let Some(pending) = &mut lock(&self.shared.state).pending {
@@ -494,16 +521,6 @@ impl SimGitHub {
         lock(&self.shared.state).pending.is_some()
     }
 
-    /// Whether the app is installed on the repository.
-    pub fn set_installed(&self, installed: bool) {
-        lock(&self.shared.state).installed = installed;
-    }
-
-    /// Adds this many other repositories (not stores) to the installation.
-    pub fn set_extra_repositories(&self, count: u32) {
-        lock(&self.shared.state).extra_repositories = count;
-    }
-
     /// Whether tokens expire (with refresh tokens) or not.
     pub fn set_expiring_tokens(&self, expiring: bool) {
         lock(&self.shared.state).expiring = expiring;
@@ -513,13 +530,6 @@ impl SimGitHub {
     pub fn expire_access_tokens(&self) {
         let mut state = lock(&self.shared.state);
         state.access.clear();
-    }
-
-    /// The person revoked paw at GitHub: nothing issued works any more.
-    pub fn revoke_authorisation(&self) {
-        let mut state = lock(&self.shared.state);
-        state.access.clear();
-        state.refresh.clear();
     }
 
     /// Git requests are redirected to `url` (another host), or not.
@@ -634,7 +644,6 @@ fn handle(shared: &Shared, request: &SimHttpRequest) -> Reply {
         ("POST", "/credentials/revoke") => revoke(shared, request),
         ("GET", "/user/installations") => installations(shared, request),
         ("GET", p) if p.starts_with("/user/installations/") => repositories(shared, request),
-        ("GET", p) if p.starts_with("/repos/") && p.ends_with("/contents/.gpg-id") => contents(shared, request),
         (_, p) if p.starts_with(&repo_prefix) => git(shared, request, &p[repo_prefix.len()..]),
         _ => Reply::status(404),
     }
@@ -786,21 +795,6 @@ fn repositories(shared: &Shared, request: &SimHttpRequest) -> Reply {
     Reply::json(200, json!({ "total_count": all.len(), "repository_selection": "selected", "repositories": slice }))
 }
 
-fn contents(shared: &Shared, request: &SimHttpRequest) -> Reply {
-    if !authorised(shared, bearer(request)) {
-        return Reply::status(401);
-    }
-    shared.probes.fetch_add(1, Ordering::SeqCst);
-    if request.path != format!("/repos/{}/{}/contents/.gpg-id", shared.owner, shared.name) {
-        return Reply::status(404);
-    }
-    let has = git2::Repository::open_bare(&shared.bare)
-        .ok()
-        .and_then(|repo| repo.revparse_single("HEAD:.gpg-id").ok().map(|_| ()))
-        .is_some();
-    if has { Reply::json(200, json!({ "type": "file", "name": ".gpg-id" })) } else { Reply::status(404) }
-}
-
 fn git(shared: &Shared, request: &SimHttpRequest, rest: &str) -> Reply {
     let (redirect, drop_mid_pack) = {
         let state = lock(&shared.state);
@@ -854,21 +848,15 @@ fn reachable(bare: &std::path::Path, tip: Oid, id: Oid) -> bool {
 
 /// One stateless upload-pack round: wants, haves, then `done` or a flush.
 fn upload_pack(shared: &Shared, body: &[u8]) -> Result<Vec<u8>, String> {
-    let mut at = 0;
+    let mut rest = body;
     let mut lines: Vec<Option<String>> = Vec::new();
-    while at + 4 <= body.len() {
-        let length = std::str::from_utf8(&body[at..at + 4])
-            .ok()
-            .and_then(|hex| usize::from_str_radix(hex, 16).ok())
-            .ok_or("not a pkt-line")?;
-        if length < 4 {
-            lines.push(None);
-            at += 4;
-            continue;
-        }
-        let line = body.get(at + 4..at + length).ok_or("short pkt-line")?;
-        lines.push(Some(String::from_utf8_lossy(line).trim_end().to_owned()));
-        at += length;
+    while !rest.is_empty() {
+        let (pkt, used) = split_pkt(rest)?.ok_or("short pkt-line")?;
+        lines.push(match pkt {
+            Pkt::Flush => None,
+            Pkt::Line(line) => Some(String::from_utf8_lossy(&line).trim_end().to_owned()),
+        });
+        rest = &rest[used..];
     }
     let (refs, _) = branches(&shared.bare)?;
     let mut wants: Vec<Oid> = Vec::new();
@@ -914,7 +902,6 @@ fn upload_pack(shared: &Shared, body: &[u8]) -> Result<Vec<u8>, String> {
 
 /// Another host on another port that answers everything with 200 and
 /// records what it was sent: where a hostile redirect points.
-#[derive(uniffi::Object)]
 pub struct SimBystander {
     record: Arc<Mutex<Vec<SimHttpRequest>>>,
     server: Server,
@@ -924,11 +911,7 @@ impl SimBystander {
     pub fn requests(&self) -> Vec<SimHttpRequest> {
         lock(&self.record).clone()
     }
-}
 
-#[uniffi::export]
-impl SimBystander {
-    #[uniffi::constructor]
     pub fn start() -> Result<Arc<Self>, PawError> {
         let record = Arc::new(Mutex::new(Vec::new()));
         let server = Server::start(
@@ -975,7 +958,9 @@ impl SimTokenVault {
     pub fn as_vault(self: Arc<Self>) -> Arc<dyn TokenVault> {
         self
     }
+}
 
+impl SimTokenVault {
     /// The next `store` fails and keeps nothing.
     pub fn fail_next_store(&self) {
         self.fail_next_store.store(true, Ordering::SeqCst);

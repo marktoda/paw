@@ -227,7 +227,7 @@ fn sign_in_polls_at_githubs_interval_until_the_person_authorises() {
 
     assert_eq!(w.clock.waits(), vec![secs(5), secs(10), secs(15)]);
     assert_eq!(sign_in.polls(), 3);
-    assert!(w.account.signed_in().unwrap());
+    assert!(w.account.is_signed_in().unwrap());
     assert!(!format!("{sign_in:?}").contains("ghu_"));
 }
 
@@ -317,7 +317,7 @@ fn a_cancel_from_another_thread_wakes_a_real_wait_at_once() {
         Arc::new(paw_core::github::SystemPollClock::default()),
         paw_core::github::session::system_wall_clock(),
     );
-    let sign_in = Arc::new(account.start_sign_in().unwrap());
+    let sign_in = account.start_sign_in().unwrap();
     let waiting = sign_in.clone();
     let started = std::time::Instant::now();
     let poller = std::thread::spawn(move || waiting.poll().unwrap());
@@ -386,7 +386,6 @@ fn the_picker_lists_every_granted_repository_across_pages_with_the_store_first()
     // Three pages of repositories, and nothing read from inside any of them.
     let pages = w.github.requests().iter().filter(|r| r.path.ends_with("/repositories")).count();
     assert_eq!(pages, 3);
-    assert_eq!(w.github.store_probes(), 0);
     assert!(!w.github.requests().iter().any(|r| r.path.contains("/contents/")));
 }
 
@@ -407,16 +406,16 @@ fn a_repository_not_in_the_list_cannot_be_chosen() {
     w.sign_in();
     w.account.repositories().unwrap();
     assert!(matches!(w.account.select_repository("someone/else"), Err(GitHubError::Failed { .. })));
-    assert!(w.account.link().is_none());
+    assert!(w.account.linked_repository().is_none());
 }
 
 #[test]
 fn with_the_vault_empty_nothing_is_sent_anywhere() {
     let w = world();
-    assert!(!w.account.signed_in().unwrap());
+    assert!(!w.account.is_signed_in().unwrap());
     assert_eq!(w.account.repositories().unwrap_err(), GitHubError::NotSignedIn);
     assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::NotSignedIn);
-    assert!(w.account.refresh_with_token().is_err());
+    assert!(w.account.refresh_store().is_err());
     assert!(!w.account.sign_out(true).unwrap().revoked);
     assert_eq!(w.github.request_count(), 0);
 }
@@ -431,7 +430,7 @@ fn sign_in_pick_clone_over_ssh_then_refresh_over_https_with_no_key() {
     assert_eq!(w.head(), w.remote.tip().unwrap());
 
     let changed = w.remote.commit_file(NEW_ENTRY.into(), b"ciphertext".to_vec(), "Add web/new-site.".into()).unwrap();
-    let report = w.account.refresh_with_token().unwrap();
+    let report = w.account.refresh_store().unwrap();
 
     assert_eq!(report.state, SyncState::UpToDate);
     assert_eq!(report.integration.fast_forwarded, 1);
@@ -454,9 +453,9 @@ fn the_token_is_nowhere_on_disk_in_git_config_or_in_any_message() {
     let w = world();
     w.set_up();
     w.remote.commit_file(NEW_ENTRY.into(), b"x".to_vec(), "Add.".into()).unwrap();
-    let report = w.account.refresh_with_token().unwrap();
+    let report = w.account.refresh_store().unwrap();
     w.github.set_redirect_git(Some("http://127.0.0.1:9".into()));
-    let error = w.account.refresh_with_token().unwrap_err();
+    let error = w.account.refresh_store().unwrap_err();
     let background = w.account.background_refresh(secs(25));
     w.github.set_redirect_git(None);
 
@@ -469,7 +468,7 @@ fn the_token_is_nowhere_on_disk_in_git_config_or_in_any_message() {
     }
     let config = std::fs::read_to_string(w.repo().join(".git/config")).unwrap();
     assert!(!config.contains("x-access-token") && !config.contains("https://"), "{config}");
-    let shown = format!("{report:?} {error} {error:?} {background:?} {:?}", w.account.link());
+    let shown = format!("{report:?} {error} {error:?} {background:?} {:?}", w.account.linked_repository());
     for token in &tokens {
         assert!(!shown.contains(token.as_str()));
     }
@@ -488,7 +487,7 @@ fn an_expired_access_token_is_refreshed_rotated_and_kept_before_use() {
     w.wall.fetch_add(9 * 3600, Ordering::SeqCst);
 
     w.remote.commit_file(NEW_ENTRY.into(), b"x".to_vec(), "Add.".into()).unwrap();
-    w.account.refresh_with_token().unwrap();
+    w.account.refresh_store().unwrap();
 
     assert_eq!(w.vault.store_count(), stores + 1);
     assert_eq!(w.github.live_tokens().len(), 2, "the old pair was retired");
@@ -503,7 +502,7 @@ fn an_access_token_github_stopped_accepting_is_refreshed_once_and_the_fetch_retr
     w.set_up();
     w.github.expire_access_tokens();
     w.remote.commit_file(NEW_ENTRY.into(), b"x".to_vec(), "Add.".into()).unwrap();
-    w.account.refresh_with_token().unwrap();
+    w.account.refresh_store().unwrap();
     assert!(w.repo().join(NEW_ENTRY).is_file());
 }
 
@@ -515,14 +514,14 @@ fn killed_after_github_rotated_but_before_the_keychain_write_ends_the_sign_in_cl
     w.wall.fetch_add(9 * 3600, Ordering::SeqCst);
     w.vault.fail_next_store();
 
-    let first = w.account.refresh_with_token().unwrap_err();
+    let first = w.account.refresh_store().unwrap_err();
     assert!(first.to_string().contains("could not be kept"), "{first}");
     // The old pair is still kept; GitHub no longer takes it.
-    assert!(w.account.signed_in().unwrap());
+    assert!(w.account.is_signed_in().unwrap());
 
     let report = w.account.background_refresh(secs(25));
     assert_eq!(report.outcome, BackgroundOutcome::SignedOut);
-    assert!(!w.account.signed_in().unwrap());
+    assert!(!w.account.is_signed_in().unwrap());
     assert_eq!(w.head(), head);
     w.assert_consistent();
 }
@@ -568,7 +567,7 @@ fn concurrent_refreshes_spend_the_refresh_token_once() {
             let (account, start) = (w.account.clone(), start.clone());
             std::thread::spawn(move || {
                 start.wait();
-                account.refresh_with_token()
+                account.refresh_store()
             })
         })
         .collect();
@@ -586,9 +585,9 @@ fn a_revoked_sign_in_ends_cleanly_and_leaves_the_store_alone() {
     w.remote.commit_file(NEW_ENTRY.into(), b"x".to_vec(), "Add.".into()).unwrap();
     w.github.revoke_authorisation();
 
-    let error = w.account.refresh_with_token().unwrap_err();
+    let error = w.account.refresh_store().unwrap_err();
     assert!(matches!(&error, SyncError::Failed { message } if *message == GitHubError::SignedOut.to_string()), "{error}");
-    assert!(!w.account.signed_in().unwrap());
+    assert!(!w.account.is_signed_in().unwrap());
     assert_eq!(w.head(), head);
     w.assert_consistent();
     assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::NotSignedIn);
@@ -625,7 +624,7 @@ fn a_hostile_tree_fetched_over_https_is_refused_exactly_as_over_ssh() {
     let head = w.head();
     push_link(&w.remote);
 
-    let over_https = w.account.refresh_with_token().unwrap_err();
+    let over_https = w.account.refresh_store().unwrap_err();
     let over_ssh = ssh_refresh(&w, twin.path()).unwrap_err();
 
     assert!(matches!((&over_https, &over_ssh), (SyncError::Failed { .. }, SyncError::Failed { .. })));
@@ -657,7 +656,7 @@ fn changed_recipients_are_reported_as_over_ssh_and_left_for_the_person_in_the_ba
     };
     assert_eq!(w.head(), head, "nothing integrated in the background");
 
-    let over_https = w.account.refresh_with_token().unwrap();
+    let over_https = w.account.refresh_store().unwrap();
     let over_ssh = ssh_refresh(&w, twin.path()).unwrap();
     assert_eq!(over_https.integration.recipients_changed, over_ssh.integration.recipients_changed);
     assert_eq!(&over_https.integration.recipients_changed, changes);
@@ -677,7 +676,7 @@ fn a_replaced_history_is_parked_in_the_background_and_reported_as_over_ssh() {
     assert!(matches!(&background.decisions[..], [RefreshDecision::RemoteReplaced { .. }]), "{background:?}");
     assert_eq!(w.head(), head);
 
-    let over_https = w.account.refresh_with_token().unwrap();
+    let over_https = w.account.refresh_store().unwrap();
     let over_ssh = ssh_refresh(&w, twin.path()).unwrap();
     assert!(matches!(over_https.state, SyncState::RemoteReplaced { .. }));
     assert_eq!(
@@ -721,7 +720,7 @@ fn a_token_for_another_repository_is_not_used_for_this_store() {
     w.account.select_repository("you/other-0001").unwrap();
     let before = w.git_requests();
 
-    let error = w.account.refresh_with_token().unwrap_err();
+    let error = w.account.refresh_store().unwrap_err();
     assert!(error.to_string().contains("GitHub sign-in is for you/other-0001"), "{error}");
     let report = w.account.background_refresh(secs(25));
     assert!(matches!(report.outcome, BackgroundOutcome::Failed { .. }), "{report:?}");
@@ -736,7 +735,7 @@ fn a_redirect_to_another_host_is_not_followed_and_carries_no_token() {
     w.github.set_redirect_git(Some(elsewhere.url()));
     let head = w.head();
 
-    let error = w.account.refresh_with_token().unwrap_err();
+    let error = w.account.refresh_store().unwrap_err();
     assert!(error.to_string().contains("another address"), "{error}");
     assert_eq!(elsewhere.request_count(), 0);
     for request in elsewhere.requests() {
@@ -758,7 +757,7 @@ fn a_fetch_larger_than_the_cap_stops_and_changes_nothing() {
         w.remote.commit_file(format!("noise/{n}.gpg"), noise, "Noise.".into()).unwrap();
     }
     w.account.set_download_limit(16 << 10);
-    let error = w.account.refresh_with_token().unwrap_err();
+    let error = w.account.refresh_store().unwrap_err();
     assert!(error.to_string().contains("paw stopped the download"), "{error}");
     assert_eq!(w.head(), head);
     w.assert_consistent();

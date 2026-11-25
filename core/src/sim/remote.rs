@@ -166,23 +166,6 @@ fn fresh_dir() -> Result<PathBuf, PawError> {
     Ok(dir)
 }
 
-fn index_entry(path: &str, id: Oid) -> git2::IndexEntry {
-    git2::IndexEntry {
-        ctime: git2::IndexTime::new(0, 0),
-        mtime: git2::IndexTime::new(0, 0),
-        dev: 0,
-        ino: 0,
-        mode: git2::FileMode::Blob.into(),
-        uid: 0,
-        gid: 0,
-        file_size: 0,
-        id,
-        flags: 0,
-        flags_extended: 0,
-        path: path.as_bytes().to_vec(),
-    }
-}
-
 /// Every file under `dir`, as (path with `/`, contents), sorted.
 fn files_under(dir: &Path) -> Result<Vec<(String, Vec<u8>)>, PawError> {
     let mut found = Vec::new();
@@ -217,7 +200,7 @@ fn commit_files(repo: &Path, files: &[(String, Vec<u8>)], message: &str) -> Resu
     }
     for (path, contents) in files {
         let blob = repo.blob(contents).map_err(git_failed("write a file"))?;
-        index.add(&index_entry(path, blob)).map_err(git_failed("add a file"))?;
+        index.add(&crate::sync::history::index_entry(path, blob, git2::FileMode::Blob.into())).map_err(git_failed("add a file"))?;
     }
     let tree = index.write_tree_to(&repo).map_err(git_failed("write the tree"))?;
     let tree = repo.find_tree(tree).map_err(git_failed("write the tree"))?;
@@ -245,13 +228,43 @@ async fn bind(port: u16) -> Result<tokio::net::TcpListener, PawError> {
     }
 }
 
-/// Connections paw makes to `host:port` go to this machine's `port` `to`
-/// instead, or, with `None`, where they say again: for testing what paw
+/// Where setup's connections go: to this machine's port instead of
+/// `host:port`, for each host a test sends elsewhere, for testing what paw
 /// does when a well-known host (github.com) is unreachable or presents
 /// another key, without the network. Host keys are still checked against
-/// what `host:port` is pinned to. Process-wide; Rust only.
-pub fn redirect_connections(host: &str, port: u16, to: Option<u16>) {
-    crate::sync::redirect(host, port, to.map(|to| ("127.0.0.1".to_owned(), to)));
+/// what `host:port` is pinned to. Rust only.
+#[derive(Clone, Default)]
+pub struct SimRoutes(Arc<Mutex<Vec<Redirect>>>);
+
+/// `(host, port)` and the local port connections to it go to.
+type Redirect = ((String, u16), u16);
+
+impl SimRoutes {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Connections to `host:port` go to this machine's port `to` from now
+    /// on, or, with `None`, where they say again.
+    pub fn redirect(&self, host: &str, port: u16, to: Option<u16>) {
+        let mut routes = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        routes.retain(|((h, p), _)| !(h.eq_ignore_ascii_case(host) && *p == port));
+        if let Some(to) = to {
+            routes.push(((host.to_owned(), port), to));
+        }
+    }
+
+    /// The setup kept in `state_dir`, connecting through these routes.
+    pub fn open_setup(&self, state_dir: String) -> Result<Arc<crate::ffi::sync::Setup>, crate::setup::SetupError> {
+        let setup = crate::ffi::sync::Setup::open(state_dir)?;
+        let routes = self.0.clone();
+        setup.set_route(crate::sync::Route::new(move |host, port| {
+            let routes = routes.lock().unwrap_or_else(|p| p.into_inner());
+            let found = routes.iter().find(|((h, p), _)| h.eq_ignore_ascii_case(host) && *p == port);
+            found.map(|(_, to)| ("127.0.0.1".to_owned(), *to))
+        }));
+        Ok(setup)
+    }
 }
 
 fn fixture_options(key: &SimulatedKey) -> SimRemoteOptions {
@@ -387,6 +400,7 @@ impl SimRemote {
             user: USER.into(),
             path: REPO.into(),
             host_key: HostKeyPin::parse(&ed25519_host_key())?,
+            route: Default::default(),
         })
     }
 
@@ -416,12 +430,6 @@ impl SimRemote {
         Self::start_with(fixture_options(&key))
     }
 
-    /// As `start`, listening on `port` (0: any free port).
-    #[uniffi::constructor]
-    pub fn start_on(key: Arc<SimulatedKey>, port: u16) -> Result<Arc<Self>, PawError> {
-        Self::start_with_on(fixture_options(&key), port)
-    }
-
     /// Serves the repository kept in the folder `dir` on `port` (0: any
     /// free port), accepting `key`'s SSH key. The first time, the folder
     /// gets a fresh copy of the fixture store; after that, whatever the
@@ -443,30 +451,10 @@ impl SimRemote {
         self.port
     }
 
-    /// The `SHA256:...` fingerprint of the host key it presents now, as
-    /// setup's `ConfirmHost` shows it.
-    pub fn host_key_fingerprint(&self) -> String {
-        let line = if self.shared.changed_host_key.load(Ordering::SeqCst) {
-            changed_host_key()
-        } else {
-            ed25519_host_key()
-        };
-        PublicKey::from_openssh(&line)
-            .map(|key| key.fingerprint(HashAlg::Sha256).to_string())
-            .unwrap_or_default()
-    }
-
     /// Refuse every key from now on (as if it were never added to the
     /// account), or accept the authorised ones again.
     pub fn set_refuse_key(&self, refuse: bool) {
         self.shared.refuse_key.store(refuse, Ordering::SeqCst);
-    }
-
-    /// Accept this public key line too.
-    pub fn authorise(&self, line: String) -> Result<(), PawError> {
-        let key = PublicKey::from_openssh(line.trim()).map_err(|e| failed("read the key", e))?;
-        lock(&self.shared.authorised).push(key);
-        Ok(())
     }
 
     /// Present another host key on new connections, or the usual one again.
@@ -507,6 +495,33 @@ impl SimRemote {
     /// Commits a file to `main` as another machine would.
     pub fn commit_file(&self, path: String, contents: Vec<u8>, message: String) -> Result<String, PawError> {
         commit_files(&self.shared.repo, &[(path, contents)], &message).map(|id| id.to_string())
+    }
+}
+
+impl SimRemote {
+    /// As `start`, listening on `port` (0: any free port).
+    pub fn start_on(key: Arc<SimulatedKey>, port: u16) -> Result<Arc<Self>, PawError> {
+        Self::start_with_on(fixture_options(&key), port)
+    }
+
+    /// The `SHA256:...` fingerprint of the host key it presents now, as
+    /// setup's `ConfirmHost` shows it.
+    pub fn host_key_fingerprint(&self) -> String {
+        let line = if self.shared.changed_host_key.load(Ordering::SeqCst) {
+            changed_host_key()
+        } else {
+            ed25519_host_key()
+        };
+        PublicKey::from_openssh(&line)
+            .map(|key| key.fingerprint(HashAlg::Sha256).to_string())
+            .unwrap_or_default()
+    }
+
+    /// Accept this public key line too.
+    pub fn authorise(&self, line: String) -> Result<(), PawError> {
+        let key = PublicKey::from_openssh(line.trim()).map_err(|e| failed("read the key", e))?;
+        lock(&self.shared.authorised).push(key);
+        Ok(())
     }
 }
 
@@ -670,9 +685,24 @@ struct Input {
     buffer: Vec<u8>,
 }
 
-enum Pkt {
+pub(crate) enum Pkt {
     Flush,
     Line(Vec<u8>),
+}
+
+/// The pkt-line at the start of `buffer` and how many bytes it takes, or
+/// `None` if `buffer` does not hold all of it yet. A length under 4 is a
+/// flush (0000) or, in newer protocols, a delimiter.
+pub(crate) fn split_pkt(buffer: &[u8]) -> Result<Option<(Pkt, usize)>, String> {
+    let Some(header) = buffer.get(..4) else { return Ok(None) };
+    let length = std::str::from_utf8(header)
+        .ok()
+        .and_then(|hex| usize::from_str_radix(hex, 16).ok())
+        .ok_or("not a pkt-line")?;
+    if length < 4 {
+        return Ok(Some((Pkt::Flush, 4)));
+    }
+    Ok(buffer.get(4..length).map(|line| (Pkt::Line(line.to_vec()), length)))
 }
 
 impl Input {
@@ -692,28 +722,15 @@ impl Input {
 
     /// The next pkt-line, or `None` if the client closed before sending one.
     async fn pkt(&mut self) -> Result<Option<Pkt>, String> {
-        while self.buffer.len() < 4 {
+        loop {
+            if let Some((pkt, used)) = split_pkt(&self.buffer)? {
+                self.buffer.drain(..used);
+                return Ok(Some(pkt));
+            }
             if !self.fill().await {
                 return if self.buffer.is_empty() { Ok(None) } else { Err("the client stopped mid-line".into()) };
             }
         }
-        let length = std::str::from_utf8(&self.buffer[..4])
-            .ok()
-            .and_then(|hex| usize::from_str_radix(hex, 16).ok())
-            .ok_or("not a pkt-line")?;
-        if length < 4 {
-            // A flush (0000) or, in newer protocols, a delimiter.
-            self.buffer.drain(..4);
-            return Ok(Some(Pkt::Flush));
-        }
-        while self.buffer.len() < length {
-            if !self.fill().await {
-                return Err("the client stopped mid-line".into());
-            }
-        }
-        let line = self.buffer[4..length].to_vec();
-        self.buffer.drain(..length);
-        Ok(Some(Pkt::Line(line)))
     }
 }
 

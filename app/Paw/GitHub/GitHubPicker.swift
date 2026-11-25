@@ -46,7 +46,7 @@ final class GitHubPicker: Identifiable {
     private(set) var stage: Stage = .starting
     let access: GitHubAccess
     private let purpose: Purpose
-    @ObservationIgnored private var signIn: GitHubSignIn?
+    @ObservationIgnored private var signIn: DeviceSignIn?
     /// Bumped by every new step, so an answer to an older one is dropped.
     @ObservationIgnored private var generation = 0
 
@@ -85,7 +85,7 @@ final class GitHubPicker: Identifiable {
         }
     }
 
-    private func started(_ result: Result<GitHubSignIn, Error>, generation: Int) {
+    private func started(_ result: Result<DeviceSignIn, Error>, generation: Int) {
         guard generation == self.generation else {
             if case .success(let late) = result { late.cancel() }
             return
@@ -102,7 +102,7 @@ final class GitHubPicker: Identifiable {
 
     /// `poll` waits for GitHub's interval itself: call it until it stops
     /// saying `waiting`, on a thread of its own.
-    private func poll(_ signIn: GitHubSignIn, generation: Int) {
+    private func poll(_ signIn: DeviceSignIn, generation: Int) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var outcome: Result<SignInState, Error>
             while true {

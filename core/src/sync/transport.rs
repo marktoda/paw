@@ -69,10 +69,11 @@ async fn dial<H: client::Handler + Send + 'static>(
     config: Arc<client::Config>,
     host: &str,
     port: u16,
+    route: &Route,
     handler: H,
 ) -> Result<client::Handle<H>, Dial<H::Error>> {
     let attempt = async {
-        let stream = tokio::net::TcpStream::connect(dial_address(host, port))
+        let stream = tokio::net::TcpStream::connect(route.address(host, port))
             .await
             .map_err(|e| Dial::NoConnection(format!("{NO_CONNECTION}: {e}")))?;
         if config.nodelay {
@@ -86,41 +87,30 @@ async fn dial<H: client::Handler + Send + 'static>(
     }
 }
 
-/// Where to open the TCP connection for `host:port`.
-#[cfg(not(feature = "sim"))]
-fn dial_address(host: &str, port: u16) -> (String, u16) {
-    (host.to_owned(), port)
+/// Where the TCP connection for `host:port` is opened: there, unless a
+/// simulation plays that host (`sim::remote::SimRoutes`, test builds only).
+/// Host keys are still checked against what `host:port` is pinned to.
+#[derive(Clone, Default)]
+pub struct Route(Option<Arc<Resolve>>);
+
+/// Where to connect instead of `host:port`, if anywhere.
+type Resolve = dyn Fn(&str, u16) -> Option<(String, u16)> + Send + Sync;
+
+impl Route {
+    /// Connections go where `resolve` says, or, given `None`, where they say.
+    #[cfg(feature = "sim")]
+    pub(crate) fn new(resolve: impl Fn(&str, u16) -> Option<(String, u16)> + Send + Sync + 'static) -> Self {
+        Self(Some(Arc::new(resolve)))
+    }
+
+    fn address(&self, host: &str, port: u16) -> (String, u16) {
+        self.0.as_ref().and_then(|resolve| resolve(host, port)).unwrap_or_else(|| (host.to_owned(), port))
+    }
 }
 
-/// Where to open the TCP connection for `host:port`: there, unless a test
-/// sent that host and port elsewhere ([`redirect`]).
-#[cfg(feature = "sim")]
-fn dial_address(host: &str, port: u16) -> (String, u16) {
-    let redirects = REDIRECTS.lock().unwrap_or_else(|p| p.into_inner());
-    redirects
-        .iter()
-        .find(|((h, p), _)| h.eq_ignore_ascii_case(host) && *p == port)
-        .map(|(_, to)| to.clone())
-        .unwrap_or_else(|| (host.to_owned(), port))
-}
-
-/// Process-wide: which `host:port` connects where instead. Simulation only.
-#[cfg(feature = "sim")]
-type Redirects = Vec<((String, u16), (String, u16))>;
-#[cfg(feature = "sim")]
-static REDIRECTS: Mutex<Redirects> = Mutex::new(Vec::new());
-
-/// Simulation only: connections to `host:port` go to `to` instead (or, with
-/// `None`, where they say again), for the whole process. Host keys are
-/// still checked against what `host:port` is pinned to, so this tests what
-/// paw does when a well-known host is unreachable or impersonated, without
-/// the network. Not in device builds.
-#[cfg(feature = "sim")]
-pub(crate) fn redirect(host: &str, port: u16, to: Option<(String, u16)>) {
-    let mut redirects = REDIRECTS.lock().unwrap_or_else(|p| p.into_inner());
-    redirects.retain(|((h, p), _)| !(h.eq_ignore_ascii_case(host) && *p == port));
-    if let Some(to) = to {
-        redirects.push(((host.to_owned(), port), to));
+impl std::fmt::Debug for Route {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_some() { "Route(simulated)" } else { "Route(direct)" })
     }
 }
 
@@ -247,6 +237,7 @@ pub struct Remote {
     /// e.g. `owner/repo.git` for GitHub.
     pub path: String,
     pub host_key: HostKeyPin,
+    pub route: Route,
 }
 
 impl Remote {
@@ -371,7 +362,7 @@ async fn handshake(remote: &Remote) -> Result<client::Handle<PinnedHost>, PawErr
 
     let refused = Arc::new(Mutex::new(None));
     let handler = PinnedHost { pin, refused: refused.clone() };
-    match dial(Arc::new(config), &remote.host, remote.port, handler).await {
+    match dial(Arc::new(config), &remote.host, remote.port, &remote.route, handler).await {
         Err(Dial::NoConnection(detail)) => Err(PawError::Network(detail)),
         Err(Dial::Ssh(e)) => Err(match refused.lock().unwrap().take() {
             Some(presented) => PawError::HostKeyMismatch { presented },
@@ -384,7 +375,7 @@ async fn handshake(remote: &Remote) -> Result<client::Handle<PinnedHost>, PawErr
 /// Connects to `host` and returns the host key it presents, without
 /// accepting it or sending anything else. For a host that is not pinned
 /// yet: the key is shown to the person, and pinned only once confirmed.
-pub fn scan_host_key(host: &str, port: u16) -> Result<PresentedHostKey, PawError> {
+pub fn scan_host_key(host: &str, port: u16, route: &Route) -> Result<PresentedHostKey, PawError> {
     let runtime = runtime()?;
     let presented = Arc::new(Mutex::new(None));
     let handler = RecordHost { presented: presented.clone() };
@@ -392,7 +383,7 @@ pub fn scan_host_key(host: &str, port: u16) -> Result<PresentedHostKey, PawError
         inactivity_timeout: Some(INACTIVITY_TIMEOUT),
         ..Default::default()
     };
-    let outcome = runtime.block_on(dial(Arc::new(config), host, port, handler));
+    let outcome = runtime.block_on(dial(Arc::new(config), host, port, route, handler));
     let error = match outcome {
         Err(Dial::NoConnection(detail)) => PawError::Network(detail),
         // The handler refuses every key, so the handshake cannot succeed.

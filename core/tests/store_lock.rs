@@ -289,7 +289,7 @@ fn concurrent_token_refreshes_never_collide_on_a_ref_200_rounds() {
                 let (w, start) = (w.clone(), start.clone());
                 std::thread::spawn(move || {
                     start.wait();
-                    w.account.refresh_with_token()
+                    w.account.refresh_store()
                 })
             })
             .collect();
@@ -366,7 +366,7 @@ fn refresh_save_undo_read_and_send_at_once_lose_nothing() {
                 if refresher == 0 && n % 4 == 0 {
                     w.expire_token();
                 }
-                w.account.refresh_with_token().unwrap();
+                w.account.refresh_store().unwrap();
                 refreshes.fetch_add(1, Ordering::SeqCst);
                 n += 1;
             }
@@ -475,7 +475,7 @@ fn a_reader_never_sees_a_checkout_halfway() {
         repo.commit(Some("refs/heads/main"), &who, &who, &format!("Generation {g}."), &tree, &[&parent]).unwrap();
     };
     push_generation(0);
-    w.account.refresh_with_token().unwrap();
+    w.account.refresh_store().unwrap();
 
     let stop = Arc::new(AtomicBool::new(false));
     let snapshots = Arc::new(AtomicU64::new(0));
@@ -517,7 +517,7 @@ fn a_reader_never_sees_a_checkout_halfway() {
     };
     for g in 1..=12 {
         push_generation(g);
-        w.account.refresh_with_token().unwrap();
+        w.account.refresh_store().unwrap();
     }
     stop.store(true, Ordering::SeqCst);
     for reader in readers {
@@ -537,7 +537,7 @@ fn a_save_and_a_read_finish_while_a_fetch_is_stalled_mid_transfer() {
     w.github.stall_packs();
     let refreshing = {
         let w = w.clone();
-        std::thread::spawn(move || w.account.refresh_with_token())
+        std::thread::spawn(move || w.account.refresh_store())
     };
     let started = Instant::now();
     while w.github.stalled_packs() == 0 {
@@ -632,7 +632,7 @@ fn git_lock_files_left_by_a_killed_process_are_removed_under_the_lock() {
     // locked file ...: File exists").
     w.save("after-a-crash").unwrap();
     w.remote.commit_file("remote/after.gpg".into(), b"x".to_vec(), "After.".into()).unwrap();
-    w.account.refresh_with_token().unwrap();
+    w.account.refresh_store().unwrap();
     for path in &stale {
         assert!(!path.exists(), "{} is still there", path.display());
     }
@@ -784,7 +784,7 @@ fn two_processes_refreshing_the_sign_in_at_once_spend_the_refresh_token_once() {
         let threads: Vec<_> = (0..3)
             .map(|_| {
                 let w = w.clone();
-                std::thread::spawn(move || w.account.refresh_with_token())
+                std::thread::spawn(move || w.account.refresh_store())
             })
             .collect();
         for thread in threads {
@@ -860,7 +860,7 @@ fn every_mutating_entry_point_returns_even_when_its_thread_holds_the_lock() {
                 let remote = w.remote.remote().unwrap();
                 sync::Connection::open(&remote, &signer).map_err(|e| text(&e)).and_then(|c| steps::push(&c, &repo).map_err(|e| text(&e)))
             });
-            note("refresh_with_token", w.account.refresh_with_token().map(drop).map_err(|e| text(&e)));
+            note("refresh_with_token", w.account.refresh_store().map(drop).map_err(|e| text(&e)));
             let background = w.account.background_refresh(Duration::from_secs(25));
             note("background_refresh", match background.outcome {
                 paw_core::github::BackgroundOutcome::Failed { message } => Err(message),
@@ -894,7 +894,7 @@ fn two_processes_saving_and_integrating_at_once_lose_no_entry() {
         save_in(&w.writer(), &format!("parent-{n}")).unwrap();
         if n % 5 == 0 {
             w.remote.commit_file(format!("remote/x{n}.gpg"), b"x".to_vec(), format!("Desktop {n}.")).unwrap();
-            w.account.refresh_with_token().unwrap();
+            w.account.refresh_store().unwrap();
         }
     }
     let done = w.dir.path().join("done-save");
@@ -902,7 +902,7 @@ fn two_processes_saving_and_integrating_at_once_lose_no_entry() {
     assert!(other.wait().unwrap().success());
     let failed = std::fs::read_to_string(&done).unwrap();
     assert!(failed.is_empty(), "the other process's saves failed: {failed}");
-    w.account.refresh_with_token().unwrap();
+    w.account.refresh_store().unwrap();
     for n in 0..20 {
         assert!(w.local_has(&format!("lock/parent-{n}")), "parent-{n} lost");
         assert!(w.local_has(&format!("lock/child-{n}")), "child-{n} lost");
@@ -967,7 +967,7 @@ fn a_push_record_left_by_a_crash_does_not_block_taking_a_change_back() {
 
     // One left behind is also cleared by the next fetch.
     repo.reference("refs/paw/pushing/main", repo.head().unwrap().target().unwrap(), true, "again").unwrap();
-    w.account.refresh_with_token().unwrap();
+    w.account.refresh_store().unwrap();
     assert!(markers(&w).is_empty());
     w.assert_consistent();
 }
@@ -1000,7 +1000,7 @@ fn a_push_that_landed_is_success_even_if_recording_it_has_to_wait_too_long() {
     release.send(()).unwrap();
 
     // The next fetch heals it.
-    w.account.refresh_with_token().unwrap();
+    w.account.refresh_store().unwrap();
     assert_eq!(origin(&w), w.remote.tip().unwrap());
     assert!(queue::unpushed(&w.repo()).unwrap().is_empty());
     assert!(markers(&w).is_empty());
@@ -1058,7 +1058,7 @@ fn a_shallow_lock_belongs_to_the_fetch_lock() {
     assert!(shallow.exists());
     // The next fetch, holding the fetch lock, removes a stale one.
     w.remote.commit_file("remote/s.gpg".into(), b"x".to_vec(), "S.".into()).unwrap();
-    w.account.refresh_with_token().unwrap();
+    w.account.refresh_store().unwrap();
     assert!(!shallow.exists());
     assert!(w.local_has("remote/s"));
 }
@@ -1117,9 +1117,9 @@ fn a_refresh_refused_because_another_process_spent_the_token_uses_that_processs_
     // This process sends the same, spent token: refused, then it finds the
     // other's pair and goes on with it, still signed in.
     let issued = w.tokens();
-    w.account.refresh_with_token().unwrap();
+    w.account.refresh_store().unwrap();
     keeping.join().unwrap();
-    assert!(w.account.signed_in().unwrap());
+    assert!(w.account.is_signed_in().unwrap());
     assert_eq!(w.tokens(), issued, "no second rotation");
     assert_ne!(kept(&w)["refresh"], spent);
 }

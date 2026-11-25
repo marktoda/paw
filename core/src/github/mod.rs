@@ -44,9 +44,9 @@ pub mod repos;
 pub mod session;
 mod transport;
 
-pub use account::{GitHubAccount, SignOutReport};
+pub use account::{GitHubAccount, SignInExpiry, SignOutReport};
 pub use device::{DeviceCode, DeviceSignIn, PollClock, SignInState, SystemPollClock};
-pub use refresh::{BackgroundOutcome, BackgroundRefreshReport, GitHubLink, RefreshDecision, RefreshStep};
+pub use refresh::{BackgroundOutcome, BackgroundRefreshReport, BackgroundStop, GitHubLink, RefreshDecision, RefreshStep};
 pub use repos::{GitHubRepository, RepositoryList};
 pub use session::{TokenVault, VaultError};
 
@@ -63,9 +63,6 @@ pub const WEB: &str = "https://github.com";
 /// Where paw talks to GitHub: the REST API.
 pub const API: &str = "https://api.github.com";
 
-/// Where the person sees and revokes the GitHub Apps they have authorised.
-pub const AUTHORIZATIONS_URL: &str = "https://github.com/settings/apps/authorizations";
-
 /// The REST API version paw was written against (GitHub's docs, 2026).
 pub(crate) const API_VERSION: &str = "2026-03-10";
 
@@ -78,10 +75,16 @@ pub struct Endpoints {
     api: String,
     client_id: String,
     app_slug: String,
-    /// The simulated GitHub's store (`owner/name`) and the SSH address of
-    /// the simulated host it is cloned from.
-    #[cfg(feature = "sim")]
-    ssh_address: Option<(String, String)>,
+    /// Set only by [`Endpoints::simulated`], so never in a device build.
+    simulation: Option<Simulation>,
+}
+
+/// A test build's simulated GitHub.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Simulation {
+    /// Its store (`owner/name`) and the SSH address of the simulated host
+    /// it is cloned from.
+    store: Option<(String, String)>,
 }
 
 impl Endpoints {
@@ -92,8 +95,7 @@ impl Endpoints {
             api: API.into(),
             client_id: CLIENT_ID.into(),
             app_slug: APP_SLUG.into(),
-            #[cfg(feature = "sim")]
-            ssh_address: None,
+            simulation: None,
         }
     }
 
@@ -108,20 +110,13 @@ impl Endpoints {
             api: api.trim_end_matches('/').into(),
             client_id: client_id.into(),
             app_slug: APP_SLUG.into(),
-            ssh_address,
+            simulation: Some(Simulation { store: ssh_address }),
         }
     }
 
     /// Whether these are a test build's simulated endpoints.
     pub(crate) fn is_simulated(&self) -> bool {
-        #[cfg(feature = "sim")]
-        {
-            self.web != WEB || self.api != API
-        }
-        #[cfg(not(feature = "sim"))]
-        {
-            false
-        }
+        self.simulation.is_some()
     }
 
     pub fn web(&self) -> &str {
@@ -141,6 +136,11 @@ impl Endpoints {
         format!("{}/apps/{}/installations/new", self.web, self.app_slug)
     }
 
+    /// Where the person sees and removes the GitHub Apps they authorised.
+    pub(crate) fn authorizations_url(&self) -> String {
+        format!("{}/settings/apps/authorizations", self.web)
+    }
+
     pub(crate) fn app_slug(&self) -> &str {
         &self.app_slug
     }
@@ -148,8 +148,7 @@ impl Endpoints {
     /// The SSH address setup clones `owner/repo` from: GitHub's, except in
     /// a simulation, whose repositories live on a simulated SSH host.
     pub(crate) fn ssh_address(&self, full_name: &str) -> Option<String> {
-        #[cfg(feature = "sim")]
-        if let Some((name, address)) = &self.ssh_address
+        if let Some((name, address)) = self.simulation.as_ref().and_then(|s| s.store.as_ref())
             && name.eq_ignore_ascii_case(full_name)
         {
             return Some(address.clone());
@@ -219,5 +218,16 @@ impl Secret {
 impl std::fmt::Debug for Secret {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Secret(..)")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signing_out_of_github_points_at_githubs_own_authorisations_page() {
+        assert_eq!(Endpoints::github().authorizations_url(), "https://github.com/settings/apps/authorizations");
+        assert!(!Endpoints::github().is_simulated());
     }
 }

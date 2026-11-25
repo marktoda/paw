@@ -1,14 +1,14 @@
 //! Fetching the store over HTTPS with the GitHub sign-in, and the
 //! background refresh built on it.
 //!
-//! [`GitHubAccount::refresh_with_token`] is a refresh exactly like the SSH
+//! [`GitHubAccount::refresh_store`] is a refresh exactly like the SSH
 //! one (`StoreSync.refresh`) with a different transport: the same fetch
 //! (every branch into `origin/*`), then the same integrate, so the same
 //! trees are refused, the same `.gpg-id` changes reported and a replaced
 //! history stops it the same way. It refuses to run unless the store's
 //! remote is the repository chosen in the picker.
 //!
-//! [`GitHubAccount::background_refresh`] is what a background task calls,
+//! [`GitHubAccount::background_refresh_stoppable`] is what a background task calls,
 //! with nobody present. It does what a refresh does without a decision
 //! (fast-forward, replay local changes), and parks the rest for the
 //! person, changing nothing:
@@ -31,6 +31,8 @@
 //! up by the next refresh.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use super::account::GitHubAccount;
@@ -283,21 +285,6 @@ impl GitHubAccount {
         }
     }
 
-    /// Fetch over HTTPS with the token, then integrate exactly as an SSH
-    /// refresh does, pushing nothing. No key, no card. Refused before
-    /// anything is sent if there is no sign-in, no chosen repository, or
-    /// the store's remote is another repository.
-    pub fn refresh_with_token(&self) -> Result<SyncReport, SyncError> {
-        if !self.keeper.signed_in().map_err(FetchError::GitHub)? {
-            return Err(FetchError::GitHub(GitHubError::NotSignedIn).into());
-        }
-        let link = self.checked_link().map_err(FetchError::GitHub)?;
-        let http = Http::new(&self.endpoints, None);
-        let fetching = self.fetch_with_token(&http, &link, crate::lock::FETCH_WAIT, None)?;
-        let held = self.publish(fetching, crate::lock::DEFAULT_WAIT)?;
-        crate::sync::operation::integrate_fetched(&held, &self.repo_dir())
-    }
-
     /// The background refresh: see the module comment. Ends by `budget`
     /// from now. Never asks anyone anything, never pushes.
     pub fn background_refresh(&self, budget: Duration) -> BackgroundRefreshReport {
@@ -429,5 +416,60 @@ impl GitHubAccount {
             BackgroundOutcome::UpToDate
         };
         BackgroundRefreshReport { outcome, integration: Some(integration), decisions, unpushed }
+    }
+}
+
+/// Stops a `GitHubAccount.background_refresh_stoppable` from another thread.
+#[derive(uniffi::Object, Default)]
+pub struct BackgroundStop {
+    stopped: AtomicBool,
+}
+
+#[uniffi::export]
+impl BackgroundStop {
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// The refresh ends at its next step or chunk. Returns at once.
+    pub fn stop(&self) {
+        self.stopped.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_stopped(&self) -> bool {
+        self.stopped.load(Ordering::SeqCst)
+    }
+}
+
+#[uniffi::export]
+impl GitHubAccount {
+    /// Fetches over HTTPS with the sign-in and integrates exactly as
+    /// `StoreSync.refresh` does, pushing nothing. No key, no card. Refused
+    /// before anything is sent if there is no sign-in, no chosen
+    /// repository, or the store's remote is another repository. Sign-in
+    /// problems come as `Failed` (or `Network`); `is_signed_in` then says
+    /// whether the person must sign in again.
+    pub fn refresh_store(&self) -> Result<SyncReport, SyncError> {
+        if !self.keeper.signed_in().map_err(FetchError::GitHub)? {
+            return Err(FetchError::GitHub(GitHubError::NotSignedIn).into());
+        }
+        let link = self.checked_link().map_err(FetchError::GitHub)?;
+        let http = Http::new(&self.endpoints, None);
+        let fetching = self.fetch_with_token(&http, &link, crate::lock::FETCH_WAIT, None)?;
+        let held = self.publish(fetching, crate::lock::DEFAULT_WAIT)?;
+        crate::sync::operation::integrate_fetched(&held, &self.repo_dir())
+    }
+
+    /// The background refresh: at most `seconds` long, never asks anyone
+    /// anything, never pushes, and leaves every decision to the person
+    /// (see `BackgroundRefreshReport.decisions`). Safe to be killed. Ends
+    /// early once `stop.stop()` is called from any thread (the background
+    /// task's expiration handler): between steps, or at the transfer's
+    /// next chunk; a request already waiting on the network ends by the
+    /// deadline. Ends `OutOfTime` then, with the store as it was or fully
+    /// updated, and no lock held.
+    pub fn background_refresh_stoppable(&self, seconds: u32, stop: Arc<BackgroundStop>) -> BackgroundRefreshReport {
+        self.background_refresh_with(Duration::from_secs(u64::from(seconds)), &|_| stop.is_stopped())
     }
 }

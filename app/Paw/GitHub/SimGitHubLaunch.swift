@@ -48,8 +48,8 @@ final class SimGitHubLaunch: @unchecked Sendable {
 
     /// The store's sign-in against the simulated GitHub, or `nil` without
     /// `-pawSimGitHub`.
-    func makeCore(stateDir: String) -> GitHub? {
-        github.map { GitHub.openSimulated(stateDir: stateDir, vault: vault.asVault(), github: $0) }
+    func makeCore(stateDir: String) -> GitHubAccount? {
+        github.map { $0.openAccount(stateDir: stateDir, vault: vault.asVault()) }
     }
 
     /// A sign-in ended: from now on codes wait for the debug control.

@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use paw_core::copies::{CopyCache, CopyStatus};
-use paw_core::ffi::github::GitHub;
+use paw_core::github::GitHubAccount;
 use paw_core::ffi::sync::StoreSync;
 use paw_core::ffi::write::StoreWriter;
 use paw_core::github::{TokenVault, VaultError};
@@ -381,7 +381,7 @@ fn diagnostics_say_what_they_should_and_name_nothing() {
             .into_bytes(),
         )
         .unwrap();
-    let github = GitHub::open(store.state(), vault);
+    let github = GitHubAccount::open(store.state(), vault);
 
     let clock = SimClock::new(1_795_520_000_000);
     let port = KeyPort::new(clock.clone());
@@ -443,7 +443,7 @@ fn diagnostics_say_what_they_should_and_name_nothing() {
         DiagnosticsFacts { last_sync: None, last_checked_ms: None, ..facts() },
         None,
         bare_port,
-        Some(GitHub::open(store.state(), Arc::new(Vault::default()))),
+        Some(GitHubAccount::open(store.state(), Arc::new(Vault::default()))),
         Some(copies),
     );
     for line in ["Store: not set up", "Face ID copies: off", "GitHub: not signed in", "Key: not plugged in", "(empty)"] {

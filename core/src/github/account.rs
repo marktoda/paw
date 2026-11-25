@@ -1,5 +1,8 @@
 //! The GitHub sign-in of one store, as the app uses it: sign in, list,
-//! choose, refresh, sign out. `crate::ffi::github` is a thin wrapper.
+//! choose, refresh, sign out.
+//!
+//! The tokens never cross into Swift: Swift only provides where they are
+//! kept ([`TokenVault`]). The token is read-only and is never used to push.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -11,7 +14,7 @@ use super::http::Http;
 use super::refresh::GitHubLink;
 use super::repos::{self, GitHubRepository, RepositoryList, is_unauthorised};
 use super::session::{TokenKeeper, TokenVault, WallClock, system_wall_clock};
-use super::{AUTHORIZATIONS_URL, Endpoints, GitHubError, Secret};
+use super::{Endpoints, GitHubError, Secret};
 
 /// What signing out did.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -25,7 +28,17 @@ pub struct SignOutReport {
     pub manage_url: String,
 }
 
+/// When a kept GitHub sign-in stops working, seconds since 1970.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SignInExpiry {
+    /// The access token; GitHub renews it with the renewal token.
+    pub access_until_secs: Option<u64>,
+    /// The renewal token: after this, sign in again.
+    pub renewal_until_secs: Option<u64>,
+}
+
 /// The GitHub sign-in kept for the store in `state_dir`.
+#[derive(uniffi::Object)]
 pub struct GitHubAccount {
     pub(crate) endpoints: Endpoints,
     pub(crate) keeper: Arc<TokenKeeper>,
@@ -71,23 +84,6 @@ impl GitHubAccount {
         *self.download_limit.lock().unwrap_or_else(|p| p.into_inner()) = Some(bytes);
     }
 
-    /// Whether a sign-in is kept. Reads the vault only.
-    pub fn signed_in(&self) -> Result<bool, GitHubError> {
-        self.keeper.signed_in()
-    }
-
-    /// When the kept sign-in's tokens stop working, in seconds since 1970:
-    /// `(access, renewal)`, each `None` if GitHub gave no end. `None` when
-    /// signed out. Reads the vault only; the tokens stay in the core.
-    pub fn sign_in_expiry(&self) -> Result<Option<(Option<u64>, Option<u64>)>, GitHubError> {
-        Ok(self.keeper.load()?.map(|tokens| (tokens.access_expires_at, tokens.refresh_expires_at)))
-    }
-
-    /// Starts a device sign-in; see [`DeviceSignIn`].
-    pub fn start_sign_in(&self) -> Result<DeviceSignIn, GitHubError> {
-        DeviceSignIn::start(&self.endpoints, self.keeper.clone(), self.clock.clone())
-    }
-
     /// Runs `call` with an access token; if GitHub refuses it (401, as
     /// `unauthorised` reads `call`'s error), once more with a refreshed one.
     pub(crate) fn with_token<T, E: From<GitHubError>>(
@@ -104,6 +100,38 @@ impl GitHubAccount {
             }
             other => other,
         }
+    }
+
+
+}
+
+#[uniffi::export]
+impl GitHubAccount {
+    /// The sign-in for the store in `state_dir`, kept in `vault`, against
+    /// the real GitHub.
+    #[uniffi::constructor]
+    pub fn open(state_dir: String, vault: Arc<dyn TokenVault>) -> Arc<Self> {
+        Arc::new(Self::new(Path::new(&state_dir), vault))
+    }
+
+    /// Whether a sign-in is kept. Reads the vault only; sends nothing.
+    pub fn is_signed_in(&self) -> Result<bool, GitHubError> {
+        self.keeper.signed_in()
+    }
+
+    /// When the kept sign-in ends, for Copy diagnostics: `None` when
+    /// signed out. Reads the vault only; sends nothing, shows no token.
+    pub fn sign_in_expiry(&self) -> Result<Option<SignInExpiry>, GitHubError> {
+        Ok(self.keeper.load()?.map(|tokens| SignInExpiry {
+            access_until_secs: tokens.access_expires_at,
+            renewal_until_secs: tokens.refresh_expires_at,
+        }))
+    }
+
+    /// Starts a device sign-in: one request to GitHub with paw's client
+    /// id; see [`DeviceSignIn`].
+    pub fn start_sign_in(&self) -> Result<Arc<DeviceSignIn>, GitHubError> {
+        DeviceSignIn::start(&self.endpoints, self.keeper.clone(), self.clock.clone()).map(Arc::new)
     }
 
     /// The repositories the person granted paw, for the picker. Nothing is
@@ -125,7 +153,8 @@ impl GitHubAccount {
     /// Chooses `full_name` from the last list for this store: remembers it
     /// (the token fetch is for it alone) and returns the SSH address to
     /// give setup (`Setup.set_address`), which continues as if it had been
-    /// typed. The key still does the first clone, over SSH.
+    /// typed. The key still does the first clone, over SSH. The token is
+    /// read-only and is never used to push.
     pub fn select_repository(&self, full_name: &str) -> Result<String, GitHubError> {
         let listed = self.listed.lock().unwrap_or_else(|p| p.into_inner());
         let chosen = listed
@@ -141,7 +170,7 @@ impl GitHubAccount {
     }
 
     /// The repository chosen for this store, if any.
-    pub fn link(&self) -> Option<GitHubLink> {
+    pub fn linked_repository(&self) -> Option<GitHubLink> {
         GitHubLink::load(&self.state_dir)
     }
 
@@ -153,11 +182,7 @@ impl GitHubAccount {
     pub fn sign_out(&self, revoke: bool) -> Result<SignOutReport, GitHubError> {
         // After any refresh in this process, so none brings the pair back.
         let tokens = self.keeper.take()?;
-        let manage_url = if self.endpoints.is_simulated() {
-            format!("{}/settings/apps/authorizations", self.endpoints.web())
-        } else {
-            AUTHORIZATIONS_URL.to_owned()
-        };
+        let manage_url = self.endpoints.authorizations_url();
         let mut revoked = false;
         if let (true, Some(tokens)) = (revoke, tokens) {
             let mut body = Zeroizing::new(String::from("{\"credentials\":[\""));
@@ -172,5 +197,10 @@ impl GitHubAccount {
             revoked = http.api_post_anonymous("/credentials/revoke", body.as_bytes()).is_ok_and(|a| a.status == 202);
         }
         Ok(SignOutReport { revoked, manage_url })
+    }
+
+    /// Where the person installs paw's GitHub App on a repository.
+    pub fn install_url(&self) -> String {
+        self.endpoints.install_url()
     }
 }

@@ -144,7 +144,7 @@ enum BackgroundRefresh {
             return skipped("Not signed in to GitHub")
         }
         #else
-        let core = GitHub.open(stateDir: location.stateDir.path, vault: KeychainTokenVault())
+        let core = GitHubAccount.open(stateDir: location.stateDir.path, vault: KeychainTokenVault())
         #endif
         let report = core.backgroundRefreshStoppable(seconds: budgetSeconds, stop: stop)
         let run = summary(of: report, at: Date())
