@@ -48,7 +48,8 @@ struct EntryFormSheet: View {
         guard form == nil else { return }
         switch purpose {
         case .add(let folder):
-            form = EntryFormModel(adding: folder, writer: edits.writer, folders: model.allFolders)
+            form = EntryFormModel(
+                adding: folder, writer: edits.writer, folders: model.allFolders, store: model.store)
         case .edit(let id, let focusName):
             guard let session = model.session(id) else {
                 openProblem = "It was closed. Open it again, then tap Edit."
@@ -56,7 +57,8 @@ struct EntryFormSheet: View {
             }
             do {
                 form = try EntryFormModel(
-                    editing: session, focusName: focusName, writer: edits.writer, folders: model.allFolders)
+                    editing: session, focusName: focusName, writer: edits.writer, folders: model.allFolders,
+                    store: model.store)
             } catch let error as WriteError {
                 openProblem = editProblem(error, folder: session.ref.folder).nextStep
             } catch {
@@ -132,6 +134,9 @@ private struct EntryFormView: View {
                     withAnimation { scroller.scrollTo("top", anchor: .top) }
                 }
             }
+            .onChange(of: ObjectIdentifier(model.store)) {
+                form.storeChanged(model.store)
+            }
             .onChange(of: form.saveProblem) {
                 if form.saveProblem != nil {
                     withAnimation { scroller.scrollTo("footer", anchor: .bottom) }
@@ -187,7 +192,7 @@ private struct EntryFormView: View {
                 FolderChoiceLabel(title: "Not in a folder", chosen: form.newFolder == nil && form.folder.isEmpty)
             }
             ForEach(form.folders, id: \.self) { folder in
-                let writable = edits.writer.folderOpenable(folder)
+                let writable = form.folderOpenable[folder] ?? true
                 Button {
                     form.chooseFolder(folder)
                 } label: {
