@@ -23,13 +23,11 @@ use pgp::types::{DecryptionKey, EskType, Password};
 use zeroize::Zeroizing;
 
 use super::session::{CardJob, Halt, card_error};
-use super::status::{self, KeyOperation};
+use super::apdu;
 use super::task::TaskCore;
 use super::touch::{self, TouchWatch};
 use super::KeyError;
 use crate::recipients;
-
-const DECIPHER: u8 = 0x2A;
 
 fn unreadable(detail: impl std::fmt::Display) -> KeyError {
     KeyError::EntryUnreadable { detail: detail.to_string() }
@@ -113,18 +111,14 @@ impl<'a> Plan<'a> {
                 return Err(Halt::Fail(KeyError::KeyRemoved));
             }
             match wire.last() {
-                Some((DECIPHER, sw)) => match status::key_operation(sw, touch_possible) {
-                    // The card answered; what it gave did not unwrap this
-                    // packet. Try the next hidden one.
-                    KeyOperation::Done => failure = KeyError::DecryptFailed { detail: error.to_string() },
-                    KeyOperation::TouchTimeout | KeyOperation::Refused(0x6982 | 0x6985) => {
-                        return Err(session.refused(task, "decrypting", sw, touch_possible, sent.elapsed()));
-                    }
-                    KeyOperation::Refused(sw) => return Err(Halt::Fail(status::unexpected("decrypting", sw))),
-                },
-                Some((_, sw)) if sw != status::OK => {
-                    return Err(Halt::Fail(status::unexpected("decrypting", sw)));
+                Some((apdu::PSO, sw)) if apdu::security_refusal(sw) => {
+                    return Err(session.refused(task, "decrypting", sw, touch_possible, sent.elapsed()));
                 }
+                Some((_, sw)) if sw != apdu::SW_OK => {
+                    return Err(Halt::Fail(apdu::unexpected("decrypting", sw)));
+                }
+                // The card answered; what it gave did not unwrap this
+                // packet. Try the next hidden one.
                 _ => failure = KeyError::DecryptFailed { detail: error.to_string() },
             }
         }

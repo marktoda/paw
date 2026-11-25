@@ -9,7 +9,7 @@
 use sha2::{Digest, Sha256, Sha512};
 use zeroize::Zeroizing;
 
-use super::KeyError;
+use super::{KeyError, apdu};
 use super::wire::Wire;
 
 /// How the card wants the PIN sent.
@@ -23,6 +23,8 @@ pub(crate) enum PinKdf {
     Unsupported(String),
 }
 
+/// The KDF algorithm paw follows: iterated and salted S2K.
+const ITER_SALTED: u8 = 3;
 const SHA256: u8 = 0x08;
 const SHA512: u8 = 0x0A;
 
@@ -56,8 +58,8 @@ impl PinKdf {
     /// Reads the card's KDF data object. A card that has none (it answers
     /// GET DATA with an error) takes the PIN as typed.
     pub(crate) fn read(wire: &Wire) -> Result<Self, KeyError> {
-        let (body, sw) = wire.send(&[0x00, 0xCA, 0x00, 0xF9, 0x00])?;
-        if sw != super::status::OK {
+        let (body, sw) = wire.send(&apdu::READ_KDF)?;
+        if sw != apdu::SW_OK {
             return Ok(Self::Plain);
         }
         Ok(Self::parse(&body))
@@ -66,7 +68,7 @@ impl PinKdf {
     pub(crate) fn parse(body: &[u8]) -> Self {
         // Some cards wrap the contents in the `F9` tag itself.
         let mut fields = match next_tlv(body) {
-            Some((0xF9, inner, _)) => inner,
+            Some((tag, inner, _)) if tag == u16::from(apdu::KDF) => inner,
             _ => body,
         };
         let (mut algorithm, mut hash, mut count, mut salt) = (None, None, None, None);
@@ -85,8 +87,8 @@ impl PinKdf {
         }
         match (algorithm, hash, count, salt) {
             (None | Some(0), ..) => Self::Plain,
-            (Some(3), Some(hash @ (SHA256 | SHA512)), Some(count), Some(salt)) => Self::IterSalted { hash, count, salt },
-            (Some(3), ..) => Self::Unsupported("the key's PIN KDF uses a hash or setting paw does not support".into()),
+            (Some(ITER_SALTED), Some(hash @ (SHA256 | SHA512)), Some(count), Some(salt)) => Self::IterSalted { hash, count, salt },
+            (Some(ITER_SALTED), ..) => Self::Unsupported("the key's PIN KDF uses a hash or setting paw does not support".into()),
             (Some(other), ..) => Self::Unsupported(format!("the key's PIN KDF (algorithm {other}) is not supported")),
         }
     }

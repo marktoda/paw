@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use super::{KeyError, KeyPurpose, KeyTaskState, LoginPurpose};
+use super::{KeyError, KeyPurpose, KeyTaskState, LoginPurpose, apdu};
 use crate::{KeyTouch, PawError};
 
 /// Lines a session keeps in memory: about 40 card commands with the task
@@ -190,12 +190,12 @@ impl KeyLog {
             format!("+{} ms", since.as_millis())
         };
         let answer = match sw {
-            Some(sw) => format!("{} {}", sw_code(sw), sw_words(sw)),
+            Some(sw) => format!("{} {}", apdu::sw_code(sw), apdu::sw_words(sw)),
             None => "reader failed".into(),
         };
-        self.line(format!("→ {}: {answer} · {} ms · {since}", command_words(header, has_data), round_trip.as_millis()));
+        self.line(format!("→ {}: {answer} · {} ms · {since}", apdu::command_words(header, has_data), round_trip.as_millis()));
         // The PIN has gone out: times are exact again.
-        if header[1] == 0x20 && header[2] == 0x00 && has_data {
+        if apdu::carries_pin(header, has_data) {
             self.coarse.store(false, Ordering::SeqCst);
         }
     }
@@ -206,70 +206,6 @@ impl KeyLog {
             .iter()
             .map(|(at_ms, text)| format!("{} {text}\n", clock_time(*at_ms, utc_offset_secs)))
             .collect()
-    }
-}
-
-/// The instruction, named, with P1 and P2 where they say something.
-pub(crate) fn command_words(header: [u8; 4], has_data: bool) -> String {
-    let [cla, ins, p1, p2] = header;
-    let name = match (ins, p1, p2) {
-        (0xA4, ..) => "SELECT".to_string(),
-        (0xCA | 0xCB, ..) => format!("GET DATA {p1:02X}{p2:02X}"),
-        (0x20, 0xFF, _) => format!("VERIFY {p1:02X} {p2:02X} (forget)"),
-        (0x20, ..) => format!("VERIFY {p1:02X} {p2:02X} ({})", if has_data { "with PIN" } else { "check" }),
-        (0x2A, 0x80, 0x86) => "PSO:DECIPHER".into(),
-        (0x2A, 0x9E, 0x9A) => "PSO:COMPUTE SIGNATURE".into(),
-        (0x2A, ..) => format!("PSO {p1:02X} {p2:02X}"),
-        (0x88, ..) => "INTERNAL AUTHENTICATE".into(),
-        (0xC0, ..) => "GET RESPONSE".into(),
-        (0x47, 0x81, _) => "READ PUBLIC KEY".into(),
-        (0x47, ..) => "GENERATE KEY".into(),
-        (0xDA | 0xDB, ..) => format!("PUT DATA {p1:02X}{p2:02X}"),
-        (0x24, ..) => format!("CHANGE PIN {p2:02X}"),
-        (0x2C, ..) => format!("RESET RETRY COUNTER {p2:02X}"),
-        (0x84, ..) => "GET CHALLENGE".into(),
-        (0xE6, ..) => "TERMINATE".into(),
-        (0x44, ..) => "ACTIVATE".into(),
-        _ => format!("INS {ins:02X} {p1:02X} {p2:02X}"),
-    };
-    if cla & 0x10 != 0 { format!("{name} (chain part)") } else { name }
-}
-
-/// A status word as hex, with the length byte of `61xx` and `6Cxx` (how
-/// much response data there is) left out.
-pub(crate) fn sw_code(sw: u16) -> String {
-    match sw & 0xFF00 {
-        0x6100 => "61xx".into(),
-        0x6C00 => "6Cxx".into(),
-        _ => format!("{sw:04X}"),
-    }
-}
-
-/// A status word in a few words.
-pub(crate) fn sw_words(sw: u16) -> String {
-    match sw {
-        0x9000 => "ok".into(),
-        // Their low byte is a length of response data: not shown.
-        sw if sw & 0xFF00 == 0x6100 => "more data".into(),
-        sw if sw & 0xFF00 == 0x6C00 => "wrong length".into(),
-        0x63C0 => "blocked, 0 tries left".into(),
-        sw if sw & 0xFFF0 == 0x63C0 => format!("not verified, {} tries left", sw & 0xF),
-        0x6285 => "application terminated".into(),
-        0x6400 => "execution error".into(),
-        0x6581 => "memory failure".into(),
-        0x6700 => "wrong length".into(),
-        0x6982 => "security status not satisfied".into(),
-        0x6983 => "PIN blocked".into(),
-        0x6984 => "data invalid".into(),
-        0x6985 => "conditions not satisfied".into(),
-        0x6A80 => "wrong data".into(),
-        0x6A82 => "not found".into(),
-        0x6A86 | 0x6B00 => "wrong P1 or P2".into(),
-        0x6A88 => "data not found".into(),
-        0x6D00 => "instruction not supported".into(),
-        0x6E00 => "class not supported".into(),
-        0x6F00 => "no precise diagnosis".into(),
-        _ => "unknown".into(),
     }
 }
 
@@ -447,30 +383,6 @@ pub fn clear_key_log(state_dir: String) -> Result<(), PawError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn names_commands_without_their_data() {
-        assert_eq!(command_words([0x00, 0x20, 0x00, 0x82], false), "VERIFY 00 82 (check)");
-        assert_eq!(command_words([0x00, 0x20, 0x00, 0x82], true), "VERIFY 00 82 (with PIN)");
-        assert_eq!(command_words([0x00, 0x20, 0xFF, 0x82], false), "VERIFY FF 82 (forget)");
-        assert_eq!(command_words([0x10, 0x2A, 0x80, 0x86], true), "PSO:DECIPHER (chain part)");
-        assert_eq!(command_words([0x00, 0xCA, 0x00, 0x6E], false), "GET DATA 006E");
-        assert_eq!(command_words([0x00, 0x99, 0x01, 0x02], false), "INS 99 01 02");
-    }
-
-    #[test]
-    fn translates_common_status_words() {
-        assert_eq!(sw_words(0x9000), "ok");
-        assert_eq!(sw_words(0x63C2), "not verified, 2 tries left");
-        assert_eq!(sw_words(0x63C0), "blocked, 0 tries left");
-        assert_eq!(sw_words(0x6982), "security status not satisfied");
-        assert_eq!(sw_words(0x6985), "conditions not satisfied");
-        assert_eq!(sw_words(0x6983), "PIN blocked");
-        assert_eq!(sw_words(0x6110), "more data");
-        assert_eq!(sw_code(0x6110), "61xx");
-        assert_eq!(sw_code(0x6C20), "6Cxx");
-        assert_eq!(sw_code(0x6982), "6982");
-    }
 
     #[test]
     fn clock_time_is_local() {

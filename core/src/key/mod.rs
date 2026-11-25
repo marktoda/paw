@@ -10,7 +10,7 @@
 //! - [`port`]: where keys are plugged in and out, and where tasks start.
 //! - [`session`]: one connected card; the PIN; one card job at a time.
 //! - [`task`]: the state machine the sheet binds to.
-//! - [`status`]: the card's status words, read in one place.
+//! - [`apdu`]: the card's commands and status words, defined once.
 //! - [`wire`]: the transport wrapper that sees every command go out.
 //! - [`touch`]: when to show `Touch`.
 //! - [`decrypt`]: an entry, split into what needs the card and what not.
@@ -18,6 +18,7 @@
 //! - [`enrolment`]: the key the store was set up with; no PIN to another.
 //! - [`keylog`]: what paw and the card said to each other, for diagnosis.
 
+pub(crate) mod apdu;
 mod decrypt;
 pub mod enrolment;
 pub(crate) mod kdf;
@@ -25,7 +26,6 @@ pub mod keylog;
 mod port;
 mod session;
 mod signer;
-mod status;
 mod task;
 mod touch;
 mod wire;
@@ -55,6 +55,10 @@ pub const PIN_BACKGROUND_LIMIT: Duration = Duration::from_secs(15 * 60);
 /// is still waiting this long after the command went out, so a cached touch
 /// does not flash a prompt.
 pub const CACHED_TOUCH_GRACE: Duration = Duration::from_millis(400);
+
+/// A refusal quicker than this was not a touch timeout: a YubiKey waits
+/// about 15 seconds for a touch before it gives up.
+pub(crate) const FAST_REFUSAL: Duration = Duration::from_secs(1);
 
 /// The PIN lengths an OpenPGP card accepts for the user PIN. Anything
 /// outside is refused before it reaches the card, so it costs no try.

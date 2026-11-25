@@ -29,6 +29,10 @@ use sha1::{Digest, Sha1};
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::ApduTransport;
+use crate::key::FAST_REFUSAL;
+use crate::key::apdu::{
+    self, DECIPHER_P1, DECIPHER_P2, FORGET_P1, GET_DATA, INTERNAL_AUTHENTICATE, PSO, PW1_82, SELECT, VERIFY, VERIFY_P1,
+};
 use crate::ffi::{CardConnection, ConnectionError};
 
 const CREATED: u32 = 1_780_000_000;
@@ -45,8 +49,8 @@ const TOUCH_CACHE: Duration = Duration::from_secs(15);
 
 /// [`SimulatedKey::time_out_touch`] answers no sooner than this after the
 /// command came, so the core takes it for a touch timeout rather than an
-/// instant refusal (see `key::session::FAST_REFUSAL`).
-const MIN_TOUCH_TIMEOUT: Duration = Duration::from_millis(1100);
+/// instant refusal.
+const MIN_TOUCH_TIMEOUT: Duration = FAST_REFUSAL.saturating_add(Duration::from_millis(100));
 
 /// A slot's touch policy, as the simulated key can be set to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -462,7 +466,7 @@ impl SimulatedKey {
             state.plugged
         };
         let (mut body, sw) = match self.handle(apdu) {
-            Ok(body) => (body, 0x9000u16),
+            Ok(body) => (body, apdu::SW_OK),
             Err(sw) => (vec![], sw),
         };
         let state = self.lock();
@@ -558,10 +562,10 @@ impl SimulatedKey {
 
     fn handle(&self, apdu: &[u8]) -> Result<Vec<u8>, u16> {
         if apdu.len() < 4 {
-            return Err(0x6700);
+            return Err(apdu::SW_WRONG_LENGTH);
         }
         let (cla, ins, p1, p2) = (apdu[0], apdu[1], apdu[2], apdu[3]);
-        let part = command_data(&apdu[4..]).ok_or(0x6700u16)?;
+        let part = command_data(&apdu[4..]).ok_or(apdu::SW_WRONG_LENGTH)?;
 
         // Command chaining: every part but the last has CLA bit 0x10 set and
         // is only stored.
@@ -576,22 +580,22 @@ impl SimulatedKey {
         let data = data.as_slice();
 
         match (ins, p1, p2) {
-            (0xA4, 0x04, _) => {
+            (SELECT, 0x04, _) => {
                 let mut state = self.lock();
                 if state.reselect_drops_pin {
                     state.verified = false;
                 }
                 Ok(vec![])
             }
-            (0xCA, 0x00, 0x6E) => Ok(self.application_related_data()),
-            (0xCA, 0x00, 0xC4) => Ok(self.pw_status()),
-            (0xCA, 0x00, 0xC5) => Ok(self.fingerprints()),
-            (0xCA, 0x00, 0xCD) => Ok(self.generation_times()),
-            (0xCA, 0x00, 0xD7) => Ok(self.uif(Slot::Decryption)),
-            (0xCA, 0x00, 0xD8) => Ok(self.uif(Slot::Authentication)),
-            (0xCA, 0x00, 0xF9) => self.lock().kdf.clone().ok_or(0x6A88),
-            (0xCA, _, _) => Err(0x6A88),
-            (0x20, 0x00, 0x82) => {
+            (GET_DATA, 0x00, 0x6E) => Ok(self.application_related_data()),
+            (GET_DATA, 0x00, apdu::PW_STATUS) => Ok(self.pw_status()),
+            (GET_DATA, 0x00, 0xC5) => Ok(self.fingerprints()),
+            (GET_DATA, 0x00, 0xCD) => Ok(self.generation_times()),
+            (GET_DATA, 0x00, 0xD7) => Ok(self.uif(Slot::Decryption)),
+            (GET_DATA, 0x00, 0xD8) => Ok(self.uif(Slot::Authentication)),
+            (GET_DATA, 0x00, apdu::KDF) => self.lock().kdf.clone().ok_or(apdu::SW_DATA_NOT_FOUND),
+            (GET_DATA, _, _) => Err(apdu::SW_DATA_NOT_FOUND),
+            (VERIFY, VERIFY_P1, PW1_82) => {
                 let mut state = self.lock();
                 if data.is_empty() {
                     state.pin_queries += 1;
@@ -599,16 +603,16 @@ impl SimulatedKey {
                     state.verify_attempts += 1;
                 }
                 if state.tries_left == 0 {
-                    return Err(0x6983);
+                    return Err(apdu::SW_PIN_BLOCKED);
                 }
                 // No data asks whether the PIN is verified, without using a try.
                 if data.is_empty() {
-                    return if state.verified { Ok(vec![]) } else { Err(0x63C0 | u16::from(state.tries_left)) };
+                    return if state.verified { Ok(vec![]) } else { Err(apdu::SW_TRIES_LEFT | u16::from(state.tries_left)) };
                 }
                 let expected = match &state.kdf {
                     Some(object) => crate::key::kdf::PinKdf::parse(object)
                         .derive(state.pin.as_bytes())
-                        .map_err(|_| 0x6F00u16)?,
+                        .map_err(|_| apdu::SW_NO_DIAGNOSIS)?,
                     None => zeroize::Zeroizing::new(state.pin.as_bytes().to_vec()),
                 };
                 if data == expected.as_slice() {
@@ -618,11 +622,11 @@ impl SimulatedKey {
                 } else {
                     state.tries_left -= 1;
                     state.verified = false;
-                    Err(0x6982)
+                    Err(apdu::SW_SECURITY_NOT_SATISFIED)
                 }
             }
             // P1 FF: forget that the PIN was verified.
-            (0x20, 0xFF, 0x82) => {
+            (VERIFY, FORGET_P1, PW1_82) => {
                 self.lock().verified = false;
                 Ok(vec![])
             }
@@ -633,9 +637,9 @@ impl SimulatedKey {
                 &[0x7F, 0x49],
                 &tlv(&[0x86], &self.authentication_public_key()),
             )),
-            (0x2A, 0x80, 0x86) => self.decipher(data),
-            (0x88, 0x00, 0x00) => self.internal_authenticate(data),
-            _ => Err(0x6D00),
+            (PSO, DECIPHER_P1, DECIPHER_P2) => self.decipher(data),
+            (INTERNAL_AUTHENTICATE, 0x00, 0x00) => self.internal_authenticate(data),
+            _ => Err(apdu::SW_INS_NOT_SUPPORTED),
         }
     }
 
@@ -648,7 +652,7 @@ impl SimulatedKey {
     fn authorise(&self, slot: Slot) -> Result<MutexGuard<'_, State>, u16> {
         let mut state = self.lock();
         if !state.verified {
-            return Err(0x6982);
+            return Err(apdu::SW_SECURITY_NOT_SATISFIED);
         }
         let cached = state.last_touch[slot as usize]
             .is_some_and(|at| at.elapsed() < state.touch_cache);
@@ -674,10 +678,10 @@ impl SimulatedKey {
                 // So a timeout asked for at once still takes that second.
                 drop(state);
                 std::thread::sleep(MIN_TOUCH_TIMEOUT.saturating_sub(waiting_since.elapsed()));
-                return Err(0x6982);
+                return Err(apdu::SW_SECURITY_NOT_SATISFIED);
             }
             if !state.touch_pending || !state.present {
-                return Err(0x6982);
+                return Err(apdu::SW_SECURITY_NOT_SATISFIED);
             }
             state.touch_pending = false;
             state.touches += 1;
@@ -690,7 +694,7 @@ impl SimulatedKey {
     /// (PureEdDSA): no hashing or padding by the caller.
     fn internal_authenticate(&self, data: &[u8]) -> Result<Vec<u8>, u16> {
         if data.is_empty() {
-            return Err(0x6A80);
+            return Err(apdu::SW_WRONG_DATA);
         }
         let mut state = self.authorise(Slot::Authentication)?;
         state.authentications += 1;
@@ -700,7 +704,7 @@ impl SimulatedKey {
     fn decipher(&self, data: &[u8]) -> Result<Vec<u8>, u16> {
         // A6 { 7F49 { 86 { point } } }: the point is the last 32 bytes.
         if data.len() < 32 || data[0] != 0xA6 {
-            return Err(0x6A80);
+            return Err(apdu::SW_WRONG_DATA);
         }
         let mut state = self.authorise(Slot::Decryption)?;
         let mut point = [0u8; 32];

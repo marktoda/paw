@@ -19,10 +19,10 @@ use zeroize::Zeroizing;
 
 use super::kdf::{self, PinKdf};
 use super::keylog::{self, KeyLog, Sink};
-use super::status::{self, Verify};
+use super::apdu::{self, Verify};
 use super::task::TaskCore;
 use super::wire::Wire;
-use super::{KeyError, KeyTaskState, MAX_PIN_LEN, MIN_PIN_LEN, PIN_BACKGROUND_LIMIT};
+use super::{FAST_REFUSAL, KeyError, KeyTaskState, MAX_PIN_LEN, MIN_PIN_LEN, PIN_BACKGROUND_LIMIT};
 use crate::copies::Clock;
 use crate::ssh::SshPublicKey;
 use crate::{ApduTransport, CardInfo, PawError};
@@ -49,13 +49,7 @@ impl Pin {
     /// VERIFY for PW1 in mode 82 (decryption and authentication), with
     /// the PIN as the card's KDF wants it.
     fn verify_apdu(&self, kdf: &PinKdf) -> Result<Zeroizing<Vec<u8>>, KeyError> {
-        let data = kdf.derive(&self.0)?;
-        let mut apdu = Zeroizing::new(Vec::with_capacity(5 + data.len()));
-        // The PIN's length was checked, and a KDF hash is at most 64 bytes:
-        // a short APDU either way.
-        apdu.extend_from_slice(&[0x00, 0x20, 0x00, 0x82, data.len() as u8]);
-        apdu.extend_from_slice(&data);
-        Ok(apdu)
+        Ok(apdu::verify_pin(&kdf.derive(&self.0)?))
     }
 }
 
@@ -121,10 +115,6 @@ pub struct KeySession {
     state: Mutex<State>,
     card_free: Condvar,
 }
-
-/// A refusal quicker than this was not a touch timeout: a YubiKey waits
-/// about 15 seconds for a touch before it gives up.
-pub(crate) const FAST_REFUSAL: Duration = Duration::from_secs(1);
 
 /// What the PIN stage shows.
 pub(crate) struct PinPrompt {
@@ -359,7 +349,7 @@ impl KeySession {
     /// iPhone's reader; paw does not rely on it, because it asks for the
     /// PIN whenever it holds none, whatever the card says.
     fn deverify(&self) {
-        let _ = self.wire.send(&[0x00, 0x20, 0xFF, 0x82]);
+        let _ = self.wire.send(&apdu::FORGET_PIN);
     }
 
     fn set_tries(&self, tries: u8) {
@@ -415,12 +405,12 @@ impl KeySession {
     /// A card that cannot say whether the PIN is verified is judged on the
     /// time alone.
     pub(crate) fn refused(&self, task: &TaskCore, step: &str, sw: u16, touch_possible: bool, elapsed: Duration) -> Halt {
-        let check = match self.wire.send(&[0x00, 0x20, 0x00, 0x82]) {
+        let check = match self.wire.send(&apdu::CHECK_PIN) {
             Ok((_, check)) => check,
             Err(error) => return Halt::Fail(error),
         };
         let slow = elapsed >= FAST_REFUSAL;
-        let (halt, reading) = match status::verify(check) {
+        let (halt, reading) = match apdu::verify(check) {
             Verify::Verified | Verify::Other(_) if touch_possible && slow => {
                 (Halt::Fail(KeyError::TouchTimeout), "a touch timeout")
             }
@@ -559,7 +549,7 @@ pub(crate) fn card_error(wire: &Wire, step: &str, error: impl std::fmt::Display)
         return KeyError::KeyRemoved;
     }
     match wire.last() {
-        Some((_, sw)) if sw != status::OK => status::unexpected(step, sw),
+        Some((_, sw)) if sw != apdu::SW_OK => apdu::unexpected(step, sw),
         _ => KeyError::Reader { detail: format!("{step}: {error}") },
     }
 }
@@ -601,8 +591,8 @@ impl<'a> CardJob<'a> {
         }
 
         let Some(pin) = session.held_pin() else { return Err(Halt::AskPin(None)) };
-        let (_, sw) = session.wire.send(&[0x00, 0x20, 0x00, 0x82])?;
-        let tries_left = match status::verify(sw) {
+        let (_, sw) = session.wire.send(&apdu::CHECK_PIN)?;
+        let tries_left = match apdu::verify(sw) {
             Verify::Verified => return Ok(()),
             Verify::NotVerified { tries_left: Some(tries) } => tries,
             Verify::NotVerified { tries_left: None } => self.read_tries()?,
@@ -632,7 +622,7 @@ impl<'a> CardJob<'a> {
     fn verify(&mut self, pin: &Pin) -> Result<Verified, KeyError> {
         let session = self.session;
         let (_, sw) = session.wire.send(&pin.verify_apdu(&session.identity.pin_kdf)?)?;
-        let verified = match status::verify(sw) {
+        let verified = match apdu::verify(sw) {
             Verify::Verified => {
                 let tries = self.read_tries()?;
                 session.set_tries(tries);
@@ -642,7 +632,7 @@ impl<'a> CardJob<'a> {
             // The card did not say: read the counter.
             Verify::NotVerified { tries_left: None } => self.read_tries()?,
             Verify::Blocked => 0,
-            Verify::Other(sw) => return Err(status::unexpected("verifying the PIN", sw)),
+            Verify::Other(sw) => return Err(apdu::unexpected("verifying the PIN", sw)),
         };
         session.set_tries(verified);
         Ok(if verified == 0 { Verified::Blocked } else { Verified::Wrong { tries_left: verified } })
@@ -650,10 +640,10 @@ impl<'a> CardJob<'a> {
 
     /// The PW1 retry counter, from the PW status bytes (`C4`).
     fn read_tries(&mut self) -> Result<u8, KeyError> {
-        let (body, sw) = self.session.wire.send(&[0x00, 0xCA, 0x00, 0xC4, 0x00])?;
+        let (body, sw) = self.session.wire.send(&apdu::READ_PW_STATUS)?;
         match body.get(4) {
-            Some(tries) if sw == status::OK => Ok(*tries),
-            _ if sw != status::OK => Err(status::unexpected("reading the PIN counter", sw)),
+            Some(tries) if sw == apdu::SW_OK => Ok(*tries),
+            _ if sw != apdu::SW_OK => Err(apdu::unexpected("reading the PIN counter", sw)),
             _ => Err(KeyError::Reader { detail: "reading the PIN counter: too short".into() }),
         }
     }

@@ -14,14 +14,12 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use super::session::{CardJob, Halt, KeySession, card_error};
-use super::status::{self, KeyOperation};
+use super::apdu;
 use super::task::TaskCore;
 use super::touch::{self, TouchWatch};
 use super::{KeyError, KeyTaskState};
 use crate::PawError;
 use crate::ssh::{SshPublicKey, SshSigner};
-
-const INTERNAL_AUTHENTICATE: u8 = 0x88;
 
 pub struct SessionSigner {
     task: Arc<TaskCore>,
@@ -68,18 +66,14 @@ pub(crate) fn authenticate(job: &mut CardJob<'_>, task: &Arc<TaskCore>, data: &[
     if wire.failed() {
         return Err(Halt::Fail(KeyError::KeyRemoved));
     }
-    Err(Halt::Fail(match wire.last() {
-        Some((INTERNAL_AUTHENTICATE, sw)) => match status::key_operation(sw, touch::possible(policy)) {
-            // A lost PIN cannot be asked for while the server waits: the
-            // signature fails with `PinForgotten` (see `sign`).
-            KeyOperation::TouchTimeout | KeyOperation::Refused(0x6982 | 0x6985) => {
-                return Err(session.refused(task, "signing", sw, touch::possible(policy), sent.elapsed()));
-            }
-            KeyOperation::Refused(sw) => status::unexpected("signing", sw),
-            KeyOperation::Done => KeyError::Reader { detail: format!("signing: {error}") },
-        },
-        _ => card_error(&wire, "signing", error),
-    }))
+    match wire.last() {
+        // A lost PIN cannot be asked for while the server waits: the
+        // signature fails with `PinForgotten` (see `sign`).
+        Some((apdu::INTERNAL_AUTHENTICATE, sw)) if apdu::security_refusal(sw) => {
+            Err(session.refused(task, "signing", sw, touch::possible(policy), sent.elapsed()))
+        }
+        _ => Err(Halt::Fail(card_error(&wire, "signing", error))),
+    }
 }
 
 impl SshSigner for SessionSigner {

@@ -15,32 +15,9 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
-use super::KeyError;
+use super::{KeyError, apdu};
 use super::keylog::KeyLog;
 use crate::ApduTransport;
-
-/// PSO:DECIPHER (`2A 80 86`) and INTERNAL AUTHENTICATE (`88`) are the
-/// commands a card holds until it is touched.
-fn waits_for_touch(apdu: &[u8]) -> bool {
-    match apdu {
-        // The last (or only) part of a chain: CLA bit 0x10 clear.
-        [cla, 0x2A, 0x80, 0x86, ..] | [cla, 0x88, ..] => cla & 0x10 == 0,
-        _ => false,
-    }
-}
-
-const GET_RESPONSE: u8 = 0xC0;
-
-/// Whether a command carries a data field (ISO 7816-4 cases 3 and 4), as
-/// opposed to none (case 1), or only an expected length: one byte (case 2)
-/// or `00` and two bytes (extended case 2).
-pub(crate) fn has_data(apdu: &[u8]) -> bool {
-    match apdu.len() {
-        0..=5 => false,
-        7 => apdu[4] != 0x00,
-        _ => true,
-    }
-}
 
 /// Told when a command that may wait for a touch goes out, and when its
 /// answer (or the reader's failure) comes back.
@@ -118,19 +95,19 @@ impl Wire {
 }
 
 impl ApduTransport for Wire {
-    fn transmit(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
+    fn transmit(&self, command: &[u8]) -> Result<Vec<u8>, String> {
         let hook = {
             let record = self.record();
             if record.failed {
                 return Err("the reader failed earlier".into());
             }
-            waits_for_touch(apdu).then(|| record.touch_hook.clone()).flatten()
+            apdu::waits_for_touch(command).then(|| record.touch_hook.clone()).flatten()
         };
         if let Some(hook) = &hook {
             hook.sent();
         }
         let sent = Instant::now();
-        let result = self.inner.transmit(apdu);
+        let result = self.inner.transmit(command);
         let round_trip = sent.elapsed();
 
         let sw = {
@@ -141,8 +118,8 @@ impl ApduTransport for Wire {
                     None
                 }
                 Ok(response) => {
-                    let ins = match apdu.get(1) {
-                        Some(&GET_RESPONSE) => record.last.map(|(ins, _)| ins),
+                    let ins = match command.get(1) {
+                        Some(&apdu::GET_RESPONSE) => record.last.map(|(ins, _)| ins),
                         other => other.copied(),
                     };
                     let sw = match response.as_slice() {
@@ -157,39 +134,13 @@ impl ApduTransport for Wire {
         // After the answer and outside the record's lock. The header only:
         // the fifth byte would be the length of the data, which for a
         // VERIFY is the PIN's.
-        if let [cla, ins, p1, p2, ..] = apdu {
-            self.log.command([*cla, *ins, *p1, *p2], has_data(apdu), sw, round_trip, sent);
+        if let [cla, ins, p1, p2, ..] = command {
+            self.log.command([*cla, *ins, *p1, *p2], apdu::has_data(command), sw, round_trip, sent);
         }
         // After the log line, so the log reads command, then stage.
         if let Some(hook) = &hook {
             hook.answered();
         }
         result
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{has_data, waits_for_touch};
-
-    #[test]
-    fn only_a_data_field_counts_as_data() {
-        assert!(!has_data(&[0x00, 0x20, 0x00, 0x82]));
-        assert!(!has_data(&[0x00, 0xCA, 0x00, 0x6E, 0x00]));
-        assert!(!has_data(&[0x00, 0xCA, 0x00, 0x6E, 0x00, 0x00, 0x00]));
-        assert!(has_data(&[0x00, 0x20, 0x00, 0x82, 0x01, 0x31]));
-        assert!(has_data(&[0x00, 0x20, 0x00, 0x82, 0x02, 0x31, 0x32]));
-        assert!(has_data(&[0x00, 0x2A, 0x80, 0x86, 0x00, 0x00, 0x01, 0xA6, 0x00, 0x00]));
-    }
-
-    #[test]
-    fn only_the_last_part_of_a_key_operation_waits_for_a_touch() {
-        assert!(waits_for_touch(&[0x00, 0x2A, 0x80, 0x86, 0x01, 0x00]));
-        assert!(waits_for_touch(&[0x00, 0x88, 0x00, 0x00, 0x01, 0x00]));
-        assert!(!waits_for_touch(&[0x10, 0x88, 0x00, 0x00, 0x01, 0x00]));
-        // PSO:COMPUTE DIGITAL SIGNATURE is not used; neither is a short APDU.
-        assert!(!waits_for_touch(&[0x00, 0x2A, 0x9E, 0x9A, 0x01, 0x00]));
-        assert!(!waits_for_touch(&[0x00, 0x20, 0x00, 0x82]));
-        assert!(!waits_for_touch(&[0x00]));
     }
 }
