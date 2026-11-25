@@ -105,6 +105,8 @@ final class AppModel {
     @ObservationIgnored var noteCode: (@MainActor (OpenedEntry, String) -> Void)?
 
     @ObservationIgnored private var pendingRoute: Route?
+    /// Bumped by each key read: which access answer is the latest.
+    @ObservationIgnored private var accessAttempt = 0
     /// Monotonic milliseconds on `clock` when paw went to the background.
     @ObservationIgnored var backgroundedAtMs: Int64?
     @ObservationIgnored var deviceLockWatch: NSObjectProtocol?
@@ -237,8 +239,11 @@ final class AppModel {
             nextStep: "\(why) Try again, or unplug the key and plug it back in.")
     }
 
-    /// A key was read: asks the core which entries it can open.
+    /// A key was read: asks the core which entries it can open. Only the
+    /// latest read's answer is kept, should an earlier key's come later.
     private func learnAccess(_ session: KeySession) {
+        accessAttempt += 1
+        let attempt = accessAttempt
         let store = store
         let paths = allEntryPaths()
         DispatchQueue.global(qos: .userInitiated).async {
@@ -251,7 +256,7 @@ final class AppModel {
             let found = Handoff(value: access)
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
-                    guard let self, !found.value.isEmpty else { return }
+                    guard let self, attempt == self.accessAttempt, !found.value.isEmpty else { return }
                     self.accessByPath = found.value
                 }
             }
