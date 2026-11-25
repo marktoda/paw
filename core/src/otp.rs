@@ -33,6 +33,8 @@ pub enum OtpProblem {
     UnknownAlgorithm,
     BadDigits,
     BadPeriod,
+    /// A label pass-otp can't read: more than one `:`.
+    BadLabel,
 }
 
 impl OtpProblem {
@@ -46,6 +48,7 @@ impl OtpProblem {
             Self::UnknownAlgorithm => "It uses an algorithm paw doesn't support.",
             Self::BadDigits => "Codes must have 6 to 8 digits.",
             Self::BadPeriod => "The code's time step isn't valid.",
+            Self::BadLabel => "The address's name has more than one colon.",
         }
     }
 }
@@ -258,15 +261,16 @@ fn label_safe(byte: u8) -> bool {
 }
 
 /// The `otpauth://` line to store for what was typed or pasted in the
-/// editor: a pasted address as it is (trimmed), once it is known to make
-/// codes, or for a bare base32 key the line pass-otp writes,
+/// editor: a pasted address once it is known to make codes, as pass-otp
+/// reads it (see [`pass_otp_address`]), or for a bare base32 key the line
+/// pass-otp writes,
 /// `otpauth://totp/<label>?secret=<KEY>`, with the key in capitals and
 /// without spaces or padding.
 pub fn setup_line(input: &str, label: &str) -> Result<Zeroizing<String>, OtpProblem> {
     let input = input.trim();
     if is_address(input) {
         Totp::from_address(input)?;
-        return Ok(Zeroizing::new(input.to_owned()));
+        return pass_otp_address(input);
     }
     if input.contains(['\n', '\r', ':', '/', '?']) {
         return Err(OtpProblem::NotAnAddress);
@@ -286,5 +290,28 @@ pub fn setup_line(input: &str, label: &str) -> Result<Zeroizing<String>, OtpProb
     for byte in input.bytes().filter(|b| !matches!(b, b' ' | b'\t' | b'-' | b'=')) {
         line.push(char::from(byte.to_ascii_uppercase()));
     }
+    Ok(line)
+}
+
+/// A pasted `otpauth://totp` address in the form pass-otp reads, whose
+/// pattern `^otpauth://(totp|hotp)/([^:?]+)?(:[^:?]*)?\?.+` is case-sensitive:
+/// scheme and type in lowercase, and a `/` before the query when there is
+/// no label. Everything after the type is kept as it was. A label with more
+/// than one `:` is refused.
+fn pass_otp_address(address: &str) -> Result<Zeroizing<String>, OtpProblem> {
+    let rest = &address[SCHEME.len()..];
+    let after = &rest[rest.find(['/', '?']).unwrap_or(rest.len())..];
+    let after = after.strip_prefix('/').unwrap_or(after);
+    let Some((label, query)) = after.split_once('?') else { return Err(OtpProblem::NoSecret) };
+    if query.is_empty() {
+        return Err(OtpProblem::NoSecret);
+    }
+    if label.matches(':').count() > 1 {
+        return Err(OtpProblem::BadLabel);
+    }
+    let mut line = Zeroizing::new(String::with_capacity(SCHEME.len() + 6 + after.len()));
+    line.push_str(SCHEME);
+    line.push_str("totp/");
+    line.push_str(after);
     Ok(line)
 }

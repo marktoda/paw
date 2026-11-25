@@ -153,6 +153,19 @@ fn a_bare_key_becomes_the_line_pass_otp_writes() {
     assert_eq!(setup_line("https://example.com/2fa", "x").unwrap_err(), OtpProblem::NotAnAddress);
 }
 
+#[test]
+fn a_pasted_address_is_written_so_pass_otp_can_read_it() {
+    let line = |pasted: &str| setup_line(pasted, "ignored").map(|l| l.as_str().to_owned());
+    assert_eq!(
+        line("OTPAUTH://TOTP/GitHub:you?secret=JBSWY3DPEHPK3PXP").unwrap(),
+        "otpauth://totp/GitHub:you?secret=JBSWY3DPEHPK3PXP"
+    );
+    assert_eq!(line("otpauth://totp?secret=JBSWY3DPEHPK3PXP").unwrap(), "otpauth://totp/?secret=JBSWY3DPEHPK3PXP");
+    assert_eq!(line("otpauth://Totp/?secret=JBSWY3DPEHPK3PXP").unwrap(), "otpauth://totp/?secret=JBSWY3DPEHPK3PXP");
+    assert_eq!(line("otpauth://totp/:you?secret=JBSWY3DPEHPK3PXP").unwrap(), "otpauth://totp/:you?secret=JBSWY3DPEHPK3PXP");
+    assert_eq!(line("otpauth://totp/a:b:c?secret=JBSWY3DPEHPK3PXP").unwrap_err(), OtpProblem::BadLabel);
+}
+
 proptest! {
     /// Anything at all gives a code or a reason, never a panic, and a code
     /// always has the digits asked for.

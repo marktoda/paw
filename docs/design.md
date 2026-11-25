@@ -1294,6 +1294,8 @@ After losing a phone, the user should remove its deploy key from the git host an
 
 **Logging.** No log line, error string or crash annotation contains plaintext, the PIN, APDU bytes, session keys, ciphertext or pasteboard content. Names, the repo URL and usernames are `os_log` `.private` only. Secret-bearing Rust types have no `Display`, a redacting `Debug`, and zeroise on drop. The diagnostic runner's export contains instruction bytes, status words and timings only, never command or response data. APDU data tracing sits behind a cargo feature the device build script refuses to enable. No third-party SDKs.
 
+Known limit: the HMAC state that makes a one-time code (`hmac` 0.12, which has no zeroize support) is not zeroised on drop; the secret and the code are.
+
 **System stores.** No CoreSpotlight, `NSUserActivity`, Siri suggestions or widgets with names in v1. `ASCredentialIdentityStore` holds path-derived data and user associations. It is cleared on store removal and when "Require Face ID to open paw" is turned on.
 
 **Outcome (branch `core-hardening`, PIN KDF).** The session path built its own VERIFY with the PIN as typed, so a card with the PIN KDF on counted a correct PIN as wrong. The session now reads the KDF data object (`F9`) when the key is plugged in (`key/kdf.rs`) and sends the iterated and salted S2K of the PIN (SHA-256 or SHA-512) that the card expects, as the openpgp-card library does on the legacy path; the simulated key has a KDF mode (`SimulatedKey.set_pin_kdf`), checked against the library's own derivation. A KDF paw does not know fails the task with `KeyError::Reader` before the PIN stage, with no VERIFY sent. Rule 5's "never to a card with KDF enabled" therefore now reads: never the raw PIN to such a card.
