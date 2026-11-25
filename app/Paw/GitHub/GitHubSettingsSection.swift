@@ -1,10 +1,11 @@
 import SwiftUI
 
 /// Settings › GitHub: whether paw is signed in and to which store,
-/// signing in and out. Shown for a store on GitHub, or once signed in.
+/// signing in and out. Shown for a store on GitHub, or once signed in, on
+/// the store paw set up (`address`, `nil` for a fixture).
 struct GitHubSettingsSection: View {
+    let address: String?
     @Environment(\.gitHubAccess) private var gitHub
-    @Environment(\.storeControls) private var controls
     @Environment(\.openURL) private var openURL
     @State private var picker: GitHubPicker?
     @State private var confirming = false
@@ -14,7 +15,7 @@ struct GitHubSettingsSection: View {
     @State private var problem: String?
 
     var body: some View {
-        if let gitHub, let controls, shows(gitHub, address: controls.address) {
+        if let gitHub, let address, shows(gitHub, address: address) {
             Section {
                 if gitHub.signedIn {
                     status(gitHub)
@@ -22,7 +23,7 @@ struct GitHubSettingsSection: View {
                 } else {
                     Button("Sign in to GitHub") {
                         report = nil
-                        let picker = GitHubPicker(access: gitHub, purpose: .link(address: controls.address, linked: {
+                        let picker = GitHubPicker(access: gitHub, purpose: .link(address: address, linked: {
                             self.picker = nil
                         }))
                         self.picker = picker
