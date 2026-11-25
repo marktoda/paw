@@ -190,10 +190,10 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
             Change::Write { path, blob } | Change::Rename { to: path, blob, .. } => (path, blob.0),
             Change::Delete { .. } => continue,
         };
-        if !path.ends_with(".gpg") {
+        if !crate::path::is_entry_file(path) {
             continue;
         }
-        let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
+        let folder = crate::path::folder_of(path);
         let bytes = repo.find_blob(blob).map_err(git_err)?.content().to_vec();
         let found = crate::recipients::entry_recipients(&bytes).ok();
         let encrypted_for: Vec<String> = found
@@ -322,7 +322,7 @@ pub fn reencrypt_held_back(
     let mut swaps: std::collections::HashMap<(String, Oid), Oid> = std::collections::HashMap::new();
     let reencrypted = opened.len() as u32;
     for (path, old, text) in &opened {
-        let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
+        let folder = crate::path::folder_of(path);
         let keys = keyring.resolve(dir, folder, now).map_err(failed)?;
         let ciphertext = crate::write::encrypt(&keys, text.as_slice()).map_err(failed)?;
         swaps.insert((path.clone(), *old), repo.blob(&ciphertext).map_err(git_err)?);
@@ -460,7 +460,7 @@ fn look(
     if !item.accepted {
         return Some(Look::Left(LeftReason::NotAccepted));
     }
-    let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
+    let folder = crate::path::folder_of(&path);
     Some(match keyring.resolve(dir, folder, now) {
         Ok(_) => Look::Ready { path, blob },
         Err(crate::write::WriteError::MissingRecipients { missing, .. }) => {
@@ -603,7 +603,7 @@ pub fn reencrypt_each(
         }
         ensure_clean(&repo)?;
         let keyring = crate::write::Keyring::open(state_dir).map_err(failed)?;
-        let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
+        let folder = crate::path::folder_of(&path);
         let keys = keyring.resolve(dir, folder, crate::write::now_secs()).map_err(failed)?;
         let Some(text) = texts.get(&blob) else {
             return Err(SyncError::Failed { message: "internal: a held-back change's text went missing".into() });
