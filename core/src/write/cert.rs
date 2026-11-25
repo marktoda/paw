@@ -35,9 +35,7 @@ use pgp::types::{KeyDetails, Tag};
 
 use super::WriteError;
 use crate::recipients::hex;
-
-/// No certificate file comes close to this.
-const MAX_CERTIFICATE_BYTES: usize = 1 << 20;
+use crate::store::read::MAX_FILE_BYTES;
 
 /// The key chosen for encrypting to a certificate.
 #[derive(Clone)]
@@ -86,7 +84,7 @@ pub fn certificate_infos(bytes: &[u8], now: u32) -> Result<Vec<CertificateInfo>,
 /// Every certificate in `bytes`, armored (`gpg --export --armor`) or
 /// binary (`gpg --export`).
 pub fn read_certificates(bytes: &[u8]) -> Result<Vec<SignedPublicKey>, WriteError> {
-    if bytes.len() > MAX_CERTIFICATE_BYTES {
+    if bytes.len() as u64 > MAX_FILE_BYTES {
         return Err(cert_err("the file is too large to be a public key"));
     }
     let text = bytes.trim_ascii_start();

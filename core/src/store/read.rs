@@ -16,8 +16,9 @@ use std::path::Path;
 use crate::PawError;
 use crate::path::{entry_file, has_hidden_part, unsafe_path, unsafe_path_err};
 
-/// No entry or `.gpg-id` comes close to this. A larger file is not read, so
-/// a hostile repository cannot make paw load something huge.
+/// No entry, `.gpg-id`, certificate or state file comes close to this. A
+/// larger file is not read, so a hostile repository or a damaged file
+/// cannot make paw load something huge.
 pub(crate) const MAX_FILE_BYTES: u64 = 1 << 20;
 
 fn io_err(relative: &str, e: std::io::Error) -> PawError {

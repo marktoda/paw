@@ -55,9 +55,11 @@ use crate::recipients::{hex, key_id};
 use crate::path::{folder_and_parents, folder_of, folder_of_gpg_id, gpg_id_in, governing};
 use crate::store::gpg_id::{governing_gpg_id, key_digits, parse_gpg_id};
 use crate::store::read::read_file;
+use crate::store::state_file::{read_bounded, write_atomic};
 
 const FILE: &str = "recipients";
 const HEADER: &str = "# paw pinned recipients, version 1";
+const TEMP_PREFIX: &str = ".recipients.tmp-";
 
 /// Where a pinned key came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -361,11 +363,8 @@ impl Keyring {
     /// Empty if nothing has been pinned yet.
     pub fn open(state_dir: &Path) -> Result<Self, WriteError> {
         let file = state_dir.join(FILE);
-        let text = match std::fs::read_to_string(&file) {
-            Ok(text) => text,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(e) => return Err(failed("read", e)),
-        };
+        let bytes = read_bounded(&file).map_err(|e| failed("read", e))?.unwrap_or_default();
+        let text = String::from_utf8(bytes).map_err(|e| failed("read", e))?;
         let mut keyring = Self { file, keys: Vec::new(), bindings: Vec::new(), accepted: None };
         for line in text.lines() {
             let parts: Vec<&str> = line.split(' ').collect();
@@ -447,12 +446,9 @@ impl Keyring {
                 text.push_str(&format!("gpgid {} {} {}\n", record.sha, b64(&record.path), b64(&record.text)));
             }
         }
-        if let Some(dir) = self.file.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| failed("save", e))?;
-        }
-        let temporary = self.file.with_extension("tmp");
-        std::fs::write(&temporary, text).map_err(|e| failed("save", e))?;
-        std::fs::rename(&temporary, &self.file).map_err(|e| failed("save", e))
+        let dir = self.file.parent().unwrap_or(Path::new("."));
+        std::fs::create_dir_all(dir).map_err(|e| failed("save", e))?;
+        write_atomic(dir, TEMP_PREFIX, &self.file, text.as_bytes()).map_err(|e| failed("save", e))
     }
 
     /// Every pinned key.
