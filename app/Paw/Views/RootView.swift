@@ -33,9 +33,6 @@ struct RootView: View {
             .sheet(isPresented: $model.showsSettings) {
                 SettingsSheet(model: model)
             }
-            .onChange(of: model.path) {
-                model.pathChanged()
-            }
             .onChange(of: splitView, initial: true) {
                 model.setSplitView(splitView)
             }
@@ -73,7 +70,7 @@ struct RootView: View {
         if splitView {
             SplitRootView(model: model)
         } else {
-            NavigationStack(path: $model.path) {
+            NavigationStack(path: Binding(get: { model.path }, set: { model.setPath($0) })) {
                 HomeScreen(model: model)
                     .navigationDestination(for: Route.self) { route in
                         RouteScreen(model: model, route: route)

@@ -20,7 +20,7 @@ final class HeldBackModelTests: XCTestCase {
         let fixture = try Fixture(writable: true)
         let model = fixture.model
         let edits = try XCTUnwrap(model.edits)
-        let sync = try XCTUnwrap(edits.syncing, "The fixture store should sync")
+        let sync = try XCTUnwrap(model.syncing, "The fixture store should sync")
         // A second key paw has the public half of, then work/ is given to both.
         let other = SimulatedKey.newOther(pin: Fixture.pin, touchRequired: false, touchTimeoutMs: 15_000)
         let otherSession = try KeyPort(clock: SystemClock()).pluggedIn(connection: other.asConnection())
@@ -30,7 +30,7 @@ final class HeldBackModelTests: XCTestCase {
         let list = fixture.key.fingerprintHex() + "\n" + other.fingerprintHex() + "\n"
         _ = try host.commitFile(path: "work/.gpg-id", contents: Data(list.utf8), message: "Give work a second key.")
 
-        sync.check(app: model)
+        sync.check()
         await passPin(sync)
         await waitFor("the held-back change", timeout: 30) {
             sync.running == nil && sync.sheet == nil && sync.reencryptLeft["work/held.example"] != nil
@@ -40,13 +40,12 @@ final class HeldBackModelTests: XCTestCase {
         XCTAssertEqual(sync.reencryptReady, 0, "Not before the new list is accepted")
         XCTAssertFalse(sync.canSend(unpushed: 1))
 
-        try edits.writer.acceptRecipients(folder: "work")
-        sync.recomputeLocal()
+        try edits.acceptRecipients(folder: "work")
         XCTAssertEqual(sync.reencryptReady, 1)
         XCTAssertEqual(sync.heldBack.count, 1, "Accepting alone does not release it")
         XCTAssertNil(sync.running, "Nothing starts by itself")
 
-        sync.startReencrypt(app: model)
+        sync.startReencrypt()
         guard case .key(.reencrypt)? = sync.sheet?.mode else {
             return XCTFail("Re-encrypt should open the key sheet, it is \(String(describing: sync.sheet?.mode))")
         }
@@ -59,7 +58,7 @@ final class HeldBackModelTests: XCTestCase {
         XCTAssertEqual(edits.unpushed.count, 1, "Still one change, not sent")
         XCTAssertTrue(sync.canSend(unpushed: 1))
 
-        sync.start(.send, app: model)
+        sync.start(.send)
         await waitFor("the send", timeout: 30) { sync.running == nil && model.toast == "Sent" }
         await waitFor("the queue to empty") { edits.unpushed.isEmpty }
     }

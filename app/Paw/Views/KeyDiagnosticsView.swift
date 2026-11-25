@@ -125,7 +125,7 @@ struct KeyDiagnosticsView: View {
             systemVersion: "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)",
             deviceModel: Self.deviceModel,
             lastSync: syncSummary,
-            lastCheckedMs: model.edits?.syncing?.lastChecked.map { Int64($0.timeIntervalSince1970 * 1000) })
+            lastCheckedMs: model.syncing?.lastChecked.map { Int64($0.timeIntervalSince1970 * 1000) })
         let stateDir = model.settingsStateDir
         let port = model.keyPort
         let github = gitHub?.core
@@ -144,7 +144,7 @@ struct KeyDiagnosticsView: View {
 
     /// What the sync pill says now, as one fixed word.
     private var syncSummary: LastSyncState? {
-        guard let edits = model.edits, let syncing = edits.syncing else { return nil }
+        guard let edits = model.edits, let syncing = model.syncing else { return nil }
         switch syncing.pillState(unpushed: edits.unpushed.count) {
         case .working: return .working
         case .upToDate: return .upToDate

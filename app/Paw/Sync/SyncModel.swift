@@ -1,7 +1,6 @@
 import Foundation
 import Observation
 import SwiftUI
-import UIKit
 
 /// Screens about sync on the navigation stack (`Route.sync`).
 enum SyncRoute: Hashable {
@@ -154,15 +153,37 @@ struct SyncSummary: Identifiable, Equatable {
     }
 }
 
+/// When paw last found the store as the server has it, by a check with
+/// the key or the sign-in, in the foreground or the background. Kept per
+/// store in the app's own defaults, which can be read while the iPhone is
+/// locked.
+enum LastChecked {
+    static func read(repoDir: String) -> Date? {
+        let seen = UserDefaults.standard.double(forKey: key(repoDir))
+        return seen > 0 ? Date(timeIntervalSince1970: seen) : nil
+    }
+
+    static func record(_ date: Date, repoDir: String) {
+        UserDefaults.standard.set(date.timeIntervalSince1970, forKey: key(repoDir))
+    }
+
+    private static func key(_ repoDir: String) -> String {
+        "pawSyncLastChecked:\(repoDir)"
+    }
+}
+
 /// Sending and checking for changes: the pill, the sync sheet and the
 /// screens after a sync. The core does the sync, in its own thread, on one
-/// card-signed login; this keeps what the screens show, and never starts
-/// the network or the card without a tap. The PIN goes from the sheet's
-/// field straight to the core task.
+/// card-signed login; this keeps what the screens show. It never starts the
+/// network or the card without a tap, but for one rule: what a background
+/// check left for the person is brought up with the sign-in when paw comes
+/// forward (`checkWhatTheBackgroundLeft`). The PIN goes from the sheet's
+/// field straight to the core task. What it brings in is announced on the
+/// live store; what the screens should show next is asked through
+/// `requests`.
 @MainActor @Observable
 final class SyncModel {
     let sync: StoreSync
-    let repoDir: String
     let address: String
 
     var sheet: SyncSheet?
@@ -191,19 +212,23 @@ final class SyncModel {
     private(set) var simStatus = ""
     /// The GitHub sign-in, which checks for changes without the key when
     /// it is for this store's repository.
-    @ObservationIgnored var gitHub: GitHubAccess?
+    let gitHub: GitHubAccess?
     /// Said in the key sheet when a check fell back to the key.
     private(set) var keyPathNote: String?
     /// The last background check (`BackgroundRefresh`), for the status page.
     private(set) var backgroundRun: BackgroundRun?
 
-    @ObservationIgnored private weak var app: AppModel?
+    /// The unpushed queue.
+    @ObservationIgnored private let queue: StoreEdits
+    @ObservationIgnored private let live: LiveStore
+    @ObservationIgnored private let requests: Signal<ScreenRequest>
+    @ObservationIgnored private let reader: KeyReader
+    @ObservationIgnored private let copies: CopyCache?
     /// The key task has had its touch: "Connecting" is over.
     @ObservationIgnored private var signedIn = false
     /// Where to go once the sheet has gone.
     @ObservationIgnored private var pendingRoute: Route?
     @ObservationIgnored private var pendingSettings = false
-    @ObservationIgnored private var backgroundWatch: NSObjectProtocol?
     /// What the last re-encrypt left, and why (only what it found trying).
     @ObservationIgnored private var lastLeft: [LeftHeldBack] = []
     /// What came back needs looking at: after Done, the sheet turns into
@@ -211,41 +236,36 @@ final class SyncModel {
     @ObservationIgnored private var doneNeedsLook = false
     private let workQueue = DispatchQueue(label: "paw-sync", qos: .userInitiated)
 
-    init(sync: StoreSync, repoDir: String) {
+    init(sync: StoreSync, queue: StoreEdits, live: LiveStore, requests: Signal<ScreenRequest>, reader: KeyReader,
+         copies: CopyCache?, gitHub: GitHubAccess?) {
         self.sync = sync
-        self.repoDir = repoDir
-        keyTask = KeyTaskDriver()
+        self.queue = queue
+        self.live = live
+        self.requests = requests
+        self.reader = reader
+        self.copies = copies
+        self.gitHub = gitHub
+        keyTask = KeyTaskDriver(reader: reader)
         address = sync.address()
-        let seen = UserDefaults.standard.double(forKey: Self.checkedKey(repoDir))
-        lastChecked = seen > 0 ? Date(timeIntervalSince1970: seen) : nil
+        lastChecked = LastChecked.read(repoDir: live.repoDir)
         #if targetEnvironment(simulator)
-        SimRemoteHandle.shared.storeReady(repoDir: repoDir)
+        SimRemoteHandle.shared.storeReady(repoDir: live.repoDir)
         refreshSimSummary()
         #endif
         recomputeLocal()
         backgroundRun = BackgroundRefresh.lastRun()
         keyTask.owner = self
-        // A background run that ends while paw is on screen (or coming
-        // back to it); one that ends in the background waits for the next
-        // `cameForward`.
-        backgroundWatch = NotificationCenter.default.addObserver(
-            forName: BackgroundRefresh.finished, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, let app = self.app, UIApplication.shared.applicationState != .background else { return }
-                self.cameForward(app: app)
-            }
+        live.changed.subscribe(self) { model, changed in
+            model.storeChanged(changed)
         }
-    }
-
-    /// Where the time of the last check is kept; the background refresh
-    /// writes it too.
-    nonisolated static func checkedKey(_ repoDir: String) -> String {
-        "pawSyncLastChecked:\(repoDir)"
     }
 
     var host: String {
         storeAddressHost(address: address)
+    }
+
+    private var unpushed: Int {
+        queue.unpushed.count
     }
 
     // MARK: What the pill says
@@ -285,11 +305,10 @@ final class SyncModel {
 
     /// A tap on the pill: the status sheet, or with the disc, straight to
     /// the key sheet that updates the store (design.md 2.3).
-    func pillTapped(app: AppModel) {
-        let unpushed = app.edits?.unpushed.count ?? 0
+    func pillTapped() {
         let state = pillState(unpushed: unpushed)
         if state == .needsKey || state == .notChecked {
-            check(app: app)
+            check()
         } else {
             showStatus()
         }
@@ -307,8 +326,7 @@ final class SyncModel {
         unpushed > 0 && heldBack.isEmpty && replaced == nil && refused.isEmpty
     }
 
-    /// The local state again, without the network or the key: on coming to
-    /// the foreground and after each change to the queue.
+    /// The local state again, without the network or the key.
     func recomputeLocal() {
         guard running == nil, !accepting else { return }
         heldBack = (try? sync.heldBack()) ?? []
@@ -328,30 +346,42 @@ final class SyncModel {
         reencryptLeft = left
     }
 
+    /// The store changed, here or by a sync: what is held back or refused
+    /// is read again, and what a sync brought in is said on Home.
+    private func storeChanged(_ changed: StoreChanged) {
+        switch changed.change {
+        case .synced(let report?, let replaced):
+            summarise(report, origin: replaced ? .replaced : .sync, store: changed.store)
+        case .removed:
+            return
+        case .wrote, .recipientsAccepted, .synced(nil, _), .reencrypted:
+            break
+        }
+        recomputeLocal()
+    }
+
     /// "Re-encrypt 3 changes": the key sheet, then the core's task that
     /// opens each held-back change with the key (a touch each) and encrypts
     /// it for its folder's new list. Only ever started by a tap.
-    func startReencrypt(app: AppModel) {
+    func startReencrypt() {
         guard reencryptReady > 0 else { return }
-        start(.reencrypt, app: app)
+        start(.reencrypt)
     }
 
     // MARK: Running a send or a check
 
     /// "Send N changes" or "Check for changes": the key sheet, then the
     /// core's sign-in task.
-    func start(_ kind: SyncKind, app: AppModel) {
+    func start(_ kind: SyncKind) {
         guard running == nil, !accepting else { return }
-        self.app = app
         let mode = SyncSheet.Mode.key(kind: kind)
         if sheet == nil {
             sheet = SyncSheet(mode: mode)
         } else {
             sheet?.mode = mode
         }
-        keyTask.reader = app.reader
         let sync = sync
-        let port = app.keyPort
+        let port = reader.port
         keyTask.start { (listener: KeyTaskListener) -> KeyTask in
             let task: KeyTask = switch kind {
             case .send: sync.sendWithKey(port: port, listener: listener)
@@ -364,14 +394,14 @@ final class SyncModel {
     }
 
     /// "Try again" on the status page, after a failure.
-    func retryFailed(app: AppModel) {
+    func retryFailed() {
         guard let failure else { return }
         if failure.during == .refresh {
-            check(app: app)
+            check()
         } else if failure.during == .reencrypt {
-            startReencrypt(app: app)
+            startReencrypt()
         } else {
-            start(failure.during, app: app)
+            start(failure.during)
         }
     }
 
@@ -382,7 +412,7 @@ final class SyncModel {
         if case .key(let kind)? = sheet?.mode {
             keyTask.cancel()
             if running != nil {
-                failure = SyncFailure.cancelled(during: kind, unpushed: app?.edits?.unpushed.count ?? 0)
+                failure = SyncFailure.cancelled(during: kind, unpushed: unpushed)
             }
             running = nil
         }
@@ -390,27 +420,15 @@ final class SyncModel {
         keyPathNote = nil
     }
 
-    /// The queue after a re-encrypt ended, however it ended: it may have
-    /// rewritten some, and after a cancel the core may still be writing the
-    /// last one.
-    private func reloadAfterReencrypt() {
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(300))
-            guard let self, self.running == nil else { return }
-            self.app?.reloadAfterWrite()
-            self.recomputeLocal()
-        }
-    }
-
     /// The sheet went away: go where it said to.
-    func sheetDismissed(app: AppModel) {
+    func sheetDismissed() {
         if let route = pendingRoute {
             pendingRoute = nil
-            app.path.append(route)
+            requests.send(.show(route))
         }
         if pendingSettings {
             pendingSettings = false
-            app.showsSettings = true
+            requests.send(.settings)
         }
     }
 
@@ -477,8 +495,9 @@ final class SyncModel {
     /// status page and the card on Home. `true` if it needs looking at.
     private func absorb(_ report: SyncReport?, kind: SyncKind) -> Bool {
         lastLeft = []
-        lastChecked = Date()
-        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.checkedKey(repoDir))
+        let now = Date()
+        lastChecked = now
+        LastChecked.record(now, repoDir: live.repoDir)
         var needsLook = false
         if let report {
             switch report.state {
@@ -491,13 +510,11 @@ final class SyncModel {
             case .upToDate:
                 replaced = nil
                 if kind == .send, report.pushed > 0 {
-                    app?.toast = "Sent"
+                    requests.send(.toast("Sent"))
                 }
             }
-            integrated(report.integration, origin: .sync)
-        } else {
-            app?.reloadAfterWrite()
         }
+        live.announce(.synced(report?.integration, replaced: false))
         refused = (try? sync.refusedRemote()) ?? []
         #if targetEnvironment(simulator)
         refreshSimSummary()
@@ -505,37 +522,49 @@ final class SyncModel {
         return needsLook
     }
 
-    /// A re-encrypt that ran to the end (`reloadAfterReencrypt` reads the
-    /// queue again). Always back to the status page after: what is left held back
-    /// is said there, and Send is there once none is.
+    /// A re-encrypt that ran to the end (its end is announced with every
+    /// other re-encrypt's, in `keyTaskEnded`). Always back to the status
+    /// page after: what is left held back is said there, and Send is there
+    /// once none is.
     private func reencrypted(_ report: ReencryptReport?) -> Bool {
         lastLeft = report?.left ?? []
         if let report, report.reencrypted > 0 {
-            app?.toast = "Re-encrypted. Not sent yet."
+            requests.send(.toast("Re-encrypted. Not sent yet."))
         }
         return true
     }
 
     // MARK: After a background check
 
-    /// paw is on screen again: what background checks brought in shows in
-    /// the list, and what they left for the person comes up through a
-    /// check with the sign-in (no key), as a check from the pill would.
-    func cameForward(app: AppModel) {
-        self.app = app
+    /// paw is on screen again, or a background check ended while it was:
+    /// what background checks brought in shows in the lists, and what they
+    /// left for the person comes up as a check from the pill would.
+    func cameForward() {
         backgroundRun = BackgroundRefresh.lastRun()
-        let seen = UserDefaults.standard.double(forKey: Self.checkedKey(repoDir))
-        if seen > 0 {
-            lastChecked = Date(timeIntervalSince1970: seen)
+        if let seen = LastChecked.read(repoDir: live.repoDir) {
+            lastChecked = seen
         }
         guard running == nil, !accepting else { return }
         let pending = BackgroundRefresh.takePending()
         if pending.changed {
-            app.reloadAfterWrite()
+            live.announce(.synced(nil, replaced: false))
+        } else {
             recomputeLocal()
         }
-        if pending.needsLook, checksWithSignIn {
-            check(app: app)
+        if pending.needsLook {
+            checkWhatTheBackgroundLeft()
+        }
+    }
+
+    /// The one time paw starts the network without a tap: a background
+    /// check found something only the person can decide (two versions
+    /// kept, a delete that didn't happen, a changed list of keys). With the
+    /// sign-in, no key, it is checked for again, so it comes up as a check
+    /// from the pill would bring it up. Without the sign-in it waits for
+    /// a tap.
+    private func checkWhatTheBackgroundLeft() {
+        if checksWithSignIn {
+            checkWithSignIn()
         }
     }
 
@@ -549,34 +578,31 @@ final class SyncModel {
 
     /// "Check for changes": with the GitHub sign-in when it covers this
     /// store, else with the key.
-    func check(app: AppModel) {
+    func check() {
         if checksWithSignIn {
-            checkWithSignIn(app: app)
+            checkWithSignIn()
         } else {
-            start(.refresh, app: app)
+            start(.refresh)
         }
     }
 
     /// Fetches over HTTPS with the sign-in and integrates as the key's
     /// check does, with no key sheet. Sends nothing. If the sign-in has
     /// ended, the check goes on with the key, and the key sheet says why.
-    private func checkWithSignIn(app: AppModel) {
+    private func checkWithSignIn() {
         guard running == nil, !accepting, let gitHub else { return }
-        self.app = app
         failure = nil
         running = .refresh
         progress = nil
         keyPathNote = nil
-        let core = gitHub.core
+        let signIn = SignInCheck(core: gitHub.core)
         let time = BackgroundTime.begin("Sync")
         workQueue.async { [weak self] in
-            let result = Result { try core.refreshStore() }
-            let stillSignedIn = (try? core.isSignedIn()) ?? false
-            let handoff = Handoff(value: (result, stillSignedIn))
+            let checked = Handoff(value: signIn.run())
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     time.end()
-                    self?.checkedWithSignIn(handoff.value.0, stillSignedIn: handoff.value.1)
+                    self?.checkedWithSignIn(checked.value.result, stillSignedIn: checked.value.stillSignedIn)
                 }
             }
         }
@@ -596,12 +622,11 @@ final class SyncModel {
                 }
             }
         case .failure(let error):
-            if !stillSignedIn, let app {
-                start(.refresh, app: app)
+            if !stillSignedIn {
+                start(.refresh)
                 keyPathNote = "Your GitHub sign-in ended, so this check uses your key."
                 return
             }
-            let unpushed = app?.edits?.unpushed.count ?? 0
             if let error = error as? SyncError {
                 failure = SyncFailure(error, during: .refresh, unpushed: unpushed, host: "github.com")
             } else {
@@ -613,16 +638,14 @@ final class SyncModel {
         }
     }
 
-    /// After an integrate: the lists read the store again, Face ID copies
-    /// of entries whose text changed end (the core finds them), and the
-    /// card on Home says what changed.
-    private func integrated(_ report: IntegrateReport, origin: SyncSummary.Origin) {
-        let repoDir = repoDir
-        let copies = app?.copies
+    /// The card on Home: what a sync brought in, and which Face ID copies
+    /// it ended because their entry's text changed (the core finds them,
+    /// off the main thread).
+    private func summarise(_ report: IntegrateReport, origin: SyncSummary.Origin, store: PassStore) {
+        let copies = copies
         workQueue.async { [weak self] in
-            let store = try? PassStore(dir: repoDir)
             var summary = SyncSummary(origin: origin, report: report)
-            if let copies, let store {
+            if let copies {
                 for copy in (try? copies.list()) ?? [] {
                     if case .stale? = try? store.faceIdStatus(copies: copies, entry: copy.entry) {
                         summary.endedCopies.append(copy.entry)
@@ -633,11 +656,9 @@ final class SyncModel {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    self.app?.reloadAfterWrite()
                     if !handoff.value.isEmpty || !handoff.value.endedCopies.isEmpty {
                         self.summary = handoff.value
                     }
-                    self.recomputeLocal()
                 }
             }
         }
@@ -648,9 +669,8 @@ final class SyncModel {
     /// Takes the git remote's new history, keeping this iPhone's waiting
     /// changes (replayed onto it) or discarding them. Local work only: no
     /// key, no network.
-    func acceptReplaced(keepChanges: Bool, app: AppModel) {
+    func acceptReplaced(keepChanges: Bool) {
         guard replaced != nil, running == nil, !accepting else { return }
-        self.app = app
         accepting = true
         acceptProblem = nil
         let sync = sync
@@ -672,19 +692,17 @@ final class SyncModel {
         case .success(let report):
             replaced = nil
             failure = nil
-            integrated(report, origin: .replaced)
-            if let app {
-                app.path.removeAll { $0 == .sync(.replaced) }
-                app.toast = keepChanges ? "Using the new store. Your changes are kept." : "Using the new store."
-            }
+            live.announce(.synced(report, replaced: true))
+            requests.send(.leave(.sync(.replaced)))
+            requests.send(.toast(keepChanges ? "Using the new store. Your changes are kept." : "Using the new store."))
         case .failure(let error):
             acceptProblem = (error as? SyncError).map { describeEditError($0) } ?? describe(error)
         }
     }
 
     /// "Not now" on the replaced screen: sync stays paused.
-    func notNow(app: AppModel) {
-        app.path.removeAll { $0 == .sync(.replaced) }
+    func notNow() {
+        requests.send(.leave(.sync(.replaced)))
     }
 
     // MARK: The simulated host
@@ -736,10 +754,6 @@ extension SyncModel: KeyTaskOwner {
         return .refresh
     }
 
-    private var unpushed: Int {
-        app?.edits?.unpushed.count ?? 0
-    }
-
     func keyWords(_ error: KeyError, pinAskedAgain: Bool) -> KeyErrorWords {
         syncKeyWords(error, during: keyKind, unpushed: unpushed)
     }
@@ -778,8 +792,11 @@ extension SyncModel: KeyTaskOwner {
     }
 
     func keyTaskEnded(_ end: KeyTaskEnd) -> KeySheetStage? {
-        if case .reencrypt = end.purpose {
-            reloadAfterReencrypt()
+        // A re-encrypt may have rewritten some changes, however it ended.
+        defer {
+            if case .reencrypt = end.purpose {
+                live.announce(.reencrypted)
+            }
         }
         guard case .key(let kind)? = sheet?.mode else { return nil }
         switch end.result {
@@ -804,10 +821,10 @@ extension SyncModel: KeyTaskOwner {
     }
 
     /// A task the sheet let go of has ended: a re-encrypt may have
-    /// rewritten some changes.
+    /// rewritten some changes, the last of them after its Cancel.
     func letGoTaskEnded(_ end: KeyTaskEnd) {
         if case .reencrypt = end.purpose {
-            reloadAfterReencrypt()
+            live.announce(.reencrypted)
         }
     }
 

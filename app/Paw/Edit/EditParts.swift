@@ -162,7 +162,7 @@ extension RecipientLine {
 /// line by line, with Accept. Accepting never drops a key: paw then
 /// encrypts for everyone on the new list, or says which key it lacks.
 struct RecipientsReviewScreen: View {
-    let writer: StoreWriter
+    let edits: StoreEdits
     let folder: String
     let onAccepted: () -> Void
 
@@ -230,7 +230,7 @@ struct RecipientsReviewScreen: View {
         .navigationTitle("Who can open \(folder.isEmpty ? "your store" : folder)")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            recipients = Result { try writer.folderRecipients(folder: folder) }
+            recipients = Result { try edits.writer.folderRecipients(folder: folder) }
         }
     }
 
@@ -278,7 +278,7 @@ struct RecipientsReviewScreen: View {
 
     private func accept() {
         do {
-            try writer.acceptRecipients(folder: folder)
+            try edits.acceptRecipients(folder: folder)
             onAccepted()
         } catch let error as WriteError {
             problem = editProblem(error, folder: folder).nextStep

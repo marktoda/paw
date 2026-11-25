@@ -15,8 +15,9 @@ import Foundation
 /// (`OneTimeCodeEntries`, a yes per entry) also gets a one-time-code
 /// identity for each of its sites, so iOS offers it in a code field. Off,
 /// the core lists none. The list is replaced whole after setup, on each
-/// launch, after a save, rename, delete or refresh; removing the store
-/// clears it. App target only (not compiled into the extension).
+/// launch, after a save, rename, delete or refresh (`AutoFillUpkeep`);
+/// removing the store clears it. App target only (not compiled into the
+/// extension).
 enum CredentialIdentities {
     struct Identity: Equatable, Sendable {
         let domain: String
@@ -63,22 +64,6 @@ enum CredentialIdentities {
     /// Which entries of the store paw set up have a one-time code.
     static func standardCodes() -> OneTimeCodeEntries? {
         (try? StoreLocation.standard()).map { OneTimeCodeEntries.open(stateDir: $0.stateDir.path) }
-    }
-
-    /// An entry was opened in the app: keeps whether it has a one-time
-    /// code, off the main thread, and publishes again when that changed, so
-    /// its code suggestion appears or goes. Nothing while the list is off.
-    @MainActor
-    static func noteOpened(_ opened: OpenedEntry, path: String, codes: OneTimeCodeEntries) {
-        let hasCode = opened.makesOneTimeCodes()
-        Task.detached(priority: .utility) {
-            guard (try? codes.note(entry: path, hasCode: hasCode)) == true else { return }
-            await MainActor.run {
-                if let store = CredentialIdentities.current {
-                    CredentialIdentities.publish(store)
-                }
-            }
-        }
     }
 
     /// The store the last publish used, for Settings to publish again once
@@ -171,5 +156,54 @@ enum CredentialIdentities {
         #if !targetEnvironment(simulator)
         try? await ASCredentialIdentityStore.shared.removeAllCredentialIdentities()
         #endif
+    }
+}
+
+/// Keeps AutoFill's suggestions in step with the store paw set up: writes
+/// them when the store opens, when paw comes forward and whenever the store
+/// changes, and keeps which opened entries have a one-time code. Built for
+/// the set-up store only, never for a fixture, whose entries must not reach
+/// the system's suggestions.
+@MainActor
+final class AutoFillUpkeep {
+    private let live: LiveStore
+    private let codes: OneTimeCodeEntries
+    private let publish: @MainActor (PassStore) -> Void
+
+    init(live: LiveStore, codes: OneTimeCodeEntries,
+         publish: @escaping @MainActor (PassStore) -> Void = { CredentialIdentities.publish($0) }) {
+        self.live = live
+        self.codes = codes
+        self.publish = publish
+        live.changed.subscribe(self) { upkeep, changed in
+            if changed.change.rewritesEntries {
+                upkeep.publish(changed.store)
+            }
+        }
+        live.opened.subscribe(self) { upkeep, opened in
+            upkeep.noteOpened(opened)
+        }
+        publish(live.store)
+    }
+
+    /// Writes the suggestions again: on coming forward, and after a
+    /// setting that changes them.
+    func republish() {
+        publish(live.store)
+    }
+
+    /// Keeps whether the entry has a one-time code, off the main thread,
+    /// and writes the suggestions again when that changed, so its code
+    /// suggestion appears or goes. Nothing while the list is off.
+    private func noteOpened(_ opened: EntryOpened) {
+        let hasCode = opened.entry.makesOneTimeCodes()
+        let codes = codes
+        let path = opened.path
+        Task.detached(priority: .utility) { [weak self] in
+            guard (try? codes.note(entry: path, hasCode: hasCode)) == true else { return }
+            await MainActor.run {
+                self?.republish()
+            }
+        }
     }
 }

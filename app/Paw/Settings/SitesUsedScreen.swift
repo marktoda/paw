@@ -111,7 +111,7 @@ struct SitesUsedScreen: View {
             problem = describe(error)
         }
         rows = pairings.pairings().sorted { $0.entry < $1.entry }
-        model.publishIdentities?(model.store)
+        model.storeSession.autoFill?.republish()
     }
 }
 

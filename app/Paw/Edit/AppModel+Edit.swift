@@ -15,31 +15,21 @@ extension AppModel {
         edits.form = .edit(sessionID: session.id, focusName: focusName)
     }
 
-    /// The store changed on disk: read it again, and the queue with it.
-    func reloadAfterWrite(renamed: (from: String, to: String)? = nil) {
-        guard let edits else { return }
-        do {
-            storeChanged(try PassStore(dir: edits.repoDir), renamed: renamed)
-        } catch {
-            notice = Notice(problem: "Couldn't read the list again", nextStep: describe(error))
-        }
-        edits.refreshQueue()
-    }
-
-    /// A save went through. A new entry needs the key to open, like any
+    /// Save in the form. A new entry needs the key to open, like any
     /// other; an edited one stays on screen with the text just saved.
-    func saved(_ outcome: Saved, purpose: EntryFormPurpose) {
-        let renamed = outcome.previous.map { (from: $0, to: outcome.entry) }
-        reloadAfterWrite(renamed: renamed)
-        if case .edit(let id, _) = purpose {
+    /// `false` if the form refused or said why not.
+    func save(_ form: EntryFormModel) -> Bool {
+        guard let edits, let outcome = edits.save(form, copies: copies) else { return false }
+        if case .edit(let id, _) = form.purpose {
             if let opened = outcome.opened {
                 replaceSession(id, ref: EntryRef(path: outcome.entry), entry: opened)
             } else {
                 // Saved, but the screen can't show the new text: close it.
-                path.removeAll { $0 == .entry(id) }
+                leave(.entry(id))
             }
         }
         toast = outcome.commits.isEmpty ? "Nothing changed." : "Saved. Not sent yet."
+        return true
     }
 
     /// Delete after its inline confirm: back to the list, with Undo.
@@ -47,7 +37,7 @@ extension AppModel {
         guard let edits else { return }
         edits.confirmingDelete = nil
         do {
-            _ = try BackgroundTime.run("Delete") { try edits.writer.delete(entry: session.ref.path, copies: copies) }
+            try edits.delete(session.ref.path, copies: copies)
         } catch let error as WriteError {
             notice = Notice(
                 problem: editProblem(error, folder: session.ref.folder).problem,
@@ -57,14 +47,15 @@ extension AppModel {
             notice = Notice(problem: "\(session.ref.name) wasn't deleted.", nextStep: describe(error))
             return
         }
-        if let last = path.last, last == .entry(session.id) {
-            path.removeLast()
+        var routes = path
+        if routes.last == .entry(session.id) {
+            routes.removeLast()
         }
-        reloadAfterWrite()
         // A folder whose last entry went is gone too.
-        while case .folder(let folder)? = path.last, (try? store.folder(path: folder)) == nil {
-            path.removeLast()
+        while case .folder(let folder)? = routes.last, (try? store.folder(path: folder)) == nil {
+            routes.removeLast()
         }
+        setPath(routes)
         if let newest = edits.unpushed.first {
             edits.undoOffer = UndoOffer(
                 message: "Deleted \(session.ref.name).", entryName: session.ref.name, change: newest.id)
@@ -73,7 +64,7 @@ extension AppModel {
 
     /// Undo on the delete toast: only if that change is still the newest.
     func undo(_ offer: UndoOffer) {
-        guard let edits, let sync = edits.sync else { return }
+        guard let edits, edits.sync != nil else { return }
         edits.undoOffer = nil
         edits.refreshQueue()
         guard edits.unpushed.first?.id == offer.change else {
@@ -81,8 +72,7 @@ extension AppModel {
             return
         }
         do {
-            _ = try BackgroundTime.run("Undo") { try sync.undoLast() }
-            reloadAfterWrite()
+            try edits.undoLast()
             toast = "\(offer.entryName) is back."
         } catch {
             edits.queueProblem = describeEditError(error)
@@ -92,23 +82,22 @@ extension AppModel {
     // MARK: The unpushed list
 
     func undoLastChange() {
-        changeQueue { _ = try $0.undoLast() }
+        changeQueue { try $0.undoLast(task: "Change") }
     }
 
     func discardChange(_ id: String) {
-        changeQueue { _ = try $0.discard(id: id) }
+        changeQueue { try $0.discard(id) }
     }
 
     func discardAllChanges() {
         changeQueue { try $0.discardAll() }
     }
 
-    private func changeQueue(_ change: (StoreSync) throws -> Void) {
-        guard let edits, let sync = edits.sync else { return }
+    private func changeQueue(_ change: (StoreEdits) throws -> Void) {
+        guard let edits, edits.sync != nil else { return }
         edits.undoOffer = nil
         do {
-            try BackgroundTime.run("Change") { try change(sync) }
-            reloadAfterWrite()
+            try change(edits)
             edits.queueProblem = nil
         } catch {
             edits.queueProblem = describeEditError(error)

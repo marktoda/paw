@@ -2,27 +2,6 @@ import Observation
 import SwiftUI
 import UIKit
 
-/// What Settings shows and does about the store: its address and host,
-/// whether Face ID copies exist on this iPhone, and removing it.
-struct StoreControls {
-    let address: String
-    let hostFingerprints: [String]
-    /// Passwords not yet pushed, lost if the store is removed.
-    let unpushed: Int
-    /// `false` on a device until the Secure Enclave keystore exists.
-    let copiesAvailable: Bool
-    /// Removes the store from this iPhone and returns to setup. Returns
-    /// why it could not, if it could not.
-    let remove: @MainActor () -> String?
-    /// The protection classes of the store's files, for the simulator's
-    /// Settings readback.
-    let fileProtection: @MainActor () -> String
-}
-
-extension EnvironmentValues {
-    @Entry var storeControls: StoreControls? = nil
-}
-
 /// The app outside the simulator's fixture: setup until a store is set up,
 /// then Home on the cloned store. One key port serves both, so the PIN
 /// typed during setup is still held on Home.
@@ -30,7 +9,7 @@ extension EnvironmentValues {
 final class StoreRootModel {
     enum Phase {
         case setup(SetupModel)
-        case home(AppModel, StoreControls)
+        case home(AppModel)
         /// The store on this iPhone could not be opened: the raw error for
         /// "Details", the changes that setting up again would lose, and
         /// whether it was only busy.
@@ -154,7 +133,6 @@ final class StoreRootModel {
             _ = try keyPort.loadEnrolledKey(stateDir: location.stateDir.path)
             // Setup wrote the pinned keys, the enrolment and the known hosts.
             location.protect()
-            let store = try PassStore(dir: location.repoDir.path)
             let sync = try? StoreSync.open(stateDir: location.stateDir.path)
             #if targetEnvironment(simulator)
             let copies: CopyCache? = CopyCache(
@@ -173,27 +151,17 @@ final class StoreRootModel {
             let copies = PlatformCopies.make(dir: location.copiesDir.path)
             let simulator: SimulatorControls? = nil
             #endif
-            let model = AppModel(
-                store: store, copies: copies, clock: clock, connect: connect, simulator: simulator,
-                keyPort: keyPort)
             // Setup pinned the key and accepted the recipients: saving
             // works from here with no further step.
-            model.edits = StoreEdits(
-                writer: StoreWriter.open(stateDir: location.stateDir.path), sync: sync,
-                stateDir: location.stateDir.path, sendingNote: nil)
-            model.edits?.syncing?.gitHub = gitHub
-            let controls = StoreControls(
-                address: sync?.address() ?? "",
-                hostFingerprints: (try? sync?.hostFingerprints()) ?? [],
-                unpushed: (try? sync?.unpushed().count) ?? 0,
-                copiesAvailable: copies != nil,
-                remove: { [weak self] in self?.removeStore() },
-                fileProtection: { [location] in location.protectionSummary() })
-            model.publishIdentities = { CredentialIdentities.publish($0) }
-            let codes = OneTimeCodeEntries.open(stateDir: location.stateDir.path)
-            model.noteCode = { CredentialIdentities.noteOpened($0, path: $1, codes: codes) }
-            CredentialIdentities.publish(store)
-            phase = .home(model, controls)
+            let session = try StoreSession(StoreSession.Parts(
+                repoDir: location.repoDir.path, copies: copies, clock: clock, keyPort: keyPort, connect: connect,
+                simulator: simulator,
+                writing: StoreSession.Writing(
+                    writer: StoreWriter.open(stateDir: location.stateDir.path), sync: sync,
+                    stateDir: location.stateDir.path),
+                gitHub: gitHub,
+                setUp: SetUpStore(location: location, remove: { [weak self] in self?.removeStore() })))
+            phase = .home(AppModel(session: session))
         } catch {
             fail(error)
         }
@@ -206,58 +174,91 @@ final class StoreRootModel {
     }
 
     private func removeStoreNow() -> String? {
-        if case .home(let model, _) = phase {
-            model.lockNow()
+        if case .home(let model) = phase {
+            model.storeSession.live.announce(.removed)
         }
-        // Whatever Lock now managed, and even with no Face ID copies on this
-        // iPhone: the seal key, the index key and the enrolment marker go.
-        let keychain = wipeKeychain()
-        Clipboard.clearIfOurs()
-        let files = wipeAndRestart()
-        removeLegacy()
-        return [keychain, files].compactMap { $0 }.first
-    }
-
-    /// Deletes the Face ID copies' keychain items. Returns why not, if not.
-    private func wipeKeychain() -> String? {
-        do {
-            #if targetEnvironment(simulator)
-            try keystore.reset()
-            #else
-            try EnclaveKeystore().resetDetailed()
-            #endif
-            return nil
-        } catch {
-            return "paw couldn't delete the Face ID keys from the keychain: \(describe(error))"
+        let problems = wipeAndRestart()
+        if let keychain = problems.keychain {
+            return "paw couldn't delete the Face ID keys from the keychain: \(describe(keychain))"
         }
+        return problems.files.map { "paw couldn't delete the store: \($0.localizedDescription)" }
     }
 
     /// "Start setup again" after the host's identity changed, or after the
     /// store could not be opened.
     func startOver() {
-        _ = wipeKeychain()
-        if let problem = wipeAndRestart() {
-            phase = .failed(detail: problem, unpushed: 0, busy: false)
+        if let files = wipeAndRestart().files {
+            phase = .failed(detail: "paw couldn't delete the store: \(files.localizedDescription)", unpushed: 0, busy: false)
         }
     }
 
-    private func wipeAndRestart() -> String? {
+    /// Wipes everything the store left on this iPhone, then setup again.
+    private func wipeAndRestart() -> StoreWipe.Problems {
+        var problems = StoreWipe.wipe(
+            location, keyPort: keyPort,
+            resetKeychain: {
+                #if targetEnvironment(simulator)
+                try keystore.reset()
+                #else
+                try EnclaveKeystore().resetDetailed()
+                #endif
+            },
+            legacyLeft: { [weak self] left in self?.legacyFolder = left ? "present" : "gone" })
+        guard problems.files == nil else { return problems }
+        do {
+            try location.prepare()
+        } catch {
+            problems.files = error
+            return problems
+        }
+        route()
+        return problems
+    }
+}
+
+/// Everything paw keeps for a store on this iPhone, in one list: wiped by
+/// Settings › Remove, by "Start setup again", and when the store can't even
+/// be opened.
+@MainActor
+enum StoreWipe {
+    struct Problems {
+        var keychain: Error?
+        var files: Error?
+    }
+
+    /// The folders go only with a `location`. `keyPort` forgets the PIN
+    /// and the enrolled key; `resetKeychain`
+    /// deletes the Face ID copies' keychain items (the seal key, the index
+    /// key and the enrolment marker), whatever Lock now managed and even
+    /// with no Face ID copies on this iPhone; `legacyLeft` hears whether
+    /// the folder from before the App Group is still there.
+    static func wipe(
+        _ location: StoreLocation?, keyPort: KeyPort?, resetKeychain: () throws -> Void,
+        legacyLeft: (@MainActor @Sendable (_ folderLeft: Bool) -> Void)?
+    ) -> Problems {
+        var problems = Problems()
         // Drops the PIN at once; the card is de-verified on the session's
         // own thread, never here on the main thread.
-        keyPort.session()?.forgetPin()
-        keyPort.setEnrolledKey(key: nil)
+        keyPort?.session()?.forgetPin()
+        keyPort?.setEnrolledKey(key: nil)
+        do {
+            try resetKeychain()
+        } catch {
+            problems.keychain = error
+        }
         CredentialIdentities.clear()
+        Clipboard.clearIfOurs()
+        LegacyStore.remove(then: legacyLeft)
+        guard let location else { return problems }
         // Gone with the folder below too; cleared first in case that fails.
         try? SitePairings.open(stateDir: location.stateDir.path).clearPairings(entry: nil)
         try? OneTimeCodeEntries.open(stateDir: location.stateDir.path).clear()
         do {
             try location.removeAll()
-            try location.prepare()
         } catch {
-            return "paw couldn't delete the store: \(error.localizedDescription)"
+            problems.files = error
         }
-        route()
-        return nil
+        return problems
     }
 }
 
@@ -323,14 +324,18 @@ struct StoreRoot: View {
     /// "Remove the store" when even opening paw's folder failed: what the
     /// normal remove deletes, as far as it can without the store open.
     private func removeEverything() {
-        #if !targetEnvironment(simulator)
-        DispatchQueue.global(qos: .utility).async { try? EnclaveKeystore().resetDetailed() }
-        #endif
-        CredentialIdentities.clear()
-        Clipboard.clearIfOurs()
-        LegacyStore.remove()
+        let location = Result { try StoreLocation.standard() }
+        let problems = StoreWipe.wipe(
+            try? location.get(), keyPort: nil,
+            resetKeychain: {
+                #if !targetEnvironment(simulator)
+                DispatchQueue.global(qos: .utility).async { try? EnclaveKeystore().resetDetailed() }
+                #endif
+            },
+            legacyLeft: nil)
         do {
-            try StoreLocation.standard().removeAll()
+            _ = try location.get()
+            if let files = problems.files { throw files }
             build()
         } catch {
             problem = String(describing: error)
@@ -360,9 +365,8 @@ private struct StoreRootContent: View {
             switch root.phase {
             case .setup(let model):
                 SetupFlowView(model: model)
-            case .home(let model, let controls):
+            case .home(let model):
                 RootView(model: model)
-                    .environment(\.storeControls, controls)
             case .failed(let detail, let unpushed, let busy):
                 StoreProblemView(
                     detail: detail, unpushed: unpushed, busy: busy, retry: { root.route() },

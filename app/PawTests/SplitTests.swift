@@ -55,8 +55,7 @@ final class SplitTests: XCTestCase {
         let fixture = try Fixture()
         let model = fixture.model
         model.setSplitView(true)
-        model.path = [.folder("web")]
-        model.pathChanged()
+        model.setPath([.folder("web")])
 
         let openedFirst = await fixture.open("web/github.com")
         let first = try XCTUnwrap(openedFirst)
@@ -82,7 +81,7 @@ final class SplitTests: XCTestCase {
 
     func testTheStackIsPutInColumnOrderWhenTheSplitViewStarts() throws {
         let model = try Fixture().model
-        model.path = [.unpushed, .folder("web")]
+        model.setPath([.unpushed, .folder("web")])
         model.setSplitView(true)
         XCTAssertEqual(model.path, [.folder("web"), .unpushed])
         XCTAssertEqual(model.splitFolder, "web")

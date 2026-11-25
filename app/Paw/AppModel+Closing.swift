@@ -61,7 +61,7 @@ extension AppModel {
         }
         closeSession(session.id, because: .copyEnded)
         if path.last == .entry(session.id) {
-            path.removeLast()
+            setPath(Array(path.dropLast()))
         }
         refreshCopies()
         toast = "Locked. \(session.ref.name) needs your key again."
@@ -72,7 +72,7 @@ extension AppModel {
     func reopen(_ id: UUID) {
         guard let closed = closedEntries[id] else { return }
         if path.last == .entry(id) {
-            path.removeLast()
+            setPath(Array(path.dropLast()))
         }
         closedEntries[id] = nil
         open(closed.ref)

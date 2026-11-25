@@ -49,6 +49,6 @@ struct OneTimeCodeSettingsSection: View {
         }
         enabled = codes.enabled()
         // Off takes the code suggestions away.
-        CredentialIdentities.publish(model.store)
+        model.storeSession.autoFill?.republish()
     }
 }

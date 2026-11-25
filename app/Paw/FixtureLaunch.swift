@@ -51,7 +51,6 @@ enum FixtureLaunch {
             storePath = storeDir.path
         }
 
-        let store = try PassStore(dir: storePath)
         let keystore = SimKeystore()
         keystore.setFaceId(answer: faceId)
         let clock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000))
@@ -66,17 +65,16 @@ enum FixtureLaunch {
         // Key diagnostics shows it; set before the key is first read.
         let keyPort = KeyPort(clock: sharedClock)
         keyPort.setKeyLog(stateDir: root.path, process: "app")
-        let model = AppModel(
-            store: store, copies: copies, clock: sharedClock,
+        let session = try StoreSession(StoreSession.Parts(
+            repoDir: storePath, copies: copies, clock: sharedClock, keyPort: keyPort,
             connect: { try KeyConnection.open() },
             simulator: SimulatorControls(
                 advanceClock: { clock.advanceMs(ms: $0) },
                 plugIn: { key.key.plugIn() },
                 startsUnplugged: key.startsUnplugged,
                 awayMs: UInt64(max(away, 0))),
-            keyPort: keyPort)
-        WritableFixture.attach(writable, to: model)
-        return model
+            writing: try? writable.get().writing, gitHub: nil, setUp: nil))
+        return AppModel(session: session, notice: WritableFixture.notice(writable))
     }
 }
 

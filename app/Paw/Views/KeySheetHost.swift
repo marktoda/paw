@@ -90,7 +90,7 @@ struct SettingsSheet: View {
                 } header: {
                     PawSectionHeader("About")
                 }
-                RemoveStoreSection()
+                RemoveStoreSection(model: model)
                 #if DEBUG && targetEnvironment(simulator)
                 if model.simulator != nil {
                     SimulatorSettingsSection(model: model)
@@ -122,7 +122,6 @@ struct SettingsSheet: View {
 /// Settings until it is tapped.
 private struct SimulatorSettingsSection: View {
     let model: AppModel
-    @Environment(\.storeControls) private var controls
     @State private var pasteboard: String?
     @State private var shown = false
 
@@ -174,7 +173,7 @@ private struct SimulatorSettingsSection: View {
                     .accessibilityValue(pasteboard)
                     .accessibilityIdentifier("sim-pasteboard-value")
             }
-            if let protection = controls?.fileProtection() {
+            if let protection = model.storeSession.setUp?.location.protectionSummary() {
                 Text(protection)
                     .font(PawFont.footnote)
                     .foregroundStyle(PawColor.labelSecondary)

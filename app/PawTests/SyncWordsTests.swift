@@ -187,28 +187,28 @@ final class SyncWordsTests: XCTestCase {
 
     func testTheBackgroundCheckIsSaidInAFewWords() {
         let updated = background(.updated, integration: report())
-        XCTAssertEqual(updated.result, "Brought in changes")
+        XCTAssertEqual(updated.outcome.words, "Brought in changes")
         XCTAssertTrue(updated.changed)
         XCTAssertTrue(updated.success)
         XCTAssertFalse(updated.needsLook)
 
-        XCTAssertEqual(background(.upToDate).result, "Up to date")
-        XCTAssertEqual(background(.notSignedIn).result, "Not signed in to GitHub")
-        XCTAssertEqual(background(.signedOut).result, "GitHub sign-in ended")
+        XCTAssertEqual(background(.upToDate).outcome.words, "Up to date")
+        XCTAssertEqual(background(.notSignedIn).outcome.words, "Not signed in to GitHub")
+        XCTAssertEqual(background(.signedOut).outcome.words, "GitHub sign-in ended")
 
         let offline = background(.offline(message: "no route"))
-        XCTAssertEqual(offline.result, "Couldn't reach GitHub")
+        XCTAssertEqual(offline.outcome.words, "Couldn't reach GitHub")
         XCTAssertFalse(offline.success)
-        XCTAssertEqual(background(.outOfTime).result, "Ran out of time")
+        XCTAssertEqual(background(.outOfTime).outcome.words, "Ran out of time")
     }
 
     func testOnlyADecisionThatIsNotAHeldBackChangeNeedsThePerson() {
         let held = background(.needsDecision, decisions: [.heldBack(count: 2)])
         XCTAssertFalse(held.needsLook)
-        XCTAssertEqual(held.result, "Up to date")
+        XCTAssertEqual(held.outcome.words, "Up to date")
 
         let refused = background(.needsDecision, decisions: [.refusedRemote(paths: [])])
         XCTAssertTrue(refused.needsLook)
-        XCTAssertEqual(refused.result, "Paused")
+        XCTAssertEqual(refused.outcome.words, "Paused")
     }
 }

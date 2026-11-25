@@ -19,10 +19,8 @@ import Foundation
 /// can't save there.
 enum WritableFixture {
     struct Prepared {
-        let stateDir: String
         let repoDir: String
-        let writer: StoreWriter
-        let sync: StoreSync?
+        let writing: StoreSession.Writing
         /// Serves the store while the app runs; `SimRemoteHandle` keeps it.
         let host: SimRemote
     }
@@ -95,21 +93,16 @@ enum WritableFixture {
             try finish(sync.refreshWithKey(port: port, listener: MainQueueTaskListener {}), pin: pin, "The refresh")
         }
         return Prepared(
-            stateDir: stateDir.path, repoDir: storeRepoDir(stateDir: stateDir.path),
-            writer: StoreWriter.open(stateDir: stateDir.path), sync: sync, host: host)
+            repoDir: storeRepoDir(stateDir: stateDir.path),
+            writing: StoreSession.Writing(
+                writer: StoreWriter.open(stateDir: stateDir.path), sync: sync, stateDir: stateDir.path),
+            host: host)
     }
 
-    /// Gives `model` its write side, or says on Home why it has none.
-    @MainActor
-    static func attach(_ prepared: Result<Prepared, Error>, to model: AppModel) {
-        switch prepared {
-        case .success(let prepared):
-            model.edits = StoreEdits(
-                writer: prepared.writer, sync: prepared.sync, stateDir: prepared.stateDir, sendingNote: nil)
-        case .failure(let error):
-            model.notice = Notice(
-                problem: "Adding passwords isn't available in this test store.", nextStep: describe(error))
-        }
+    /// What Home says when the store could not be set up to be written.
+    static func notice(_ prepared: Result<Prepared, Error>) -> Notice? {
+        guard case .failure(let error) = prepared else { return nil }
+        return Notice(problem: "Adding passwords isn't available in this test store.", nextStep: describe(error))
     }
 }
 #endif

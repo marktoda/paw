@@ -33,12 +33,12 @@ struct HomeSyncPill: View {
     let model: AppModel
 
     var body: some View {
-        if let edits = model.edits, let syncing = edits.syncing {
+        if let edits = model.edits, let syncing = model.syncing {
             TimelineView(.periodic(from: .now, by: 30)) { context in
                 let state = syncing.pillState(unpushed: edits.unpushed.count)
                 let text = state.text(now: context.date)
                 Button {
-                    syncing.pillTapped(app: model)
+                    syncing.pillTapped()
                 } label: {
                     SyncPill(status: state.status, text: text)
                 }
@@ -60,7 +60,7 @@ struct SyncSummarySection: View {
     private static let shown = 5
 
     var body: some View {
-        if let syncing = model.edits?.syncing, let summary = syncing.summary {
+        if let syncing = model.syncing, let summary = syncing.summary {
             Section {
                 HStack(alignment: .firstTextBaseline, spacing: PawMetrics.Spacing.m) {
                     // A tick only when everything simply arrived. Two
@@ -175,7 +175,7 @@ struct SyncSummarySection: View {
             nextStep: "Review the new list before saving there.",
             actionTitle: "Review"
         ) {
-            model.path.append(.sync(.review(folder: folder)))
+            model.show(.sync(.review(folder: folder)))
         }
         .pawListRow()
     }
@@ -214,7 +214,7 @@ struct SyncSendSection: View {
     let model: AppModel
 
     var body: some View {
-        if let edits = model.edits, let syncing = edits.syncing, !edits.unpushed.isEmpty {
+        if let edits = model.edits, let syncing = model.syncing, !edits.unpushed.isEmpty {
             Section {
                 if !syncing.heldBack.isEmpty {
                     ErrorRow(
@@ -225,14 +225,14 @@ struct SyncSendSection: View {
                         nextStep: "Who can open the folder changed after you saved.",
                         actionTitle: "Review"
                     ) {
-                        model.path.append(.sync(.heldBack))
+                        model.show(.sync(.heldBack))
                     }
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("unpushed-held-back")
                     .pawListRow()
                     if syncing.reencryptReady > 0 {
                         Button {
-                            syncing.startReencrypt(app: model)
+                            syncing.startReencrypt()
                         } label: {
                             KeyActionLabel(reencryptTitle(syncing.reencryptReady))
                         }
@@ -244,7 +244,7 @@ struct SyncSendSection: View {
                     }
                 } else if syncing.canSend(unpushed: edits.unpushed.count) {
                     Button {
-                        syncing.start(.send, app: model)
+                        syncing.start(.send)
                     } label: {
                         KeyActionLabel(edits.sendTitle)
                     }
@@ -274,15 +274,13 @@ struct SyncSendSection: View {
     }
 }
 
-/// The sync sheet, the debug element with the simulated host's tip, and
-/// recomputing the pill from local state on coming back to the
-/// foreground. Apply once, at the root.
+/// The sync sheet and the debug element with the simulated host's tip.
+/// Apply once, at the root.
 private struct SyncModifier: ViewModifier {
     let model: AppModel
-    @Environment(\.scenePhase) private var scenePhase
 
     private var syncing: SyncModel? {
-        model.edits?.syncing
+        model.syncing
     }
 
     private var sheet: Binding<SyncSheet?> {
@@ -295,17 +293,10 @@ private struct SyncModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .sheet(item: sheet, onDismiss: { syncing?.sheetDismissed(app: model) }) { _ in
+            .sheet(item: sheet, onDismiss: { syncing?.sheetDismissed() }) { _ in
                 if let syncing {
                     SyncSheetHost(model: model, syncing: syncing)
                 }
-            }
-            .onChange(of: scenePhase) {
-                // Never the network or the key: only what is on this iPhone.
-                if scenePhase == .active { syncing?.recomputeLocal() }
-            }
-            .onChange(of: model.edits?.unpushed) {
-                syncing?.recomputeLocal()
             }
             #if targetEnvironment(simulator)
             .background(alignment: .topLeading) {
@@ -396,7 +387,7 @@ private struct SyncStatusSheet: View {
         guard let run = syncing.backgroundRun else { return "Not yet" }
         let when = syncAgo(run.at, now: now)
         // Kept in the iPhone's words; said in this device's.
-        let result = Device.words(run.result)
+        let result = Device.words(run.outcome.words)
         if let checked = syncing.lastChecked, syncAgo(checked, now: now) == when {
             return result
         }
@@ -566,7 +557,7 @@ private struct SyncStatusSheet: View {
         switch failure.kind {
         case .hostKeyChanged: syncing.openSettings()
         case .refusedRemote: syncing.go(to: .sync(.refusedRemote))
-        default: syncing.retryFailed(app: model)
+        default: syncing.retryFailed()
         }
     }
 
@@ -578,7 +569,7 @@ private struct SyncStatusSheet: View {
         return VStack(spacing: PawMetrics.Spacing.s) {
             if canReencrypt {
                 Button {
-                    syncing.startReencrypt(app: model)
+                    syncing.startReencrypt()
                 } label: {
                     KeyActionLabel(reencryptTitle(syncing.reencryptReady))
                 }
@@ -588,7 +579,7 @@ private struct SyncStatusSheet: View {
             }
             if canSend, let edits = model.edits {
                 Button {
-                    syncing.start(.send, app: model)
+                    syncing.start(.send)
                 } label: {
                     KeyActionLabel(edits.sendTitle)
                 }
@@ -596,7 +587,7 @@ private struct SyncStatusSheet: View {
                 .accessibilityIdentifier("sync-send")
             }
             Button {
-                syncing.check(app: model)
+                syncing.check()
             } label: {
                 if syncing.checksWithSignIn {
                     Text(syncing.running == .refresh ? "Checking for changes\u{2026}" : "Check for changes")
