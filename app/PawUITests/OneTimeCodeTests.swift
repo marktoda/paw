@@ -17,7 +17,9 @@ final class OneTimeCodeTests: PawUITestCase {
     }
 
     func testTheFixtureEntryShowsACodeThatCopies() {
-        launchFixture()
+        // The pasteboard is read more than 45 real seconds after the copy on
+        // a slow machine; the system's own expiry would have emptied it.
+        launchFixture(extra: ["-pawSimPasteboardSecs", "3600"])
         openGitHubWithKey()
         let shown = scrollTo("field-one-time-code")
         XCTAssertTrue(shown.exists)
