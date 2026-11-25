@@ -194,6 +194,10 @@ class PawUITestCase: XCTestCase {
             // its frame from a snapshot, which says "gone" instead of failing.
             if exists, let top = (try? found.snapshot())?.frame.maxY, top < app.frame.height * 0.2 {
                 app.swipeDown()
+            } else if !exists && swipes >= 3 {
+                // A long list can fling past a row in the middle, which then
+                // no longer exists: come back up slowly, a screen at a time.
+                app.swipeDown(velocity: .slow)
             } else {
                 app.swipeUp()
             }
