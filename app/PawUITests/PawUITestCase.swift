@@ -210,6 +210,14 @@ class PawUITestCase: XCTestCase {
         XCTAssertTrue(exists, "\"\(identifier)\" should be on screen", file: file, line: line)
         if swipes > 0 {
             waitUntilStill(found)
+            // A row that stopped under the navigation bar counts as hittable,
+            // but a tap there lands on the bar: bring it down a little.
+            if let top = (try? found.snapshot())?.frame.minY, top < app.frame.height * 0.16 {
+                let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+                let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+                from.press(forDuration: 0.05, thenDragTo: to)
+                waitUntilStill(found)
+            }
         }
         return found
     }
