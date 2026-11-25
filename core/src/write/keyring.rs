@@ -263,17 +263,18 @@ pub(crate) fn gpg_id_paths(root: &Path) -> Result<Vec<String>, WriteError> {
 }
 
 /// Every key line of every `.gpg-id` committed in the store at `root`, as
-/// it is in the working copy: sorted, each once.
-fn all_gpg_id_lines(root: &Path) -> Result<Vec<String>, WriteError> {
+/// it is in the working copy: sorted, each once. A store with nothing
+/// committed yet has none, and a `.gpg-id` that can't be read adds none.
+fn all_gpg_id_lines(root: &Path) -> Vec<String> {
     let mut lines = Vec::new();
-    for path in gpg_id_paths(root)? {
-        if let Some(bytes) = read_file(root, &path)? {
+    for path in gpg_id_paths(root).unwrap_or_default() {
+        if let Ok(Some(bytes)) = read_file(root, &path) {
             lines.extend(parse_gpg_id(&String::from_utf8_lossy(&bytes)));
         }
     }
     lines.sort();
     lines.dedup();
-    Ok(lines)
+    lines
 }
 
 /// A public certificate, as the import screen shows it.
@@ -292,9 +293,9 @@ pub struct CertificateSummary {
 }
 
 /// How each certificate in `infos` stands with the store at `root`.
-pub fn certificate_summaries(root: &Path, infos: &[CertificateInfo]) -> Result<Vec<CertificateSummary>, WriteError> {
-    let lines = all_gpg_id_lines(root)?;
-    Ok(infos
+pub fn certificate_summaries(root: &Path, infos: &[CertificateInfo]) -> Vec<CertificateSummary> {
+    let lines = all_gpg_id_lines(root);
+    infos
         .iter()
         .map(|info| CertificateSummary {
             primary_fingerprint: info.primary.clone(),
@@ -304,7 +305,7 @@ pub fn certificate_summaries(root: &Path, infos: &[CertificateInfo]) -> Result<V
             problem: info.encryption.as_ref().err().cloned(),
             satisfies: lines.iter().filter(|line| certificate_named_by(info, line)).cloned().collect(),
         })
-        .collect())
+        .collect()
 }
 
 /// The pinned keys, bindings and `.gpg-id` pins of one store.
@@ -727,4 +728,39 @@ impl Keyring {
 /// address), as it would once pinned.
 pub fn certificate_named_by(info: &CertificateInfo, line: &str) -> bool {
     PinnedKey::of_certificate(info).is_ok_and(|key| key.named_by(line))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::all_gpg_id_lines;
+
+    fn commit(repo: &git2::Repository, files: &[(&str, &str)]) {
+        let mut index = repo.index().unwrap();
+        for (path, text) in files {
+            let file = repo.workdir().unwrap().join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(&file, text).unwrap();
+            index.add_path(std::path::Path::new(path)).unwrap();
+        }
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let who = git2::Signature::now("t", "t@example.com").unwrap();
+        repo.commit(Some("HEAD"), &who, &who, "files", &tree, &[]).unwrap();
+    }
+
+    #[test]
+    fn a_store_with_nothing_committed_has_no_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(dir.path()).unwrap();
+        assert!(all_gpg_id_lines(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn a_gpg_id_that_cannot_be_read_is_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        commit(&repo, &[(".gpg-id", "AAAA1111\n"), ("work/.gpg-id", "BBBB2222\n")]);
+        std::fs::remove_file(dir.path().join("work/.gpg-id")).unwrap();
+        std::os::unix::fs::symlink("../.gpg-id", dir.path().join("work/.gpg-id")).unwrap();
+        assert_eq!(all_gpg_id_lines(dir.path()), ["AAAA1111"]);
+    }
 }

@@ -219,7 +219,7 @@ impl StoreWriter {
     pub fn inspect_certificate(&self, bytes: Vec<u8>) -> Result<Vec<CertificateSummary>, WriteError> {
         let infos = certificate_infos(&bytes, core::now_secs())?;
         let _reading = self.store.lock().shared()?;
-        certificate_summaries(self.store.repo(), &infos)
+        Ok(certificate_summaries(self.store.repo(), &infos))
     }
 
     /// Pins the encryption key of each certificate in `bytes`.
@@ -230,7 +230,7 @@ impl StoreWriter {
         for info in &infos {
             keyring.pin_certificate(info)?;
         }
-        certificate_summaries(self.store.repo(), &infos)
+        Ok(certificate_summaries(self.store.repo(), &infos))
     }
 }
 
