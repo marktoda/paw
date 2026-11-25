@@ -371,35 +371,30 @@ Known limit: hosts that serve many tenants but that the public suffix list does 
 
 A name fits lookalikes (`bankofamerica.co`), so paw keeps, per entry, the registrable domains it has filled on after the person confirmed (`site-pairings.json` in the state directory: not in the repository, not synced, removed with the store, bounded to 300 entries of 4 domains). In the list:
 - Paired with this domain: under "For <site>", fills without asking, published above the keyboard for that domain only.
-- Not yet paired: under "Might be for this site", below; picking it asks first, as a plain question (no warning colour: it is the common case): "Use bankofamerica on bankofamerica.com?" / "First time on this site. Check the address is right.", the full address when it differs, **Cancel** (primary) / **Use it here**. The pairing is kept only after the fill succeeds.
-- Paired only with other domains of that name: not listed; found by search, it asks in red: "You've used this on bankofamerica.com. This is bankofamerica.co." **Use it here** fills once and never pairs (the core refuses), so it warns every time. Trusting a second domain of one name means clearing the entry's pairings, which has no screen yet.
-- A password from search for an unrelated site ("Fill anyway") is never paired.
+- Not yet paired: under "Might be for this site", below. Picking it asks once, in plain colours: "Use bankofamerica on bankofamerica.com?" / "First time on this site. Check the address is right." The pairing is kept only after the fill succeeds; then it fills without asking.
+- Paired only with other domains of that name (a lookalike): not listed; found by search, it asks in red: "Use bankofamerica on bankofamerica.co?" / "Used before on bankofamerica.com." **Fill** fills once and never pairs (the core refuses), so it warns every time. Trusting a second domain of one name means clearing the entry's pairings, which has no screen yet.
+- Another site's password, found by search: "Fill GitHub's password here?" / "This password isn't saved for this site.", with a warning mark. Never paired.
 
-Pairings involve no decrypted content, so rule 6 holds. The core can list and clear them (`SitePairings`); a "Used on" row on the entry screen or a list in Settings › AutoFill can come later.
+**Confirm screen.** One layout for every case: headline, one line, the site's address in full, then **Cancel** (primary) and **Fill**. Hosts are always shown in the `xn--` form iOS gives, so a lookalike spelling shows. Once opened, an entry whose `url:` line names another registrable domain asks the same way, in red: "Saved for github.com, not example.net", plus "Fill needs your key again." when there is no Face ID copy to fill from.
 
-**Tapping a suggestion.** `provideCredentialWithoutUserInteraction` always returns `userInteractionRequired`, so the provider always presents a view. The minimal one shows the entry name behind the Face ID prompt.
+Pairings involve no decrypted content, so rule 6 holds. The core can list and clear them (`SitePairings`); Settings › Sites used shows them.
+
+**Tapping a suggestion.** `provideCredentialWithoutUserInteraction` always returns `userInteractionRequired`, so the provider always presents a view: "Fill github.com" behind the Face ID prompt, or the key sheet with that purpose ("Fill fastmail on example.com" when the name doesn't say the site).
 
 | Entry state | What happens |
 |---|---|
 | Covered | Face ID, then filled |
-| Needs the key, extension can reach it | A choice screen (below), then `KeySheet` titled "Fill github.com" |
-| Needs the key, extension cannot reach it | Hand-off screen |
-
-**Choice screen** (reach `Works`), titled "github.com needs your key":
-- **Enter PIN and touch here**: `KeySheet` in the provider. The extension asks for the PIN on every key use; the PIN is never shared with it. The entry gets a copy as usual.
-- **Open in paw first (one touch)**: the hand-off screen. In the app the PIN is usually already held.
-- If no key is plugged in, the `PlugIn` stage adds: "Or open it in paw later."
-
-Whether the in-extension key path is worth keeping is decided after the device spike. If typing the PIN over a web page proves worse than the hand-off in practice, remove the first option.
+| Needs the key | `KeySheet` in the provider: it asks for the PIN on every key use (the app's held PIN is never shared with it), then "Then it fills with Face ID for 8 hours." |
 
 **Provider sheet** (key icon or "Passwords…"). Title "paw", bottom search.
-- Section "For github.com": the matching entries.
-- Section "All entries": hidden until the user searches.
-- Nothing matches: "Nothing in your store matches github.com." / "Search for it by name."
-- A manual pick for a non-matching, non-associated domain asks: "Fill the password for 'GitHub' into login.example.net?"
-- After decrypt, if the entry's `url` field has a different registrable domain from the site and no association covers it, paw asks the same question before filling.
+- "For github.com": the site's entries; "Might be for this site": name matches, below.
+- Nothing matches: "No password for this site." over the address. No site (an app): "paw can't tell which site this is."
+- Search: the site's sections first, then "Other passwords"; nothing found: "No matches."
+- An entry with no password: "<name> has no password" / "Pick another entry."
 
-**Hand-off screen**, titled "github.com needs your key":
+**Not built** (roadmap M7): the choice screen and the hand-off below, for when the extension can't reach the key. Whether the in-extension key path is worth keeping is decided after the device spike.
+
+**Hand-off screen** (not built), titled "github.com needs your key":
 1. "Open paw."
 2. "Touch your key when it asks."
 3. "Go back to Safari and tap the password field again."
@@ -415,7 +410,7 @@ Button **Cancel** removes the request. So does any other dismissal of the provid
 
 | State | Copy |
 |---|---|
-| Setup not finished | "Finish setting up paw first." |
+| Setup not finished | "Set up paw first" / "Open paw, then come back here." |
 | PIN blocked | Same text as the app |
 | Entry over 1 MiB | "Open this one in paw." |
 
