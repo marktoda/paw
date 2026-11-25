@@ -155,12 +155,8 @@ private struct AutoFillList: View {
         }
     }
 
-    /// Nothing listed for the site. A code is listed once its entry has
-    /// been opened on this iPhone with code suggestions on; search finds
-    /// the others.
     private var emptyLine: String {
-        if model.site == nil { return "paw can't tell which site this is." }
-        return model.kind == .oneTimeCode ? "No codes for this site. Search for one." : "No password for this site."
+        model.site == nil ? "paw can't tell which site this is." : model.kind.noneForSite
     }
 
     /// Named like the site, never filled on it: apart, below the site's
@@ -226,7 +222,7 @@ private struct AutoFillList: View {
             subtitle: entry.folder,
             symbol: EntryGlyph.symbol(for: entry.name),
             tint: FolderTint(folder: entry.folder.split(separator: "/").first.map(String.init)),
-            access: model.live.contains(entry.path) ? .faceID : .needsKey,
+            access: model.opensWithKey(entry) ? .needsKey : .faceID,
             nameHighlights: nameHighlights,
             subtitleHighlights: folderHighlights,
             identifier: "autofill-entry-\(entry.path)"
@@ -272,7 +268,8 @@ private struct AutoFillConfirm: View {
         switch reason {
         case .otherSite:
             // The address below names the site.
-            model.site == nil ? "Fill \(entry.name)'s \(thing)?" : "Fill \(entry.name)'s \(thing) here?"
+            model.site == nil
+                ? "Fill \(entry.name)'s \(model.kind.thing)?" : "Fill \(entry.name)'s \(model.kind.thing) here?"
         case .firstTime(let site), .lookalike(let site, _):
             "Use \(entry.name) on \(site)?"
         case .urlDiffers(let url, let site):
@@ -283,7 +280,7 @@ private struct AutoFillConfirm: View {
     private var line: String {
         switch reason {
         case .otherSite:
-            model.site == nil ? "paw can't tell which site this is." : "This \(thing) isn't saved for this site."
+            model.site == nil ? "paw can't tell which site this is." : "This \(model.kind.thing) isn't saved for this site."
         case .firstTime:
             "First time on this site. Check the address is right."
         case .lookalike(_, let known):
@@ -292,11 +289,6 @@ private struct AutoFillConfirm: View {
             // Without a Face ID copy to fill from, Fill opens it again.
             model.opensWithKey(entry) ? "Fill needs your key again." : ""
         }
-    }
-
-    /// What is being filled.
-    private var thing: String {
-        model.kind == .oneTimeCode ? "code" : "password"
     }
 
     private var symbol: String? {

@@ -16,13 +16,6 @@ struct AutoFillSource: @unchecked Sendable {
     var codes: OneTimeCodeEntries? = nil
 }
 
-/// What a request fills: a password, or the current one-time code
-/// (iOS 18's one-time-code AutoFill).
-enum AutoFillKind: Equatable, Sendable {
-    case password
-    case oneTimeCode
-}
-
 /// The store as the extension finds it.
 enum AutoFillOpening: @unchecked Sendable {
     case ready(AutoFillSource)
@@ -42,7 +35,6 @@ enum AutoFillEnd: String, Sendable {
     case userCanceled
     case userInteractionRequired
     case credentialIdentityNotFound
-    case failed
 }
 
 /// Opens the store paw set up, for the extension. Reads only: no `Setup`
@@ -60,29 +52,40 @@ enum StoreForAutoFill {
             return .noStore
         }
         do {
-            let store = try PassStore(dir: location.repoDir.path)
-            let keyPort = KeyPort(clock: SystemClock())
-            keyPort.setKeyLog(stateDir: location.stateDir.path, process: "fill")
-            // The store's key: any other key is refused before a PIN is sent.
-            _ = try keyPort.loadEnrolledKey(stateDir: location.stateDir.path)
-            #if targetEnvironment(simulator)
-            // The simulator has no Secure Enclave the two processes share.
-            let copies: CopyCache? = nil
-            #else
-            let copies = PlatformCopies.make(dir: location.copiesDir.path)
-            #endif
-            return .ready(AutoFillSource(
-                store: store, copies: copies, keyPort: keyPort,
-                connect: { try KeyConnection.open() },
-                pairings: SitePairings.open(stateDir: location.stateDir.path),
-                codes: OneTimeCodeEntries.open(stateDir: location.stateDir.path)))
+            return .ready(try AutoFillSource.open(
+                at: location, clock: SystemClock(), connect: { try KeyConnection.open() },
+                copies: { dir in
+                    #if targetEnvironment(simulator)
+                    // The simulator has no Secure Enclave the two processes share.
+                    return nil
+                    #else
+                    return PlatformCopies.make(dir: dir.path)
+                    #endif
+                }))
         } catch {
             return isStoreBusy(error) ? .busy : .unreadable(String(describing: error))
         }
     }
+}
 
-    /// What `provideCredentialWithoutUserInteraction` answers: always a
-    /// screen. Every copy is sealed behind Face ID, which needs one, so a
-    /// fill without one is never possible.
-    static let answerWithoutScreen = AutoFillEnd.userInteractionRequired
+extension AutoFillSource {
+    /// Everything the AutoFill screens read, for the store set up at
+    /// `location`, in this order: the store's folder names, a key port
+    /// writing the extension's key log, the enrolled key (any other key is
+    /// refused before a PIN is sent), the Face ID copies, the site pairings
+    /// and the list of entries with a code.
+    static func open(
+        at location: StoreLocation, clock: Clock, connect: @escaping KeyReader.Connect,
+        copies: (URL) -> CopyCache?
+    ) throws -> AutoFillSource {
+        let stateDir = location.stateDir.path
+        let store = try PassStore(dir: location.repoDir.path)
+        let keyPort = KeyPort(clock: clock)
+        keyPort.setKeyLog(stateDir: stateDir, process: "fill")
+        _ = try keyPort.loadEnrolledKey(stateDir: stateDir)
+        return AutoFillSource(
+            store: store, copies: copies(location.copiesDir), keyPort: keyPort, connect: connect,
+            pairings: SitePairings.open(stateDir: stateDir),
+            codes: OneTimeCodeEntries.open(stateDir: stateDir))
+    }
 }

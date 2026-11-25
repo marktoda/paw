@@ -11,13 +11,10 @@ enum AutoFillRequest: Equatable, Sendable {
     case entry(path: String, service: String? = nil)
 }
 
-/// Where a request ends. The extension passes these to iOS; the debug
-/// harness records them. Called once per request.
+/// Where a request ends (`AutoFillProvider`). Called once per request.
 @MainActor
 protocol AutoFillCompletion: AnyObject {
-    func fill(user: String, password: String)
-    /// The current one-time code, for a one-time-code request.
-    func fill(oneTimeCode: String)
+    func fill(_ credential: AutoFillCredential)
     func end(_ reason: AutoFillEnd)
 }
 
@@ -76,8 +73,6 @@ final class AutoFillModel {
     }
 
     let request: AutoFillRequest
-    /// A password, or a one-time code: the same entries, rules and steps,
-    /// and only what is handed over differs.
     let kind: AutoFillKind
     private(set) var screen: Screen = .loading
     /// The site the list is for, e.g. `github.com`. `nil` for an app iOS
@@ -108,7 +103,7 @@ final class AutoFillModel {
     }
     private(set) var hits: [SearchHit] = []
     /// Entries with a live Face ID copy.
-    private(set) var live: Set<String> = []
+    private var live: Set<String> = []
     private(set) var notice: AutoFillNotice?
     private(set) var keyEntry: EntryRef?
     /// The key sheet's task: opening `keyEntry` with the key. Done fills at
@@ -232,15 +227,14 @@ final class AutoFillModel {
         hits = trimmed.isEmpty ? [] : source.store.search(query: trimmed, limit: 100)
     }
 
-    /// The site's own entries the list shows: for a code, only those known
-    /// to have one. Search still finds the rest.
+    /// The site's own entries the list shows. Search still finds the rest.
     var listedMatches: [EntryRef] {
-        kind == .password ? matches : matches.filter { withCode.contains($0.path) }
+        matches.filter { kind.lists($0.path, knownCodes: withCode) }
     }
 
     /// The name matches the list shows, likewise.
     var listedMaybe: [EntryRef] {
-        kind == .password ? maybe : maybe.filter { withCode.contains($0.path) }
+        maybe.filter { kind.lists($0.path, knownCodes: withCode) }
     }
 
     var isSearching: Bool {
@@ -264,9 +258,8 @@ final class AutoFillModel {
     /// example.com"; for a code, "Fill code for github.com". The key sheet
     /// and the Face ID prompt both say this.
     func purpose(_ entry: EntryRef) -> String {
-        let verb = kind == .oneTimeCode ? "Fill code for" : "Fill"
-        guard let site, site != entry.name.lowercased() else { return "\(verb) \(entry.name)" }
-        return "\(verb) \(entry.name) on \(site)"
+        guard let site, site != entry.name.lowercased() else { return "\(kind.fillVerb) \(entry.name)" }
+        return "\(kind.fillVerb) \(entry.name) on \(site)"
     }
 
     /// A tap on an entry. One that is not this site's asks first (design
@@ -341,18 +334,17 @@ final class AutoFillModel {
         }
     }
 
-    /// Whether opening `entry` now takes the key rather than Face ID: what
-    /// the url warning says before Fill when there is no copy to fill from.
+    /// Whether opening `entry` now takes the key rather than Face ID, as
+    /// its row and the url warning say: Face ID if it has a live copy.
     func opensWithKey(_ entry: EntryRef) -> Bool {
         !(live.contains(entry.path) && source?.copies != nil)
     }
 
-    /// Face ID if the entry has a live copy, else the key.
     private func open(_ entry: EntryRef) {
-        if live.contains(entry.path), source?.copies != nil {
-            openWithFaceId(entry)
-        } else {
+        if opensWithKey(entry) {
             openWithKey(entry)
+        } else {
+            openWithFaceId(entry)
         }
     }
 
@@ -446,8 +438,9 @@ final class AutoFillModel {
 
     // MARK: Ending
 
-    /// Hands the credential over and wipes the entry. The password is in
-    /// this function's locals only, never in a view or the pasteboard.
+    /// Hands the credential over and wipes the entry. The password or code
+    /// is in this function's locals only, never in a view or the
+    /// pasteboard.
     ///
     /// First, the entry's own `url:` lines: if they name another site, the
     /// entry is wiped unread and the person is asked. Filling anyway opens
@@ -460,53 +453,20 @@ final class AutoFillModel {
             screen = .confirm(entry, warning)
             return
         }
-        if kind == .oneTimeCode {
-            fillCode(opened, entry: entry)
-            return
-        }
-        let password = opened.password()
-        let user = fillUsername(entry: opened, path: entry.path) ?? ""
-        let hasCode = opened.makesOneTimeCodes()
+        let taken = kind.take(from: opened, entry: entry)
         opened.close()
         let codes = source?.codes
-        guard let password, !password.isEmpty else {
-            screen = isSuggestion
-                ? .problem("\(entry.name) has no password", "Add one in paw, then try again.", backToList: false)
-                : .problem("\(entry.name) has no password", "Pick another entry.", backToList: true)
-            noteCode(hasCode, entry: entry, codes: codes)
-            return
-        }
-        guard !finished else { return }
-        screen = .filled
-        recordPairing(entry)
-        shutDown()
-        completion?.fill(user: user, password: password)
-        noteCode(hasCode, entry: entry, codes: codes)
-    }
-
-    /// The current code, made now and handed over; the entry is wiped at
-    /// once. With under 3 seconds left, the next one, which is still good
-    /// once the page sends it. One with no code, or a code line that makes
-    /// none, says so.
-    private func fillCode(_ opened: OpenedEntry, entry: EntryRef) {
-        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
-        var otp = opened.otpCode(nowMs: nowMs)
-        if let current = otp, current.secondsLeft < 3 {
-            otp = opened.otpCode(nowMs: nowMs + Int64(current.secondsLeft) * 1000 + 1)
-        }
-        let code = otp?.code
-        let problem = code == nil ? opened.otpProblem() : nil
-        opened.close()
-        let codes = source?.codes
-        guard let code, !code.isEmpty else {
-            noteCode(false, entry: entry, codes: codes)
-            withCode.remove(entry.path)
-            if let problem {
-                screen = .problem("\(entry.name)'s code doesn't work", problem, backToList: !isSuggestion)
+        guard let credential = taken.credential else {
+            noteCode(taken.hasCode, entry: entry, codes: codes)
+            if !taken.hasCode {
+                withCode.remove(entry.path)
+            }
+            if let unusable = taken.unusable {
+                screen = .problem(unusable.problem, unusable.nextStep, backToList: !isSuggestion)
             } else {
                 screen = isSuggestion
-                    ? .problem("\(entry.name) has no one-time code", "Add one in paw, then try again.", backToList: false)
-                    : .problem("\(entry.name) has no one-time code", "Pick another entry.", backToList: true)
+                    ? .problem("\(entry.name) has no \(kind.missing)", "Add one in paw, then try again.", backToList: false)
+                    : .problem("\(entry.name) has no \(kind.missing)", "Pick another entry.", backToList: true)
             }
             return
         }
@@ -514,8 +474,8 @@ final class AutoFillModel {
         screen = .filled
         recordPairing(entry)
         shutDown()
-        completion?.fill(oneTimeCode: code)
-        noteCode(true, entry: entry, codes: codes)
+        completion?.fill(credential)
+        noteCode(taken.hasCode, entry: entry, codes: codes)
     }
 
     /// Keeps whether the entry just opened has a one-time code, so a code

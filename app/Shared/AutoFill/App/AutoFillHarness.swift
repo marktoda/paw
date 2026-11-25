@@ -1,4 +1,5 @@
 #if DEBUG && targetEnvironment(simulator)
+import AuthenticationServices
 import CryptoKit
 import SwiftUI
 
@@ -19,8 +20,10 @@ import SwiftUI
 /// - `-pawSimOneTimeCodes 1`: "Suggest one-time codes" on, as Settings
 ///   turns it on; off by default, as on a phone.
 ///
-/// The fixture store, the simulated key (`-pawSimPin` and the rest) and a
-/// simulated Face ID (`-pawSimFaceId`) stand in. What a fill hands over is
+/// The requests go through `AutoFillProvider`, as the extension's do, on
+/// the fixture store laid out as `StoreLocation` lays a store out. The
+/// simulated key (`-pawSimPin` and the rest) and a simulated Face ID
+/// (`-pawSimFaceId`) stand in. What a fill hands over is
 /// shown as the user name, the password's length and the start of its
 /// SHA-256, never the password; a code likewise, by length and SHA-256.
 enum AutoFillHarnessLaunch {
@@ -28,15 +31,35 @@ enum AutoFillHarnessLaunch {
         LaunchArguments.string("pawHostProvider") != nil || LaunchArguments.string("pawHostProviderEntry") != nil
     }
 
-    static func request(run: Int) -> (AutoFillRequest, AutoFillKind) {
+    /// What iOS would ask for.
+    enum Ask {
+        case list([ASCredentialServiceIdentifier], AutoFillKind)
+        case entry(ASCredentialRequest)
+    }
+
+    static func request(run: Int) -> Ask {
         if let path = LaunchArguments.string("pawHostProviderEntry") {
             let (kind, bare) = parse(path)
-            return (.entry(path: bare), kind)
+            return .entry(suggestion(kind, path: bare))
         }
         let sites = (LaunchArguments.string("pawHostProvider") ?? "").split(separator: ",").map(String.init)
         let (kind, site) = parse(sites.isEmpty ? "" : sites[min(run, sites.count - 1)])
         // `app`: an app iOS gives no site for.
-        return (.list(services: site == "app" ? [] : [site]), kind)
+        return .list(site == "app" ? [] : [ASCredentialServiceIdentifier(identifier: site, type: .URL)], kind)
+    }
+
+    /// A tap on the suggestion for `path`, as iOS hands it over. iOS gives
+    /// no site with it here.
+    private static func suggestion(_ kind: AutoFillKind, path: String) -> ASCredentialRequest {
+        let identity = kind.identity(domain: "", user: EntrySite.suggestionUser(forPath: path), path: path)
+        switch identity {
+        case let password as ASPasswordCredentialIdentity:
+            return ASPasswordCredentialRequest(credentialIdentity: password)
+        case let code as ASOneTimeCodeCredentialIdentity:
+            return ASOneTimeCodeCredentialRequest(credentialIdentity: code)
+        default:
+            preconditionFailure("paw publishes no other kind of suggestion")
+        }
     }
 
     /// `code:…` asks for a one-time code; anything else for a password.
@@ -64,13 +87,9 @@ struct AutoFillHarnessRoot: View {
 /// key fill leaves a copy the next run fills from.
 private final class HarnessWorld: @unchecked Sendable {
     let opening: AutoFillOpening
-    /// The key port behind `opening`, to read whether a PIN is held.
-    private(set) var keyPort: KeyPort?
-    /// The site pairings behind `opening`, to show what was recorded.
-    private(set) var pairings: SitePairings?
-    /// Which entries are known to have a code, likewise.
-    private(set) var codes: OneTimeCodeEntries?
-    private(set) var store: PassStore?
+    /// What `opening` reads: the key port, to read whether a PIN is held,
+    /// and the site pairings and code list, to show what was recorded.
+    private(set) var source: AutoFillSource?
     private let lock = NSLock()
     private var busyOnce = LaunchArguments.string("pawHostProviderStore") == "busy"
 
@@ -91,23 +110,13 @@ private final class HarnessWorld: @unchecked Sendable {
             return
         }
         do {
-            let root = FileManager.default.temporaryDirectory
-                .appendingPathComponent("paw-autofill-\(UUID().uuidString)", isDirectory: true)
-            let storeDir = root.appendingPathComponent("store", isDirectory: true)
-            let copiesDir = root.appendingPathComponent("window", isDirectory: true)
-            let stateDir = root.appendingPathComponent("state", isDirectory: true)
-            try FileManager.default.createDirectory(at: copiesDir, withIntermediateDirectories: true)
-            try FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true)
-            try writeFixtureStore(dir: storeDir.path)
+            let location = StoreLocation(root: FileManager.default.temporaryDirectory
+                .appendingPathComponent("paw-autofill-\(UUID().uuidString)", isDirectory: true))
+            try FileManager.default.createDirectory(at: location.copiesDir, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: location.stateDir, withIntermediateDirectories: true)
+            try writeFixtureStore(dir: location.repoDir.path)
             // `finance/northwind` and `contoso/alice`: named without a domain.
-            try writeNameMatchEntries(dir: storeDir.path)
-            let pairings = SitePairings.open(stateDir: stateDir.path)
-            self.pairings = pairings
-            let codes = OneTimeCodeEntries.open(stateDir: stateDir.path)
-            if LaunchArguments.bool("pawSimOneTimeCodes") {
-                try codes.setEnabled(enabled: true)
-            }
-            self.codes = codes
+            try writeNameMatchEntries(dir: location.repoDir.path)
             let keystore = SimKeystore()
             switch LaunchArguments.string("pawSimFaceId") {
             case "cancel": keystore.setFaceId(answer: .cancel)
@@ -115,17 +124,14 @@ private final class HarnessWorld: @unchecked Sendable {
             default: keystore.setFaceId(answer: .match)
             }
             let clock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000)).asClock()
-            let port = KeyPort(clock: clock)
-            keyPort = port
-            let store = try PassStore(dir: storeDir.path)
-            self.store = store
-            opening = .ready(AutoFillSource(
-                store: store,
-                copies: CopyCache(dir: copiesDir.path, keystore: keystore.asKeystore(), clock: clock),
-                keyPort: port,
-                connect: { try KeyConnection.open() },
-                pairings: pairings,
-                codes: codes))
+            let source = try AutoFillSource.open(
+                at: location, clock: clock, connect: { try KeyConnection.open() },
+                copies: { CopyCache(dir: $0.path, keystore: keystore.asKeystore(), clock: clock) })
+            if LaunchArguments.bool("pawSimOneTimeCodes") {
+                try source.codes?.setEnabled(enabled: true)
+            }
+            opening = .ready(source)
+            self.source = source
         } catch {
             opening = .unreadable(String(describing: error))
         }
@@ -133,7 +139,7 @@ private final class HarnessWorld: @unchecked Sendable {
 }
 
 @MainActor @Observable
-private final class HarnessRun: AutoFillCompletion {
+private final class HarnessRun: AutoFillAnswers {
     private(set) var model: AutoFillModel?
     private(set) var result = "none"
     private(set) var quickType: String?
@@ -141,38 +147,49 @@ private final class HarnessRun: AutoFillCompletion {
     private(set) var pairings = "none"
     /// The entries `OneTimeCodeEntries` knows have a code, or "none".
     private(set) var codes = "none"
-    @ObservationIgnored private let world = HarnessWorld()
+    @ObservationIgnored private let world: HarnessWorld
+    @ObservationIgnored private let provider: AutoFillProvider
     @ObservationIgnored private var runs = 0
+
+    init() {
+        let world = HarnessWorld()
+        self.world = world
+        provider = AutoFillProvider(open: { world.open() })
+        provider.answers = self
+    }
 
     func run() {
         result = "running"
-        let (request, kind) = AutoFillHarnessLaunch.request(run: runs)
+        let ask = AutoFillHarnessLaunch.request(run: runs)
         runs += 1
-        if case .entry = request {
-            quickType = StoreForAutoFill.answerWithoutScreen.rawValue
+        switch ask {
+        case .list(let services, let kind):
+            model = provider.list(services, kind: kind)
+        case .entry(let request):
+            quickType = AutoFillProvider.answerWithoutScreen(request).rawValue
+            model = provider.entry(request)
         }
-        let world = world
-        model = AutoFillModel(request: request, kind: kind, completion: self, open: { world.open() })
     }
 
-    func fill(user: String, password: String) {
-        let digest = SHA256.hash(data: Data(password.utf8)).map { String(format: "%02x", $0) }.joined()
-        result = "filled user=\(user) password-length=\(password.count) password-sha=\(digest.prefix(12))"
+    func complete(with credential: AutoFillCredential) {
+        switch credential {
+        case .password(let user, let password):
+            result = "filled user=\(user) password-length=\(password.count) password-sha=\(Self.digest(password))"
+        case .oneTimeCode(let code):
+            result = "filled code-length=\(code.count) code-sha=\(Self.digest(code))"
+        }
         model = nil
         readPairingsSoon()
     }
 
-    func fill(oneTimeCode: String) {
-        let digest = SHA256.hash(data: Data(oneTimeCode.utf8)).map { String(format: "%02x", $0) }.joined()
-        result = "filled code-length=\(oneTimeCode.count) code-sha=\(digest.prefix(12))"
-        model = nil
-        readPairingsSoon()
-    }
-
-    func end(_ reason: AutoFillEnd) {
+    func cancel(_ reason: AutoFillEnd) {
         result = "ended \(reason.rawValue)"
         model = nil
         readPairings()
+    }
+
+    private static func digest(_ text: String) -> String {
+        String(SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined().prefix(12))
     }
 
     /// Once the model's fill has returned: it keeps a code mark after
@@ -184,17 +201,18 @@ private final class HarnessRun: AutoFillCompletion {
     }
 
     private func readPairings() {
-        let all = (world.pairings?.pairings() ?? []).flatMap { p in p.sites.map { "\(p.entry)=\($0)" } }
+        let source = world.source
+        let all = (source?.pairings?.pairings() ?? []).flatMap { p in p.sites.map { "\(p.entry)=\($0)" } }
         pairings = all.isEmpty ? "none" : all.joined(separator: " ")
-        let known = world.store.map { world.codes?.entries(store: $0) ?? [] } ?? []
+        let known = source.map { $0.codes?.entries(store: $0.store) ?? [] } ?? []
         codes = known.isEmpty ? "none" : known.joined(separator: " ")
     }
 
-    /// What the extension's controller does when its view goes away
-    /// without paw ending the request (a swipe down): the model ends the
-    /// request, except under a Face ID prompt.
+    /// The extension's view going away without paw ending the request (a
+    /// swipe down): the request ends, except under a Face ID prompt, whose
+    /// answer still fills.
     func dismiss() {
-        model?.viewWentAway()
+        provider.viewWentAway()
         if model != nil {
             model = nil
             result = "dismissed"
@@ -202,7 +220,7 @@ private final class HarnessRun: AutoFillCompletion {
     }
 
     var holdsPin: Bool {
-        world.keyPort?.session()?.holdsPin() == true
+        world.source?.keyPort.session()?.holdsPin() == true
     }
 }
 
