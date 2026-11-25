@@ -127,16 +127,6 @@ final class AutoFillTests: PawUITestCase {
         expectLabel("key-sheet-purpose", contains: "Fill fastmail")
     }
 
-    func testMatchingTable() {
-        app.launchArguments = ["-pawMatchTable", "1"]
-        app.launch()
-        let summary = expect("match-table-summary")
-        wait(for: "value CONTAINS 'passed' OR value CONTAINS 'failed'", on: summary, timeout: Self.patience,
-             "The table should finish")
-        XCTAssertTrue((summary.value as? String)?.hasPrefix("all ") == true,
-                      "Every matching case should pass: \(summary.value ?? "")")
-    }
-
     // MARK: Entries named without a domain
 
     /// The harness's `finance/northwind`, named like www.northwind.example.

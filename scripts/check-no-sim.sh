@@ -80,7 +80,6 @@ app_needles=(
   'pawAppearance'
   'pawSetup'
   'pawPlantLegacy'
-  'pawMatchTable'
   'pawHarnessDismiss'
   'pawSimPin'
   'pawNoAnimations'

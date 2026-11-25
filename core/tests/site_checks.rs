@@ -337,3 +337,34 @@ fn a_suggestion_names_the_last_part_of_the_path_that_is_a_registrable_host() {
     assert_eq!(domain("web/co.uk"), None, "a public suffix");
     assert_eq!(domain("pages/alice.github.io").as_deref(), Some("alice.github.io"));
 }
+
+#[test]
+fn a_suggestion_is_for_a_plain_registrable_name_only() {
+    let domain = |path: &str| suggestion_domain(path.into());
+    assert_eq!(domain("sites/example.co.uk").as_deref(), Some("example.co.uk"));
+    assert_eq!(domain("web/xn--exmple-cua.com").as_deref(), Some("xn--exmple-cua.com"));
+    assert_eq!(domain("web/ex\u{00E4}mple.com"), None, "only the ASCII form");
+    assert_eq!(domain("web/g\u{0456}thub.com"), None, "lookalike letters");
+    assert_eq!(domain("web/github.io"), None, "a public suffix");
+}
+
+#[test]
+fn a_neighbour_of_an_entrys_host_is_never_offered() {
+    let all = entries(&[
+        "web/example.com",
+        "web/evil-example.com",
+        "sites/example.co.uk",
+        "sites/co.uk",
+        "web/192.168.1.1",
+        "web/github.com",
+    ]);
+    let offered = |service: &str| -> Vec<String> {
+        match_services(&all, &[service.to_owned()], &[]).into_iter().map(|m| m.entry.path).collect()
+    };
+    assert_eq!(offered("https://evil-example.com"), ["web/evil-example.com"]);
+    assert_eq!(offered("https://shop.example.co.uk"), ["sites/example.co.uk"]);
+    assert!(offered("https://other.co.uk").is_empty(), "an entry named after a public suffix");
+    assert_eq!(offered("http://192.168.1.1:8080/admin"), ["web/192.168.1.1"]);
+    assert!(offered("http://192.168.1.10").is_empty());
+    assert!(offered("github").is_empty(), "a bare dotless name");
+}
