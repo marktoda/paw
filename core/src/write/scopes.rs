@@ -21,7 +21,7 @@ use super::keyring::{KeySource, Keyring, LineStatus};
 use crate::path::folder_of_gpg_id;
 use crate::recipients::{Recipient, entry_recipients};
 use crate::path::GPG_ID;
-use crate::store::gpg_id::{governing_gpg_id, key_digits, parse_gpg_id};
+use crate::store::gpg_id::{governing_gpg_id, parse_gpg_id};
 use crate::store::read::{read_entry, read_file};
 use crate::store::tree::StoreTree;
 
@@ -62,15 +62,7 @@ pub struct RecipientScope {
     pub unsure_entries: u32,
 }
 
-/// The 64-bit key ID a recipient packet would name for a key with this
-/// fingerprint or long ID (16, 40 or 64 hex digits).
-fn key_id(text: &str) -> Option<String> {
-    let digits = key_digits(text)?;
-    if digits.len() == 16 {
-        return Some(digits);
-    }
-    crate::recipients::key_id(&digits).map(str::to_owned)
-}
+use super::keyring::line_key_id as key_id;
 
 /// How a packet's recipient reads as a key ID.
 fn packet_key_id(recipient: &Recipient) -> Option<String> {

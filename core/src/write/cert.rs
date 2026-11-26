@@ -34,7 +34,6 @@ use pgp::packet::{PubKeyInner, PublicKey, Signature, SignatureType};
 use pgp::types::{KeyDetails, Tag};
 
 use super::WriteError;
-use crate::recipients::hex;
 use crate::files::MAX_FILE_BYTES;
 
 /// The key chosen for encrypting to a certificate.
@@ -68,9 +67,7 @@ pub struct CertificateInfo {
     pub encryption: Result<EncryptionChoice, String>,
 }
 
-pub(crate) fn fingerprint_of(key: &impl KeyDetails) -> String {
-    hex(key.fingerprint().as_bytes())
-}
+pub(crate) use crate::recipients::fingerprint_of;
 
 fn cert_err(message: impl Into<String>) -> WriteError {
     WriteError::Certificate { message: message.into() }

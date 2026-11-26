@@ -56,16 +56,10 @@ pub enum HeldBackList {
 /// Whether `found` names exactly the keys of `keys`, no more, no fewer,
 /// and nothing hidden or passphrase-only.
 fn encrypted_for_exactly(found: &crate::recipients::EntryRecipients, keys: &[pgp::packet::PublicKey]) -> bool {
-    use crate::recipients::Recipient;
-    let fingerprints: Vec<String> = keys.iter().map(super::cert::fingerprint_of).collect();
-    let names = |recipient: &Recipient, fingerprint: &str| match recipient {
-        Recipient::KeyId { id } => fingerprint.len() == 40 && fingerprint.ends_with(id.as_str()),
-        Recipient::Fingerprint { fingerprint: named } => named == fingerprint,
-        Recipient::Hidden => false,
-    };
+    let fingerprints: Vec<String> = keys.iter().map(crate::recipients::fingerprint_of).collect();
     !found.passphrase
-        && found.keys.iter().all(|r| fingerprints.iter().any(|f| names(r, f)))
-        && fingerprints.iter().all(|f| found.keys.iter().any(|r| names(r, f)))
+        && found.keys.iter().all(|r| fingerprints.iter().any(|f| r.names(f)))
+        && fingerprints.iter().all(|f| found.keys.iter().any(|r| r.names(f)))
 }
 
 /// The waiting changes paw will not push, oldest first: each whose

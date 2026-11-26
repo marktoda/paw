@@ -27,6 +27,19 @@ pub enum Recipient {
 }
 
 impl Recipient {
+    /// Whether this packet names the key with `fingerprint` (upper-case
+    /// hex, no spaces): by that fingerprint, or by its key ID. A hidden
+    /// recipient names no key. The one rule for "is this entry for that
+    /// key": Home's badge, the key open, held-back changes and setup's
+    /// binding all ask it.
+    pub(crate) fn names(&self, fingerprint: &str) -> bool {
+        match self {
+            Self::KeyId { id } => key_id(fingerprint) == Some(id.as_str()),
+            Self::Fingerprint { fingerprint: named } => named == fingerprint,
+            Self::Hidden => false,
+        }
+    }
+
     /// The recipient as a person would write it.
     pub fn describe(&self) -> String {
         match self {
@@ -219,11 +232,13 @@ pub(crate) fn key_id(fingerprint: &str) -> Option<&str> {
 /// Whether one of `recipients` names the key with `fingerprint` (upper-case
 /// hex, no spaces): by that fingerprint, or by its key ID.
 pub(crate) fn names_key(recipients: &[Recipient], fingerprint: &str) -> bool {
-    recipients.iter().any(|recipient| match recipient {
-        Recipient::KeyId { id } => key_id(fingerprint) == Some(id.as_str()),
-        Recipient::Fingerprint { fingerprint: named } => named == fingerprint,
-        Recipient::Hidden => false,
-    })
+    recipients.iter().any(|recipient| recipient.names(fingerprint))
+}
+
+/// The fingerprint of `key`, upper-case hex: as a recipient packet or a
+/// `.gpg-id` line names it.
+pub(crate) fn fingerprint_of(key: &impl pgp::types::KeyDetails) -> String {
+    hex(key.fingerprint().as_bytes())
 }
 
 /// Decides whether the key whose decryption (sub)key has `card_fingerprint`

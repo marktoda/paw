@@ -110,6 +110,29 @@ enum Spec {
     Other,
 }
 
+impl Spec {
+    /// Whether this line names the (sub)key with `fingerprint` by itself:
+    /// by that fingerprint or by its key ID ([`crate::recipients::key_id`],
+    /// as a recipient packet would).
+    fn names(&self, fingerprint: &str) -> bool {
+        match self {
+            Self::Fingerprint(wanted) => wanted == fingerprint,
+            Self::LongId(id) => key_id(fingerprint) == Some(id.as_str()),
+            Self::Email(_) | Self::Other => false,
+        }
+    }
+}
+
+/// The 64-bit key ID a recipient packet would name for the key `line`
+/// names by fingerprint or long key ID; `None` for any other line.
+pub(crate) fn line_key_id(line: &str) -> Option<String> {
+    match spec(line) {
+        Spec::Fingerprint(fingerprint) => key_id(&fingerprint).map(str::to_owned),
+        Spec::LongId(id) => Some(id),
+        Spec::Email(_) | Spec::Other => None,
+    }
+}
+
 fn spec(line: &str) -> Spec {
     if let Some(digits) = key_digits(line) {
         return match digits.len() {
@@ -156,22 +179,16 @@ impl PinnedKey {
     /// Whether `line` names this key by itself (no binding).
     fn named_by(&self, line: &str) -> bool {
         match spec(line) {
-            Spec::Fingerprint(fpr) => self.all_fingerprints().any(|own| own == fpr),
-            Spec::LongId(id) => self.all_fingerprints().any(|own| key_id(own) == Some(id.as_str())),
             Spec::Email(email) => self.emails.contains(&email),
-            Spec::Other => false,
+            spec => self.all_fingerprints().any(|own| spec.names(own)),
         }
     }
 
     /// If `line` names one of the certificate's other subkeys, why that
     /// subkey is not used.
     fn refusal(&self, line: &str) -> Option<&str> {
-        let names = |fpr: &str| match spec(line) {
-            Spec::Fingerprint(wanted) => wanted == fpr,
-            Spec::LongId(id) => key_id(fpr) == Some(id.as_str()),
-            _ => false,
-        };
-        self.refused.iter().find(|(fpr, _)| names(fpr)).map(|(_, why)| why.as_str())
+        let spec = spec(line);
+        self.refused.iter().find(|(fpr, _)| spec.names(fpr)).map(|(_, why)| why.as_str())
     }
 
     fn expired(&self, now: u32) -> bool {

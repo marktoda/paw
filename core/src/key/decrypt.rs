@@ -24,7 +24,7 @@ use super::apdu;
 use super::task::TaskSide;
 use super::touch::{self, TouchWatch};
 use super::KeyError;
-use crate::recipients;
+use crate::recipients::{self, Access};
 
 /// How many recipient packets of one entry the card is asked to unwrap:
 /// one. It is the first packet that names the card's decryption key, or,
@@ -76,7 +76,18 @@ pub(crate) struct Plan<'a> {
 }
 
 impl<'a> Plan<'a> {
+    /// Refuses, before the PIN or a touch, an entry the key cannot open,
+    /// by the rule Home's badge uses ([`recipients::access`]), so the two
+    /// never disagree.
     pub(crate) fn new(ciphertext: &'a [u8], key: &PublicKey) -> Result<Self, KeyError> {
+        let not_for_this_key = |keys: &[recipients::Recipient]| KeyError::NotForThisKey {
+            recipients: keys.iter().map(recipients::Recipient::describe).collect(),
+        };
+        match recipients::access(ciphertext, &recipients::fingerprint_of(key)) {
+            Access::CanOpen | Access::MightOpen => {}
+            Access::NotForThisKey { recipients } => return Err(not_for_this_key(&recipients)),
+            Access::Unreadable { reason } => return Err(unreadable(reason)),
+        }
         let message = Message::from_bytes(ciphertext).map_err(unreadable)?;
         let Message::Encrypted { esk, edata, .. } = message else {
             return Err(unreadable("it is not encrypted"));
@@ -89,10 +100,9 @@ impl<'a> Plan<'a> {
         let mut candidates = if named.is_empty() { hidden } else { named };
         candidates.truncate(MAX_DECIPHERS);
         if candidates.is_empty() {
-            let recipients = recipients::entry_recipients(ciphertext)
-                .map(|found| found.keys.iter().map(recipients::Recipient::describe).collect())
-                .unwrap_or_default();
-            return Err(KeyError::NotForThisKey { recipients });
+            // The headers name this key, yet the OpenPGP library finds no
+            // packet for it: the file is not what its headers say.
+            return Err(unreadable("its recipient packets do not match its headers"));
         }
         Ok(Self { candidates, edata })
     }
