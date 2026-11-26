@@ -26,6 +26,7 @@ pub mod generate;
 pub mod files;
 pub mod lock;
 pub mod otp;
+pub mod open;
 pub mod github;
 pub mod write;
 

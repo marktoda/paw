@@ -21,7 +21,6 @@ use super::Uptime;
 use crate::PawError;
 use crate::copies::CopyCache;
 use crate::files::content_id;
-use crate::entry::opened::OpenedEntry;
 use crate::store::PassStore;
 
 struct State {
@@ -375,13 +374,11 @@ impl KeyPort {
                     return Err(KeyError::Cancelled.into());
                 }
                 let plaintext = plan.finish(session_key)?;
-                if std::str::from_utf8(&plaintext).is_err() {
-                    return Err(entry_unreadable(PawError::NotText).into());
-                }
+                let opened = crate::open::opened(plaintext, content_id(&ciphertext)).map_err(entry_unreadable)?;
                 let copies = match then {
                     Then::Keep(copies) => copies,
                     Then::Check(after) => {
-                        drop(plaintext);
+                        opened.close();
                         if !task.begin_commit() {
                             return Err(KeyError::Cancelled.into());
                         }
@@ -394,17 +391,13 @@ impl KeyPort {
                 }
                 // The entry opens even if keeping the copy fails: the
                 // person has already touched the key.
-                let (face_id_until_ms, copy_failed) = match copies
-                    .map(|(copies, ttl)| copies.put(&entry, &plaintext, &content_id(&ciphertext), ttl))
-                {
-                    None => (None, None),
-                    Some(Ok(until)) => (until, None),
-                    Some(Err(error)) => (None, Some(error)),
-                };
-                let mut plaintext = plaintext;
-                let entry = OpenedEntry::decrypted(std::mem::take(&mut *plaintext), content_id(&ciphertext))
-                    .map_err(entry_unreadable)?;
-                Ok(KeyDone::Opened { entry, face_id_until_ms, copy_failed }.into())
+                let (face_id_until_ms, copy_failed) =
+                    match copies.map(|(copies, ttl)| crate::open::keep_copy(&copies, &entry, &opened, ttl)) {
+                        None => (None, None),
+                        Some(Ok(until)) => (until, None),
+                        Some(Err(error)) => (None, Some(error)),
+                    };
+                Ok(KeyDone::Opened { entry: opened, face_id_until_ms, copy_failed }.into())
             },
         )
     }

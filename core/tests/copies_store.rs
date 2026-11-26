@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use key_common::{Driver, finish, is_touch};
 use paw_core::PawError;
 use paw_core::copies::{CopyCache, CopyStatus};
-use paw_core::ffi::FaceIdOpen;
+use paw_core::open::FaceIdOpen;
 use paw_core::key::KeyPort;
 use paw_core::task::{KeyOutcome, KeyTaskState};
 use paw_core::sim::SimulatedKey;
