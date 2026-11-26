@@ -15,10 +15,10 @@ settings:
     TARGETED_DEVICE_FAMILY: "1,2"
     GENERATE_INFOPLIST_FILE: "NO"
   configs:
-    # Debug: the simulator and its UI tests. The component gallery, the
-    # launch-argument harnesses and the debug screens are compiled under
-    # DEBUG only, and the simulated hardware under
-    # `targetEnvironment(simulator)` as well.
+    # Debug: the simulator and its UI tests. The launch arguments, the
+    # component gallery and the debug screens are compiled under DEBUG
+    # only, and the simulated hardware and every harness (Paw/Simulator,
+    # Shared/Simulator) under `targetEnvironment(simulator)` as well.
     Debug:
       SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
       # The unit tests (PawTests) reach the app's internal types.

@@ -64,7 +64,7 @@ enum WritableFixture {
         let connection = key.asConnection()
         let host = try SimRemote.start(key: key)
         // Owned by the handle alone, which the sync screens' debug controls
-        // drive (`Sync/SimRemoteControls.swift`).
+        // drive (`SimRemoteControls.swift`).
         SimRemoteHandle.shared.register(host, key: key)
         // Its own key port, as the app has one: the PIN is typed once.
         let port = KeyPort(clock: SystemClock())
