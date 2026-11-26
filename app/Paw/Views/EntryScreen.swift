@@ -118,16 +118,16 @@ struct EntryScreen: View {
         .environment(\.defaultMinListRowHeight, PawMetrics.tapMin)
         .navigationBarTitleDisplayMode(.inline)
         .sheetOrPadCover(item: largeType) { item in
-            LargeTypeSheet(item: item) { model.largeType = nil }
+            LargeTypeSheet(item: item) { closeLargeType() }
         }
         .onAppear { load() }
         .onDisappear {
             // The entry closed (another was opened, or its folder left):
             // its large type goes with it.
-            model.largeType = nil
+            closeLargeType()
         }
         .onChange(of: model.session(opened.id) == nil) {
-            if model.session(opened.id) == nil { model.largeType = nil }
+            if model.session(opened.id) == nil { closeLargeType() }
         }
         .onChange(of: ObjectIdentifier(session.entry)) { load() }
         .entryEditing(model, session: session)
@@ -140,8 +140,19 @@ struct EntryScreen: View {
         }
     }
 
+    /// This entry's large type: another entry's stays with that entry.
     private var largeType: Binding<LargeTypeItem?> {
-        Binding(get: { model.largeType }, set: { model.largeType = $0 })
+        Binding(
+            get: { model.largeType?.entry == opened.id ? model.largeType : nil },
+            set: { item in
+                if item == nil { closeLargeType() }
+            })
+    }
+
+    private func closeLargeType() {
+        if model.largeType?.entry == opened.id {
+            model.largeType = nil
+        }
     }
 
     // MARK: Parts
@@ -179,7 +190,7 @@ struct EntryScreen: View {
                     isRevealed: $passwordRevealed,
                     fetch: { session.entry.password() },
                     onCopy: { copy(session.entry.password(), what: "Password") },
-                    onLargeType: { model.largeType = LargeTypeItem(title: "Password", text: $0) })
+                    onLargeType: { model.largeType = LargeTypeItem(entry: opened.id, title: "Password", text: $0) })
             }
             if let website {
                 FieldRow(label: "Website", value: website) {
@@ -194,7 +205,7 @@ struct EntryScreen: View {
                         label: label, identifier: "field-\(field.id)", hideToken: hideToken,
                         fetch: { session.entry.fieldValue(id: field.id) },
                         onCopy: { copy(session.entry.fieldValue(id: field.id), what: label) },
-                        onLargeType: { model.largeType = LargeTypeItem(title: label, text: $0) })
+                        onLargeType: { model.largeType = LargeTypeItem(entry: opened.id, title: label, text: $0) })
                 } else {
                     FieldRow(label: label, value: plainValues[field.id] ?? "") {
                         copy(session.entry.fieldValue(id: field.id), what: label)
@@ -250,7 +261,7 @@ struct EntryScreen: View {
     private func hideAll() {
         passwordRevealed = false
         hideToken += 1
-        model.largeType = nil
+        closeLargeType()
     }
 
     private func copy(_ value: String?, what: String) {
@@ -409,6 +420,8 @@ private struct HiddenFieldRow: View {
 
 struct LargeTypeItem: Identifiable {
     let id = UUID()
+    /// The open entry it is from (`OpenSession.id`).
+    let entry: UUID
     let title: String
     let text: String
 }
