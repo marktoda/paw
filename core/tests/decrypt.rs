@@ -34,7 +34,6 @@ fn reads_card_status_without_a_pin() {
     assert_eq!(info.decryption_fingerprint, Some(key.fingerprint_hex()));
     assert_eq!(info.authentication_fingerprint, Some(key.authentication_fingerprint_hex()));
     assert_eq!(info.pin_tries_left, 3);
-    assert!(info.touch_required);
     assert_eq!(info.decryption_touch, KeyTouch::EachUse);
     assert_eq!(info.authentication_touch, KeyTouch::EachUse);
     assert_eq!(port_with(&self::key(false)).session().unwrap().info().decryption_touch, KeyTouch::Off);

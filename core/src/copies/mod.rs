@@ -33,8 +33,6 @@ use crate::PawError;
 use format::{CopyFile, IndexKeys, Invalid, Meta};
 pub use seams::{Clock, DeviceKeystore, KeystoreError};
 
-/// How long a copy lives if the person has not chosen.
-pub const DEFAULT_TTL: Duration = Duration::from_secs(8 * 60 * 60);
 /// No copy lives longer, whatever the caller asks for.
 pub const MAX_TTL: Duration = Duration::from_secs(12 * 60 * 60);
 /// In the copies folder while the person has turned Face ID copies off
@@ -197,11 +195,13 @@ impl CopyCache {
     }
 
     /// Removes `entry`'s copy, if it has one, and no other: "Lock now" on
-    /// an entry's screen, or an open that was cancelled. Never prompts and
-    /// never resets the keystore. Copies that have ended are wiped too, as
-    /// by every call.
+    /// an entry's screen, an open that was cancelled, an entry deleted or
+    /// moved. Never prompts and never resets the keystore. Copies that have
+    /// ended are wiped too, as by every call.
     pub fn forget_entry(&self, entry: String) -> Result<(), PawError> {
-        self.forget(&entry)
+        self.scan(&self.keys()?)?;
+        let keys = self.keys()?;
+        dir::remove(&self.path(&keys, &entry)).map_err(io_err)
     }
 }
 
@@ -429,10 +429,5 @@ impl CopyCache {
             return Ok(None);
         }
         self.put(to, text, content_id, Duration::from_millis(left as u64))
-    }
-
-    /// Removes any copy of `entry`, e.g. after it was deleted or renamed.
-    pub fn forget(&self, entry: &str) -> Result<(), PawError> {
-        self.put(entry, &[], &[], Duration::ZERO).map(|_| ())
     }
 }

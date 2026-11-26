@@ -145,7 +145,7 @@ fn the_fixture_can_be_searched_and_matched_to_sites() {
     assert_eq!(hits, ["web/Zürich Tourism"]);
 
     let offered: Vec<_> = store
-        .match_site("https://www.example.net/".into(), None)
+        .match_services(vec!["https://www.example.net/".into()], None)
         .into_iter()
         .filter(|m| !matches!(m.kind, MatchKind::Name { .. }))
         .map(|m| (m.entry.path, m.kind == MatchKind::ExactHost))
@@ -354,7 +354,7 @@ fn the_harness_adds_entries_named_without_a_domain_that_open_and_match_by_name()
         assert!(opened.view().has_password, "{entry}");
     }
     let found: Vec<_> = store
-        .match_site("https://www.northwind.example/login".into(), None)
+        .match_services(vec!["https://www.northwind.example/login".into()], None)
         .into_iter()
         .map(|m| (m.entry.path, m.kind, m.site))
         .collect();
@@ -380,7 +380,7 @@ fn the_sites_the_autofill_tests_use_gain_no_name_matches_from_the_fixture() {
         "https://paypa1.example",
     ];
     for site in sites {
-        let found = store.match_site(site.into(), None);
+        let found = store.match_services(vec![site.into()], None);
         assert!(found.iter().all(|m| !matches!(m.kind, MatchKind::Name { .. })), "{site}");
     }
 }

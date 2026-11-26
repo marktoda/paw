@@ -315,10 +315,10 @@ fn only_a_name_match_for_the_site_is_ever_paired() {
     assert!(temps(dir.path()).is_empty());
 
     // The match now says paired, and a lookalike says where it was used.
-    let found = store.match_site("https://bankofamerica.com".into(), Some(pairings.clone()));
+    let found = store.match_services(vec!["https://bankofamerica.com".into()], Some(pairings.clone()));
     assert_eq!(found[0].kind, MatchKind::Name { pairing: NamePairing::Paired });
     assert_eq!(found[0].site, "bankofamerica.com");
-    let lookalike = store.match_site("https://www.bankofamerica.co".into(), Some(pairings.clone()));
+    let lookalike = store.match_services(vec!["https://www.bankofamerica.co".into()], Some(pairings.clone()));
     assert_eq!(
         lookalike[0].kind,
         MatchKind::Name { pairing: NamePairing::PairedElsewhere { sites: vec!["bankofamerica.com".into()] } }
@@ -331,7 +331,7 @@ fn only_a_name_match_for_the_site_is_ever_paired() {
     // Recording the paired domain again is fine.
     assert!(record("bank/bankofamerica", "https://secure.bankofamerica.com"));
     // Without pairings every name match is unpaired.
-    let blind = store.match_site("https://bankofamerica.com".into(), None);
+    let blind = store.match_services(vec!["https://bankofamerica.com".into()], None);
     assert_eq!(blind[0].kind, MatchKind::Name { pairing: NamePairing::Unpaired });
 }
 

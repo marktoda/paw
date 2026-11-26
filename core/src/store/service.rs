@@ -166,7 +166,6 @@ pub fn site_name(host: &str) -> Option<String> {
 /// The registrable domain a service identifier is on:
 /// `bankofamerica.com` for `https://www.bankofamerica.com/login`. `None`
 /// where there is none: a bare word, an IP address, a public suffix.
-#[uniffi::export]
 pub fn registrable_domain(service: String) -> Option<String> {
     let host = host_of(&service)?;
     registrable(&host).map(str::to_owned)

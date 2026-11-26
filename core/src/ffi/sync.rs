@@ -292,11 +292,6 @@ impl StoreSync {
         self.address.display()
     }
 
-    /// The fingerprints of the host keys the store's host must present.
-    pub fn host_fingerprints(&self) -> Result<Vec<String>, SyncError> {
-        Ok(self.remote()?.host_key.fingerprints())
-    }
-
     /// Settings › Store › server keys: the host, whether its keys ship
     /// with paw (and so cannot be forgotten), and each pinned key's type
     /// and fingerprint. A forgotten key leaves `keys` empty until the next

@@ -78,11 +78,6 @@ pub enum PawError {
     /// exactly as it is.
     #[error("this entry is not text, so paw cannot show or edit it")]
     NotText,
-    /// Refused before the PIN or a touch was asked for: none of the keys the
-    /// entry is encrypted for is the one plugged in. `recipients` are the
-    /// keys that can open it, as people write them ("key ID 0123...").
-    #[error("this entry is encrypted for another key ({})", .recipients.join(", "))]
-    NotForThisKey { recipients: Vec<String> },
     /// A value that cannot be stored in an entry as given.
     #[error("{0}")]
     InvalidField(String),

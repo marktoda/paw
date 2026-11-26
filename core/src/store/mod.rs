@@ -107,14 +107,6 @@ impl PassStore {
 }
 
 impl PassStore {
-    /// The entries to offer for a website, by host and by name, each with
-    /// why; see [`service::match_site`]. `pairings` class the name
-    /// matches; without them every name match is unpaired.
-    pub fn match_site(&self, service: String, pairings: Option<Arc<SitePairings>>) -> Vec<MatchedEntry> {
-        let known = pairings.map(|p| p.pairings()).unwrap_or_default();
-        service::match_site(self.tree.entries(), &service, &known)
-    }
-
     /// The encrypted bytes of `entry` ([`read::read_entry`]), read with the
     /// store lock shared (so
     /// never a file a checkout is halfway through writing) and released

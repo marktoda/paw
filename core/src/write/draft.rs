@@ -444,11 +444,4 @@ impl EntryDraft {
         Ok(doc)
     }
 
-    /// The text as it would be saved, for the form to show; the opened
-    /// entry (or an empty one) if a value cannot be stored yet.
-    pub fn preview(&self) -> EntryDoc {
-        self.build().unwrap_or_else(|_| {
-            self.original.as_ref().map_or_else(EntryDoc::empty, |o| o.doc.duplicate())
-        })
-    }
 }

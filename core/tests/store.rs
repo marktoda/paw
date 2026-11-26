@@ -175,7 +175,7 @@ fn lists_five_thousand_entries_quickly() {
 
     let started = Instant::now();
     let hits = store.search("entry 042 group".into(), 50);
-    let offered = store.match_site("https://entry-042.example.com/login".into(), None);
+    let offered = store.match_services(vec!["https://entry-042.example.com/login".into()], None);
     let searched = started.elapsed();
     assert_eq!(hits.len(), 50);
     assert_eq!(offered.len(), 5000);

@@ -10,7 +10,10 @@ use std::time::Duration;
 
 use paw_core::PawError;
 use paw_core::copies::format::{CopyFile, IndexKeys};
-use paw_core::copies::{CopyCache, CopyStatus, DEFAULT_TTL, LiveCopy, MAX_TTL};
+use paw_core::copies::{CopyCache, CopyStatus, LiveCopy, MAX_TTL};
+
+/// How long the tests keep a copy: the app's 8 hours.
+const TTL: std::time::Duration = std::time::Duration::from_secs(8 * 60 * 60);
 use paw_core::sim::copies::{SimClock, SimFaceId, SimKeystore};
 use proptest::prelude::*;
 
@@ -91,7 +94,7 @@ fn hours(n: u64) -> Duration {
 #[test]
 fn copy_opens_until_its_deadline_and_not_after() {
     let w = World::new();
-    let until = w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL).unwrap();
+    let until = w.put(GITHUB, GITHUB_TEXT, TTL).unwrap();
     assert_eq!(until, START + 8 * HOUR as i64);
     assert_eq!(w.status(GITHUB), CopyStatus::Available { until_ms: until });
 
@@ -107,9 +110,9 @@ fn copy_opens_until_its_deadline_and_not_after() {
 #[test]
 fn each_entry_keeps_its_own_deadline() {
     let w = World::new();
-    w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
+    w.put(GITHUB, GITHUB_TEXT, TTL);
     w.clock.advance_ms(5 * HOUR);
-    let bank_until = w.put(BANK, BANK_TEXT, DEFAULT_TTL).unwrap();
+    let bank_until = w.put(BANK, BANK_TEXT, TTL).unwrap();
     assert_eq!(
         w.cache.list().unwrap(),
         vec![
@@ -158,13 +161,13 @@ fn sweep_wipes_expired_copies_and_keeps_live_ones() {
 #[test]
 fn stale_copy_is_wiped_without_a_prompt() {
     let w = World::new();
-    w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
+    w.put(GITHUB, GITHUB_TEXT, TTL);
     // A pull changed the entry's file.
     assert!(matches!(w.cache.open(GITHUB, b"v2", REASON), Err(PawError::CopyUnavailable)));
     assert_eq!(w.keystore.prompt_count(), 0);
     assert!(w.files().is_empty());
 
-    w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
+    w.put(GITHUB, GITHUB_TEXT, TTL);
     assert_eq!(w.cache.status(GITHUB, b"v2").unwrap(), CopyStatus::Stale);
     assert_eq!(w.status(GITHUB), CopyStatus::NeedsKey);
 }
@@ -172,9 +175,9 @@ fn stale_copy_is_wiped_without_a_prompt() {
 #[test]
 fn clock_moved_back_ends_every_copy() {
     let w = World::new();
-    w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
+    w.put(GITHUB, GITHUB_TEXT, TTL);
     w.clock.advance_ms(HOUR);
-    w.put(BANK, BANK_TEXT, DEFAULT_TTL);
+    w.put(BANK, BANK_TEXT, TTL);
     // Back to before the bank copy was made, though after GitHub's.
     w.clock.set_wall_ms(START + 1000);
     assert_eq!(w.status(GITHUB), CopyStatus::NeedsKey);
@@ -197,8 +200,8 @@ fn wall_clock_moved_back_a_little_still_cannot_lengthen_a_copy() {
 #[test]
 fn reboot_ends_every_copy() {
     let w = World::new();
-    w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
-    w.put(BANK, BANK_TEXT, DEFAULT_TTL);
+    w.put(GITHUB, GITHUB_TEXT, TTL);
+    w.put(BANK, BANK_TEXT, TTL);
     w.clock.reboot();
     assert!(matches!(w.open(BANK), Err(PawError::CopyUnavailable)));
     assert_eq!(w.keystore.prompt_count(), 0);
@@ -210,14 +213,14 @@ fn reboot_ends_every_copy() {
 fn a_copy_made_right_after_a_reboot_or_a_clock_change_is_kept() {
     for end_all in ["reboot", "clock moved back"] {
         let w = World::new();
-        w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
+        w.put(GITHUB, GITHUB_TEXT, TTL);
         match end_all {
             "reboot" => w.clock.reboot(),
             _ => w.clock.set_wall_ms(START - HOUR as i64),
         }
         // The first thing after it is a new copy: it ends the old ones, and
         // must still be there itself.
-        let promised = w.put(BANK, BANK_TEXT, DEFAULT_TTL);
+        let promised = w.put(BANK, BANK_TEXT, TTL);
 
         assert!(promised.is_some(), "{end_all}");
         assert!(matches!(w.status(BANK), CopyStatus::Available { .. }), "{end_all}: {:?}", w.status(BANK));
@@ -229,8 +232,8 @@ fn a_copy_made_right_after_a_reboot_or_a_clock_change_is_kept() {
 #[test]
 fn lock_now_ends_every_copy_and_resets_the_keystore() {
     let w = World::new();
-    w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
-    w.put(BANK, BANK_TEXT, DEFAULT_TTL);
+    w.put(GITHUB, GITHUB_TEXT, TTL);
+    w.put(BANK, BANK_TEXT, TTL);
     let (path, before) = w.only_file_named(GITHUB);
     w.cache.lock_now().unwrap();
     assert!(w.files().is_empty());
@@ -246,8 +249,8 @@ fn lock_now_ends_every_copy_and_resets_the_keystore() {
 #[test]
 fn forgetting_one_entry_removes_only_its_copy_and_keeps_the_keystore() {
     let w = World::new();
-    w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
-    w.put(BANK, BANK_TEXT, DEFAULT_TTL);
+    w.put(GITHUB, GITHUB_TEXT, TTL);
+    w.put(BANK, BANK_TEXT, TTL);
 
     w.cache.forget_entry(GITHUB.into()).unwrap();
     assert_eq!(w.status(GITHUB), CopyStatus::NeedsKey);
@@ -270,7 +273,7 @@ fn the_simulated_keystore_and_clock_go_straight_to_the_cache() {
     let keystore = SimKeystore::new();
     let clock = SimClock::new(START);
     let cache = CopyCache::new(window(&dir), keystore.clone().as_keystore(), clock.clone().as_clock());
-    cache.put(GITHUB, GITHUB_TEXT, b"v1", DEFAULT_TTL).unwrap();
+    cache.put(GITHUB, GITHUB_TEXT, b"v1", TTL).unwrap();
     clock.advance_ms(9 * HOUR);
     assert_eq!(cache.status(GITHUB, b"v1").unwrap(), CopyStatus::NeedsKey);
 }
@@ -287,8 +290,8 @@ impl World {
 #[test]
 fn enrolment_change_clears_every_copy_with_its_own_error() {
     let w = World::new();
-    w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
-    w.put(BANK, BANK_TEXT, DEFAULT_TTL);
+    w.put(GITHUB, GITHUB_TEXT, TTL);
+    w.put(BANK, BANK_TEXT, TTL);
     w.keystore.change_enrolment();
     let err = w.open(GITHUB).unwrap_err();
     assert!(matches!(err, PawError::FaceIdChanged));
@@ -299,14 +302,14 @@ fn enrolment_change_clears_every_copy_with_its_own_error() {
     assert!(w.files().is_empty());
     assert_eq!(w.keystore.reset_count(), 1);
     // The new key works.
-    w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
+    w.put(GITHUB, GITHUB_TEXT, TTL);
     assert_eq!(w.open(GITHUB).unwrap(), GITHUB_TEXT);
 }
 
 #[test]
 fn face_id_cancel_leaves_the_copy_in_place() {
     let w = World::new();
-    w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
+    w.put(GITHUB, GITHUB_TEXT, TTL);
     for (answer, expected) in [
         (SimFaceId::Cancel, "FaceIdCancelled"),
         (SimFaceId::NoMatch, "FaceIdNotRecognised"),
@@ -325,8 +328,8 @@ fn face_id_cancel_leaves_the_copy_in_place() {
 #[test]
 fn blob_moved_to_another_entrys_name_is_rejected() {
     let w = World::new();
-    w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
-    w.put(BANK, BANK_TEXT, DEFAULT_TTL);
+    w.put(GITHUB, GITHUB_TEXT, TTL);
+    w.put(BANK, BANK_TEXT, TTL);
     let (bank_path, _) = w.only_file_named(BANK);
     let (github_path, github_bytes) = w.only_file_named(GITHUB);
     std::fs::write(&bank_path, &github_bytes).unwrap();
@@ -341,8 +344,8 @@ fn blob_moved_to_another_entrys_name_is_rejected() {
 #[test]
 fn copy_spliced_from_another_entry_is_rejected_before_a_prompt() {
     let w = World::new();
-    w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
-    w.put(BANK, BANK_TEXT, DEFAULT_TTL);
+    w.put(GITHUB, GITHUB_TEXT, TTL);
+    w.put(BANK, BANK_TEXT, TTL);
     let (bank_path, bank_bytes) = w.only_file_named(BANK);
     let (_, github_bytes) = w.only_file_named(GITHUB);
     let keys = w.keys();
@@ -392,8 +395,8 @@ fn deadline_edited_on_disk_is_rejected() {
 #[test]
 fn nothing_on_disk_contains_the_plaintext_or_the_entry_name() {
     let w = World::new();
-    w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
-    w.put(BANK, BANK_TEXT, DEFAULT_TTL);
+    w.put(GITHUB, GITHUB_TEXT, TTL);
+    w.put(BANK, BANK_TEXT, TTL);
     let needles: Vec<&[u8]> = vec![
         GITHUB.as_bytes(),
         BANK.as_bytes(),
@@ -424,7 +427,7 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 fn copy_files_are_private_to_the_user() {
     use std::os::unix::fs::PermissionsExt;
     let w = World::new();
-    w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
+    w.put(GITHUB, GITHUB_TEXT, TTL);
     let (path, _) = w.only_file();
     assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
 }
@@ -436,7 +439,7 @@ fn ttl_zero_stores_nothing() {
     assert!(w.files().is_empty());
 
     // And opening with the key under "always ask" forgets an older copy.
-    w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
+    w.put(GITHUB, GITHUB_TEXT, TTL);
     w.put(GITHUB, GITHUB_TEXT, Duration::ZERO);
     assert!(w.files().is_empty());
 }
@@ -463,7 +466,7 @@ fn a_key_open_renews_the_copy() {
 #[test]
 fn a_copy_made_by_one_process_opens_in_the_other() {
     let w = World::new();
-    w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
+    w.put(GITHUB, GITHUB_TEXT, TTL);
     let extension = w.other_process();
     assert_eq!(extension.open(GITHUB, b"v1", REASON).unwrap().to_vec(), GITHUB_TEXT);
 }
@@ -471,7 +474,7 @@ fn a_copy_made_by_one_process_opens_in_the_other() {
 #[test]
 fn files_that_are_not_copies_are_left_alone() {
     let w = World::new();
-    w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
+    w.put(GITHUB, GITHUB_TEXT, TTL);
     let window = Path::new(&window(&w.dir)).to_owned();
     std::fs::write(window.join("key.json"), b"{}").unwrap();
     std::fs::write(window.join("junk.copy"), b"not a copy").unwrap();
@@ -541,7 +544,7 @@ proptest! {
         keep_magic in any::<bool>(),
     ) {
         let w = World::new();
-        w.put(GITHUB, GITHUB_TEXT, DEFAULT_TTL);
+        w.put(GITHUB, GITHUB_TEXT, TTL);
         let (path, _) = w.only_file();
         let mut bytes = bytes;
         if keep_magic {

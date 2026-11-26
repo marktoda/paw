@@ -167,7 +167,7 @@ impl WriteStore {
     /// Forgets the Face ID copy of `entry`, if there are copies.
     fn forget_copy(&self, entry: &str, follow_ups: &mut FollowUps) {
         if let Some(copies) = &self.copies {
-            follow_ups.copy(copies.forget(entry).map(|()| None));
+            follow_ups.copy(copies.forget_entry(entry.to_owned()).map(|()| None));
         }
     }
 

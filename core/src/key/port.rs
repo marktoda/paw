@@ -268,6 +268,13 @@ impl KeyPort {
         )
     }
 
+    /// How the plugged-in key differs from the enrolled one, or `None` if it
+    /// is the enrolled key, no key is enrolled, or no key is plugged in.
+    pub fn key_mismatch(&self) -> Option<KeyMismatch> {
+        let session = self.session()?;
+        enrolment_check(self.expected().as_ref(), &session)
+    }
+
     /// The key tasks must be on: the enrolled one, if any.
     pub(crate) fn expected(&self) -> Option<KeyIdentity> {
         self.lock().enrolled.clone()
@@ -467,13 +474,6 @@ impl KeyPort {
     /// The state directory this process's key log is written to, if set.
     pub fn key_log_dir(&self) -> Option<String> {
         self.lock().log.as_ref().map(|sink| sink.dir().to_string_lossy().into_owned())
-    }
-
-    /// How the plugged-in key differs from the enrolled one, or `None` if it
-    /// is the enrolled key, no key is enrolled, or no key is plugged in.
-    pub fn key_mismatch(&self) -> Option<KeyMismatch> {
-        let session = self.session()?;
-        enrolment_check(self.expected().as_ref(), &session)
     }
 
     /// Whether a key is plugged in and tasks may send it the PIN: it is the

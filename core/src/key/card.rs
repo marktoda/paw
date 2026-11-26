@@ -48,8 +48,6 @@ pub struct CardInfo {
     pub authentication_fingerprint: Option<String>,
     /// Remaining user PIN attempts before the PIN blocks.
     pub pin_tries_left: u8,
-    /// Whether the decryption key needs a physical touch for each use.
-    pub touch_required: bool,
     /// When the decryption key asks for a touch.
     pub decryption_touch: KeyTouch,
     /// When the authentication key (SSH) asks for a touch.
@@ -163,14 +161,12 @@ pub(crate) fn card_info(transport: Arc<dyn CardConnection>) -> Result<CardInfo, 
     let pin_tries_left = tx.pw_status_bytes().map_err(card_err)?.err_count_pw1();
     let decryption_touch = key_touch(&mut tx, KeyType::Decryption)?;
     let authentication_touch = key_touch(&mut tx, KeyType::Authentication)?;
-    let touch_required = decryption_touch != KeyTouch::Off;
 
     Ok(CardInfo {
         ident,
         decryption_fingerprint: fps.decryption().map(|f| f.to_string().replace(' ', "")),
         authentication_fingerprint: fps.authentication().map(|f| f.to_string().replace(' ', "")),
         pin_tries_left,
-        touch_required,
         decryption_touch,
         authentication_touch,
     })
