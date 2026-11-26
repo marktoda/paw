@@ -167,7 +167,7 @@ impl std::fmt::Debug for DeviceSignIn {
 }
 
 fn refused(message: &str) -> GitHubError {
-    GitHubError::Refused { message: message.into() }
+    GitHubError::refused(message)
 }
 
 /// Codes GitHub shows are short letters, digits and a hyphen; anything else
@@ -184,7 +184,7 @@ impl DeviceSignIn {
         let answer = http.post_form("/login/device/code", &[("client_id", &client_id)])?;
         let started = clock.now();
         if answer.status >= 500 {
-            return Err(GitHubError::Network { message: format!("GitHub answered {}", answer.status) });
+            return Err(GitHubError::network(format!("GitHub answered {}", answer.status)));
         }
         let mut parsed: CodeAnswer =
             serde_json::from_slice(&answer.body).map_err(|_| refused("GitHub's sign-in answer was not readable"))?;
@@ -285,7 +285,7 @@ impl DeviceSignIn {
             ],
         )?;
         if answer.status >= 500 {
-            return Err(GitHubError::Network { message: format!("GitHub answered {}", answer.status) });
+            return Err(GitHubError::network(format!("GitHub answered {}", answer.status)));
         }
         let parsed = parse_token_answer(&answer.body)?;
         let state = match parsed.error.as_deref() {

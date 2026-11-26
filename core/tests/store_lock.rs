@@ -392,7 +392,7 @@ fn refresh_save_undo_read_and_send_at_once_lose_nothing() {
         workers.push(std::thread::spawn(move || {
             while !stop.load(Ordering::SeqCst) {
                 match w.send() {
-                    Ok(_) | Err(sync::SyncError::RemoteKeptMoving) => {}
+                    Ok(_) | Err(sync::SyncError::Remote { failure: paw_core::remote::RemoteFailure::KeptMoving }) => {}
                     Err(other) => panic!("send failed: {other}"),
                 }
                 sends.fetch_add(1, Ordering::SeqCst);
@@ -1028,7 +1028,13 @@ fn a_refused_push_reports_the_refusal_not_busy_while_the_store_is_held() {
     let connection = connect(&w);
     let error = steps::push(&connection, &w.repo()).unwrap_err();
     release.send(()).unwrap();
-    assert!(matches!(error, sync::PushError::Failed(sync::SyncError::PushRefused { .. })), "{error}");
+    assert!(
+        matches!(
+            error,
+            sync::PushError::Failed(sync::SyncError::Remote { failure: paw_core::remote::RemoteFailure::PushRefused { .. } })
+        ),
+        "{error}"
+    );
     assert!(!w.remote_has("lock/refused"));
     assert_eq!(queue::unpushed(&w.repo()).unwrap().len(), 1, "still waiting");
 }
@@ -1049,10 +1055,11 @@ fn busy_stays_busy_through_every_error_type() {
     ] {
         assert_eq!(error, busy);
     }
-    assert!(!matches!(
-        sync::SyncError::from(PawError::Network("timed out".into())),
-        sync::SyncError::StoreBusy
-    ));
+    assert!(!matches!(sync::SyncError::from(PawError::Git("timed out".into())), sync::SyncError::StoreBusy));
+    let unreachable = paw_core::remote::RemoteFailure::Unreachable { host: "h".into(), detail: "timed out".into() };
+    assert!(!matches!(paw_core::setup::SetupError::from(sync::SyncError::from(unreachable)), paw_core::setup::SetupError::StoreBusy));
+    assert!(matches!(paw_core::setup::SetupError::from(sync::SyncError::StoreBusy), paw_core::setup::SetupError::StoreBusy));
+    assert!(matches!(sync::SyncError::from(paw_core::github::GitHubError::StoreBusy), sync::SyncError::StoreBusy));
 }
 
 #[test]

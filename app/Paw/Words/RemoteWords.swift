@@ -82,3 +82,66 @@ func addressNoticeWords(_ notice: AddressNotice) -> String {
         return "Port \(fromPort) of \(fromHost) could not be reached, so paw will use \(host) on port \(port) instead."
     }
 }
+
+/// "the remote contains something paw will not check out: up (it is a
+/// symbolic link)", naming the first five paths.
+func refusedMessage(_ paths: [RefusedPath]) -> String {
+    let named = paths.prefix(5).map { "\($0.path) (\(refusedWords($0)))" }
+    var message = "the remote contains something paw will not check out: " + named.joined(separator: "; ")
+    if paths.count > 5 {
+        message += "; and \(paths.count - 5) more"
+    }
+    return message
+}
+
+/// What went wrong with the remote, as one line under Details, or as the
+/// sentence where a screen has room for one line only. The same words in
+/// every workflow; screens with words of their own (setup's, sync's, the
+/// GitHub picker's) use those first.
+func remoteDetail(_ failure: RemoteFailure) -> String {
+    switch failure {
+    case .noConnection(_, let detail, _), .unreachable(_, let detail):
+        "could not reach the git host: \(detail)"
+    case .hostKeyChanged(let host, let expected, let presented, _):
+        "\(host)'s key changed: expected \(expected.joined(separator: " or ")), it presented \(presented)"
+    case .hostKeyNotConfirmed(let host):
+        "\(host) now shows a different key from the one you checked"
+    case .noSavedHostKey(let host):
+        "\(host) has no saved key; set the store up again"
+    case .hostKeyBundled(let host):
+        hostKeyBundled(host)
+    case .keyNotAccepted:
+        "the git host did not accept this key"
+    case .loginKeyUnusable(let detail):
+        "this key cannot log in to a git host: \(detail)"
+    case .repositoryMissing(_, _, _, let detail), .pushRefused(let detail):
+        detail
+    case .refusedContent(let paths):
+        refusedMessage(paths)
+    case .keptMoving:
+        "the remote kept changing; try again"
+    case .notSignedIn:
+        "not signed in to GitHub"
+    case .signedOut:
+        "GitHub sign-in ended; sign in again"
+    case .unauthorised:
+        // Met here when reading the store's repository; the picker words
+        // it for the list (`GitHubWords`).
+        "GitHub: GitHub did not let paw's sign-in read this repository; is paw still installed on it?"
+    case .notLinked:
+        "no GitHub repository is chosen for this store"
+    case .wrongRepository(let store, let granted):
+        "this store is \(store), but GitHub sign-in is for \(granted); paw did not use it"
+    case .gitHubRefused(let message):
+        "GitHub: \(message)"
+    }
+}
+
+/// Whether the GitHub sign-in has ended: sign in again, or go on with the
+/// key.
+func signInEnded(_ failure: RemoteFailure) -> Bool {
+    switch failure {
+    case .notSignedIn, .signedOut: true
+    default: false
+    }
+}

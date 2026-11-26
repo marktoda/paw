@@ -11,8 +11,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use super::integrate::{IntegrateReport, Integration, Replaced, integrate_locked};
 use super::transport::{ConnectError, Connection, Remote};
 use super::{PushError, SyncError, TransferCallback, current_branch, fetch_branches, git_err, push_tip};
-use crate::PawError;
 use crate::key::KeyError;
+use crate::remote::RemoteFailure;
 use crate::lock::{Exclusive, StoreLock};
 use crate::ssh::{SshPublicKey, SshSigner};
 
@@ -96,35 +96,11 @@ impl SshSigner for Counting<'_> {
     }
 }
 
-/// A connection error as sync words it: a host key mismatch becomes
-/// [`SyncError::HostKeyChanged`] with both fingerprints.
-pub(crate) fn connect_error(remote: &Remote, error: PawError) -> SyncError {
-    match error {
-        PawError::HostKeyMismatch { presented } => SyncError::HostKeyChanged {
-            host: remote.host.clone(),
-            expected: remote.host_key.fingerprints(),
-            presented,
-        },
-        other => other.into(),
-    }
-}
-
 /// How many changes are waiting ([`super::queue::waiting`]). Called with
 /// the store's lock held.
 fn waiting(dir: &Path) -> Result<u32, SyncError> {
     let repo = super::guard::open(dir)?;
     Ok(super::queue::waiting(&repo)?.commits.len() as u32)
-}
-
-/// A fetch's failure as sync says it: what the host printed picks out a
-/// repository that is not there.
-fn fetch_error(connection: &Connection, error: PawError) -> SyncError {
-    match connection.remote_said() {
-        Some(said) if super::says_repository_missing(&said) => {
-            SyncError::RepositoryMissing { detail: error.to_string() }
-        }
-        _ => error.into(),
-    }
 }
 
 /// Fetches on `connection` (no store lock during the transfer), then with
@@ -138,7 +114,7 @@ fn fetch_and_integrate(
     progress: Option<TransferCallback<'_>>,
 ) -> Result<(Option<u32>, Exclusive), SyncError> {
     let repo = super::guard::open(dir)?;
-    let (_, held) = fetch_branches(connection, store, &repo, progress).map_err(|e| fetch_error(connection, e))?;
+    let (_, held) = fetch_branches(connection, store, &repo, progress)?;
     let waiting = report.integrate(&held, dir)?;
     Ok((waiting, held))
 }
@@ -194,7 +170,7 @@ pub(crate) fn run_until<E: From<KeyError> + From<SyncError>>(
     let connection = match Connection::open(remote, &counting) {
         Ok(connection) => connection,
         Err(ConnectError::Key(error)) => return Err(error.into()),
-        Err(ConnectError::Remote(error)) => return Err(connect_error(remote, error).into()),
+        Err(ConnectError::Sync(error)) => return Err(error.into()),
     };
     let mut report = run_on(&connection, dir, state_dir, send, stop, progress)?;
     report.signatures = counting.count.load(Ordering::SeqCst);
@@ -260,7 +236,7 @@ fn run_on(
             if waiting > 0 {
                 match push_tip(connection, &store, &repo, &branch, tip, held, pushing) {
                     Ok(()) => {}
-                    Err(PushError::NotFastForward) => return Err(SyncError::RemoteKeptMoving),
+                    Err(PushError::NotFastForward) => return Err(RemoteFailure::KeptMoving.into()),
                     Err(PushError::Failed(error)) => return Err(error),
                 }
             }

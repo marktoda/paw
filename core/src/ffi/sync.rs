@@ -21,8 +21,8 @@ use crate::key::{
 use crate::key::touch_clock::{TouchClock, TouchExpectation};
 use crate::setup::{SetupError, SetupFlow, SetupState, SetupWriteReadiness};
 use crate::store::PassStore;
-use crate::sync::{Cloned, ConnectError, Connection, Route};
-use crate::PawError;
+use crate::remote::RemoteFailure;
+use crate::sync::{ConnectError, Connection, Route};
 use crate::sync::address::{StoreAddress, saved_address};
 use crate::sync::hosts::{KnownHosts, is_bundled};
 use crate::sync::operation;
@@ -77,7 +77,7 @@ impl Setup {
                 }
                 return Err(match error {
                     ConnectError::Key(error) => error.into(),
-                    ConnectError::Remote(error) => flow.connection_error(&remote, error, None).into(),
+                    ConnectError::Sync(error) => SetupError::from(error).into(),
                 });
             }
         };
@@ -90,14 +90,12 @@ impl Setup {
             task.report_progress(update.received_objects, update.total_objects)
         };
         let cloned = crate::sync::clone_with_transfer(&connection, &remote, &repo, Some(&mut progress));
-        let said = connection.remote_said();
         drop(connection);
         if !task.begin_commit() {
             let _ = self.flow().abandon_download();
             return Err(cancelled());
         }
-        let cloned: Result<Cloned, PawError> = cloned;
-        self.flow().finish_download(&remote, cloned, said)?;
+        self.flow().finish_download(cloned)?;
         Ok(KeyOutcome::SignedIn)
     }
 }
@@ -185,13 +183,6 @@ impl Setup {
         port.check_key_then(store, entry, listener, expected, after)
     }
 
-    /// After a download failed with "the remote contains something paw
-    /// will not check out": the paths it refused and why, for the screen
-    /// that says so. Empty otherwise. Nothing was checked out.
-    pub fn refused_remote(&self) -> Vec<RefusedPath> {
-        self.flow().refused_remote()
-    }
-
     /// "I expected this change", on the changed-host-key screen: forgets
     /// the host's pinned key without leaving setup; `check_host` then shows
     /// the key it presents now for confirmation. Refused (`Failed`) for a
@@ -207,29 +198,13 @@ impl Setup {
         *lock(&self.transfer)
     }
 
-    /// After a host check or download that made no connection at all to
-    /// github.com on port 22 (refused or timed out, not a changed host key
-    /// or a refused key): GitHub's port-443 endpoint, to offer as "Port 22
-    /// seems blocked. Try GitHub's port 443?". Never used unless the person
-    /// says so with `use_port_fallback`. `None` otherwise.
-    pub fn port_fallback(&self) -> Option<crate::setup::PortFallback> {
-        self.flow().port_fallback()
-    }
-
-    /// Switches the address to the `port_fallback` endpoint and goes back
-    /// to the host check (`CheckHost`, with a notice saying why); call
-    /// `check_host` next. Its keys ship with paw, so nothing is confirmed.
+    /// After `RemoteFailure::NoConnection` with a `fallback` (no
+    /// connection at all to github.com on port 22): switches the address to
+    /// that endpoint and goes back to the host check (`CheckHost`, with a
+    /// notice saying why); call `check_host` next. Its keys ship with paw,
+    /// so nothing is confirmed. Never used unless the person says so.
     pub fn use_port_fallback(&self) -> Result<SetupState, SetupError> {
         self.flow().use_port_fallback()
-    }
-
-    /// After a host check or a download that failed: what it found out
-    /// about the remote, to pick the screen ("No store at that address" for
-    /// `RepositoryNotFound`, which comes as `SetupError::Failed`). `None`
-    /// if the last step went through, or failed for the key's or the
-    /// store's sake.
-    pub fn last_remote_message(&self) -> Option<crate::setup::outcome::RemoteMessage> {
-        self.flow().last_remote_message()
     }
 
     /// Once setup is done: whether new entries can be saved with no
@@ -258,8 +233,8 @@ impl StoreSync {
     }
 
     fn remote(&self) -> Result<crate::sync::Remote, SyncError> {
-        self.known_hosts().remote(&self.address)?.ok_or_else(|| SyncError::Failed {
-            message: format!("{} has no saved key; set the store up again", self.address.connect_host()),
+        self.known_hosts().remote(&self.address)?.ok_or_else(|| {
+            RemoteFailure::NoSavedHostKey { host: self.address.connect_host().to_owned() }.into()
         })
     }
 
@@ -382,9 +357,7 @@ impl StoreSync {
         let (host, port) = (self.address.connect_host(), self.address.port);
         let scan = || crate::sync::scan_host_key(host, port, &Route::default());
         if !self.known_hosts().trust(host, port, scan, &fingerprint)? {
-            return Err(SyncError::Failed {
-                message: format!("{host} now shows a different key from the one you checked"),
-            });
+            return Err(RemoteFailure::HostKeyNotConfirmed { host: host.to_owned() }.into());
         }
         Ok(())
     }
@@ -393,7 +366,7 @@ impl StoreSync {
     /// host that is not bundled asks to confirm its key again. A bundled
     /// host's keys (github.com's, ...) cannot be forgotten: `Failed`.
     pub fn forget_host_key(&self) -> Result<(), SyncError> {
-        Ok(self.known_hosts().forget(self.address.connect_host(), self.address.port)?)
+        self.known_hosts().forget(self.address.connect_host(), self.address.port)
     }
 
     /// Whether the next login will wait for a touch, given the slot's policy.
@@ -500,7 +473,7 @@ impl StoreSync {
     /// What the fetched remote holds that paw will not check out (links,
     /// submodules, unsafe names, names that are the same on an iPhone),
     /// with why; empty if nothing. A sync that fails with
-    /// `SyncError::RefusedRemote` names the same paths.
+    /// `RemoteFailure::RefusedContent` names the same paths.
     pub fn refused_remote(&self) -> Result<Vec<RefusedPath>, SyncError> {
         crate::sync::refused_remote(&self.repo())
     }

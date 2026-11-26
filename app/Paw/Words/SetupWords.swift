@@ -4,26 +4,70 @@ import Foundation
 /// do (design.md 2.4, S3 and S4). The core decides what went wrong; this
 /// only words it.
 enum SetupWords {
-    /// The words for what the last host check or download found, when it
-    /// has words of its own.
-    static func remoteWords(_ remote: RemoteMessage) -> SetupProblem? {
-        switch remote.reason {
-        case .repositoryNotFound:
-            let repository = remote.repository.isEmpty ? "that repository" : remote.repository
-            let host = remote.host.isEmpty ? "The server" : remote.host
+    /// What the host check or download found wrong with the remote.
+    static func remoteWords(_ failure: RemoteFailure, during moment: SetupModel.Moment) -> SetupProblem {
+        let downloading = moment == .downloading
+        switch failure {
+        case .noConnection(let host, let detail, let fallback):
+            var words = unreachable(host: host, detail: detail, downloading: downloading)
+            words.offer = fallback.map(portFallbackOffer)
+            return words
+        case .unreachable(let host, let detail):
+            return unreachable(host: host, detail: detail, downloading: downloading)
+        case .hostKeyChanged(let host, let expected, let presented, let bundled):
+            return hostKeyChanged(host: host, expected: expected, presented: presented, bundled: bundled)
+        case .hostKeyNotConfirmed(let host):
+            return SetupProblem(
+                problem: "That isn't the fingerprint \(host) showed", nextStep: "Go back and connect again.")
+        case .keyNotAccepted(let host, _):
+            return SetupProblem(
+                problem: "\(host) doesn't know this key yet", nextStep: "Add its SSH key to your account there.")
+        case .repositoryMissing(let host, let repository, let said, _):
+            let repository = repository.isEmpty ? "that repository" : repository
+            let host = host.isEmpty ? "The server" : host
             return SetupProblem(
                 problem: "No store at that address",
                 nextStep: "\(host) says \(repository) doesn't exist, or this key can't see it. Check the address "
                     + "and your account's access.",
-                details: remote.said.map { ["\(host) said: \($0)"] } ?? [],
+                details: said.map { ["\(host) said: \($0)"] } ?? [],
                 action: .retry, actionTitle: "Try again")
-        case .emptyRepository:
-            return words(.EmptyRepository, during: .downloading)
-        case .notAPassStore:
-            return words(.NotAPassStore, during: .downloading)
-        case .keyNotAccepted, .unreachable, .hostKeyChanged, .other:
-            return nil
+        case .refusedContent(let paths):
+            return SetupProblem(
+                problem: SyncFailure.refusedRemoteProblem,
+                nextStep: "Rename or remove them on a computer, then try again.",
+                details: paths.map { "\($0.path): \(refusedWords($0))" },
+                action: .retry, actionTitle: "Try again")
+        case .hostKeyBundled(let host):
+            return didNotWork(hostKeyBundled(host), downloading: downloading)
+        default:
+            return didNotWork(remoteDetail(failure), downloading: downloading)
         }
+    }
+
+    private static func unreachable(host: String, detail: String, downloading: Bool) -> SetupProblem {
+        if downloading {
+            return SetupProblem(
+                problem: "The download was interrupted",
+                nextStep: "Nothing was kept. Check your connection and try again.",
+                details: [detail], action: .retry, actionTitle: "Try again")
+        }
+        return SetupProblem(
+            problem: "Can't reach \(host)", nextStep: "Check your connection and try again.",
+            details: [detail], action: .retry, actionTitle: "Try again")
+    }
+
+    /// A step that failed for a reason the person can only retry: `detail`
+    /// says which.
+    private static func didNotWork(_ detail: String, downloading: Bool) -> SetupProblem {
+        if downloading {
+            return SetupProblem(
+                problem: "The download didn't finish",
+                nextStep: "Nothing was kept. Try again, or check the address and your account's access.",
+                details: [detail], action: .retry, actionTitle: "Try again")
+        }
+        return SetupProblem(
+            problem: "That didn't work", nextStep: "Try again.", details: [detail],
+            action: .retry, actionTitle: "Try again")
     }
 
     /// A pinned host presented another key. For a host paw has no keys of
@@ -53,23 +97,8 @@ enum SetupWords {
     static func words(_ error: SetupError, during moment: SetupModel.Moment) -> SetupProblem {
         let downloading = moment == .downloading
         switch error {
-        case .HostUnreachable(let host, let detail):
-            if downloading {
-                return SetupProblem(
-                    problem: "The download was interrupted",
-                    nextStep: "Nothing was kept. Check your connection and try again.",
-                    details: [detail], action: .retry, actionTitle: "Try again")
-            }
-            return SetupProblem(
-                problem: "Can't reach \(host)", nextStep: "Check your connection and try again.",
-                details: [detail], action: .retry, actionTitle: "Try again")
-        case .HostKeyChanged(let host, let expected, let presented):
-            // `show` knows whether the host's keys ship with paw; without
-            // that, nothing is offered but starting again.
-            return hostKeyChanged(host: host, expected: expected, presented: presented, bundled: true)
-        case .HostKeyNotConfirmed(let host):
-            return SetupProblem(
-                problem: "That isn't the fingerprint \(host) showed", nextStep: "Go back and connect again.")
+        case .Remote(let failure):
+            return remoteWords(failure, during: moment)
         case .EmptyRepository:
             return SetupProblem(
                 problem: "That store is empty",
@@ -85,37 +114,18 @@ enum SetupWords {
                 problem: "This key can't open this store",
                 nextStep: "Its passwords are encrypted for another key. Plug that key in and try again.",
                 action: .retry, actionTitle: "Try again")
-        case .CannotOpenEntry(let entry, let detail):
-            return SetupProblem(
-                problem: "Your key couldn't open \(entry)",
-                nextStep: "The store is downloaded. Try again; if it keeps failing, that file may be damaged.",
-                details: [detail], action: .retry, actionTitle: "Try again")
         case .UnusableKey(let reason):
             return unusableKey(reason)
         case .WrongStep(let message):
             return SetupProblem(
                 problem: "Setup got out of step", nextStep: "Go back one step and try again.",
                 details: [message])
-        case .Failed, .StoreBusy, .HostKeyBundled:
-            let message = switch error {
-            case .Failed(let message): message
-            case .HostKeyBundled(let host): hostKeyBundled(host)
-            default: storeBusyText
-            }
-            if downloading {
-                return SetupProblem(
-                    problem: "The download didn't finish",
-                    nextStep: "Nothing was kept. Try again, or check the address and your account's access.",
-                    details: [message], action: .retry, actionTitle: "Try again")
-            }
-            return SetupProblem(
-                problem: "That didn't work", nextStep: "Try again.", details: [message],
-                action: .retry, actionTitle: "Try again")
+        case .Failed(let message):
+            return didNotWork(message, downloading: downloading)
+        case .StoreBusy:
+            return didNotWork(storeBusyText, downloading: downloading)
         case .BadAddress(let problem):
             return SetupProblem(problem: "Check the address", nextStep: addressProblemWords(problem))
-        case .KeyNotAccepted(let host, _):
-            return SetupProblem(
-                problem: "\(host) doesn't know this key yet", nextStep: "Add its SSH key to your account there.")
         }
     }
 

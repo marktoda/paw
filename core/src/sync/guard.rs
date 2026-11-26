@@ -101,23 +101,28 @@ const NAMED_IN_MESSAGE: usize = 5;
 /// Folders this deep or deeper are refused: no store needs them, and a crafted
 /// tree could otherwise make the walk very long.
 const MAX_DEPTH: usize = 32;
-/// The words the app shows; [`std::fmt::Display`] starts with them.
-pub(crate) const REFUSED_PREFIX: &str = "the remote contains something paw will not check out";
+/// What [`refused_message`] starts with.
+const REFUSED_PREFIX: &str = "the remote contains something paw will not check out";
 
 impl std::fmt::Display for Refused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let named: Vec<String> = self
-            .0
-            .iter()
-            .take(NAMED_IN_MESSAGE)
-            .map(|refused| format!("{} ({})", refused.path, refused.reason_words()))
-            .collect();
-        write!(f, "{REFUSED_PREFIX}: {}", named.join("; "))?;
-        if self.0.len() > NAMED_IN_MESSAGE {
-            write!(f, "; and {} more", self.0.len() - NAMED_IN_MESSAGE)?;
-        }
-        Ok(())
+        f.write_str(&refused_message(&self.0))
     }
+}
+
+/// "the remote contains something paw will not check out: ..." with the
+/// first few paths and why.
+pub(crate) fn refused_message(paths: &[RefusedPath]) -> String {
+    let named: Vec<String> = paths
+        .iter()
+        .take(NAMED_IN_MESSAGE)
+        .map(|refused| format!("{} ({})", refused.path, refused.reason_words()))
+        .collect();
+    let mut message = format!("{REFUSED_PREFIX}: {}", named.join("; "));
+    if paths.len() > NAMED_IN_MESSAGE {
+        message.push_str(&format!("; and {} more", paths.len() - NAMED_IN_MESSAGE));
+    }
+    message
 }
 
 impl From<Refused> for PawError {
@@ -128,7 +133,7 @@ impl From<Refused> for PawError {
 
 impl From<Refused> for super::SyncError {
     fn from(refused: Refused) -> Self {
-        super::SyncError::RefusedRemote { message: refused.to_string(), paths: refused.0 }
+        crate::remote::RemoteFailure::RefusedContent { paths: refused.0 }.into()
     }
 }
 

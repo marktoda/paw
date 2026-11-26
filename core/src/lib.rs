@@ -13,6 +13,7 @@ pub mod entry;
 pub mod ffi;
 pub mod path;
 pub mod recipients;
+pub mod remote;
 pub mod report;
 #[cfg(feature = "sim")]
 pub mod sim;
@@ -40,24 +41,6 @@ pub enum PawError {
     Card(String),
     #[error("this key cannot log in to a git host: {0}")]
     NoSshKey(String),
-    #[error("the key could not sign the login: {0}")]
-    Sign(String),
-    #[error("could not reach the git host: {0}")]
-    Network(String),
-    /// The host presented a key other than the pinned one. `presented` is
-    /// its SHA-256 fingerprint, for the "host key changed" screen.
-    #[error("the git host's key does not match the saved one (it presented {presented})")]
-    HostKeyMismatch { presented: String },
-    #[error("the git host did not accept this key")]
-    KeyRejected,
-    /// The host's keys ship with paw: they are never forgotten, and no
-    /// other key is pinned for it.
-    #[error("{host}'s keys come with paw and can't be forgotten")]
-    HostKeyBundled { host: String },
-    /// The remote branch has commits this copy does not build on. Nothing
-    /// was pushed; paw never forces.
-    #[error("the remote has changes that are not in this copy")]
-    NotFastForward,
     /// A file name that could reach outside the store or into git's own
     /// files. Nothing was written.
     #[error("not a safe name for an entry: {0}")]
