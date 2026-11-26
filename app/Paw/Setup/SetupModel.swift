@@ -9,7 +9,7 @@ enum SetupScreen: Equatable {
     case welcome
     case plugIn
     case yourKey(KeySummary)
-    case address(notice: String?)
+    case address(notice: AddressNotice?)
     case confirmHost(host: String, algorithm: String, fingerprint: String)
     case keyNotAccepted(host: String, publicKey: String)
     case download(address: String)
@@ -278,7 +278,7 @@ final class SetupModel {
     var addressReading: AddressReading? {
         let typed = addressText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !typed.isEmpty else { return nil }
-        return try? readStoreAddress(text: typed)
+        return readStoreAddress(text: typed)
     }
 
     /// "Connects to github.com as git."
@@ -643,12 +643,12 @@ final class SetupModel {
             return
         }
         switch error {
-        case .BadAddress(let message):
-            addressProblem = message
+        case .BadAddress(let problem):
+            addressProblem = addressProblemWords(problem)
         case .KeyNotAccepted(let host, let publicKey):
             notAccepted = KeyNotAccepted(host: host, publicKey: publicKey)
         case .HostKeyChanged(let host, let expected, let presented):
-            let bundled = (try? readStoreAddress(text: addressSet))?.hostKeyBundled ?? false
+            let bundled = readStoreAddress(text: addressSet)?.hostKeyBundled ?? false
             problem = SetupWords.hostKeyChanged(host: host, expected: expected, presented: presented, bundled: bundled)
         case .HostUnreachable:
             var words = SetupWords.words(error, during: moment)

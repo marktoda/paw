@@ -15,6 +15,7 @@ use paw_core::key::KeyPort;
 use paw_core::setup::outcome::RemoteReason;
 use paw_core::setup::{PortFallback, SetupError, SetupState};
 use paw_core::sim::SimTouch;
+use paw_core::sync::address::AddressNotice;
 use paw_core::sim::remote::{SimRemote, SimRoutes};
 
 /// A port nothing listens on.
@@ -62,7 +63,8 @@ fn port_443_is_offered_only_when_port_22_cannot_be_reached_and_used_only_when_as
 
     let SetupState::CheckHost { address, notice } = state else { panic!("{state:?}") };
     assert_eq!(address, "ssh://git@ssh.github.com:443/you/store.git");
-    assert!(notice.unwrap().contains("port 443"));
+    let fallback = AddressNotice::PortFallback { from_host: "github.com".into(), from_port: 22, host: "ssh.github.com".into(), port: 443 };
+    assert_eq!(notice, Some(fallback));
     assert_eq!(setup.port_fallback(), None);
     // Survives a relaunch, as any address does.
     assert!(matches!(Setup::open(dir.path().to_string_lossy().into_owned()).unwrap().state(), SetupState::CheckHost { address, .. } if address.contains(":443/")));

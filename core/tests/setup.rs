@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use key_common::{Driver, PIN, WAIT, finish, is_touch, port_with};
 use paw_core::ffi::sync::Setup;
 use paw_core::key::{KeyError, KeyPort, KeyTaskState, KeyTouch};
-use paw_core::sync::address::StoreAddress;
+use paw_core::sync::address::{AddressNotice, AddressProblem, StoreAddress};
 use paw_core::setup::outcome::RemoteReason;
 use paw_core::key::touch_clock::{TouchClock, TouchExpectation};
 use paw_core::setup::{SetupError, SetupFlow, SetupState};
@@ -521,7 +521,7 @@ fn a_key_that_needs_a_touch_each_time_is_asked_each_time() {
 #[test]
 fn addresses_are_read_in_the_forms_git_hosts_show() {
     let ok = |text: &str, user: &str, host: &str, port: u16, path: &str| {
-        let parsed = StoreAddress::parse(text).unwrap_or_else(|e| panic!("{text}: {e}"));
+        let parsed = StoreAddress::parse(text).unwrap_or_else(|e| panic!("{text}: {e:?}"));
         let expected = StoreAddress { user: user.into(), host: host.into(), port, path: path.into() };
         assert_eq!(parsed.address, expected, "{text}");
         assert_eq!(parsed.notice, None, "{text}");
@@ -548,31 +548,32 @@ fn a_github_web_address_becomes_its_ssh_address_and_says_so() {
         let parsed = StoreAddress::parse(text).unwrap();
         assert_eq!(parsed.address.display(), "git@github.com:you/password-store.git", "{text}");
         let notice = parsed.notice.unwrap();
-        assert!(notice.contains("git@github.com:you/password-store.git"), "{notice}");
+        assert_eq!(notice, AddressNotice::GitHubWebAddress { address: "git@github.com:you/password-store.git".into() });
     }
 }
 
 #[test]
 fn addresses_paw_cannot_use_are_refused_with_what_to_do() {
     for (text, says) in [
-        ("", "Type or paste"),
-        ("git@github.com:you/my store.git", "no spaces"),
-        ("https://gitlab.com/you/store", "connects over SSH"),
-        ("https://github.com/you/store/tree/main", "repository itself"),
-        ("git://github.com/you/store.git", "connects over SSH"),
-        ("file:///home/you/store", "connects over SSH"),
-        ("github.com:you/store.git", "user name"),
-        ("/home/you/store", "doesn't look like a git address"),
-        ("C:/Users/you/store", "user name"),
-        ("git@github.com:", "after the colon"),
-        ("ssh://github.com/you/store.git", "user name"),
-        ("ssh://git@github.com:99999/you/store.git", "port"),
-        ("ssh://git@github.com", "path"),
-        ("git@-oProxyCommand=x:store", "doesn't look like"),
-        ("git@github.com:-u", "after the colon"),
+        ("", AddressProblem::Empty),
+        ("git@github.com:you/my store.git", AddressProblem::HasSpaces),
+        ("https://gitlab.com/you/store", AddressProblem::UseSsh),
+        ("https://github.com/you/store/tree/main", AddressProblem::NotARepositoryPage),
+        ("git://github.com/you/store.git", AddressProblem::UseSsh),
+        ("file:///home/you/store", AddressProblem::UseSsh),
+        ("github.com:you/store.git", AddressProblem::NoUser),
+        ("/home/you/store", AddressProblem::NotGit),
+        ("C:/Users/you/store", AddressProblem::NoUser),
+        ("git@github.com:", AddressProblem::NoRepository),
+        ("ssh://github.com/you/store.git", AddressProblem::SshWithoutUser),
+        ("ssh://git@github.com:99999/you/store.git", AddressProblem::BadPort),
+        ("ssh://git@github.com", AddressProblem::SshWithoutPath),
+        ("git@-oProxyCommand=x:store", AddressProblem::NotGit),
+        ("git@github.com:-u", AddressProblem::NoRepository),
+        ("home/you:store", AddressProblem::LooksLikeFolder),
     ] {
-        let message = StoreAddress::parse(text).err().unwrap_or_else(|| panic!("{text:?} was accepted"));
-        assert!(message.contains(says), "{text:?}: {message}");
+        let problem = StoreAddress::parse(text).err().unwrap_or_else(|| panic!("{text:?} was accepted"));
+        assert_eq!(problem, says, "{text:?}");
     }
 }
 

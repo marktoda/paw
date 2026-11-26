@@ -111,8 +111,8 @@ enum SetupWords {
             return SetupProblem(
                 problem: "That didn't work", nextStep: "Try again.", details: [message],
                 action: .retry, actionTitle: "Try again")
-        case .BadAddress(let message):
-            return SetupProblem(problem: "Check the address", nextStep: message)
+        case .BadAddress(let problem):
+            return SetupProblem(problem: "Check the address", nextStep: addressProblemWords(problem))
         case .KeyNotAccepted(let host, _):
             return SetupProblem(
                 problem: "\(host) doesn't know this key yet", nextStep: "Add its SSH key to your account there.")

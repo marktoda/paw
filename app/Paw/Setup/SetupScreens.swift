@@ -266,7 +266,7 @@ private struct YourKeyScreen: View {
 
 private struct AddressScreen: View {
     @Bindable var model: SetupModel
-    let notice: String?
+    let notice: AddressNotice?
     @FocusState private var focused: Bool
     @Environment(\.gitHubAccess) private var gitHub
 
@@ -342,7 +342,7 @@ private struct AddressScreen: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("address-reading")
                         if let readingNotice = reading.notice {
-                            Text(readingNotice)
+                            Text(addressNoticeWords(readingNotice))
                                 .font(PawFont.footnote)
                                 .foregroundStyle(PawColor.labelSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -350,7 +350,7 @@ private struct AddressScreen: View {
                         }
                     }
                     if let notice, notice != reading?.notice {
-                        Text(notice)
+                        Text(addressNoticeWords(notice))
                             .font(PawFont.footnote)
                             .foregroundStyle(PawColor.labelSecondary)
                             .fixedSize(horizontal: false, vertical: true)

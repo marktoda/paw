@@ -1,9 +1,7 @@
 //! The store address as typed or pasted: GitHub's short forms, what is
 //! tidied, what is refused, and properties over generated input.
 
-use paw_core::setup::SetupError;
-use paw_core::setup::address::read_store_address;
-use paw_core::sync::address::StoreAddress;
+use paw_core::sync::address::{AddressNotice, AddressProblem, StoreAddress, read_store_address};
 use proptest::prelude::*;
 
 fn github(owner: &str, repo: &str) -> String {
@@ -24,10 +22,16 @@ fn githubs_short_forms_become_its_ssh_address_and_say_so() {
         "https://github.com/you/password-store.git/",
         "HTTPS://GITHUB.COM/you/password-store",
     ] {
-        let parsed = StoreAddress::parse(text).unwrap_or_else(|e| panic!("{text:?}: {e}"));
+        let parsed = StoreAddress::parse(text).unwrap_or_else(|e| panic!("{text:?}: {e:?}"));
         assert_eq!(parsed.address.display(), github("you", "password-store"), "{text:?}");
         let notice = parsed.notice.unwrap_or_else(|| panic!("{text:?} has no notice"));
-        assert!(notice.contains(&github("you", "password-store")), "{text:?}: {notice}");
+        let address = match &notice {
+            AddressNotice::GitHubShortForm { address, .. }
+            | AddressNotice::GitHubWithoutUser { address }
+            | AddressNotice::GitHubWebAddress { address } => address,
+            AddressNotice::PortFallback { .. } => panic!("{text:?}: {notice:?}"),
+        };
+        assert_eq!(*address, github("you", "password-store"), "{text:?}");
     }
 }
 
@@ -49,48 +53,53 @@ fn the_ffi_reading_names_host_user_and_whether_the_key_ships_with_paw() {
     assert_eq!(reading.address, "git@github.com:you/store.git");
     assert_eq!((reading.user.as_str(), reading.host.as_str(), reading.port), ("git", "github.com", 22));
     assert!(reading.host_key_bundled);
-    assert!(reading.notice.is_some());
+    let short = AddressNotice::GitHubShortForm {
+        owner: "you".into(),
+        repo: "store".into(),
+        address: "git@github.com:you/store.git".into(),
+    };
+    assert_eq!(reading.notice, Some(short));
 
     let reading = read_store_address("ssh://me@[::1]:2222/store.git".into()).unwrap();
     assert_eq!((reading.user.as_str(), reading.host.as_str(), reading.port), ("me", "::1", 2222));
     assert!(!reading.host_key_bundled);
     assert_eq!(reading.notice, None);
 
-    let error = read_store_address("file:///srv/store".into()).unwrap_err();
-    assert!(matches!(error, SetupError::BadAddress { .. }), "{error:?}");
+    assert_eq!(read_store_address("file:///srv/store".into()), None);
 }
 
 #[test]
 fn ambiguous_or_dangerous_addresses_are_refused() {
+    let ssh_address = |host: &str| AddressProblem::NeedsSshAddress { host: host.into() };
     for (text, says) in [
         // Options for ssh or git.
-        ("-oProxyCommand=x/store", "doesn't look like"),
-        ("you/-store", "doesn't look like"),
-        ("-you/store", "doesn't look like"),
-        ("git@-host:store", "doesn't look like"),
-        ("-git@host:store", "doesn't look like"),
-        ("ssh://-oProxyCommand=x@host/store", "doesn't look like"),
-        ("ssh://git@-host/store", "doesn't look like"),
+        ("-oProxyCommand=x/store", AddressProblem::NotGit),
+        ("you/-store", AddressProblem::NotGit),
+        ("-you/store", AddressProblem::NotGit),
+        ("git@-host:store", AddressProblem::NotGit),
+        ("-git@host:store", AddressProblem::NotGit),
+        ("ssh://-oProxyCommand=x@host/store", AddressProblem::NotGit),
+        ("ssh://git@-host/store", AddressProblem::NotGit),
         // Other transports.
-        ("ext::sh -c touch% /tmp/pwned", "no spaces"),
-        ("ext::ssh", "connects over SSH"),
-        ("fd::17", "connects over SSH"),
-        ("file:///home/you/store", "connects over SSH"),
-        ("git://github.com/you/store.git", "connects over SSH"),
+        ("ext::sh -c touch% /tmp/pwned", AddressProblem::HasSpaces),
+        ("ext::ssh", AddressProblem::UseSsh),
+        ("fd::17", AddressProblem::UseSsh),
+        ("file:///home/you/store", AddressProblem::UseSsh),
+        ("git://github.com/you/store.git", AddressProblem::UseSsh),
         // Control characters.
-        ("you/store\u{7}", "no spaces"),
-        ("git@github.com:you/st\u{0}ore", "no spaces"),
+        ("you/store\u{7}", AddressProblem::HasSpaces),
+        ("git@github.com:you/st\u{0}ore", AddressProblem::HasSpaces),
         // Not one repository.
-        ("you/store/extra", "doesn't look like"),
-        ("you/../store", "doesn't look like"),
-        ("./store", "doesn't look like"),
-        ("you/..", "doesn't look like"),
-        ("you.name/store", "SSH address"),
-        ("gitlab.com/you/store", "git@gitlab.com:you/password-store.git"),
-        ("/", "doesn't look like"),
+        ("you/store/extra", AddressProblem::NotGit),
+        ("you/../store", AddressProblem::NotGit),
+        ("./store", AddressProblem::NotGit),
+        ("you/..", AddressProblem::NotGit),
+        ("you.name/store", ssh_address("you.name")),
+        ("gitlab.com/you/store", ssh_address("gitlab.com")),
+        ("/", AddressProblem::NotGit),
     ] {
-        let message = StoreAddress::parse(text).err().unwrap_or_else(|| panic!("{text:?} was accepted"));
-        assert!(message.contains(says), "{text:?}: {message}");
+        let problem = StoreAddress::parse(text).err().unwrap_or_else(|| panic!("{text:?} was accepted"));
+        assert_eq!(problem, says, "{text:?}");
     }
 }
 
@@ -102,9 +111,8 @@ fn an_address_with_a_secret_in_it_is_refused_without_repeating_it() {
         "ssh://git:hunter22@github.com/you/store.git",
         "git:hunter22@github.com:you/store.git",
     ] {
-        let message = StoreAddress::parse(text).err().unwrap_or_else(|| panic!("{text:?} was accepted"));
-        assert!(message.contains("password or token"), "{text:?}: {message}");
-        assert!(!message.contains("hunter22") && !message.contains("ghp_"), "{message}");
+        let problem = StoreAddress::parse(text).err().unwrap_or_else(|| panic!("{text:?} was accepted"));
+        assert_eq!(problem, AddressProblem::HasSecret, "{text:?}");
     }
 }
 
@@ -141,7 +149,7 @@ proptest! {
             _ => format!("ssh://git@github.com/{owner}/{repo}.git"),
         };
         let text = format!("{before}{written}{}{after}", if slash { "/" } else { "" });
-        let parsed = StoreAddress::parse(&text).map_err(|e| TestCaseError::fail(format!("{text:?}: {e}")))?;
+        let parsed = StoreAddress::parse(&text).map_err(|e| TestCaseError::fail(format!("{text:?}: {e:?}")))?;
         prop_assert_eq!(parsed.address.host.as_str(), "github.com");
         prop_assert_eq!(parsed.address.user.as_str(), "git");
         prop_assert_eq!(parsed.address.port, 22);
@@ -186,8 +194,7 @@ proptest! {
             format!("{user}:{secret}@github.com:you/store.git"),
         ] {
             let refused = StoreAddress::parse(&text);
-            prop_assert!(refused.is_err(), "{:?} was accepted", text);
-            prop_assert!(!refused.unwrap_err().contains(&secret));
+            prop_assert_eq!(refused, Err(AddressProblem::HasSecret), "{:?}", text);
         }
     }
 }
@@ -204,7 +211,7 @@ fn check_accepted(text: &str) -> Result<(), TestCaseError> {
     prop_assert!(!address.host.contains(['@', '/']), "{:?} gave {:?}", text, address);
     prop_assert!(!address.path.trim_start_matches('/').is_empty(), "{:?} gave {:?}", text, address);
     prop_assert!(address.port > 0);
-    let again = StoreAddress::parse(&address.display()).map_err(|e| TestCaseError::fail(format!("{text:?}: {e}")))?;
+    let again = StoreAddress::parse(&address.display()).map_err(|e| TestCaseError::fail(format!("{text:?}: {e:?}")))?;
     prop_assert_eq!(&again.address, address, "{:?}", text);
     prop_assert_eq!(again.notice, None);
     Ok(())

@@ -18,7 +18,6 @@
 //! share the PIN typed once (see `ffi::sync`); they go through the
 //! `begin_*` and `finish_*` steps here.
 
-pub mod address;
 pub mod outcome;
 
 use std::path::{Path, PathBuf};
@@ -29,7 +28,7 @@ use crate::key::{CardInfo, KeyIdentity, KeyTouch, PinKdfStatus};
 use crate::recipients::Access;
 use crate::ssh::SshPublicKey;
 use crate::store::PassStore;
-use crate::sync::address::StoreAddress;
+use crate::sync::address::{AddressNotice, AddressProblem, StoreAddress};
 use crate::sync::hosts::{self, KnownHosts};
 use crate::sync::{self, Cloned, Connection, PresentedHostKey, RefusedPath};
 use crate::write::{Keyring, LineStatus, WriteError};
@@ -58,7 +57,7 @@ pub enum SetupState {
     Address { key: KeySummary },
     /// The address is set; `check_host` connects, checks the host's key and
     /// asks whether the host accepts this key. No PIN, no touch.
-    CheckHost { address: String, notice: Option<String> },
+    CheckHost { address: String, notice: Option<AddressNotice> },
     /// The host is not known yet. Show the fingerprint; `confirm_host` with
     /// it pins the key and goes on.
     ConfirmHost { host: String, algorithm: String, fingerprint: String },
@@ -73,8 +72,8 @@ pub enum SetupState {
 /// on, so each has its own case.
 #[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
 pub enum SetupError {
-    #[error("{message}")]
-    BadAddress { message: String },
+    #[error("not an address paw can use: {problem:?}")]
+    BadAddress { problem: AddressProblem },
     #[error("can't reach {host}: {detail}")]
     HostUnreachable { host: String, detail: String },
     /// A pinned host presented another key. Nothing was sent.
@@ -235,7 +234,7 @@ struct Saved {
     step: Step,
     key: Option<KeySummary>,
     address: Option<String>,
-    notice: Option<String>,
+    notice: Option<AddressNotice>,
     opened: Option<String>,
     /// Why a download sent setup back to the address: an empty repository
     /// or one that is not a pass store. Saved, so the address screen can
@@ -257,7 +256,8 @@ impl Saved {
             lines.push(format!("authentication_touch={}", touch_name(key.authentication_touch)));
             lines.push(format!("decryption_touch={}", touch_name(key.decryption_touch)));
         }
-        for (name, value) in [("address", &self.address), ("notice", &self.notice), ("opened", &self.opened)] {
+        let notice = self.notice.as_ref().map(notice_line);
+        for (name, value) in [("address", &self.address), ("notice", &notice), ("opened", &self.opened)] {
             if let Some(value) = value {
                 lines.push(format!("{name}={value}"));
             }
@@ -292,7 +292,7 @@ impl Saved {
             step,
             key,
             address: value("address"),
-            notice: value("notice"),
+            notice: value("notice").as_deref().and_then(notice_from),
             opened: value("opened"),
             problem: value("problem").as_deref().and_then(RemoteReason::from_name),
         };
@@ -305,6 +305,40 @@ impl Saved {
         };
         if complete { saved } else { Self::fresh() }
     }
+}
+
+/// A notice as the setup file keeps it: its kind, then its values, one space
+/// apart (none of them can hold a space).
+fn notice_line(notice: &AddressNotice) -> String {
+    match notice {
+        AddressNotice::GitHubShortForm { owner, repo, address } => format!("github-short-form {owner} {repo} {address}"),
+        AddressNotice::GitHubWithoutUser { address } => format!("github-without-user {address}"),
+        AddressNotice::GitHubWebAddress { address } => format!("github-web-address {address}"),
+        AddressNotice::PortFallback { from_host, from_port, host, port } => {
+            format!("port-fallback {from_host} {from_port} {host} {port}")
+        }
+    }
+}
+
+/// [`notice_line`] read back. A notice an earlier version saved in words
+/// reads as none.
+fn notice_from(line: &str) -> Option<AddressNotice> {
+    let fields: Vec<&str> = line.split(' ').collect();
+    let text = |value: &str| value.to_owned();
+    Some(match fields.as_slice() {
+        ["github-short-form", owner, repo, address] => {
+            AddressNotice::GitHubShortForm { owner: text(owner), repo: text(repo), address: text(address) }
+        }
+        ["github-without-user", address] => AddressNotice::GitHubWithoutUser { address: text(address) },
+        ["github-web-address", address] => AddressNotice::GitHubWebAddress { address: text(address) },
+        ["port-fallback", from_host, from_port, host, port] => AddressNotice::PortFallback {
+            from_host: text(from_host),
+            from_port: from_port.parse().ok()?,
+            host: text(host),
+            port: port.parse().ok()?,
+        },
+        _ => return None,
+    })
 }
 
 /// The setup state machine for one store, kept in `state_dir`.
@@ -457,7 +491,7 @@ impl SetupFlow {
         let text = self.saved.address.as_deref().unwrap_or_default();
         StoreAddress::parse(text)
             .map(|parsed| parsed.address)
-            .map_err(|message| SetupError::BadAddress { message })
+            .map_err(|problem| SetupError::BadAddress { problem })
     }
 
     fn key(&self) -> Result<&KeySummary, SetupError> {
@@ -526,7 +560,7 @@ impl SetupFlow {
     /// Sets the store's address from what the person typed.
     pub fn set_address(&mut self, text: &str) -> Result<SetupState, SetupError> {
         self.expect(&[Step::Address, Step::CheckHost], "set the address")?;
-        let parsed = StoreAddress::parse(text).map_err(|message| SetupError::BadAddress { message })?;
+        let parsed = StoreAddress::parse(text).map_err(|problem| SetupError::BadAddress { problem })?;
         self.remote_message = None;
         self.saved.address = Some(parsed.address.display());
         self.saved.notice = parsed.notice;
@@ -685,10 +719,12 @@ impl SetupFlow {
         let Some(fallback) = self.port_fallback() else {
             return Err(SetupError::WrongStep { message: "no other way to reach the host is offered now".into() });
         };
-        self.saved.notice = Some(format!(
-            "Port {} of {} could not be reached, so paw will use {} on port {} instead.",
-            fallback.from_port, fallback.from_host, fallback.host, fallback.port
-        ));
+        self.saved.notice = Some(AddressNotice::PortFallback {
+            from_host: fallback.from_host,
+            from_port: fallback.from_port,
+            host: fallback.host,
+            port: fallback.port,
+        });
         self.saved.address = Some(fallback.address);
         self.remote_message = None;
         self.no_connection = false;
@@ -950,6 +986,23 @@ fn unreadable_ssh_key(detail: String) -> SetupError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notices_are_kept_and_one_saved_in_words_reads_as_none() {
+        let notices = [
+            AddressNotice::GitHubShortForm { owner: "you".into(), repo: "store.git".into(), address: "git@github.com:you/store.git".into() },
+            AddressNotice::GitHubWithoutUser { address: "git@github.com:you/store.git".into() },
+            AddressNotice::GitHubWebAddress { address: "git@github.com:you/store.git".into() },
+            AddressNotice::PortFallback { from_host: "github.com".into(), from_port: 22, host: "ssh.github.com".into(), port: 443 },
+        ];
+        for notice in notices {
+            assert_eq!(notice_from(&notice_line(&notice)), Some(notice));
+        }
+        let old = "Port 22 of github.com could not be reached, so paw will use ssh.github.com on port 443 instead.";
+        let saved = Saved::from_text(&format!("step=check-host\nident=x\nssh_public_key=k\ndecryption_fingerprint=f\naddress=a\nnotice={old}\n"));
+        assert_eq!(saved.step, Step::CheckHost);
+        assert_eq!(saved.notice, None);
+    }
 
     #[test]
     fn a_finished_setup_starts_with_the_line_layout_reads() {
