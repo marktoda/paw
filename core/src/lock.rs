@@ -80,34 +80,6 @@ pub const FETCH_WAIT: Duration = Duration::from_secs(60);
 /// Where a repository outside a state directory keeps its lock files.
 const GIT_LOCK_DIR: &str = "paw";
 
-#[cfg(feature = "sim")]
-thread_local! {
-    /// [`RECORD_WAIT`], unless a test lowered it for this thread.
-    static RECORD_WAIT_HERE: std::cell::Cell<Duration> = const { std::cell::Cell::new(RECORD_WAIT) };
-}
-
-/// How long this thread waits to record a push that landed.
-#[cfg(feature = "sim")]
-pub(crate) fn record_wait() -> Duration {
-    RECORD_WAIT_HERE.with(std::cell::Cell::get)
-}
-
-/// How long this thread waits to record a push that landed.
-#[cfg(not(feature = "sim"))]
-pub(crate) fn record_wait() -> Duration {
-    RECORD_WAIT
-}
-
-/// Runs `work` with this thread's wait to record a push lowered to `wait`.
-/// For tests: `sim` builds only.
-#[cfg(feature = "sim")]
-pub fn with_record_wait<T>(wait: Duration, work: impl FnOnce() -> T) -> T {
-    let before = RECORD_WAIT_HERE.with(|w| w.replace(wait));
-    let result = work();
-    RECORD_WAIT_HERE.with(|w| w.set(before));
-    result
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
     Shared,

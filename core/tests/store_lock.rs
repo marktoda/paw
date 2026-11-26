@@ -1001,7 +1001,7 @@ fn a_push_that_landed_is_success_even_if_recording_it_has_to_wait_too_long() {
     }
     let connection = connect(&w);
     let before = origin(&w);
-    let pushed = paw_core::lock::with_record_wait(Duration::from_millis(300), || steps::push(&connection, &w.repo()));
+    let pushed = steps::push_recording_within(&connection, &w.repo(), Duration::from_millis(300));
     pushed.unwrap();
     assert!(w.remote_has("lock/landed"));
     assert_eq!(origin(&w), before, "not recorded: the lock was not to be had");

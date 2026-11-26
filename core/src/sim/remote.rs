@@ -1136,13 +1136,22 @@ pub mod steps {
     /// Pushes the current branch to the branch of the same name, as a
     /// fast-forward only, as a send does.
     pub fn push(connection: &Connection, dir: &Path) -> Result<(), sync::PushError> {
+        push_recording_within(connection, dir, crate::lock::RECORD_WAIT)
+    }
+
+    /// [`push`], waiting at most `record_wait` to record a push that landed.
+    pub fn push_recording_within(
+        connection: &Connection,
+        dir: &Path,
+        record_wait: std::time::Duration,
+    ) -> Result<(), sync::PushError> {
         let store = StoreLock::for_repo(dir);
         let pushing = store.pushing(FETCH_WAIT)?;
         let repo = sync::guard::open(dir)?;
         let held = store.exclusive()?;
         let (branch, _) = sync::current_branch(&repo)?;
         let tip = repo.refname_to_id(&branch).map_err(git_err)?;
-        sync::push_tip(connection, &store, &repo, &branch, tip, held, &pushing)
+        sync::push_tip(connection, &store, &repo, &branch, tip, held, &pushing, record_wait)
     }
 
     /// A whole sync of the store at `dir` (state in `state_dir`) on one

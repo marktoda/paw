@@ -239,7 +239,7 @@ fn run_on(
     };
     let (repo, branch, tip) = branch_tip(dir)?;
 
-    match push_tip(connection, &store, &repo, &branch, tip, held, pushing) {
+    match push_tip(connection, &store, &repo, &branch, tip, held, pushing, crate::lock::RECORD_WAIT) {
         Ok(()) => {}
         Err(PushError::NotFastForward) => {
             if stop() {
@@ -257,7 +257,7 @@ fn run_on(
             }
             let (repo, branch, tip) = branch_tip(dir)?;
             if waiting > 0 {
-                match push_tip(connection, &store, &repo, &branch, tip, held, pushing) {
+                match push_tip(connection, &store, &repo, &branch, tip, held, pushing, crate::lock::RECORD_WAIT) {
                     Ok(()) => {}
                     Err(PushError::NotFastForward) => return Err(SyncError::RemoteKeptMoving),
                     Err(PushError::Failed(error)) => return Err(error),

@@ -612,7 +612,9 @@ impl From<PawError> for PushError {
 /// a fast-forward only. `held` is the store lock: it is used to record
 /// which commit is going out, then released for the transfer. After it,
 /// with the lock again, `origin/<branch>` and the last-seen ref move
-/// forward to `tip` if it went. The caller holds the push lock throughout.
+/// forward to `tip` if it went, waiting up to `record_wait` for the lock
+/// ([`crate::lock::RECORD_WAIT`]). The caller holds the push lock
+/// throughout.
 pub(crate) fn push_tip(
     connection: &Connection,
     store: &StoreLock,
@@ -621,6 +623,7 @@ pub(crate) fn push_tip(
     tip: git2::Oid,
     held: Exclusive,
     _pushing: &crate::lock::Pushing,
+    record_wait: Duration,
 ) -> Result<(), PushError> {
     let short = refs::short(branch).ok_or_else(|| PawError::Git("HEAD is not on a branch".into()))?;
     repo.reference(&refs::pushing(short), tip, true, "push").map_err(git_err)?;
@@ -679,7 +682,7 @@ pub(crate) fn push_tip(
         // next integrate moves last-seen, and the marker is removed as
         // stale once no push is in flight.
         Ok(()) => {
-            if let Ok(held) = store.exclusive_within(crate::lock::record_wait()) {
+            if let Ok(held) = store.exclusive_within(record_wait) {
                 let _ = record_push(&held, repo, short, tip);
                 clear_marker();
             }
