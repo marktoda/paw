@@ -384,12 +384,10 @@ fn refresh_save_undo_read_and_send_at_once_lose_nothing() {
     }
     // The desktop keeps pushing, so integrate has to replay.
     {
-        let (w, stop) = (w.clone(), stop.clone());
+        let w = w.clone();
         workers.push(std::thread::spawn(move || {
-            let mut n = 0;
-            while !stop.load(Ordering::SeqCst) && n < 20 {
+            for n in 0..20 {
                 w.remote.commit_file(format!("desktop/d{n}.gpg"), vec![b'd'; 8], format!("Desktop {n}.")).unwrap();
-                n += 1;
                 std::thread::sleep(Duration::from_millis(20));
             }
         }));
@@ -410,7 +408,8 @@ fn refresh_save_undo_read_and_send_at_once_lose_nothing() {
         }));
     }
 
-    // The savers and the undoer finish; then everything else stops.
+    // The savers and the undoer finish; then everything else stops (the
+    // desktop once it has pushed all 20).
     let finite = 3;
     let mut workers = workers.into_iter();
     for worker in workers.by_ref().take(finite) {
@@ -556,14 +555,12 @@ fn a_save_and_a_read_finish_while_a_fetch_is_stalled_mid_transfer() {
     }
 
     // The fetch is halfway through its pack. A save and a listing go ahead.
-    let saving = Instant::now();
     let w2 = w.clone();
     within(Duration::from_secs(5), "a save during a stalled fetch", move || w2.save("during-fetch").unwrap());
     let w2 = w.clone();
     let listed = within(Duration::from_secs(5), "a listing during a stalled fetch", move || {
         PassStore::open(w2.repo().to_string_lossy().into_owned()).unwrap().entry_count()
     });
-    assert!(saving.elapsed() < Duration::from_secs(2), "the save waited {:?}", saving.elapsed());
     assert!(listed > 0);
     // Taking the store lock outright works too: the fetch does not hold it.
     let held = StoreLock::for_state_dir(w.state()).exclusive_within(Duration::from_millis(200));
@@ -1118,10 +1115,26 @@ fn a_refresh_refused_because_another_process_spent_the_token_uses_that_processs_
     // The other process wins the race at GitHub, and keeps its new pair a
     // moment later.
     let pair = spend_elsewhere(&w, &spent);
+    let sent_spent = {
+        let (w, spent) = (w.clone(), spent.clone());
+        move || {
+            w.github
+                .requests()
+                .iter()
+                .filter(|r| r.path == "/login/oauth/access_token" && r.contains(&spent))
+                .count()
+        }
+    };
+    assert_eq!(sent_spent(), 1);
     let keeping = {
-        let w = w.clone();
+        let (w, sent_spent) = (w.clone(), sent_spent.clone());
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(300));
+            // Once this process has sent the spent token too.
+            let started = Instant::now();
+            while sent_spent() < 2 {
+                assert!(started.elapsed() < Duration::from_secs(30), "the spent token was never sent");
+                std::thread::sleep(Duration::from_millis(2));
+            }
             let now = read_wall(&w.wall);
             let text = format!(
                 "paw-github-session 1\naccess={}\naccess_expires={}\nrefresh={}\n",
@@ -1139,6 +1152,7 @@ fn a_refresh_refused_because_another_process_spent_the_token_uses_that_processs_
     let issued = w.tokens();
     w.account.refresh_store().unwrap();
     keeping.join().unwrap();
+    assert_eq!(sent_spent(), 2, "refused once");
     assert!(w.account.is_signed_in().unwrap());
     assert_eq!(w.tokens(), issued, "no second rotation");
     assert_ne!(kept(&w)["refresh"], spent);

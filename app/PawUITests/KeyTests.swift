@@ -43,7 +43,6 @@ final class KeyTests: PawUITestCase {
 
         tap("touch-timeout-check")
         enterPin(Self.pin)
-        expect("touch-timeout-waiting")
         expectLabel("touch-timeout-result", contains: "gave up waiting for a touch", timeout: 20)
         snapshot("touch-timeout")
         XCTAssertTrue(keyLogLine(containing: "PIN check 9000: a touch timeout").exists,
@@ -51,12 +50,5 @@ final class KeyTests: PawUITestCase {
         XCTAssertTrue(keyLogLine(containing: "task touch timeout check").exists,
                       "The key log should name the check")
         // That a second check asks for no PIN is core/tests/touch_check.rs.
-    }
-
-    func testSettingsSayWhichBuildThisIs() {
-        launchFixture()
-        openSettings()
-        scrollTo("settings-build")
-        expectLabel("settings-build", contains: "Debug")
     }
 }

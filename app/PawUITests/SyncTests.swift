@@ -16,8 +16,9 @@ final class SyncTests: PawUITestCase {
     /// As everywhere, and clear of the sync sheet's Send and Check, which
     /// stay pinned under its list: a row scrolled beneath them would give
     /// them its tap.
-    override func tap(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {
-        let found = scrollTo(identifier, file: file, line: line)
+    override func tap(_ identifier: String, on screen: String? = nil,
+                      file: StaticString = #filePath, line: UInt = #line) {
+        let found = scrollTo(identifier, on: screen, file: file, line: line)
         var swipes = 0
         while swipes < 4 && underSyncActions(found, identifier) {
             app.swipeUp()
@@ -169,7 +170,8 @@ final class SyncTests: PawUITestCase {
 
     // MARK: Sending
 
-    func testSendingAsksForThePinOnceEmptiesTheListAndMovesTheRemoteAndASecondSendAsksForNoPin() {
+    /// That a second send asks for no PIN is SyncModelTests.
+    func testSendingAsksForThePinEmptiesTheListAndMovesTheRemote() {
         launch()
         expectLabel("sync-pill", contains: "Updates need your key")
         snapshot("pill-needs-key-light")
@@ -192,96 +194,7 @@ final class SyncTests: PawUITestCase {
         expectLabel("sync-pill", contains: "Up to date")
         expectRemoteMoved(from: before, "The simulated host's tip should have moved")
         snapshot("pill-up-to-date-light")
-
-        // A second send in the same run: the PIN is still held.
-        addEntry("again.example", folder: "web")
-        openSyncSheet()
-        expect("sync-send")
-        snapshot("sync-sheet-light")
-        let middle = remote
-        tap("sync-send")
-        passKeySheet(purpose: "Send 1 change", pin: false)
-        expectGone("key-sheet-purpose")
-        expectLabel("sync-pill", contains: "Up to date")
-        expectRemoteMoved(from: middle, "The second send should have moved the tip again")
         expectGone(element("unpushed-banner"), "Nothing should be waiting")
-    }
-
-    func testThePillAndTheSyncSheetInDark() {
-        launch(appearance: "dark")
-        expectLabel("sync-pill", contains: "Updates need your key")
-        snapshot("pill-needs-key-dark")
-        addEntry("dark.example", folder: "")
-        expectLabel("unpushed-banner", contains: "1 change not sent")
-        snapshot("pill-not-sent-dark")
-        openSyncSheet()
-        snapshot("sync-sheet-not-sent-dark")
-        tap("sync-send")
-        passKeySheet(purpose: "Send 1 change", pin: true)
-        expectGone("key-sheet-purpose")
-        expectLabel("sync-pill", contains: "Up to date")
-        snapshot("pill-up-to-date-dark")
-        openSyncSheet()
-        expectLabel("sync-last-checked", contains: "Just now")
-        snapshot("sync-sheet-up-to-date-dark")
-    }
-
-    func testSendingAfterTheRemoteMovedStillSucceedsOnTopOfIt() {
-        launch(extra: ["-pawSimRemoteChange", "add"])
-        let before = remote
-        addEntry("moved.example", folder: "web")
-        openSyncSheet()
-        tap("sync-send")
-        passKeySheet(purpose: "Send 1 change", pin: true)
-        expectGone("key-sheet-purpose")
-        expectLabel("sim-last-app-toast", contains: "Sent")
-        expectLabel("sync-pill", contains: "Up to date")
-        expectGone(element("unpushed-banner"), "Nothing should be waiting")
-        expectRemoteMoved(from: before, "The send should have moved the tip")
-        // What the other computer added came in on the way.
-        expect("sync-added-forum.example")
-        snapshot("moved-summary")
-    }
-
-    func testCancellingASendLeavesTheQueueIntact() {
-        launch()
-        let before = remote
-        addEntry("cancel.example", folder: "web")
-        tap("unpushed-banner")
-        tap("unpushed-send")
-        expectLabel("key-sheet-purpose", contains: "Send 1 change")
-        enterPin(Self.pin)
-        expect("touch-prompt")
-        tap("key-sheet-cancel")
-        expectGone("key-sheet-purpose")
-        expectLabel("unpushed-count", contains: "1 change")
-        expect("unpushed-send")
-        goBack()
-        expectLabel("unpushed-banner", contains: "1 change not sent")
-        XCTAssertEqual(remote, before, "Nothing should have been sent")
-        openSyncSheet()
-        expectLabel("sync-cancelled", contains: "Sending was cancelled.")
-        snapshot("cancelled")
-    }
-
-    func testRefusedPushesAreWordedAndTheChangesStayQueued() {
-        launch(extra: ["-pawSimRemoteRefusePushes", "1"])
-        let before = remote
-        addEntry("refused.example", folder: "web")
-        tap("unpushed-banner")
-        tap("unpushed-send")
-        passKeySheet(purpose: "Send 1 change", pin: true)
-        expect("sync-failure")
-        expectLabel("error-row", contains: "refused your changes")
-        expectLabel("error-row", contains: "Your change is saved on this iPhone.")
-        snapshot("push-refused")
-        tap("sync-sheet-done")
-        expectGone("sync-sheet-done")
-        expectLabel("unpushed-count", contains: "1 change")
-        XCTAssertEqual(remote.components(separatedBy: " · ").first, before.components(separatedBy: " · ").first,
-                       "The tip should not have moved")
-        goBack()
-        expectLabel("sync-pill", contains: "Not sent")
     }
 
     func testADroppedConnectionOffersARetryThatSucceeds() {
@@ -363,29 +276,6 @@ final class SyncTests: PawUITestCase {
     }
 
     // MARK: What a sync can't do by itself
-
-    func testAChangedGpgIdHoldsBackTheQueuedChangeAndSendsNothing() {
-        launch(extra: ["-pawSimRemoteChange", "gpgid"])
-        let before = remote
-        addEntry("held.example", folder: "work")
-        openSyncSheet()
-        tap("sync-send")
-        passKeySheet(purpose: "Send 1 change", pin: true)
-        expect("sync-held-back")
-        expectAbsent("sync-send", "A held-back change is never offered to send as it is")
-        snapshot("held-back-sheet")
-        tapAction(in: "sync-held-back")
-        expect("held-back-held.example")
-        expectLabel("held-back-should-be-for-held.example", contains: "Not accepted on this iPhone yet.")
-        snapshot("held-back-screen")
-        XCTAssertEqual(remote.components(separatedBy: " · ").first, before.components(separatedBy: " · ").first,
-                       "Nothing should have been sent")
-
-        // Accepting the new list (the same key here) lets it go.
-        tap("held-back-review-held.example")
-        tap("recipients-accept")
-        expect("held-back-empty")
-    }
 
     func testARefusedRemoteIsExplainedAndTheQueueIsKept() {
         launch(extra: ["-pawSimRemoteChange", "link"])

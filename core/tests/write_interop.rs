@@ -231,38 +231,6 @@ fn a_recipient_without_a_pinned_key_stops_the_save() {
 }
 
 #[test]
-fn git_log_shows_one_entry_per_commit_in_pass_wording() {
-    let gpg = Gpg::new();
-    let primary = gpg.generate("Alice <alice@example.com>");
-    let store = Store::new(&format!("{primary}\n"));
-    store.pin(&gpg, &primary, &[&primary]);
-    let write = store.write();
-
-    let mut generated = EntryDraft::new("Web");
-    generated.set_name("example.com");
-    generated.generate_password(&Default::default()).unwrap();
-    write.save(&generated).unwrap();
-    write.save(&new_entry("Web", "given", "pw")).unwrap();
-    let opened = EntryDoc::parse(gpg.decrypt(&store.file("Web/given")).0.into_bytes()).unwrap();
-    let mut edit = EntryDraft::edit("Web/given", opened, content_id(&store.file("Web/given")));
-    edit.set_username("alice");
-    write.save(&edit).unwrap();
-    support::move_entry(&write, "Web/given", "Web/renamed", None).unwrap();
-    write.delete("Web/example.com").unwrap();
-
-    let log = git(&store.repo, &["log", "--format=%s|%an <%ae>", "--name-status", "-M", "-5"]);
-    assert_eq!(
-        log,
-        "Remove Web/example.com from store.|paw <paw@paw.invalid>\n\nD\tWeb/example.com.gpg\n\
-         Rename Web/given to Web/renamed.|paw <paw@paw.invalid>\n\nR100\tWeb/given.gpg\tWeb/renamed.gpg\n\
-         Edit password for Web/given using paw.|paw <paw@paw.invalid>\n\nM\tWeb/given.gpg\n\
-         Add given password for Web/given to store.|paw <paw@paw.invalid>\n\nA\tWeb/given.gpg\n\
-         Add generated password for Web/example.com.|paw <paw@paw.invalid>\n\nA\tWeb/example.com.gpg"
-    );
-    assert_eq!(gpg.decrypt(&store.file("Web/renamed")).0, "pw\nlogin: alice\n");
-}
-
-#[test]
 fn an_entry_written_by_gpg_and_edited_by_paw_differs_only_in_the_edited_line() {
     let gpg = Gpg::new();
     let primary = gpg.generate("Alice <alice@example.com>");

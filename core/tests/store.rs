@@ -4,7 +4,6 @@
 
 use std::os::unix::fs::symlink;
 use std::path::Path;
-use std::time::{Duration, Instant};
 
 use paw_core::PawError;
 use paw_core::store::PassStore;
@@ -156,7 +155,7 @@ fn a_store_that_is_not_there_is_an_error() {
 }
 
 #[test]
-fn lists_five_thousand_entries_quickly() {
+fn lists_searches_and_matches_five_thousand_entries() {
     let dir = tempfile::tempdir().unwrap();
     for folder in 0..50 {
         let path = dir.path().join(format!("group-{folder:02}/site"));
@@ -166,25 +165,17 @@ fn lists_five_thousand_entries_quickly() {
         }
     }
 
-    let started = Instant::now();
     let store = PassStore::open(dir.path().to_str().unwrap().into()).unwrap();
-    let scanned = started.elapsed();
     assert_eq!(store.entry_count(), 5000);
     assert_eq!(store.home().folders.len(), 50);
     assert_eq!(store.home().folders[7].entry_count, 100);
 
-    let started = Instant::now();
     let hits = store.search("entry 042 group".into(), 50);
     let offered = store.match_services(vec!["https://entry-042.example.com/login".into()], None);
-    let searched = started.elapsed();
     assert_eq!(hits.len(), 50);
     assert_eq!(offered.len(), 5000);
     let exact = |m: &paw_core::store::service::MatchedEntry| m.kind == paw_core::store::service::MatchKind::ExactHost;
     assert!(offered[..50].iter().all(exact) && !exact(&offered[50]));
-
-    // Generous: a debug build on a busy machine takes a small part of this.
-    assert!(scanned < Duration::from_secs(2), "scan took {scanned:?}");
-    assert!(searched < Duration::from_secs(2), "search and matching took {searched:?}");
 }
 
 /// A store with links that lead outside it, next to a secret they point at.

@@ -12,11 +12,9 @@ final class EditTests: PawUITestCase {
         expectAbsent("warning-row", "The fixture store should be writable")
     }
 
-    /// Save is dimmed and does nothing: the sheet stays and nothing is saved.
+    /// Save is dimmed: nothing can be saved.
     private func expectSaveBlocked(file: StaticString = #filePath, line: UInt = #line) {
-        app.buttons["form-save"].firstMatch.tap()
-        XCTAssertTrue(element("form-cancel").exists, "Save should not close the form", file: file, line: line)
-        XCTAssertFalse(element("sim-last-app-toast").exists, "Nothing should have been saved", file: file, line: line)
+        expectEnabled("form-save", false, file: file, line: line)
     }
 
     /// Types into a form field, replacing what is there.
@@ -84,6 +82,7 @@ final class EditTests: PawUITestCase {
         }
         touchTheKey()
         expectLabel("entry-title", contains: name)
+        expectGone("key-sheet-purpose")
     }
 
     // MARK: Add
@@ -100,6 +99,10 @@ final class EditTests: PawUITestCase {
         let password = expect("form-password")
         XCTAssertEqual((password.value as? String)?.count, 20, "Generate should fill a 20-character password")
         type("https://shop.example/login", into: "form-website")
+        type("Weekly, on Fridays.", into: "form-notes")
+        tap("form-add-field")
+        type("member id", into: "form-field-key-0")
+        type("A-1234", into: "form-field-value-0")
         snapshot("add-filled-light")
         scrollTo("form-recipients")
         expectLabel("form-recipients", contains: "Encrypted for your key")
@@ -114,78 +117,44 @@ final class EditTests: PawUITestCase {
         // Saved with a Face ID copy: what was just typed opens without the key.
         tap("folder-web")
         expectLabel("entry-shop.example", contains: "shop.example, opens with Face ID")
+        tap("entry-shop.example")
+        expectLabel("entry-title", contains: "shop.example")
         expectNoKeySheet()
+        expectLabel("face-id-window-text", contains: "Opens with Face ID until")
+        expectValue("field-Username", "shopper")
+        expectValue("field-Website", "https://shop.example/login")
+        expectValue("field-Member id", "A-1234")
+        expectLabel("entry-notes", contains: "Weekly, on Fridays.")
+        tap("password-reveal")
+        let shown = element("password-value")
+        XCTAssertTrue(waitUntil(timeout: Self.patience) { (shown.value as? String)?.count == 20 },
+                      "The generated password should show once revealed")
+        snapshot("new-entry-opened")
+        goBack()
         goBack()
 
         let search = app.searchFields.firstMatch
-        XCTAssertTrue(search.waitForExistence(timeout: 10))
-        search.tap()
+        XCTAssertTrue(waitToExist(search, timeout: Self.patience), "Home should have a search field")
+        focus(search)
         search.typeText("shop")
         expect("entry-shop.example")
     }
 
-    func testANewEntryOpensWithFaceIdAndShowsWhatWasTyped() {
+    /// Which names are refused is EditModelTests and the core's; this is
+    /// the form showing the core's message and holding Save back.
+    func testADuplicateNameShowsTheCoresMessageAndBlocksSave() {
         launch()
-        tap("folder-email")
         tap("add-button")
-        expectValue("form-folder", "email")
-        type("newsletter", into: "form-name")
-        type("reader@example.com", into: "form-username")
-        type("Quiet-Harbour-7", into: "form-password")
-        type("https://news.example", into: "form-website")
-        type("Weekly, on Fridays.", into: "form-notes")
-        tap("form-add-field")
-        type("member id", into: "form-field-key-0")
-        type("A-1234", into: "form-field-value-0")
-        tap("form-save")
-        expectGone("form-save")
-        expectNoKeySheet()
+        expect("form-name")
+        chooseFolder("web")
+        type("GitHub.com", into: "form-name")
+        expectLabel("problem-name", contains: "There's already an entry called 'github.com' in web.")
+        expectSaveBlocked()
+        snapshot("add-errors")
 
-        // A new entry gets a Face ID copy from its save: no key sheet.
-        expectLabel("entry-newsletter", contains: "opens with Face ID")
-        tap("entry-newsletter")
-        expectLabel("entry-title", contains: "newsletter")
-        expectAbsent("key-sheet-purpose", "What was just typed opens with Face ID, not the key")
-        expectLabel("face-id-window-text", contains: "Opens with Face ID until")
-        expectValue("field-Username", "reader@example.com")
-        expectValue("field-Website", "https://news.example")
-        expectValue("field-Member id", "A-1234")
-        expectLabel("entry-notes", contains: "Weekly, on Fridays.")
-        tap("password-reveal")
-        expectValue("password-value", "Quiet-Harbour-7")
-        snapshot("new-entry-opened")
-    }
-
-    func testAnEmptyADuplicateAndASlashedNameEachShowTheCoresMessageAndBlockSave() {
-        for appearance in ["light", "dark"] {
-            launch(appearance: appearance)
-            tap("add-button")
-            expect("form-name")
-            if appearance == "dark" {
-                snapshot("add-empty-dark")
-            }
-            expectSaveBlocked()
-
-            type("x", into: "form-name")
-            clear("form-name")
-            expectLabel("problem-name", contains: "Give it a name.")
-            expectSaveBlocked()
-
-            type("work/vpn", into: "form-name")
-            expectLabel("problem-name", contains: "Names can't contain /.")
-            expectSaveBlocked()
-
-            chooseFolder("web")
-            type("GitHub.com", into: "form-name")
-            expectLabel("problem-name", contains: "There's already an entry called 'github.com' in web.")
-            expectSaveBlocked()
-            snapshot("add-errors-\(appearance)")
-
-            type("github.com-2", into: "form-name")
-            expectGone("problem-name")
-            expectEnabled("form-save", true)
-            app.terminate()
-        }
+        type("github.com-2", into: "form-name")
+        expectGone("problem-name")
+        expectEnabled("form-save", true)
     }
 
     func testGenerateFillsAPasswordOfTheChosenLengthAndTheStrengthFollowsTheLength() {
@@ -194,14 +163,13 @@ final class EditTests: PawUITestCase {
         expect("form-name")
         tap("form-options")
         let slider = app.sliders["form-length"]
-        XCTAssertTrue(slider.waitForExistence(timeout: 10), "The options should show the length")
+        XCTAssertTrue(waitToExist(slider, timeout: Self.patience), "The options should show the length")
         expectLabel("form-strength", contains: "very strong")
 
         scrollTo("form-length")
-        slider.adjust(toNormalizedSliderPosition: 0)
         // A drag that starts while the form is still settling moves nothing.
         for _ in 0..<3 where (slider.value as? String) != "8 characters" {
-            _ = waitUntil(timeout: 1) { false }
+            waitUntilStill(slider)
             slider.adjust(toNormalizedSliderPosition: 0)
         }
         expectValue("form-length", "8 characters")
@@ -209,29 +177,6 @@ final class EditTests: PawUITestCase {
         tap("form-generate")
         XCTAssertEqual((expect("form-password").value as? String)?.count, 8)
         snapshot("generator-options")
-
-        // A synthesized drag to the end can stop a step or two short, and
-        // stops far short when it starts while the list is still moving
-        // after Generate (once it left the slider at 28): bring the slider
-        // to rest on screen first, then read the length it settled on
-        // rather than assuming 64. A drag cut short is dragged again.
-        let long = NSPredicate(format: "value MATCHES %@", "^(4[89]|5[0-9]|6[0-4]) characters$")
-        for _ in 0..<3 where !long.evaluate(with: slider) {
-            scrollTo("form-length")
-            slider.adjust(toNormalizedSliderPosition: 1)
-            _ = XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: long, object: slider)], timeout: 5)
-        }
-        XCTAssertTrue(long.evaluate(with: slider),
-                      "The slider should move to a long length, it shows \(slider.value ?? "nothing")")
-        expectLabel("form-strength", contains: "very strong")
-        // Compare live values: the slider may still be settling as this runs.
-        let password = element("form-password")
-        let regenerated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            let length = Int(((slider.value as? String) ?? "").prefix { $0.isNumber }) ?? 0
-            return length >= 48 && (password.value as? String)?.count == length
-        }, object: nil)
-        XCTAssertEqual(XCTWaiter().wait(for: [regenerated], timeout: 15), .completed,
-                       "A generated password should follow the new length")
     }
 
     func testCancelWithSomethingTypedAsksInlineBeforeDiscarding() {
@@ -306,35 +251,29 @@ final class EditTests: PawUITestCase {
         snapshot("delete-confirm")
         tap("entry-delete-confirm")
 
-        expect("entry-github.com")
-        expectGone("entry-example.com")
+        // Undo first: the toast lasts 8 seconds, and each look takes a
+        // moment on a slow machine.
+        let undo = expect("action-toast-button")
         expectLabel("action-toast-message", contains: "Deleted example.com.")
-        app.buttons["action-toast-button"].tap()
+        undo.tap()
         expect("entry-example.com")
         expectLabel("sim-last-app-toast", contains: "example.com is back.")
     }
 
     // MARK: Not sent yet
 
-    func testTheBannerCountsChangesAndTheListShowsWhatEachDid() {
+    func testTheBannerCountsChangesAndDiscardingOneTakesBackOnlyThatChange() {
         launch()
-        addEntry("first.example", folder: "web")
+        addEntry("keep.example", folder: "web")
         expectLabel("unpushed-banner", contains: "1 change not sent")
-        addEntry("second.example", folder: "")
+        addEntry("drop.example", folder: "")
         expectLabel("unpushed-banner", contains: "2 changes not sent")
         tap("unpushed-banner")
         expectLabel("unpushed-count", contains: "2 changes")
-        expectLabel("unpushed-added-first.example", contains: "Added first.example")
-        expectLabel("unpushed-added-second.example", contains: "Added second.example")
+        expectLabel("unpushed-added-keep.example", contains: "Added keep.example")
+        expectLabel("unpushed-added-drop.example", contains: "Added drop.example")
         expectLabel("unpushed-send-footer", contains: "Needs your key")
         snapshot("unpushed-list")
-    }
-
-    func testDiscardingOneChangeTakesBackOnlyThatChange() {
-        launch()
-        addEntry("keep.example", folder: "web")
-        addEntry("drop.example", folder: "web")
-        tap("unpushed-banner")
         tap("unpushed-discard-button-keep.example")
         expectLabel("unpushed-discard-keep.example-question", contains: "Discard \u{201C}Added keep.example\u{201D}?")
         snapshot("discard-confirm")
@@ -344,8 +283,8 @@ final class EditTests: PawUITestCase {
 
         goBack()
         expectLabel("unpushed-banner", contains: "1 change not sent")
-        tap("folder-web")
         expect("entry-drop.example")
+        tap("folder-web")
         expectAbsent("entry-keep.example", "A discarded add should take the entry away")
         goBack()
 
@@ -395,23 +334,5 @@ final class EditTests: PawUITestCase {
         expectLabel("warning-row", contains: "also encrypted for a key paw doesn't have")
         expectSaveBlocked()
         snapshot("recipients-missing")
-    }
-
-    // MARK: Larger text
-
-    func testTheAddFormKeepsItsLabelsAtALargerTextSize() {
-        launch(extra: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityM"])
-        tap("add-button")
-        expect("form-name")
-        snapshot("add-large-text")
-        // A tap that lands while the sheet is still settling is lost: the
-        // row stays "hidden", so tap it again.
-        let options = scrollTo("form-options")
-        for _ in 0..<3 where (options.value as? String) != "shown" {
-            options.tap()
-            if waitUntil(timeout: 2, { (options.value as? String) == "shown" }) { break }
-        }
-        scrollTo("form-strength")
-        snapshot("add-large-text-options")
     }
 }

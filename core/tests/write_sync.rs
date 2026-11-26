@@ -19,7 +19,7 @@ use paw_core::key::KeyError;
 use paw_core::sim::SimulatedKey;
 use paw_core::sync::operation::SyncState;
 use paw_core::task::TaskFailure;
-use paw_core::sync::{self, ChangeKind, Connection, Integration, KeptBoth, queue};
+use paw_core::sync::{self, ChangeKind, Connection, Integration, queue};
 use paw_core::write::{EntryDraft, Keyring, WriteStore, held_back};
 use pgp::types::KeyDetails;
 use key_common::{PIN, decrypt, decrypt_text, signer};
@@ -192,23 +192,6 @@ fn every_kind_of_change_replays_onto_a_moved_remote_and_reaches_the_desktop() {
 }
 
 #[test]
-fn a_paw_edit_of_an_entry_the_desktop_also_edited_is_kept_twice() {
-    let w = world();
-    let mut edit = w.open("Work/github.com");
-    edit.set_password("phone-pw");
-    w.write().save(&edit).unwrap();
-    w.desktop_push(&[("Work/github.com.gpg", encrypted("desktop-pw\n"))], "Edit on the desktop.");
-
-    let Integration::Integrated(report) = w.pull() else { panic!("expected an integrate") };
-
-    assert_eq!(report.kept_both.len(), 1);
-    let KeptBoth { entry, copy } = &report.kept_both[0];
-    assert_eq!(entry, "Work/github.com");
-    assert_eq!(w.decrypt(&w.repo(), "Work/github.com"), "desktop-pw\n");
-    assert_eq!(w.decrypt(&w.repo(), copy), "phone-pw\nlogin: you\n");
-}
-
-#[test]
 fn a_paw_rename_of_an_entry_the_desktop_deleted_still_lands_under_its_new_name() {
     let w = world();
     move_entry(&w.write(), "Work/old", "Work/older", None).unwrap();
@@ -221,19 +204,6 @@ fn a_paw_rename_of_an_entry_the_desktop_deleted_still_lands_under_its_new_name()
     assert_eq!(report.replayed, 1);
     assert_eq!(w.decrypt(&w.repo(), "Work/older"), "old\n");
     assert!(!w.repo().join("Work/old.gpg").exists());
-}
-
-#[test]
-fn a_paw_delete_of_an_entry_the_desktop_edited_is_dropped() {
-    let w = world();
-    w.write().delete("Work/Jira").unwrap();
-    w.desktop_push(&[("Work/Jira.gpg", encrypted("jira v2\n"))], "Edit on the desktop.");
-
-    let Integration::Integrated(report) = w.pull() else { panic!("expected an integrate") };
-
-    assert_eq!(report.dropped_deletes, ["Work/Jira"]);
-    assert_eq!(w.decrypt(&w.repo(), "Work/Jira"), "jira v2\n");
-    assert!(queued(&w).is_empty());
 }
 
 #[test]

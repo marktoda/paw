@@ -21,6 +21,7 @@ fn githubs_short_forms_become_its_ssh_address_and_say_so() {
         "https://github.com/you/password-store",
         "https://github.com/you/password-store.git/",
         "HTTPS://GITHUB.COM/you/password-store",
+        "http://www.github.com/you/password-store",
     ] {
         let parsed = StoreAddress::parse(text).unwrap_or_else(|e| panic!("{text:?}: {e:?}"));
         assert_eq!(parsed.address.display(), github("you", "password-store"), "{text:?}");

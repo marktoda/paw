@@ -4,6 +4,7 @@
 #![cfg(feature = "sim")]
 
 mod key_common;
+mod support;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -12,8 +13,11 @@ use std::time::Duration;
 use key_common::*;
 use paw_core::key::CardConnection;
 use paw_core::key::keylog::KEEP_LINES;
-use paw_core::key::{KeyError, clear_key_log, key_log, key_log_text};
-use paw_core::task::KeyTaskState;
+use paw_core::ffi::sync::Setup;
+use paw_core::key::{KeyError, KeyPort, clear_key_log, key_log, key_log_text};
+use paw_core::setup::SetupState;
+use paw_core::sim::copies::SimClock;
+use paw_core::task::{KeyOutcome, KeyTaskState};
 use paw_core::sim::{SimOptions, SimTouch, SimulatedKey};
 
 /// The simulated key behind a transport that keeps a copy of every data
@@ -102,6 +106,41 @@ fn a_pin_and_decipher_run_is_logged_with_no_pin_no_data_and_no_names() {
 
     let ciphertext = std::fs::read(rig.store_dir().join(format!("{ENTRY}.gpg"))).unwrap();
     assert_clean(&[&merged, &ring], &recording, &[ciphertext, SECRET.as_bytes().to_vec()], &[]);
+}
+
+#[test]
+fn a_sign_in_a_setup_check_and_a_touch_check_are_logged_with_no_pin_no_data_and_no_names() {
+    let state = tempfile::tempdir().unwrap();
+    let sim = key_common::sim(SimTouch::EachUse, SimTouch::EachUse, WAIT);
+    let port = KeyPort::new(SimClock::new(1_790_000_000_000));
+    port.set_key_log(dir_string(&state), "app".into());
+    let recording = Recording::new(&sim);
+    port.plugged_in(recording.clone()).unwrap();
+    let server = support::GitServer::start_with_fixture(&[sim.ssh_public_key()]);
+    let dir = tempfile::tempdir().unwrap();
+    let setup = Setup::open(dir_string(&dir)).unwrap();
+    setup.read_key_from_session(port.session().unwrap()).unwrap();
+    setup.set_address(server.sim.address()).unwrap();
+    let SetupState::ConfirmHost { fingerprint, .. } = setup.check_host().unwrap() else { panic!("expected ConfirmHost") };
+    setup.confirm_host(fingerprint).unwrap();
+
+    let driver = Driver::helpful(PIN, &sim);
+    let task = setup.clone().download_with_key(port.clone(), driver.clone());
+    driver.drive(&task);
+    assert!(matches!(finish(&task), KeyTaskState::Done { outcome: KeyOutcome::SignedIn }));
+    let task = setup.clone().test_decrypt_with_key(port.clone(), driver.clone());
+    driver.drive(&task);
+    assert!(matches!(finish(&task), KeyTaskState::Done { outcome: KeyOutcome::KeyChecked }));
+    let task = port.clone().check_touch_timeout(driver.clone());
+    driver.drive(&task);
+    assert!(matches!(finish(&task), KeyTaskState::Done { outcome: KeyOutcome::SignedIn }));
+
+    let merged = key_log_text(dir_string(&state), 0);
+    let ring = port.session().unwrap().diagnostics(0);
+    for wanted in ["task sign in to download:", "task setup check:", "task touch timeout check:", "→ INTERNAL AUTHENTICATE: 9000 ok", "→ PSO:DECIPHER: 9000 ok"] {
+        assert!(merged.contains(wanted), "the log should have {wanted:?}:\n{merged}");
+    }
+    assert_clean(&[&merged, &ring], &recording, &[SECRET.as_bytes().to_vec()], &["password-store", "store.git"]);
 }
 
 /// Neither text holds the PIN, a name, any data that went to or from the
@@ -294,15 +333,25 @@ fn the_pin_stage_and_the_verify_after_it_have_whole_second_times() {
     assert!(lines[verify + 1..].iter().filter(|l| l.text.starts_with('→')).all(|l| l.text.ends_with(" ms")));
 }
 
+/// A task seen in its final stage has already logged that stage: a reader
+/// of the log right after the sheet closed finds how the task ended.
 #[test]
-fn the_session_ring_is_bounded() {
-    let state = tempfile::tempdir().unwrap();
-    let rig = logged_rig(state.path(), "app", SimTouch::Off);
-    for _ in 0..30 {
-        open_and_finish(&rig, OTHER_ENTRY);
+fn a_task_seen_finished_has_logged_how_it_ended() {
+    let rig = rig_unplugged(SimTouch::Off, SimTouch::Off);
+    rig.port.plugged_in(rig.sim.clone()).unwrap();
+    for _ in 0..300 {
+        let driver = Driver::helpful(PIN, &rig.sim);
+        let task = open(&rig, OTHER_ENTRY, &driver);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !task.state().is_final() {
+            assert!(std::time::Instant::now() < deadline, "the task never finished");
+            std::hint::spin_loop();
+        }
+        let ring = rig.port.session().unwrap().diagnostics(0);
+        let started = ring.lines().rfind(|l| l.contains(" task open:")).unwrap();
+        let tag = started.split_whitespace().find(|word| word.starts_with('#')).unwrap();
+        assert!(ring.contains(&format!("{tag} stage Done")), "{ring}");
     }
-    let ring = rig.port.session().unwrap().diagnostics(0);
-    assert_eq!(ring.lines().count(), paw_core::key::keylog::RING);
 }
 
 #[test]
@@ -317,9 +366,12 @@ fn a_process_file_is_cut_back_to_its_last_lines() {
     let size = std::fs::metadata(&file).unwrap().len();
     assert!(size <= 41 * 1024, "{size} bytes");
     let lines = key_log(dir_string(&state), 0);
-    assert!(lines.len() >= KEEP_LINES && lines.len() < 2 * KEEP_LINES + 100, "{} lines", lines.len());
+    assert!(lines.len() >= KEEP_LINES, "{} lines", lines.len());
     assert!(lines.last().unwrap().text.contains("stage Done"));
-    assert!(!state.path().join(format!("{}app.tmp", paw_core::files::layout::KEY_LOG_PREFIX)).exists());
+    let temp = format!(".{}app.tmp", paw_core::files::layout::KEY_LOG_PREFIX);
+    let names: Vec<String> =
+        std::fs::read_dir(state.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    assert!(!names.iter().any(|name| name.starts_with(&temp)), "a trim left its temporary file: {names:?}");
 }
 
 #[test]

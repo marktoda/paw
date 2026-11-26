@@ -69,7 +69,8 @@ fn signs_a_login_once_the_key_is_touched() {
 
     let signature = signer.sign(&message).unwrap();
 
-    assert!(verifies(&SshPublicKey::ed25519(&key.authentication_public_key()), &message, &signature));
+    assert_eq!(*signer.public_key(), SshPublicKey::ed25519(&key.authentication_public_key()));
+    assert!(verifies(signer.public_key(), &message, &signature));
     assert!(signer.driver.saw(is_touch));
     assert_eq!(key.authentication_count(), 1);
 }
@@ -85,18 +86,6 @@ fn signs_data_longer_than_one_short_apdu() {
         let signature = signer.sign(&message).unwrap();
         assert!(verifies(signer.public_key(), &message, &signature), "extended: {extended_length}");
     }
-}
-
-#[test]
-fn the_signer_signs_with_the_key_it_reports() {
-    let card = key(false, true, false);
-    let signer = signer(&card);
-    let message = login_sized();
-
-    let signature = signer.sign(&message).unwrap();
-
-    assert_eq!(*signer.public_key(), SshPublicKey::ed25519(&card.authentication_public_key()));
-    assert!(verifies(signer.public_key(), &message, &signature));
 }
 
 #[test]
@@ -124,33 +113,3 @@ fn the_authentication_slot_has_its_own_touch_policy() {
     assert_eq!(key.authentication_count(), 1);
 }
 
-#[test]
-fn the_card_refuses_to_sign_before_the_pin_is_verified() {
-    let key = key(false, false, false);
-
-    // INTERNAL AUTHENTICATE, three bytes of data, straight after power-up.
-    let response = key.exchange(vec![0x00, 0x88, 0x00, 0x00, 0x03, 1, 2, 3, 0x00]);
-
-    assert_eq!(response, [0x69, 0x82]);
-}
-
-#[test]
-fn the_card_takes_one_extended_length_command() {
-    let key = key(false, false, true);
-    let public = SshPublicKey::ed25519(&key.authentication_public_key());
-    let message: Vec<u8> = (0..300u32).map(|i| i as u8).collect();
-
-    let mut verify = vec![0x00, 0x20, 0x00, 0x82, PIN.len() as u8];
-    verify.extend(PIN.as_bytes());
-    assert_eq!(key.exchange(verify), [0x90, 0x00]);
-
-    // CLA INS P1 P2, 00 Lc-high Lc-low, data, Le-high Le-low.
-    let mut sign = vec![0x00, 0x88, 0x00, 0x00, 0x00, 0x01, 0x2C];
-    sign.extend(&message);
-    sign.extend([0x00, 0x00]);
-    let response = key.exchange(sign);
-
-    assert_eq!(response.len(), 66);
-    assert_eq!(response[64..], [0x90, 0x00]);
-    assert!(verifies(&public, &message, &response[..64]));
-}

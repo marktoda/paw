@@ -793,4 +793,33 @@ mod tests {
         let text = values::text(pairs.iter().map(|(name, value)| (*name, value.as_str())));
         assert_eq!(text.lines().next(), Some(layout::SETUP_DONE));
     }
+
+    /// A card that names one key's fingerprint and hands over another key:
+    /// the key check pins nothing. The card library already refuses such a
+    /// card when the session opens, so only this check reaches it.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn a_card_key_its_fingerprint_does_not_name_is_never_pinned() {
+        let card = crate::sim::SimulatedKey::new("123456".into(), false, 1_000);
+        let other = crate::sim::SimulatedKey::new_other("123456".into(), false, 1_000);
+        let fingerprint = card.fingerprint_hex();
+        let dir = tempfile::tempdir().unwrap();
+        let mut flow = SetupFlow::open(dir.path()).unwrap();
+        let key = KeySummary {
+            ident: "0006:1".into(),
+            ssh_public_key: card.ssh_public_key(),
+            decryption_fingerprint: fingerprint.clone(),
+            authentication_touch: KeyTouch::Unknown,
+            decryption_touch: KeyTouch::Unknown,
+        };
+        flow.saved = Saved { step: Step::TestDecrypt, key: Some(key), ..Saved::fresh() };
+        let identity =
+            KeyIdentity { ident: "0006:1".into(), decryption_fingerprint: Some(fingerprint), authentication_fingerprint: None };
+
+        let error = flow.finish_test_decrypt("web/github.com".into(), &other.decryption_key().unwrap(), &identity).unwrap_err();
+
+        assert!(matches!(error, SetupError::UnusableKey { reason: UnusableKeyReason::CardKeyMismatch }), "{error:?}");
+        assert_eq!(flow.saved.step, Step::TestDecrypt);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0, "nothing written");
+    }
 }

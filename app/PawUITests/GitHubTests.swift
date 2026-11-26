@@ -22,7 +22,7 @@ final class GitHubTests: PawUITestCase {
         expect("setup-welcome")
         tap("setup-start")
         expect("setup-your-key")
-        tap("key-continue")
+        tapUntilGone("key-continue")
         expect("repo-address")
     }
 
@@ -66,18 +66,11 @@ final class GitHubTests: PawUITestCase {
         finishSetup()
     }
 
-    /// Starts a check from Home: the pill starts it when nothing has been
-    /// checked yet, else it opens the sync sheet, whose button starts it.
-    /// Returns whether the sheet was used (and left open).
-    @discardableResult
-    private func checkFromHome() -> Bool {
-        let pill = expect("sync-pill")
-        let direct = pill.label.contains("Not checked yet") || pill.label.contains("need your key")
-        pill.tap()
-        if direct { return false }
-        expect("sync-sheet")
-        tap("sync-check")
-        return true
+    /// Starts a check from Home. Setup records no check, so the pill says
+    /// so and a tap on it starts one.
+    private func checkFromHome() {
+        expectLabel("sync-pill", contains: "Not checked yet")
+        tap("sync-pill")
     }
 
     /// Settings builds its rows lazily: scroll to the row, then read it.
@@ -107,15 +100,6 @@ final class GitHubTests: PawUITestCase {
         finishSetup()
         expectText("folder-web", contains: "web, folder, 6 passwords")
         XCTAssertEqual(pasteboardContents(), "WDJB-MJHT", "Open copies the code")
-    }
-
-    func testTheCodeSheetAndTheListInDark() {
-        launch(appearance: "dark")
-        toAddress()
-        openPicker()
-        snapshot("code-dark")
-        authorise()
-        snapshot("list-dark")
     }
 
     func testADeclinedCodeRecoversWithTryAgain() {
@@ -188,30 +172,12 @@ final class GitHubTests: PawUITestCase {
         // Not chosen: its address is github.com's own, and tests never go there.
     }
 
-    func testTheTypedAddressPathIsUnaffected() {
-        launch()
-        toAddress()
-        expect("address-github")
-        tap("simulated-address")
-        expectText("address-reading", contains: "Connects to 127.0.0.1 as git")
-        tap("address-connect")
-        finishSetup()
-        openSettings()
-        inSettingsList("settings-github-sign-in", contains: "Sign in to GitHub")
-        closeSettings()
-    }
-
     // MARK: Checking for changes with the sign-in
 
     func testCheckingWhileSignedInAsksForNoKeyAndBringsInARemoteChange() {
         launch(extra: ["-pawSimRemoteChange", "add"])
         setUpThroughGitHub()
-        let usedSheet = checkFromHome()
-        if usedSheet {
-            expectLabel("sync-check", contains: "Check for changes")
-            snapshot("sync-sheet")
-            tap("sync-sheet-done")
-        }
+        checkFromHome()
         expectLabel("sync-summary-title", contains: "1 password changed")
         expect("sync-added-forum.example")
         waitForKeyTasksToEnd()
@@ -256,16 +222,9 @@ final class GitHubTests: PawUITestCase {
         expectAbsent("settings-github-signed-out", "A plain sign-out leaves just the sign-in button")
         snapshot("settings-signed-out")
         closeSettings()
-        let pill = expect("sync-pill")
-        if pill.label.contains("need your key") {
-            pill.tap()
-            expectLabel("key-sheet-purpose", contains: "Update your store")
-        } else {
-            pill.tap()
-            expectLabel("sync-check", contains: "Needs your key")
-            tap("sync-check")
-            expectLabel("key-sheet-purpose", contains: "Update your store")
-        }
+        expectLabel("sync-pill", contains: "Updates need your key")
+        tap("sync-pill")
+        expectLabel("key-sheet-purpose", contains: "Update your store")
         tap("key-sheet-cancel")
         expectGone("key-sheet-purpose")
         // Signing in again from Settings finds the store's repository by itself.

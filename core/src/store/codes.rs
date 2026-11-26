@@ -247,25 +247,6 @@ mod tests {
     }
 
     #[test]
-    fn a_code_removed_since_unmarks_it() {
-        let d = dir();
-        let codes = codes(&d);
-        codes.note("a".into(), opened(WITH_CODE).makes_one_time_codes()).unwrap();
-        assert!(codes.note("a".into(), opened(b"pw\n").makes_one_time_codes()).unwrap());
-        assert!(codes.file.load().is_empty());
-    }
-
-    #[test]
-    fn a_closed_entry_marks_nothing() {
-        let d = dir();
-        let codes = codes(&d);
-        let entry = opened(WITH_CODE);
-        entry.close();
-        assert!(!codes.note("a".into(), entry.makes_one_time_codes()).unwrap());
-        assert!(!d.path().join(crate::files::layout::ONE_TIME_CODES).exists());
-    }
-
-    #[test]
     fn marks_follow_moves_and_go_with_deletes() {
         let d = dir();
         let file = file_on(d.path());

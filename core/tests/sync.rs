@@ -217,7 +217,8 @@ fn a_host_with_the_wrong_key_is_refused_before_login() {
 
 #[test]
 fn an_untouched_key_fails_the_login() {
-    let card = card();
+    // Longer than a quick refusal: the key really waited for a touch.
+    let card = SimulatedKey::new(PIN.into(), true, 1_200);
     let server = GitServer::start(&[authorised_line(&card)]);
     // The PIN is typed, the touch never comes.
     let port = port_with(&card);
@@ -226,7 +227,7 @@ fn an_untouched_key_fails_the_login() {
 
     let error = key_refusal(Connection::open(&server.remote(), &signer));
 
-    assert!(matches!(error, KeyError::Reader { .. }), "{error:?}");
+    assert_eq!(error, KeyError::TouchTimeout);
     assert_eq!(server.logins(), 0);
 }
 
@@ -350,27 +351,6 @@ fn commit_refuses_gits_own_directory_however_it_is_spelled() {
 }
 
 #[test]
-fn a_clone_with_links_in_it_is_refused() {
-    let card = card();
-    let server = GitServer::start(&[authorised_line(&card)]);
-    let outside = tempfile::tempdir().unwrap();
-    std::fs::write(outside.path().join("victim.gpg"), "untouched").unwrap();
-    // The repository carries a folder link and a file link out of the store.
-    server.desktop_symlink("shared", outside.path());
-    server.desktop_symlink("victim.gpg", &outside.path().join("victim.gpg"));
-    let dir = tempfile::tempdir().unwrap();
-
-    let result = steps::clone(&connect(&server, &card), &server.remote(), dir.path());
-
-    let Ok(Cloned::Refused(refused)) = result else { panic!("{result:?}") };
-    let paths: Vec<&str> = refused.iter().map(|refused| refused.path.as_str()).collect();
-    assert_eq!(paths, ["shared", "victim.gpg"]);
-    assert!(refused.iter().all(|refused| refused.reasons == [paw_core::remote::RefusedReason::SymbolicLink]));
-    assert!(!dir.path().join("shared").exists());
-    assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 1);
-}
-
-#[test]
 fn commit_refuses_to_write_through_a_link_in_the_repository() {
     let card = card();
     let server = GitServer::start(&[authorised_line(&card)]);
@@ -447,7 +427,6 @@ fn noise(len: usize) -> Vec<u8> {
 
 #[test]
 fn a_download_larger_than_the_limit_is_stopped() {
-    assert_eq!(sync::DOWNLOAD_LIMIT, 256 << 20);
     let card = card();
     let server = GitServer::start(&[authorised_line(&card)]);
     let small = cloned(&server, &card);

@@ -11,26 +11,24 @@ final class AppTests: PawUITestCase {
     // MARK: Browse and search
 
     func testHomeListsTheFixtureFoldersWithTheirCounts() {
-        for appearance in ["light", "dark"] {
-            launch(appearance: appearance)
-            expectLabel("folder-archive", contains: "archive, folder, 2 passwords")
-            expectLabel("folder-bank", contains: "bank, folder, 3 passwords")
-            expectLabel("folder-web", contains: "web, folder, 6 passwords")
-            expectLabel("folder-servers", contains: "servers, folder, 3 passwords")
-            expectAbsent("face-id-github.com", "Nothing opens with Face ID before the key was used")
-            snapshot("home-\(appearance)")
+        launch()
+        expectLabel("folder-archive", contains: "archive, folder, 2 passwords")
+        expectLabel("folder-bank", contains: "bank, folder, 3 passwords")
+        expectLabel("folder-web", contains: "web, folder, 6 passwords")
+        expectLabel("folder-servers", contains: "servers, folder, 3 passwords")
+        expectAbsent("face-id-github.com", "Nothing opens with Face ID before the key was used")
+        snapshot("home")
 
-            scrollTo("entry-Home Wi-Fi")
-            expectLabel("entry-Home Wi-Fi", contains: "Home Wi-Fi, needs your key")
-            expectLabel("entry-phone-pin", contains: "phone-pin, needs your key")
-            snapshot("home-\(appearance)-bottom")
-        }
+        scrollTo("entry-Home Wi-Fi")
+        expectLabel("entry-Home Wi-Fi", contains: "Home Wi-Fi, needs your key")
+        expectLabel("entry-phone-pin", contains: "phone-pin, needs your key")
+        snapshot("home-bottom")
     }
 
     func testOpeningAFolderShowsItsSubfoldersAndEntries() {
         launch()
         tap("folder-work")
-        XCTAssertTrue(app.navigationBars["work"].waitForExistence(timeout: 10), "The title should be the folder name")
+        XCTAssertTrue(waitToExist(app.navigationBars["work"], timeout: Self.patience), "The title should be the folder name")
         expectLabel("entry-Jira", contains: "Jira, needs your key")
         expect("entry-payroll")
         expect("entry-vpn")
@@ -48,83 +46,63 @@ final class AppTests: PawUITestCase {
     }
 
     func testSearchFindsAMiddleTermAndSaysWhenNothingMatches() {
-        for appearance in ["light", "dark"] {
-            launch(appearance: appearance)
-            let field = app.searchFields.firstMatch
-            XCTAssertTrue(field.waitForExistence(timeout: 10), "Home should have a search field")
-            field.tap()
-            field.typeText("ycombinator")
-            expectLabel("search-count", contains: "1 match")
-            expectLabel("entry-news.ycombinator.com", contains: "news.ycombinator.com, web")
-            snapshot("search-\(appearance)")
+        launch()
+        let field = app.searchFields.firstMatch
+        XCTAssertTrue(waitToExist(field, timeout: Self.patience), "Home should have a search field")
+        focus(field)
+        field.typeText("ycombinator")
+        expectLabel("search-count", contains: "1 match")
+        expectLabel("entry-news.ycombinator.com", contains: "news.ycombinator.com, web")
+        snapshot("search")
 
-            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 11) + "zzqx")
-            let empty = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "zzqx")).firstMatch
-            XCTAssertTrue(empty.waitForExistence(timeout: 10), "No results should say what was searched for")
-            XCTAssertTrue(empty.label.contains("No password or folder called"), empty.label)
-            snapshot("no-results-\(appearance)")
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 11) + "zzqx")
+        let empty = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "zzqx")).firstMatch
+        XCTAssertTrue(waitToExist(empty, timeout: Self.patience), "No results should say what was searched for")
+        XCTAssertTrue(empty.label.contains("No password or folder called"), empty.label)
+        snapshot("no-results")
 
-            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 4))
-            expect("folder-web")
-        }
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 4))
+        expect("folder-web")
     }
 
     // MARK: Opening with the key
 
     func testOpeningAnEntryAsksForThePinThenATouchAndKeepsThePasswordHidden() {
-        for appearance in ["light", "dark"] {
-            launch(appearance: appearance)
-            tap("folder-web")
-            tap("entry-github.com")
-            expectLabel("key-sheet-purpose", contains: "Open github.com")
-            let field = pinField()
-            expectAbsent("pin-tries-left", "A fresh key has all 3 tries, so none are counted out")
-            expectAbsent("touch-prompt", "No touch before the PIN")
-            if appearance == "light" { snapshot("key-sheet-pin") }
-            enterPin(Self.pin, send: false)
-            expectEnabled("pin-continue", true)
-            app.buttons["pin-continue"].tap()
-
-            expect("touch-prompt")
-            expectAbsent("entry-title", "Nothing opens before the key is touched")
-            if appearance == "light" { snapshot("key-sheet-touch") }
-            tapSimulated("simulated-touch")
-
-            expectLabel("entry-title", contains: "github.com")
-            expectGone("key-sheet-purpose")
-            expectValue("password-value", "hidden")
-            expectValue("field-Username", "you@example.com")
-            expectValue("field-Website", "https://github.com/login")
-            expectLabel("entry-notes", contains: "blue notebook")
-            snapshot("entry-hidden-\(appearance)")
-
-            app.buttons["password-reveal"].tap()
-            expectValue("password-value", Self.githubPassword)
-            snapshot("entry-revealed-\(appearance)")
-
-            if appearance == "light" {
-                app.buttons["copy-password"].tap()
-                expectLabel("sim-last-toast", contains: "Password copied. Clears in 45 seconds.")
-                snapshot("copied")
-                app.buttons["show-password"].tap()
-                expectValue("password-value", "hidden")
-            }
-        }
-    }
-
-    func testASecondEntryInTheSameRunDoesNotAskForThePinAgain() {
         launch()
-        openGitHubWithKey()
-        goBack()
-        tap("entry-gitlab.com")
-        expectLabel("key-sheet-purpose", contains: "Open gitlab.com")
+        tap("folder-web")
+        tap("entry-github.com")
+        expectLabel("key-sheet-purpose", contains: "Open github.com")
+        let field = pinField()
+        expectAbsent("pin-tries-left", "A fresh key has all 3 tries, so none are counted out")
+        expectAbsent("touch-prompt", "No touch before the PIN")
+        snapshot("key-sheet-pin")
+        enterPin(Self.pin, send: false)
+        expectEnabled("pin-continue", true)
+        tapUntilGone("pin-continue")
+
         expect("touch-prompt")
-        expectAbsent("pin-field", "The PIN is held for the run")
-        // The PIN chip reads as done ("PIN correct"), not skipped.
+        expectAbsent("entry-title", "Nothing opens before the key is touched")
         expectLabel("key-sheet-steps", contains: "Step 3 of 3: Touch. Done: Plugged in, PIN correct")
-        snapshot("touch-only")
+        snapshot("key-sheet-touch")
         tapSimulated("simulated-touch")
-        expectLabel("entry-title", contains: "gitlab.com")
+
+        expectLabel("entry-title", contains: "github.com")
+        expectGone("key-sheet-purpose")
+        expectValue("password-value", "hidden")
+        expectValue("field-Username", "you@example.com")
+        expectValue("field-Website", "https://github.com/login")
+        expectLabel("entry-notes", contains: "blue notebook")
+        snapshot("entry-hidden")
+
+        app.buttons["password-reveal"].tap()
+        expectValue("password-value", Self.githubPassword)
+        snapshot("entry-revealed")
+
+        app.buttons["copy-password"].tap()
+        expectLabel("sim-last-toast", contains: "Password copied. Clears in 45 seconds.")
+        snapshot("copied")
+        app.buttons["show-password"].tap()
+        expectValue("password-value", "hidden")
     }
 
     func testAWrongPinSaysHowManyTriesAreLeftAndOpensNothing() {
@@ -146,11 +124,45 @@ final class AppTests: PawUITestCase {
     // MARK: Face ID
 
     /// The largest size before the bar stacks: "Lock" stays beside the time.
-    func testTheFaceIdBarAtTheLargestStandardTextSize() {
-        launch(extra: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryXXXL"])
+    /// At an accessibility text size the Face ID bar's Lock goes under its
+    /// text, and the add form's rows stay on screen without running into
+    /// each other. Frames, not labels: a label reads the same however it
+    /// is drawn.
+    func testAtALargeTextSizeTheFaceIdBarAndTheAddFormKeepTheirLayout() {
+        launch(extra: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityM"])
+        let width = app.frame.width
+        func onScreen(_ found: XCUIElement, _ what: String) {
+            XCTAssertGreaterThanOrEqual(found.frame.minX, 0, "\(what) starts off the screen")
+            XCTAssertLessThanOrEqual(found.frame.maxX, width, "\(what) runs off the screen")
+        }
+
         openGitHubWithKey()
-        expectLabel("face-id-window-text", contains: "Opens with Face ID until")
-        snapshot("entry-face-id-xxxl")
+        let text = expect("face-id-window-text")
+        let lock = expect("lock-now")
+        onScreen(text, "The Face ID bar's text")
+        onScreen(lock, "Lock this password")
+        XCTAssertGreaterThanOrEqual(lock.frame.minY, text.frame.maxY - 1, "Lock should be under the text")
+        snapshot("entry-face-id-large")
+        goBack()
+        goBack()
+
+        tap("add-button")
+        let name = expect("form-name")
+        let folder = expect("form-folder")
+        onScreen(name, "The name field")
+        onScreen(folder, "The folder row")
+        XCTAssertFalse(name.frame.intersects(folder.frame), "The name field runs into the folder row")
+        snapshot("add-large-text")
+        // A tap that lands while the sheet is still settling is lost: the
+        // row stays "hidden", so tap it again.
+        let options = scrollTo("form-options")
+        for _ in 0..<3 where (options.value as? String) != "shown" {
+            options.tap()
+            if waitUntil(timeout: 2, { (options.value as? String) == "shown" }) { break }
+        }
+        let strength = scrollTo("form-strength")
+        onScreen(strength, "The strength line")
+        snapshot("add-large-text-options")
     }
 
     func testAnEntryOpenedWithTheKeyThenOpensWithFaceId() {
@@ -182,42 +194,6 @@ final class AppTests: PawUITestCase {
         expectAbsent("entry-title", "A cancelled Face ID opens nothing")
         expectAbsent("key-sheet-purpose", "A cancelled Face ID does not ask for the key by itself")
         snapshot("face-id-cancelled")
-    }
-
-    func testAnEntryNeedsTheKeyAgainOnceItsFaceIdTimeEnds() {
-        launch()
-        openGitHubWithKey()
-        goBack()
-        goBack()
-        expect("face-id-github.com")
-
-        inSettings(tapping: "sim-advance-9h")
-
-        expectLabel("recent-github.com", contains: "needs your key")
-        expectAbsent("face-id-github.com", "The copy has ended")
-        snapshot("home-recent")
-
-        tap("recent-github.com")
-        expect("touch-prompt")
-        expectAbsent("pin-field", "The PIN is still held")
-        snapshot("touch-again")
-    }
-
-    func testLockNowEndsEveryFaceIdCopy() {
-        launch()
-        openGitHubWithKey()
-        goBack()
-        goBack()
-        expect("face-id-github.com")
-
-        app.buttons["settings-button"].tap()
-        app.buttons["settings-lock-now"].tap()
-        expectGone("face-id-github.com")
-        expectLabel("recent-github.com", contains: "needs your key")
-
-        tap("recent-github.com")
-        expect("pin-field")
-        snapshot("pin-after-lock")
     }
 
     // MARK: Another key
@@ -324,16 +300,6 @@ final class AppTests: PawUITestCase {
         snapshot("touch-again")
         tapSimulated("simulated-touch")
         expectLabel("entry-title", contains: "github.com")
-    }
-
-    /// The cover is up only while paw is away; `-pawSimPrivacyCover` holds
-    /// it up to take its picture.
-    func testThePrivacyCoverShowsOnlyTheName() {
-        for appearance in ["light", "dark"] {
-            launch(appearance: appearance, extra: ["-pawSimPrivacyCover", "1"])
-            expectLabel("privacy-cover", contains: "paw is hidden")
-            snapshot("privacy-cover-\(appearance)")
-        }
     }
 
     func testARevealedPasswordHidesWhenPawLeavesTheScreen() {

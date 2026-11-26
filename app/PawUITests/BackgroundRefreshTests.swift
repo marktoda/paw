@@ -18,7 +18,7 @@ final class BackgroundRefreshTests: PawUITestCase {
         expect("setup-welcome")
         tap("setup-start")
         expect("setup-your-key")
-        tap("key-continue")
+        tapUntilGone("key-continue")
         expect("repo-address")
         tap("address-github")
         expectText("github-code", contains: "WDJB-MJHT")

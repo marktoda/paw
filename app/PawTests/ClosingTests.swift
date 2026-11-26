@@ -8,12 +8,6 @@ import XCTest
 /// going back, and an open that finishes after Cancel.
 @MainActor
 final class ClosingTests: XCTestCase {
-    func testTheClosedScreenSaysWhyInEachCase() {
-        XCTAssertEqual(ClosedEntry.Reason.away.title, "Closed after 2 minutes away")
-        XCTAssertEqual(ClosedEntry.Reason.deviceLocked.title, "Closed when your iPhone locked")
-        XCTAssertEqual(ClosedEntry.Reason.copyEnded.title, "Its Face ID time ended")
-    }
-
     /// Replaces the UI test `LifecycleTests.testAnOpenEntryClosesWhenTheIPhoneLocks`.
     func testAnOpenEntryClosesWhenTheIPhoneLocks() async throws {
         let fixture = try Fixture()

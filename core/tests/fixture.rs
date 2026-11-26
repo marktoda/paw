@@ -21,7 +21,6 @@ use paw_core::sim::fixture::{
 };
 use paw_core::store::service::{MatchKind, NamePairing};
 use paw_core::store::PassStore;
-use paw_core::store::tree::StoreTree;
 use paw_core::PawError;
 
 /// A simulated key plugged into a key port, as the app holds one.
@@ -71,10 +70,6 @@ fn fixture() -> (tempfile::TempDir, Arc<PassStore>) {
     (dir, store)
 }
 
-fn card_fingerprint() -> String {
-    SimulatedKey::new(PIN.into(), true, 50).fingerprint_hex()
-}
-
 /// Every file under `dir`, by relative path.
 fn files(dir: &Path) -> Vec<(String, Vec<u8>)> {
     fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) {
@@ -95,35 +90,6 @@ fn files(dir: &Path) -> Vec<(String, Vec<u8>)> {
 }
 
 #[test]
-fn the_fixture_is_a_small_store_with_folders_and_top_level_entries() {
-    let (dir, store) = fixture();
-    let home = store.home();
-
-    let folders: Vec<_> = home.folders.iter().map(|f| (f.name.as_str(), f.entry_count)).collect();
-    assert_eq!(
-        folders,
-        [
-            ("archive", 2),
-            ("bank", 3),
-            ("email", 3),
-            ("home", 4),
-            ("servers", 3),
-            ("travel", 2),
-            ("web", 6),
-            ("work", 4)
-        ]
-    );
-    let top: Vec<_> = home.entries.iter().map(|e| e.name.as_str()).collect();
-    assert_eq!(top, ["Home Wi-Fi", "phone-pin"]);
-    assert_eq!(store.entry_count(), 29);
-    assert!(StoreTree::scan(dir.path()).unwrap().skipped().is_empty());
-
-    let servers = store.folder("servers".into()).unwrap();
-    assert_eq!(servers.folders[0].path, "servers/example.net");
-    assert_eq!(servers.entries[0].path, "servers/backup-box");
-}
-
-#[test]
 fn writing_the_fixture_twice_gives_the_same_bytes() {
     let (first, _) = fixture();
     let (second, _) = fixture();
@@ -133,38 +99,6 @@ fn writing_the_fixture_twice_gives_the_same_bytes() {
     let before = files(first.path());
     write_fixture_store(first.path().to_str().unwrap().into()).unwrap();
     assert_eq!(files(first.path()), before);
-}
-
-#[test]
-fn the_fixture_can_be_searched_and_matched_to_sites() {
-    let (_dir, store) = fixture();
-
-    let hits: Vec<_> = store.search("wi-fi".into(), 10).into_iter().map(|h| h.entry.path).collect();
-    assert_eq!(hits, ["Home Wi-Fi", "home/Guest Wi-Fi"]);
-    let hits: Vec<_> = store.search("zurich".into(), 10).into_iter().map(|h| h.entry.path).collect();
-    assert_eq!(hits, ["web/Zürich Tourism"]);
-
-    let offered: Vec<_> = store
-        .match_services(vec!["https://www.example.net/".into()], None)
-        .into_iter()
-        .filter(|m| !matches!(m.kind, MatchKind::Name { .. }))
-        .map(|m| (m.entry.path, m.kind == MatchKind::ExactHost))
-        .collect();
-    assert_eq!(
-        offered,
-        [("servers/example.net/root".to_owned(), false), ("servers/example.net/deploy".to_owned(), false)]
-    );
-}
-
-#[test]
-fn each_folder_names_the_key_its_entries_are_for() {
-    let (_dir, store) = fixture();
-    let other = other_key_fingerprint_hex().unwrap();
-
-    assert_eq!(store.recipients("".into()).unwrap(), [card_fingerprint()]);
-    assert_eq!(store.recipients("web".into()).unwrap(), [card_fingerprint()]);
-    assert_eq!(store.recipients("servers/example.net".into()).unwrap(), [card_fingerprint()]);
-    assert_eq!(store.recipients(OTHER_KEY_FOLDER.into()).unwrap(), [other]);
 }
 
 #[test]

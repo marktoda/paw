@@ -365,16 +365,7 @@ fn another_key_plugged_in_before_the_test_decrypt_is_refused_before_the_pin() {
 #[test]
 fn a_repository_the_key_cannot_see_is_told_apart_from_a_refused_key() {
     let w = world();
-    // A key the host does not know: found at the host check.
-    w.server.sim.set_refuse_key(true);
-    let session = w.port.session().unwrap();
-    w.setup.read_key_from_session(session).unwrap();
-    w.setup.set_address(address(&w)).unwrap();
-    let SetupState::ConfirmHost { fingerprint, .. } = w.setup.check_host().unwrap() else { panic!() };
-    let error = w.setup.confirm_host(fingerprint).unwrap_err();
-    assert!(matches!(error, SetupError::Fault { fault: paw_core::fault::Fault::Remote { failure: RemoteFailure::KeyNotAccepted { .. } } }), "{error:?}");
-    w.server.sim.set_refuse_key(false);
-    assert!(matches!(w.setup.check_host().unwrap(), SetupState::NeedPin { .. }));
+    to_need_pin(&w);
 
     // The key logs in, and the host says there is no such repository for it.
     w.server.sim.set_repository_not_found(true);
@@ -475,20 +466,6 @@ fn a_bundled_hosts_key_cannot_be_forgotten() {
 }
 
 #[test]
-fn settings_cannot_forget_a_bundled_hosts_key_either() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("remote"), "git@github.com:you/store.git\n").unwrap();
-    let sync = StoreSync::open(dir.path().to_string_lossy().into_owned()).unwrap();
-
-    let error = sync.forget_host_key().unwrap_err();
-
-    assert!(
-        matches!(&error, paw_core::sync::SyncError::Fault { fault: paw_core::fault::Fault::Remote { failure: RemoteFailure::HostKeyBundled { .. } } }),
-        "{error:?}"
-    );
-}
-
-#[test]
 fn a_pin_kdf_paw_does_not_support_stops_setup_at_your_key_before_any_pin() {
     for (algorithm, enabled, supported) in [(None, false, true), (Some(3), true, true), (Some(7), true, false)] {
         let sim = cached_login_key();
@@ -510,6 +487,52 @@ fn a_pin_kdf_paw_does_not_support_stops_setup_at_your_key_before_any_pin() {
             assert!(matches!(&read, Err(SetupError::UnusableKey { reason: UnusableKeyReason::PinKdfUnsupported { .. } })), "{read:?}");
             assert_eq!(setup.state(), SetupState::ReadKey);
         }
+        assert_eq!(sim.verify_attempts() + sim.pin_queries(), 0);
+    }
+}
+
+/// The simulated key, answering as if some of its slots had no key
+/// generated: the card reports an all-zero fingerprint for each of `blank`
+/// (0 signing, 1 decryption, 2 authentication).
+struct BlankSlots {
+    sim: Arc<SimulatedKey>,
+    blank: Vec<usize>,
+}
+
+impl paw_core::key::CardConnection for BlankSlots {
+    fn transmit(&self, apdu: Vec<u8>) -> Result<Vec<u8>, paw_core::key::ConnectionError> {
+        let mut response = self.sim.transmit(apdu.clone())?;
+        let fingerprints = match apdu.get(1..4) {
+            // GET DATA of the fingerprints alone.
+            Some([0xCA, 0x00, 0xC5]) => Some(0),
+            // Within the application related data, as tag C5, 60 bytes.
+            Some([0xCA, 0x00, 0x6E]) => response.windows(2).position(|w| w == [0xC5, 0x3C]).map(|at| at + 2),
+            _ => None,
+        };
+        if let Some(start) = fingerprints {
+            for slot in &self.blank {
+                response[start + slot * 20..start + (slot + 1) * 20].fill(0);
+            }
+        }
+        Ok(response)
+    }
+}
+
+#[test]
+fn a_key_with_no_keys_generated_is_refused_before_any_pin() {
+    for (blank, reason) in
+        [(vec![1, 2], UnusableKeyReason::NoDecryptionKey), (vec![1], UnusableKeyReason::NoDecryptionKey), (vec![2], UnusableKeyReason::NoAuthenticationKey)]
+    {
+        let sim = cached_login_key();
+        let port = KeyPort::new(SimClock::new(1_790_000_000_000));
+        let session = port.plugged_in(Arc::new(BlankSlots { sim: sim.clone(), blank: blank.clone() })).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::open(dir.path().to_string_lossy().into_owned()).unwrap();
+
+        let read = setup.read_key_from_session(session);
+
+        assert!(matches!(&read, Err(SetupError::UnusableKey { reason: found }) if *found == reason), "{blank:?}: {read:?}");
+        assert_eq!(setup.state(), SetupState::ReadKey);
         assert_eq!(sim.verify_attempts() + sim.pin_queries(), 0);
     }
 }

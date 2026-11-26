@@ -10,19 +10,9 @@ import XCTest
 final class LifecycleTests: PawUITestCase {
     // MARK: Closing an open entry
 
-    func testAnOpenEntryStaysUnderTwoMinutesAwayAndClosesAfter() {
-        // Each trip to the background moves the simulated clock 1 minute on.
-        launchFixture(extra: ["-pawSimAwayMs", String(60 * 1000)])
-        openGitHubWithKey()
-        tapWhenHittable(app.buttons["password-reveal"], "The eye")
-        expectValue("password-value", Self.githubPassword)
-        backgroundAndReturn()
-        expectLabel("entry-title", contains: "github.com")
-        expectValue("password-value", "hidden")
-        expectAbsent("entry-closed", "One minute away keeps the entry open")
-
-        // 3 minutes away this time.
-        app.terminate()
+    /// That under two minutes away keeps it open is ClosingTests.
+    func testAnOpenEntryClosesAfterTwoMinutesAwayAndReopensWithFaceId() {
+        // A trip to the background moves the simulated clock 3 minutes on.
         launchFixture(extra: ["-pawSimAwayMs", String(3 * 60 * 1000)])
         openGitHubWithKey()
         backgroundAndReturn()
@@ -74,6 +64,8 @@ final class LifecycleTests: PawUITestCase {
         tap("settings-lock-now")
         expectGone("settings-done")
         XCTAssertEqual(pasteboardContents(), "", "Lock now clears what paw put on the pasteboard")
+        expectLabel("recent-github.com", contains: "needs your key")
+        expectGone("face-id-github.com")
 
         // Copied again, then 45 seconds pass on the simulated clock.
         openGitHubWithKey()

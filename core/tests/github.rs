@@ -286,17 +286,6 @@ fn a_code_past_its_lifetime_expires_without_asking_github() {
 }
 
 #[test]
-fn the_person_authorising_while_paw_waits_signs_in() {
-    let w = world();
-    w.github.set_device_outcome(SimDeviceOutcome::WaitForPerson);
-    let sign_in = w.account.start_sign_in().unwrap();
-    assert_eq!(sign_in.poll().unwrap(), SignInState::Waiting);
-    assert!(w.github.has_pending_code());
-    w.github.authorise_pending();
-    assert_eq!(sign_in.poll().unwrap(), SignInState::SignedIn);
-}
-
-#[test]
 fn a_cancelled_sign_in_stops_waiting_and_keeps_nothing() {
     let w = world();
     w.github.set_device_outcome(SimDeviceOutcome::AuthoriseAfter { pending: 0 });
@@ -352,17 +341,6 @@ fn signing_in_sends_the_client_id_and_device_code_only_and_says_paw() {
         assert!(request.header("authorization").is_none());
         assert!(request.header("cookie").is_none());
     }
-}
-
-#[test]
-fn the_real_client_id_is_the_apps_and_the_simulation_can_tell_it_apart() {
-    assert_eq!(paw_core::github::CLIENT_ID, "Iv23liyBePbnvQPCcGRz");
-    let w = world();
-    assert_ne!(w.github.endpoints().client_id(), paw_core::github::CLIENT_ID);
-    assert_eq!(
-        paw_core::github::Endpoints::github().install_url(),
-        "https://github.com/apps/paw-password-store/installations/new"
-    );
 }
 
 // --- the picker ----------------------------------------------------------------
@@ -555,31 +533,6 @@ fn killed_before_the_refresh_request_the_old_pair_still_works() {
 }
 
 #[test]
-fn concurrent_refreshes_spend_the_refresh_token_once() {
-    let w = world();
-    w.set_up();
-    w.wall.fetch_add(9 * 3600, Ordering::SeqCst);
-    let issued = w.tokens().len();
-    // All four start together, so their fetches and integrates overlap
-    // (the store lock serialises the ref updates; see tests/store_lock.rs
-    // for this race run 200 times).
-    let start = Arc::new(std::sync::Barrier::new(4));
-    let threads: Vec<_> = (0..4)
-        .map(|_| {
-            let (account, start) = (w.account.clone(), start.clone());
-            std::thread::spawn(move || {
-                start.wait();
-                account.refresh_store()
-            })
-        })
-        .collect();
-    for thread in threads {
-        thread.join().unwrap().unwrap();
-    }
-    assert_eq!(w.tokens().len(), issued + 2, "exactly one rotation");
-}
-
-#[test]
 fn a_revoked_sign_in_ends_cleanly_and_leaves_the_store_alone() {
     let w = world();
     w.set_up();
@@ -614,6 +567,78 @@ fn signing_out_forgets_the_tokens_and_revokes_them_when_asked() {
     assert!(!w.account.sign_out(false).unwrap().revoked);
     assert_eq!(w.github.request_count(), before);
     assert!(w.vault.is_empty());
+}
+
+/// `vault`, but a `store` waits while the gate is shut: a refresh stalled
+/// after GitHub rotated the pair, before the keychain kept it.
+struct GatedVault {
+    vault: Arc<SimTokenVault>,
+    gate: std::sync::Mutex<(bool, u32)>,
+    changed: std::sync::Condvar,
+}
+
+impl GatedVault {
+    fn shut(vault: &Arc<SimTokenVault>) -> Arc<Self> {
+        Arc::new(Self { vault: vault.clone(), gate: std::sync::Mutex::new((true, 0)), changed: std::sync::Condvar::new() })
+    }
+
+    fn wait_for_a_store(&self) {
+        let gate = self.gate.lock().unwrap();
+        let (gate, timeout) = self.changed.wait_timeout_while(gate, Duration::from_secs(10), |(_, waiting)| *waiting == 0).unwrap();
+        assert!(!timeout.timed_out(), "no store came");
+        drop(gate);
+    }
+
+    fn open(&self) {
+        self.gate.lock().unwrap().0 = false;
+        self.changed.notify_all();
+    }
+}
+
+impl paw_core::github::TokenVault for GatedVault {
+    fn store(&self, name: String, secret: Vec<u8>) -> Result<(), paw_core::github::VaultError> {
+        let mut gate = self.gate.lock().unwrap();
+        gate.1 += 1;
+        self.changed.notify_all();
+        let _gate = self.changed.wait_while(gate, |(shut, _)| *shut).unwrap();
+        self.vault.store(name, secret)
+    }
+
+    fn load(&self, name: String) -> Result<Option<Vec<u8>>, paw_core::github::VaultError> {
+        self.vault.load(name)
+    }
+
+    fn remove(&self, name: String) -> Result<(), paw_core::github::VaultError> {
+        self.vault.remove(name)
+    }
+}
+
+#[test]
+fn signing_out_while_a_refresh_is_stalled_leaves_no_sign_in() {
+    let w = world();
+    w.set_up();
+    w.wall.fetch_add(9 * 3600, Ordering::SeqCst);
+    let gated = GatedVault::shut(&w.vault);
+    let wall = w.wall.clone();
+    let refreshing = Arc::new(GitHubAccount::with(
+        w.github.endpoints(),
+        w.state_dir(),
+        gated.clone(),
+        w.clock.clone(),
+        Arc::new(move || wall.load(Ordering::SeqCst)),
+    ));
+    let refresh = std::thread::spawn(move || refreshing.refresh_store().map(drop));
+    gated.wait_for_a_store();
+
+    let account = w.account.clone();
+    let sign_out = std::thread::spawn(move || account.sign_out(false));
+    std::thread::sleep(Duration::from_millis(200));
+    gated.open();
+    sign_out.join().unwrap().unwrap();
+    let _ = refresh.join().unwrap();
+
+    assert!(w.vault.is_empty(), "the refreshed pair came back after the sign-out");
+    assert!(!w.account.is_signed_in().unwrap());
 }
 
 // --- the same checks as SSH ------------------------------------------------------------

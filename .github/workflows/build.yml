@@ -19,7 +19,8 @@ jobs:
   # run against an in-process SSH server and the runner's own git. The same
   # job tests the core as devices get it, without the `sim` feature, and
   # checks that both sets of Swift bindings still generate (which also
-  # scans the host build without `sim`: scripts/check-no-sim.sh).
+  # scans the host build without `sim`: scripts/check-no-sim.sh) and that
+  # the licence notices list every crate linked in.
   core:
     runs-on: ubuntu-latest
     steps:
@@ -37,6 +38,10 @@ jobs:
         run: cargo test --manifest-path core/Cargo.toml --no-default-features --target-dir core/target/no-sim
       - name: Generate the Swift bindings
         run: scripts/build-core.sh --bindings-only
+      - name: Check the licence notices are up to date
+        run: |
+          cargo fetch --manifest-path core/Cargo.toml
+          python3 scripts/licences.py --check
 
   # The core contains C (libgit2 and ring), which needs the Apple SDK to
   # compile for iOS, so the iOS libraries are built on a Mac.
@@ -116,11 +121,13 @@ jobs:
           import glob, json, os, re, subprocess, sys
           # Seconds a test of each class takes on a runner (scripts/ci-report.sh
           # prints them). Only the balance between parts depends on these.
-          # Measured on run 45500441073 (2026-11-24).
-          weight = {"EditTests": 123, "SyncTests": 113, "LifecycleTests": 116, "SettingsRestTests": 78,
-                    "KeyTests": 65, "EnclaveTests": 59, "BackgroundRefreshTests": 59, "GitHubTests": 55,
+          # Measured on run 45500441073 (2026-11-24), less the slow tests
+          # removed or merged since; DarkTests is an estimate.
+          weight = {"DarkTests": 150, "LifecycleTests": 116, "OneTimeCodeTests": 87, "SyncTests": 86,
+                    "SettingsRestTests": 78, "EditTests": 76, "HeldBackTests": 70, "KeyTests": 65,
+                    "PolishThreeTests": 60, "EnclaveTests": 59, "BackgroundRefreshTests": 59, "GitHubTests": 55,
                     "AppTests": 53, "StoreTests": 52, "LicencesTests": 50, "SetupTests": 32,
-                    "GalleryTests": 32, "AutoFillTests": 21, "AutoFillRestTests": 21}
+                    "AutoFillOneTimeCodeTests": 24, "AutoFillTests": 21, "AutoFillRestTests": 21, "GalleryTests": 13}
           tests = {}
           for path in sorted(glob.glob("app/PawUITests/*.swift")):
               cls = None

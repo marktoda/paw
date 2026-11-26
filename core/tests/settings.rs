@@ -227,6 +227,12 @@ fn turning_copies_off_ends_them_even_if_the_setting_cannot_be_written() {
     app.put("web/github.com", b"pw\n", b"id", Duration::from_secs(3600)).unwrap().unwrap();
     // As good as a full disk: nothing new can be created in the folder.
     std::fs::set_permissions(&window, std::fs::Permissions::from_mode(0o500)).unwrap();
+    if std::fs::write(window.join("probe"), b"").is_ok() {
+        // Root writes anyway: there is no full disk to be had this way.
+        std::fs::set_permissions(&window, std::fs::Permissions::from_mode(0o700)).unwrap();
+        eprintln!("skipped: permissions do not stop this user");
+        return;
+    }
 
     let result = app.set_copies_enabled(false);
     let opened = app.open("web/github.com", b"id", "Open").map(|text| text.to_vec());
@@ -298,33 +304,19 @@ fn bundled_server_keys_are_typed_and_cannot_be_forgotten() {
     let keys = sync.server_keys().unwrap();
     assert_eq!(keys.host, "github.com");
     assert!(keys.bundled);
-    let shown: Vec<(&str, &str)> = keys.keys.iter().map(|k| (k.key_type.as_str(), k.fingerprint.as_str())).collect();
-    assert_eq!(
-        shown,
-        vec![
-            ("Ed25519", "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"),
-            ("ECDSA P-256", "SHA256:p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM"),
-            ("RSA", "SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s"),
-        ]
+    let shown: Vec<(String, String)> = keys.keys.iter().map(|k| (k.key_type.clone(), k.fingerprint.clone())).collect();
+    assert_eq!(shown, paw_core::sync::hosts::bundled("github.com", 22).unwrap().described());
+    let error = sync.forget_host_key().unwrap_err();
+    assert!(
+        matches!(
+            error,
+            paw_core::sync::SyncError::Fault {
+                fault: paw_core::fault::Fault::Remote { failure: paw_core::remote::RemoteFailure::HostKeyBundled { .. } }
+            }
+        ),
+        "{error:?}"
     );
-    assert!(sync.forget_host_key().is_err());
     assert_eq!(sync.server_keys().unwrap().keys.len(), 3);
-}
-
-#[test]
-fn a_confirmed_server_key_can_be_forgotten() {
-    let state = tempfile::tempdir().unwrap();
-    std::fs::write(state.path().join("remote"), "git@git.example.org:me/store.git\n").unwrap();
-    paw_core::sync::hosts::KnownHosts::of(state.path()).add("git.example.org", 22, &support::ed25519_host_key()).unwrap();
-    let sync = StoreSync::open(state.path().to_string_lossy().into_owned()).unwrap();
-    let keys = sync.server_keys().unwrap();
-    assert!(!keys.bundled);
-    assert_eq!(keys.keys.len(), 1);
-    assert_eq!(keys.keys[0].key_type, "Ed25519");
-    assert!(keys.keys[0].fingerprint.starts_with("SHA256:"));
-
-    sync.forget_host_key().unwrap();
-    assert!(sync.server_keys().unwrap().keys.is_empty(), "the next connection asks again");
 }
 
 // MARK: Copy diagnostics
@@ -449,26 +441,6 @@ fn diagnostics_say_what_they_should_and_name_nothing() {
     for line in ["Store: not set up", "Face ID copies: off", "GitHub: not signed in", "Key: not plugged in", "(empty)"] {
         assert!(text.contains(line), "missing {line:?} in:\n{text}");
     }
-}
-
-#[test]
-fn the_simulator_seeds_sites_used_from_the_fixture() {
-    // What `-pawSimPairings 1` records in Settings › Sites used.
-    let dir = tempfile::tempdir().unwrap();
-    let repo = dir.path().join(paw_core::files::layout::REPO);
-    paw_core::sim::fixture::write_fixture_store(repo.to_string_lossy().into_owned()).unwrap();
-    let store = paw_core::store::PassStore::open(repo.to_string_lossy().into_owned()).unwrap();
-    let pairings = SitePairings::open(dir.path().to_string_lossy().into_owned());
-    assert!(pairings.record_pairing(store.clone(), "email/fastmail".into(), "https://www.fastmail.com".into()).unwrap());
-    assert!(pairings.record_pairing(store, "work/Jira".into(), "https://jira.com".into()).unwrap());
-    let found: Vec<(String, Vec<String>)> = pairings.pairings().into_iter().map(|p| (p.entry, p.sites)).collect();
-    assert_eq!(
-        found,
-        vec![
-            ("email/fastmail".to_owned(), vec!["fastmail.com".to_owned()]),
-            ("work/Jira".to_owned(), vec!["jira.com".to_owned()]),
-        ]
-    );
 }
 
 #[test]

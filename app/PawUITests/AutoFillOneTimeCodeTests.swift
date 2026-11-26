@@ -118,7 +118,7 @@ final class AutoFillOneTimeCodeTests: PawUITestCase {
         expectLabel("autofill-confirm-question", contains: "Fill github.com's code here?")
         expectLabel("autofill-confirm-question", contains: "This code isn't saved for this site.")
         expectAbsent("pin-field", "Nothing should be opened before the confirm")
-        tap("autofill-fill-anyway")
+        tapUntilGone("autofill-fill-anyway")
         expectLabel("key-sheet-purpose", contains: "Fill code for github.com on paypa1.example")
         fillWithKey()
         expectGitHubCode()
