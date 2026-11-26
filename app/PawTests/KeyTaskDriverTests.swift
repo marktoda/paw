@@ -2,9 +2,9 @@ import XCTest
 @testable import Paw
 
 /// The key-task driver every key sheet uses, on its own: the core's states
-/// as sheet stages, the PIN field, each task's end heard exactly once, and
-/// a task's end after Cancel, what each task holds until it ends, and a
-/// key that drops out mid-task. Real tasks on the fixture's simulated key.
+/// as sheet stages, the PIN field, each task's end heard exactly once
+/// (and the after-end hook with it), a task's end after Cancel, what each
+/// task holds until it ends, and a key that drops out mid-task. Real tasks on the fixture's simulated key.
 @MainActor
 final class KeyTaskDriverTests: XCTestCase {
     /// Background time as a task holds it: how many times it was ended.
@@ -22,6 +22,7 @@ final class KeyTaskDriverTests: XCTestCase {
     private final class Recorder {
         var ends: [KeyTaskEnd<Never>] = []
         var lateEnds: [KeyTaskEnd<Never>] = []
+        var afterEnds = 0
         var holds: [Hold] = []
         var closedCount = 0
         let words = KeyErrorWords.Context(entry: "github.com")
@@ -39,6 +40,9 @@ final class KeyTaskDriverTests: XCTestCase {
                 letGo: { [unowned self] end in
                     lateEnds.append(end)
                     if case .done(.opened(let entry, _, _)) = end { entry.close() }
+                },
+                afterEnd: { [unowned self] in
+                    afterEnds += 1
                 },
                 hold: { [unowned self] in
                     let hold = Hold()
@@ -193,6 +197,7 @@ final class KeyTaskDriverTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(owner.ends.count, 1, "Heard once")
         XCTAssertEqual(owner.lateEnds.count, 0)
+        XCTAssertEqual(owner.afterEnds, 1, "After the followed end")
         XCTAssertEqual(owner.closedCount, 1)
     }
 
@@ -212,6 +217,7 @@ final class KeyTaskDriverTests: XCTestCase {
         await waitFor("the let-go task to end") { driver.pendingTasks == 0 }
         XCTAssertEqual(owner.ends.count, 0)
         XCTAssertEqual(owner.lateEnds.count, 1)
+        XCTAssertEqual(owner.afterEnds, 1, "After the let-go end too")
     }
 
     func testEachTaskKeepsItsHoldUntilItHasReallyEnded() async throws {
@@ -286,6 +292,7 @@ final class KeyTaskDriverTests: XCTestCase {
         await waitFor("the key to stop waiting") { !fixture.key.waitingForTouch() }
         XCTAssertEqual(owner.lateEnds.count, 1, "The key's late answer changes nothing")
         XCTAssertEqual(owner.ends.count, 0)
+        XCTAssertEqual(owner.afterEnds, 1)
         XCTAssertNil(driver.lastEnd, "Not the sheet's end")
     }
 

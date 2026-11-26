@@ -166,6 +166,9 @@ struct KeyJob<Step: KeyStepError> {
     /// Cancel, in the last milliseconds after the card answered
     /// (`core/src/key/task.rs`): what it leaves is disposed of here.
     var letGo: (KeyTaskEnd<Step>) -> Void = { _ in }
+    /// Any task ended, followed or let go of: called once for each, after
+    /// `ended` or `letGo`.
+    var afterEnd: () -> Void = {}
     /// Taken as each task starts, and ended once that task has ended,
     /// whether the sheet still follows it or not.
     var hold: () -> KeyTaskHold? = { nil }
@@ -227,6 +230,7 @@ final class KeyTaskDriver {
         /// The stage to show, or `nil` to close.
         let ended: (KeyTaskState) -> KeySheetStage?
         let letGo: (KeyTaskState) -> Void
+        let afterEnd: () -> Void
         let hold: () -> KeyTaskHold?
         let starting: () -> Void
         let stageShown: (KeySheetStage) -> Void
@@ -247,6 +251,7 @@ final class KeyTaskDriver {
             letGo = { state in
                 if let end = KeyTaskEnd<Step>(state) { job.letGo(end) }
             }
+            afterEnd = job.afterEnd
             hold = job.hold
             starting = job.starting
             stageShown = job.stageShown
@@ -420,6 +425,7 @@ final class KeyTaskDriver {
         lastEnd = KeyTaskEnd(state)
         let run = shown
         let next = running.job.ended(state)
+        running.job.afterEnd()
         // The workflow may have closed the sheet, or started again, as it heard the end.
         guard shown == run, run != nil else { return }
         guard let next else {
@@ -437,6 +443,7 @@ final class KeyTaskDriver {
         tasks[id] = nil
         running.hold?.end()
         running.job.letGo(state)
+        running.job.afterEnd()
         if startWaits, tasks.isEmpty {
             launch()
         }

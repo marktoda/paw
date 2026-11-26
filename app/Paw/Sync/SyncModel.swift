@@ -190,21 +190,25 @@ final class SyncModel {
 
     func start(_ kind: SyncKind) {
         guard running == nil, !accepting else { return }
+        let sync = sync
+        let job: KeyJob<SyncError> = switch kind {
+        case .send: syncJob(.send) { port, listener in sync.sendWithKey(port: port, listener: listener) }
+        case .refresh: syncJob(.refresh) { port, listener in sync.refreshWithKey(port: port, listener: listener) }
+        case .reencrypt: reencryptJob()
+        }
         keyKind = kind
         // The status page, if up, turns into the key sheet.
         statusUp = false
-        keyTask.start(job(kind))
+        keyTask.start(job)
     }
 
     /// "Try again" on the status page, after a failure.
     func retryFailed() {
         guard let failure else { return }
-        if failure.during == .refresh {
-            check()
-        } else if failure.during == .reencrypt {
-            startReencrypt()
-        } else {
-            start(failure.during)
+        switch failure.during {
+        case .refresh: check()
+        case .send: start(.send)
+        case .reencrypt: startReencrypt()
         }
     }
 
@@ -244,31 +248,6 @@ final class SyncModel {
         cancelSheet()
     }
 
-    private func workingMessage(_ kind: SyncKind, unpushed: Int) -> String {
-        if kind != .reencrypt, !signedIn, progress == nil {
-            return "Connecting to \(host)\u{2026}"
-        }
-        return kind.working(unpushed: unpushed)
-    }
-
-    private func syncFailed(_ error: SyncError, kind: SyncKind, unpushed: Int) {
-        running = nil
-        failure = SyncFailure(error, during: kind, unpushed: unpushed, host: host)
-        statusUp = true
-    }
-
-    private func finished(_ kind: SyncKind, outcome: KeyOutcome) {
-        running = nil
-        let needsLook = switch outcome {
-        case .reencrypted(let report): reencrypted(report)
-        case .synced(let report): absorb(report, kind: kind)
-        default: kind == .reencrypt ? reencrypted(nil) : absorb(nil, kind: kind)
-        }
-        if needsLook {
-            statusUp = true
-        }
-    }
-
     /// What a sync that went through brought back, said on the pill, the
     /// status page and the card on Home. `true` if it needs looking at.
     private func absorb(_ report: SyncReport?, kind: SyncKind) -> Bool {
@@ -299,9 +278,13 @@ final class SyncModel {
     /// A re-encrypt that ran to the end. Always back to the status page
     /// after: what is left held back is said there, and Send is there once
     /// none is.
-    private func reencrypted(_ report: ReencryptReport?) -> Bool {
-        lastLeft = report?.left ?? []
-        if let report, report.reencrypted > 0 {
+    private func reencrypted(_ outcome: KeyOutcome) -> Bool {
+        guard case .reencrypted(let report) = outcome else {
+            lastLeft = []
+            return true
+        }
+        lastLeft = report.left
+        if report.reencrypted > 0 {
             requests.send(.toast("Re-encrypted. Not sent yet."))
         }
         return true
@@ -467,53 +450,80 @@ final class SyncModel {
 }
 
 extension SyncModel {
-    private func job(_ kind: SyncKind) -> KeyJob<SyncError> {
+    /// Send, or check for changes, with the key.
+    private func syncJob(_ kind: SyncKind,
+                         _ begin: @escaping (KeyPort, KeyTaskListener) -> KeyTask) -> KeyJob<SyncError> {
+        let port = keyPort
+        var job = keyJob(kind) { listener in
+            begin(port, listener)
+        } working: { [weak self] progress in
+            guard let self else { return ("", nil) }
+            self.progress = progress
+            let message = !signedIn && progress == nil
+                ? "Connecting to \(host)\u{2026}" : kind.working(unpushed: unpushed)
+            return (message, progress.map(\.counted))
+        } done: { [weak self] outcome in
+            guard let self else { return false }
+            if case .synced(let report) = outcome {
+                return absorb(report, kind: kind)
+            }
+            return absorb(nil, kind: kind)
+        }
+        job.stageShown = { [weak self] stage in
+            if stage == .touch {
+                self?.signedIn = true
+            }
+        }
+        return job
+    }
+
+    /// "Re-encrypt": no network. Each held-back change is opened with the
+    /// key (a touch each) and encrypted for its folder's new list.
+    private func reencryptJob() -> KeyJob<SyncError> {
         let sync = sync
         let port = keyPort
-        return KeyJob(
-            begin: { listener in
-                switch kind {
-                case .send: sync.sendWithKey(port: port, listener: listener)
-                case .refresh: sync.refreshWithKey(port: port, listener: listener)
-                case .reencrypt: sync.reencryptWithKey(port: port, listener: listener)
-                }
-            },
+        var job = keyJob(.reencrypt) { listener in
+            sync.reencryptWithKey(port: port, listener: listener)
+        } working: { [weak self] progress in
+            guard let self else { return ("", nil) }
+            // The key's answer clears it; the count goes on.
+            if let progress { self.progress = progress }
+            return (SyncKind.reencrypt.working(unpushed: unpushed), nil)
+        } done: { [weak self] outcome in
+            self?.reencrypted(outcome) ?? false
+        }
+        job.starting = { [weak self] in
+            self?.taskStarting(.reencrypt)
+            self?.lastLeft = []
+        }
+        // It may have rewritten some changes however it ended, the last of
+        // them after its Cancel.
+        job.afterEnd = { [weak self] in
+            self?.live.announce(.reencrypted)
+        }
+        return job
+    }
+
+    /// What sending, checking and re-encrypting share: the sheet's words,
+    /// background time, and how a failure or a cancel ends. `done` says
+    /// whether what the task did needs looking at on the status page.
+    private func keyJob(_ kind: SyncKind,
+                        begin: @escaping (KeyTaskListener) -> KeyTask,
+                        working: @escaping (TaskProgress?) -> (message: String, progress: String?),
+                        done: @escaping (KeyOutcome) -> Bool) -> KeyJob<SyncError> {
+        KeyJob(
+            begin: begin,
             words: { [weak self] in
                 syncKeyWords(during: kind, unpushed: self?.unpushed ?? 0)
             },
-            working: { [weak self] progress in
-                self?.working(kind, progress) ?? ("", nil)
-            },
+            working: working,
             ended: { [weak self] end in
-                self?.ended(end, kind: kind) ?? .close
-            },
-            letGo: { [weak self] _ in
-                // A re-encrypt may have rewritten some changes, the last of
-                // them after its Cancel.
-                if kind == .reencrypt {
-                    self?.live.announce(.reencrypted)
-                }
+                self?.ended(end, kind: kind, done: done) ?? .close
             },
             hold: { BackgroundTime.begin("Sync") },
             starting: { [weak self] in
                 self?.taskStarting(kind)
-            },
-            stageShown: { [weak self] stage in
-                if stage == .touch {
-                    self?.signedIn = true
-                }
             })
-    }
-
-    /// The Working stage, and the pill's count while the task runs.
-    private func working(_ kind: SyncKind, _ progress: TaskProgress?) -> (message: String, progress: String?) {
-        if kind == .reencrypt {
-            // The key's answer clears it; the count goes on.
-            if let progress { self.progress = progress }
-            return (workingMessage(kind, unpushed: unpushed), nil)
-        }
-        self.progress = progress
-        return (workingMessage(kind, unpushed: unpushed), progress.map(\.counted))
     }
 
     private func taskStarting(_ kind: SyncKind) {
@@ -521,24 +531,21 @@ extension SyncModel {
         running = kind
         progress = nil
         signedIn = false
-        if kind == .reencrypt {
-            lastLeft = []
-        }
     }
 
-    private func ended(_ end: KeyTaskEnd<SyncError>, kind: SyncKind) -> KeySheetAfterEnd {
-        // A re-encrypt may have rewritten some changes, however it ended.
-        defer {
-            if kind == .reencrypt {
-                live.announce(.reencrypted)
-            }
-        }
+    private func ended(_ end: KeyTaskEnd<SyncError>, kind: SyncKind,
+                       done: (KeyOutcome) -> Bool) -> KeySheetAfterEnd {
         switch end {
         case .done(let outcome):
-            finished(kind, outcome: outcome)
+            running = nil
+            if done(outcome) {
+                statusUp = true
+            }
             return .standard
         case .stepFailed(let error):
-            syncFailed(error, kind: kind, unpushed: unpushed)
+            running = nil
+            failure = SyncFailure(error, during: kind, unpushed: unpushed, host: host)
+            statusUp = true
             return .close
         case .cancelled:
             cancelSheet()
