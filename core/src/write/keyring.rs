@@ -54,7 +54,7 @@ use super::WriteError;
 use crate::fault::Fault;
 use crate::recipients::{fingerprint_of, hex, key_id};
 use crate::path::{folder_and_parents, folder_of, folder_of_gpg_id, gpg_id_in, governing};
-use crate::store::gpg_id::{governing_gpg_id, key_digits, parse_gpg_id};
+use crate::store::gpg_id::{governing_gpg_id, gpg_id_text, key_digits, parse_gpg_id};
 use crate::files::{MAX_FILE_BYTES, read_bounded, write_atomic};
 use crate::lock::{Exclusive, StoreLock};
 
@@ -532,15 +532,14 @@ impl Keyring {
     /// working copy; changes nothing.
     pub fn folder_recipients(&self, root: &Path, folder: &str, now: u32) -> Result<FolderRecipients, Fault> {
         let (gpg_id, bytes) = governing_gpg_id(root, folder)?;
-        let text = String::from_utf8(bytes.clone())
-            .map_err(|_| Fault::local(format!("{gpg_id} is not a text file")))?;
+        let text = gpg_id_text(&gpg_id, &bytes)?;
         let accepted = self.accepted.as_deref().and_then(|all| {
             let path = governing(folder, |file| all.iter().any(|a| a.path == file))?;
             all.iter().find(|a| a.path == path)
         });
         let changed = self.accepted.is_some()
             && accepted.is_none_or(|a| a.path != gpg_id || a.sha != sha256_hex(&bytes));
-        let lines: Vec<RecipientLine> = parse_gpg_id(&text)
+        let lines: Vec<RecipientLine> = parse_gpg_id(text)
             .into_iter()
             .map(|line| RecipientLine { status: self.line_status(&line, now), line })
             .collect();
@@ -606,11 +605,15 @@ impl Keyring {
 
     /// Setup: records every `.gpg-id` in the store as accepted, replacing
     /// any earlier record. The only acceptance that is not about one folder
-    /// the person reviewed; call it once the store is cloned and shown.
+    /// the person reviewed; call it once the store is cloned and shown. One
+    /// that is not text is left out: nothing can be saved under it.
     pub fn accept_all_recipients_at_setup(&mut self, held: &Exclusive, root: &Path) -> Result<(), Fault> {
         let all = all_gpg_ids(root)?
             .into_iter()
-            .map(|(path, bytes)| Accepted { sha: sha256_hex(&bytes), text: String::from_utf8_lossy(&bytes).into_owned(), path })
+            .filter_map(|(path, bytes)| {
+                let text = gpg_id_text(&path, &bytes).ok()?.to_owned();
+                Some(Accepted { sha: sha256_hex(&bytes), text, path })
+            })
             .collect();
         self.accepted = Some(all);
         self.save(held)
@@ -632,8 +635,9 @@ impl Keyring {
             let gone = gpg_id_in(at);
             accepted.retain(|a| a.path != gone);
         }
+        let text = gpg_id_text(&path, &bytes)?.to_owned();
         accepted.retain(|a| a.path != path);
-        accepted.push(Accepted { sha: sha256_hex(&bytes), text: String::from_utf8_lossy(&bytes).into_owned(), path });
+        accepted.push(Accepted { sha: sha256_hex(&bytes), text, path });
         Ok(self.save(held)?)
     }
 

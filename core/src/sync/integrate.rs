@@ -21,7 +21,7 @@ use super::history::{KeptBoth, Replay, ReplayNotes, commits_between, ensure_clea
 use super::queue::waiting;
 use super::{SyncError, current_branch, git_err};
 use crate::files::refs;
-use crate::store::gpg_id::parse_gpg_id;
+use crate::store::gpg_id::gpg_id_lines;
 use crate::lock::{Exclusive, StoreLock};
 
 /// A `.gpg-id` that differs between the remote tip paw saw last and the
@@ -293,13 +293,13 @@ fn recipients_changes(repo: &Repository, before: Oid, after: Oid) -> Result<Vec<
     let old = repo.find_commit(before).and_then(|c| c.tree()).map_err(git_err)?;
     let new = repo.find_commit(after).and_then(|c| c.tree()).map_err(git_err)?;
     let diff = repo.diff_tree_to_tree(Some(&old), Some(&new), None).map_err(git_err)?;
-    let lines = |id: Oid| -> Vec<String> {
+    // A file that is gone, or not text, names no key.
+    let lines = |path: &str, id: Oid| -> Vec<String> {
         if id.is_zero() {
             return Vec::new();
         }
-        repo.find_blob(id)
-            .map(|blob| parse_gpg_id(&String::from_utf8_lossy(blob.content())))
-            .unwrap_or_default()
+        let Ok(blob) = repo.find_blob(id) else { return Vec::new() };
+        gpg_id_lines(path, blob.content()).unwrap_or_default()
     };
     let mut changes = Vec::new();
     for delta in diff.deltas() {
@@ -314,8 +314,8 @@ fn recipients_changes(repo: &Repository, before: Oid, after: Oid) -> Result<Vec<
         }
         changes.push(RecipientsChange {
             path: path.to_owned(),
-            before: lines(delta.old_file().id()),
-            after: lines(delta.new_file().id()),
+            before: lines(path, delta.old_file().id()),
+            after: lines(path, delta.new_file().id()),
         });
     }
     Ok(changes)

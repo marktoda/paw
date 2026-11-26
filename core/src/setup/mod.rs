@@ -336,7 +336,7 @@ impl SetupFlow {
             unconfirmed: None,
         };
         let repo = flow.repo_dir();
-        let cloned = repo.join(".git").is_dir() && repo.join(".gpg-id").is_file();
+        let cloned = repo.join(".git").is_dir() && layout::holds_store(&repo);
         match flow.saved.step {
             // Killed while downloading, or the download went missing.
             Step::Cloning => flow.restart_download()?,
@@ -623,14 +623,8 @@ impl SetupFlow {
             Ok(Cloned::Empty) => return self.wrong_repository(SetupError::EmptyRepository),
             // Nothing was checked out; the download is removed below.
             Ok(Cloned::Refused(paths)) => Err(RemoteFailure::RefusedContent { paths }.into()),
-            Ok(Cloned::Store) => {
-                let gpg_id = std::fs::symlink_metadata(repo.join(".gpg-id"));
-                if gpg_id.map(|m| m.is_file()).unwrap_or(false) {
-                    Ok(())
-                } else {
-                    return self.wrong_repository(SetupError::NotAPassStore);
-                }
-            }
+            Ok(Cloned::Store) if layout::holds_store(&repo) => Ok(()),
+            Ok(Cloned::Store) => return self.wrong_repository(SetupError::NotAPassStore),
         };
         if let Err(e) = outcome {
             self.restart_download()?;
@@ -750,7 +744,7 @@ impl SetupFlow {
         };
         let mut folders_needing_keys = Vec::new();
         for gpg_id in crate::write::keyring::gpg_id_paths(&repo).map_err(write_failed)? {
-            let folder = gpg_id.strip_suffix(".gpg-id").unwrap_or_default().trim_end_matches('/');
+            let folder = crate::path::folder_of_gpg_id(&gpg_id);
             if folder.is_empty() {
                 continue;
             }

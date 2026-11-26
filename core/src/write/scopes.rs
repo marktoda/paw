@@ -21,7 +21,7 @@ use super::keyring::{KeySource, Keyring, LineStatus};
 use crate::path::folder_of_gpg_id;
 use crate::recipients::{Recipient, entry_recipients};
 use crate::path::GPG_ID;
-use crate::store::gpg_id::{governing_gpg_id, parse_gpg_id};
+use crate::store::gpg_id::{governing_gpg_id, gpg_id_lines, key_digits};
 use crate::store::read::{read_entry, read_file};
 use crate::store::tree::StoreTree;
 
@@ -64,12 +64,20 @@ pub struct RecipientScope {
 
 use super::keyring::line_key_id as key_id;
 
-/// How a packet's recipient reads as a key ID.
-fn packet_key_id(recipient: &Recipient) -> Option<String> {
-    match recipient {
-        Recipient::KeyId { id } => Some(id.clone()),
-        Recipient::Fingerprint { fingerprint } => key_id(fingerprint),
-        Recipient::Hidden => None,
+/// The keys a `.gpg-id` names: by fingerprint (its own lines', and its
+/// pinned keys'), and by key ID alone for a line no pinned key is behind.
+#[derive(Default)]
+struct Named {
+    fingerprints: Vec<String>,
+    key_ids: HashSet<String>,
+}
+
+impl Named {
+    /// Whether `recipient` is one of these keys: [`Recipient::names`] for a
+    /// fingerprint, the key ID when that is all the line gives.
+    fn has(&self, recipient: &Recipient) -> bool {
+        self.fingerprints.iter().any(|fingerprint| recipient.names(fingerprint))
+            || matches!(recipient, Recipient::KeyId { id } if self.key_ids.contains(id))
     }
 }
 
@@ -100,10 +108,10 @@ pub fn recipient_scopes(keyring: &Keyring, root: &Path, now: u32) -> Result<Vec<
     let mut scopes = Vec::new();
     for gpg_id in files {
         // Not in the working copy, or not a file paw reads (a link).
+        // Nor one that is not text.
         let Ok(Some(bytes)) = read_file(root, &gpg_id) else { continue };
-        let text = String::from_utf8_lossy(&bytes);
-        let lines = parse_gpg_id(&text);
-        let mut known: HashSet<String> = HashSet::new();
+        let Ok(lines) = gpg_id_lines(&gpg_id, &bytes) else { continue };
+        let mut named = Named::default();
         let mut complete = true;
         let mut keys = Vec::new();
         for line in lines {
@@ -112,17 +120,18 @@ pub fn recipient_scopes(keyring: &Keyring, root: &Path, now: u32) -> Result<Vec<
                 LineStatus::Ready { fingerprint, .. } => keyring.keys().iter().find(|k| k.fingerprint == *fingerprint),
                 _ => None,
             };
-            if let Some(id) = key_id(&line) {
-                known.insert(id);
-            }
             match pinned {
                 Some(key) => {
-                    known.extend(key_id(&key.fingerprint));
-                    known.extend(key.fingerprints.iter().filter_map(|f| key_id(f)));
-                    known.extend(key.primary.iter().filter_map(|f| key_id(f)));
+                    named.fingerprints.push(key.fingerprint.clone());
+                    named.fingerprints.extend(key.fingerprints.iter().cloned());
+                    named.fingerprints.extend(key.primary.iter().cloned());
                 }
-                None => complete = false,
+                None => {
+                    complete = false;
+                    named.key_ids.extend(key_id(&line));
+                }
             }
+            named.fingerprints.extend(key_digits(&line).filter(|digits| digits.len() >= 40));
             let short_id = key_id(&line).or_else(|| pinned.and_then(|k| key_id(&k.fingerprint)));
             let this_key = matches!(status, LineStatus::Ready { source: KeySource::Card, .. });
             keys.push(ScopeKey {
@@ -141,11 +150,7 @@ pub fn recipient_scopes(keyring: &Keyring, root: &Path, now: u32) -> Result<Vec<
             // screen says what is wrong with it.
             let Ok(bytes) = read_entry(root, entry) else { continue };
             let Ok(found) = entry_recipients(&bytes) else { continue };
-            let stranger = found
-                .keys
-                .iter()
-                .filter_map(packet_key_id)
-                .any(|id| !known.contains(&id));
+            let stranger = found.keys.iter().any(|recipient| *recipient != Recipient::Hidden && !named.has(recipient));
             // A hidden recipient may be any key, and a passphrase opens it
             // without one: neither is certain to be for another key.
             let maybe = found.passphrase || found.keys.contains(&Recipient::Hidden);

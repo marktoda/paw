@@ -30,8 +30,8 @@ impl Recipient {
     /// Whether this packet names the key with `fingerprint` (upper-case
     /// hex, no spaces): by that fingerprint, or by its key ID. A hidden
     /// recipient names no key. The one rule for "is this entry for that
-    /// key": Home's badge, the key open, held-back changes and setup's
-    /// binding all ask it.
+    /// key": Home's badge, the key open, held-back changes, setup's
+    /// binding and the recipients screen all ask it.
     pub(crate) fn names(&self, fingerprint: &str) -> bool {
         match self {
             Self::KeyId { id } => key_id(fingerprint) == Some(id.as_str()),

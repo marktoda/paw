@@ -50,7 +50,14 @@ pub(crate) fn state_dir_of(repo: &Path) -> Option<&Path> {
 pub fn is_set_up(state_dir: &Path) -> bool {
     let done = super::values::read(&state_dir.join(SETUP))
         .is_ok_and(|found| found.is_some_and(|values| values.first_line() == Some(SETUP_DONE)));
-    done && repo_dir(state_dir).join(crate::path::GPG_ID).is_file()
+    done && holds_store(&repo_dir(state_dir))
+}
+
+/// Whether the checkout at `repo` is a pass store: a `.gpg-id` at its top
+/// that is a file, not a link (a link is never checked out). Every "is the
+/// store here" asks this.
+pub(crate) fn holds_store(repo: &Path) -> bool {
+    std::fs::symlink_metadata(repo.join(crate::path::GPG_ID)).is_ok_and(|found| found.is_file())
 }
 
 /// Where the store kept in `state_dir` is checked out.

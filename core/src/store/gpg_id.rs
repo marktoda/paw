@@ -32,13 +32,24 @@ pub(crate) fn key_digits(line: &str) -> Option<String> {
     (!digits.is_empty() && digits.chars().all(|c| c.is_ascii_hexdigit())).then(|| digits.to_ascii_uppercase())
 }
 
+/// The text of the `.gpg-id` at `file` (its path in the store), from its
+/// bytes. One that is not UTF-8 is refused, the same way wherever paw reads
+/// one: saving, the recipients screen, the integrate report and accepting.
+pub(crate) fn gpg_id_text<'b>(file: &str, bytes: &'b [u8]) -> Result<&'b str, PawError> {
+    std::str::from_utf8(bytes).map_err(|_| PawError::Store(format!("{file} is not a text file")))
+}
+
+/// The key names in the `.gpg-id` at `file`, from its bytes; see
+/// [`gpg_id_text`] and [`parse_gpg_id`].
+pub(crate) fn gpg_id_lines(file: &str, bytes: &[u8]) -> Result<Vec<String>, PawError> {
+    Ok(parse_gpg_id(gpg_id_text(file, bytes)?))
+}
+
 /// The recipients for entries in `folder` (`/` separated, empty for the top
 /// of the store). The folder need not exist yet.
 pub fn recipients_for(root: &Path, folder: &str) -> Result<Vec<String>, PawError> {
     let (file, bytes) = governing_gpg_id(root, folder)?;
-    let text = String::from_utf8(bytes)
-        .map_err(|_| PawError::Store(format!("{file} is not a text file")))?;
-    Ok(parse_gpg_id(&text))
+    gpg_id_lines(&file, &bytes)
 }
 
 /// The `.gpg-id` file that decides the recipients for entries in `folder`:
@@ -50,4 +61,16 @@ pub fn governing_gpg_id(root: &Path, folder: &str) -> Result<(String, Vec<u8>), 
         }
     }
     Err(PawError::Store("this store has no .gpg-id file, so it does not say which keys it is for".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gpg_id_lines;
+
+    #[test]
+    fn a_gpg_id_that_is_not_text_names_no_key_anywhere() {
+        assert_eq!(gpg_id_lines("work/.gpg-id", b"ABCD # me\n\n").unwrap(), ["ABCD"]);
+        let error = gpg_id_lines("work/.gpg-id", b"ABCD\xff\n").unwrap_err();
+        assert_eq!(error.to_string(), "work/.gpg-id is not a text file");
+    }
 }
