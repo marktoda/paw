@@ -6,10 +6,11 @@ import XCTest
 @MainActor
 final class StoreProblemTests: XCTestCase {
     func testAQueueThatCantBeReadMayLoseChanges() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("paw-unit-\(UUID().uuidString)", isDirectory: true)
-        let repo = URL(fileURLWithPath: try WritableFixture.prepare(root: root).repoDir, isDirectory: true)
-        let stateDir = repo.deletingLastPathComponent()
+        let fixture = try Fixture(writable: true)
+        let session = fixture.model.storeSession
+        let edits = try XCTUnwrap(session.edits)
+        let stateDir = URL(fileURLWithPath: edits.stateDir, isDirectory: true)
+        let repo = URL(fileURLWithPath: session.live.repoDir, isDirectory: true)
         let nothingLost = removeStoreWarning(unpushed: 0)
 
         XCTAssertEqual(StoreRootModel.unpushed(stateDir: stateDir), 0)

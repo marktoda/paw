@@ -2,18 +2,17 @@ import Foundation
 import XCTest
 @testable import Paw
 
-/// The app's model on the core's fixture store, in-process: a simulated key
-/// of its own (PIN 123456), a simulated keystore that answers as Face ID
-/// and a simulated clock, as `FixtureLaunch` builds them for the UI tests,
-/// but with no screens, built through the same `StoreSession` as the app.
-/// `writable` sets the store up through the simulated git host
-/// (`WritableFixture`), so it can be written and synced.
+/// The app's model on the core's fixture store, in-process, as
+/// `FixtureSession` opens it for the UI tests, but with no screens and a
+/// simulated key of the test's own (no touch unless `touch`), whose first
+/// `failingReads` reads fail. `writable` sets the store up through the
+/// simulated git host, so it can be written and synced.
 ///
 /// One class per file in this target, named as the file: scripts/ci-test.sh
 /// finds a unit test class named in `PAW_ONLY` by its file.
 @MainActor
 final class Fixture {
-    static let pin = "123456"
+    static let pin = FixtureSession.pin
     static let githubPassword = "tidal-Quartz-88-ferns"
 
     let key: SimulatedKey
@@ -25,47 +24,21 @@ final class Fixture {
     let touchRequired: Bool
 
     init(touch: Bool = false, failingReads: Int = 0, writable: Bool = false) throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("paw-unit-\(UUID().uuidString)", isDirectory: true)
-        let copiesDir = root.appendingPathComponent("window", isDirectory: true)
-        try FileManager.default.createDirectory(at: copiesDir, withIntermediateDirectories: true)
-        var prepared: WritableFixture.Prepared?
-        let storePath: String
-        if writable {
-            let found = try WritableFixture.prepare(root: root)
-            prepared = found
-            storePath = found.repoDir
-        } else {
-            storePath = root.appendingPathComponent("store", isDirectory: true).path
-            try writeFixtureStore(dir: storePath)
-        }
-
-        let key = SimulatedKey(pin: "123456", touchRequired: touch, touchTimeoutMs: 15_000)
-        let clock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000))
-        let keystore = SimKeystore()
+        let key = SimulatedKey(pin: Self.pin, touchRequired: touch, touchTimeoutMs: 15_000)
         let reads = FailingReads(failingReads)
-        let shared = clock.asClock()
-        let copies = CopyCache(dir: copiesDir.path, keystore: keystore.asKeystore(), clock: shared)
-        let session = try StoreSession(StoreSession.Parts(
-            repoDir: storePath, copies: copies, clock: shared, keyPort: KeyPort(clock: shared),
-            connect: {
+        let fixture = try FixtureSession(
+            key: .own(key, connect: {
                 if reads.take() {
                     throw ConnectionError.Failed(message: "The key didn't answer while it was being read.")
                 }
                 return key.asConnection()
-            },
-            simulator: SimulatorControls(
-                advanceClock: { clock.advanceMs(ms: $0) },
-                plugIn: { key.plugIn() },
-                startsUnplugged: false,
-                awayMs: 0),
-            writing: prepared?.writing, gitHub: nil, setUp: nil))
-        let model = AppModel(session: session)
+            }),
+            writable: writable)
         self.key = key
-        self.clock = clock
-        self.keystore = keystore
+        clock = fixture.clock
+        keystore = fixture.keystore
         self.reads = reads
-        self.model = model
+        model = AppModel(session: fixture.session)
         touchRequired = touch
     }
 
@@ -99,7 +72,7 @@ final class Fixture {
         return !askedForPin
     }
 
-    func enterPin(_ pin: String = "123456") {
+    func enterPin(_ pin: String = Fixture.pin) {
         model.keyTask.pin = pin
         model.keyTask.continueWithPin()
     }

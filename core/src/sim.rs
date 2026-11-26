@@ -19,6 +19,7 @@
 pub mod copies;
 pub mod fixture;
 pub mod github;
+pub mod prepared;
 pub mod remote;
 pub mod tasks;
 

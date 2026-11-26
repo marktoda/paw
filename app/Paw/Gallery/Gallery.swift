@@ -44,27 +44,49 @@ enum GalleryPage: String, CaseIterable, Identifiable {
         case .rows: RowsPage()
         case .disc: DiscPage()
         case .sheet: KeySheetPage()
-        case .entry: EntryMock()
+        case .entry: GalleryApp(page: self)
         case .status: StatusPage()
         case .empty: EmptyPage()
-        case .home: HomeMock()
+        case .home: GalleryApp(page: self)
         }
+    }
+
+    /// The app's own screens, with their own navigation stack.
+    var isTheApp: Bool {
+        self == .home || self == .entry
     }
 }
 
-/// Every component in every state, with invented content.
+/// Every component in every state, with invented content, and the app's
+/// own Home and Entry screens on the fixture store.
 struct GalleryRoot: View {
+    @State private var shownApp: GalleryPage?
+
     var body: some View {
-        NavigationStack {
+        Group {
             if let page = GalleryLaunch.page {
-                page.view
-            } else {
-                List(GalleryPage.allCases) { page in
-                    NavigationLink(page.title, value: page)
-                        .accessibilityIdentifier("gallery-\(page.rawValue)")
+                if page.isTheApp {
+                    page.view
+                } else {
+                    NavigationStack { page.view }
                 }
-                .navigationTitle("Gallery")
-                .navigationDestination(for: GalleryPage.self) { page in
+            } else {
+                NavigationStack {
+                    List(GalleryPage.allCases) { page in
+                        if page.isTheApp {
+                            Button(page.title) { shownApp = page }
+                                .accessibilityIdentifier("gallery-\(page.rawValue)")
+                        } else {
+                            NavigationLink(page.title, value: page)
+                                .accessibilityIdentifier("gallery-\(page.rawValue)")
+                        }
+                    }
+                    .navigationTitle("Gallery")
+                    .navigationDestination(for: GalleryPage.self) { page in
+                        page.view
+                    }
+                }
+                .sheet(item: $shownApp) { page in
                     page.view
                 }
             }
@@ -72,6 +94,19 @@ struct GalleryRoot: View {
         .preferredColorScheme(LaunchArgument.colorScheme)
     }
 }
+
+#if !targetEnvironment(simulator)
+/// Home and Entry need the simulated key and git host.
+struct GalleryApp: View {
+    let page: GalleryPage
+
+    var body: some View {
+        EmptyState(
+            symbol: PawSymbol.entry, title: "\(page.title) is in the simulator only",
+            message: "It shows the app's own screens on the fixture store.")
+    }
+}
+#endif
 
 /// A scrolling gallery page on the app background.
 struct GalleryScroll<Content: View>: View {
@@ -156,8 +191,6 @@ enum GallerySample {
     static let folders: [(name: String, count: Int)] = [
         ("bank", 9), ("dev", 27), ("email", 14), ("home", 6), ("shopping", 31),
     ]
-
-    static let password = "Xk7#mO0l1-pT9&wq"
 
     static func row(_ entry: Entry, match: String? = nil, action: @escaping () -> Void = {}) -> EntryRow {
         EntryRow(
