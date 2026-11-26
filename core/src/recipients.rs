@@ -235,6 +235,26 @@ pub(crate) fn names_key(recipients: &[Recipient], fingerprint: &str) -> bool {
     recipients.iter().any(|recipient| recipient.names(fingerprint))
 }
 
+/// `text` in groups of four characters, as people read a fingerprint out:
+/// "9A1C 03F2 …". Spaces in `text` are dropped first; the characters are
+/// kept as they are (an SSH fingerprint is base64).
+#[uniffi::export]
+pub fn fingerprint_groups(text: String) -> Vec<String> {
+    let chars: Vec<char> = text.chars().filter(|c| !c.is_whitespace()).collect();
+    chars.chunks(4).map(|group| group.iter().collect()).collect()
+}
+
+/// How a person tells keys apart by eye: the last eight hex digits of
+/// `fingerprint`, upper case, in two groups ("2C11", "41DE"). Fewer if it
+/// has fewer digits.
+#[uniffi::export]
+pub fn fingerprint_ending(fingerprint: String) -> Vec<String> {
+    let hex: String = fingerprint.chars().filter(char::is_ascii_hexdigit).map(|c| c.to_ascii_uppercase()).collect();
+    let tail = &hex[hex.len().saturating_sub(8)..];
+    let (first, last) = tail.split_at(tail.len().min(4));
+    [first, last].into_iter().filter(|part| !part.is_empty()).map(str::to_owned).collect()
+}
+
 /// The fingerprint of `key`, upper-case hex: as a recipient packet or a
 /// `.gpg-id` line names it.
 pub(crate) fn fingerprint_of(key: &impl pgp::types::KeyDetails) -> String {
@@ -273,5 +293,18 @@ pub fn access(bytes: &[u8], card_fingerprint: &str) -> Access {
         Ok(recipients) => access_for(&recipients, card_fingerprint),
         Err(PawError::NotAnEntry(reason)) => Access::Unreadable { reason },
         Err(other) => Access::Unreadable { reason: other.to_string() },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fingerprint_ending, fingerprint_groups};
+
+    #[test]
+    fn fingerprints_read_in_groups_of_four_and_end_in_two() {
+        assert_eq!(fingerprint_groups("AAAA BBBB CCCC D".into()), ["AAAA", "BBBB", "CCCC", "D"]);
+        assert_eq!(fingerprint_groups("uNiVztFv8Wq2".into()), ["uNiV", "ztFv", "8Wq2"]);
+        assert_eq!(fingerprint_ending("0x0123456789abcdef2c1141de".into()), ["2C11", "41DE"]);
+        assert_eq!(fingerprint_ending("ABCDE".into()), ["ABCD", "E"]);
     }
 }

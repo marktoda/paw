@@ -23,6 +23,13 @@ use crate::files::values::{self, Values};
 /// The file in the state directory. Public data only.
 const TEMP_PREFIX: &str = ".enrolled-key.tmp-";
 
+/// The serial printed on a key, from its `ident` ("0006:12345678" is
+/// "12345678"). The screens group its digits for reading.
+#[uniffi::export]
+pub fn key_serial(ident: String) -> String {
+    ident.rsplit(':').next().unwrap_or_default().to_owned()
+}
+
 /// Who a key is, as read without a PIN. Nothing in it is secret.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct KeyIdentity {
@@ -61,9 +68,9 @@ impl KeyIdentity {
         }
     }
 
-    /// The serial, as printed on the key, from `ident`.
+    /// The serial, as printed on the key; see [`key_serial`].
     pub fn serial(&self) -> String {
-        self.ident.rsplit(':').next().unwrap_or_default().to_owned()
+        key_serial(self.ident.clone())
     }
 
     /// Whether `presented` is this key: the same decryption key, and the
@@ -84,17 +91,8 @@ impl KeyIdentity {
     pub fn describe(&self) -> String {
         let tail = self
             .decryption_fingerprint
-            .as_deref()
-            .map(|fpr| {
-                let chars: Vec<char> = fpr.chars().collect();
-                let end = &chars[chars.len().saturating_sub(8)..];
-                let (first, last) = end.split_at(end.len().min(4));
-                format!(
-                    ", decryption key ending {} {}",
-                    first.iter().collect::<String>(),
-                    last.iter().collect::<String>()
-                )
-            })
+            .clone()
+            .map(|fpr| format!(", decryption key ending {}", crate::recipients::fingerprint_ending(fpr).join(" ")))
             .unwrap_or_default();
         format!("serial {}{tail}", self.serial())
     }
