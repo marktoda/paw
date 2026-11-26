@@ -37,7 +37,6 @@ final class SimulatedHostHolder: @unchecked Sendable {
         SimRemoteHandle.shared.host
     }
 
-    /// Why it did not start, if it did not.
     let problem: String?
 
     private init() {

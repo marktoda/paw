@@ -382,7 +382,6 @@ private struct AddressScreen: View {
         #endif
     }
 
-    /// Where paw will connect, as the address reads now.
     private var reading: AddressReading? {
         model.addressReading
     }
@@ -610,8 +609,6 @@ private struct CheckScreen: View {
     }
 }
 
-// MARK: Done
-
 private struct DoneScreen: View {
     let model: SetupModel
     let opened: String
@@ -681,9 +678,6 @@ private struct DoneScreen: View {
     }
 }
 
-// MARK: The key sheet
-
-/// The shared key sheet, following `model.sheet`.
 private struct SetupKeySheet: View {
     let model: SetupModel
 

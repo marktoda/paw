@@ -108,7 +108,6 @@ struct GalleryApp: View {
 }
 #endif
 
-/// A scrolling gallery page on the app background.
 struct GalleryScroll<Content: View>: View {
     let title: String
     private let content: Content
@@ -132,7 +131,6 @@ struct GalleryScroll<Content: View>: View {
     }
 }
 
-/// A titled group of samples, on a card or straight on the background.
 struct GalleryGroup<Content: View>: View {
     let title: String
     var onCard = true

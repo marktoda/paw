@@ -1,7 +1,5 @@
 import SwiftUI
 
-/// Settings: Lock now, each feature's section, About and Remove, and in
-/// the simulator the controls for the simulated hardware.
 struct SettingsSheet: View {
     let model: AppModel
     @Environment(\.dismiss) private var dismiss

@@ -34,7 +34,6 @@ enum SetupScreen: Equatable {
 /// then what to do. Never an alert.
 struct SetupProblem: Equatable {
     enum Action: Equatable {
-        /// Run the step that failed again.
         case retry
         /// Forget everything setup kept and begin again.
         case startOver
@@ -75,9 +74,8 @@ struct SetupSheet: Identifiable {
 }
 
 /// Drives the core's `Setup` for the setup screens. The core decides every
-/// step; this keeps what the screens need besides: which of a step's two
-/// screens is up, the problem to show, and the key sheet. The PIN goes
-/// from the sheet's field straight to the core task, never kept here.
+/// step. The PIN goes from the sheet's field straight to the core task,
+/// never kept here.
 @MainActor @Observable
 final class SetupModel {
     struct KeyNotAccepted: Equatable {
@@ -93,13 +91,10 @@ final class SetupModel {
     }
 
     let setup: Setup
-    /// Where the store is cloned to.
     let repoPath: String
     /// Shared with Home afterwards, so the PIN typed here is still held.
     let keyPort: KeyPort
-    /// The key going in and out, and reading it.
     let reader: KeyReader
-    /// The key sheet's task: the download, or the check of the key.
     let keyTask: KeyTaskDriver
     private let finished: () -> Void
     private let startOver: () -> Void
@@ -116,7 +111,6 @@ final class SetupModel {
     /// A plain step under way, e.g. "Checking github.com…".
     private(set) var working: String?
     var addressText = ""
-    /// What the key sheet does, while it is up.
     private var sheetPurpose: SetupSheet.Purpose = .download
     private(set) var readiness: SetupWriteReadiness?
     private(set) var storeFacts: StoreFacts?
@@ -156,12 +150,10 @@ final class SetupModel {
         reader.watch()
     }
 
-    /// The key sheet while it is up.
     var sheet: SetupSheet? {
         keyTask.shown.map { SetupSheet(id: $0, purpose: sheetPurpose) }
     }
 
-    /// A key is in (a reader is present, or the simulated key is plugged).
     var keyPresent: Bool {
         reader.present
     }
@@ -259,8 +251,6 @@ final class SetupModel {
         return readStoreAddress(text: typed)
     }
 
-    // MARK: Moving through the steps
-
     /// "Set up" on the welcome screen: on to the key.
     func begin() {
         problem = nil
@@ -278,7 +268,6 @@ final class SetupModel {
         reader.retry()
     }
 
-    /// Setup's first step, on the key's session.
     private func stepThroughKey(_ session: KeySession) {
         problem = nil
         working = "Reading your key\u{2026}"
@@ -411,7 +400,6 @@ final class SetupModel {
         finished()
     }
 
-    /// The inline problem's action.
     func performProblemAction() {
         guard let action = problem?.action else { return }
         problem = nil
@@ -479,8 +467,6 @@ final class SetupModel {
         }
     }
 
-    // MARK: The key sheet
-
     /// "Download": the core's sign-in task, PIN (unless held), connecting,
     /// touch, then the clone with its progress.
     func startDownload() {
@@ -547,8 +533,6 @@ final class SetupModel {
         show(error, downloading: purpose == .download)
     }
 
-    // MARK: Words
-
     private func show(_ error: Error, downloading: Bool = false) {
         guard let error = error as? SetupError else {
             problem = SetupProblem(
@@ -583,7 +567,6 @@ final class SetupModel {
 }
 
 extension SetupModel {
-    /// The download, or the check of the key, with the key.
     private func job(_ purpose: SetupSheet.Purpose) -> KeyJob<SetupError> {
         let setup = setup
         let port = keyPort
@@ -604,7 +587,6 @@ extension SetupModel {
                 self?.ended(end, purpose: purpose) ?? .close
             },
             letGo: { [weak self] _ in
-                // Show where setup is.
                 guard let self else { return }
                 state = setup.state()
             },

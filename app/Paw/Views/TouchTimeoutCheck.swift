@@ -8,7 +8,6 @@ import SwiftUI
 /// What the key answered goes to the key log below it.
 @MainActor @Observable
 final class TouchTimeoutCheck {
-    /// What the last check found.
     enum Outcome: Equatable {
         case timedOut
         case signed
@@ -65,7 +64,6 @@ final class TouchTimeoutCheck {
     }
 }
 
-/// The check's section in Key diagnostics.
 struct TouchTimeoutSection: View {
     let model: AppModel
     let check: TouchTimeoutCheck

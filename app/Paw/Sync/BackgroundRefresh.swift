@@ -7,7 +7,6 @@ import UIKit
 /// and written while the iPhone is locked; the store can't (it is
 /// `complete`-protected).
 struct BackgroundRun: Equatable {
-    /// How a run went, kept by name and said by the status page.
     enum Outcome: String {
         case locked, noStore, notSignedIn, notLinked, upToDate, broughtIn, paused, signedOut, offline, outOfTime,
              busy, failed
@@ -38,10 +37,7 @@ struct BackgroundRun: Equatable {
 /// ID, and integrates only what needs no decision (the core's
 /// `background_refresh`). Anything that needs the person is left for the
 /// next open, where a check with the sign-in shows it as usual.
-///
-/// Registered before launch ends (`PawAppDelegate`); scheduled each time
-/// paw goes to the background and after each run, at the earliest an hour
-/// later. iOS decides when it runs, if at all.
+/// iOS decides when it runs, if at all.
 enum BackgroundRefresh {
     static let identifier = "com.marktoda.paw.refresh"
     /// iOS gives a refresh task about 30 seconds; the core stops by this.
@@ -55,8 +51,6 @@ enum BackgroundRefresh {
     private static let resultKey = "pawBackgroundRunResult"
     private static let changedKey = "pawBackgroundRunChanged"
     private static let needsLookKey = "pawBackgroundRunNeedsLook"
-
-    // MARK: Registering and scheduling
 
     /// Call once, before `didFinishLaunching` returns.
     @MainActor
@@ -79,7 +73,7 @@ enum BackgroundRefresh {
         }
     }
 
-    /// Asks iOS for the next run. Replaces any request already made.
+    /// Replaces any request already made.
     static func schedule() {
         let request = BGAppRefreshTaskRequest(identifier: identifier)
         request.earliestBeginDate = Date(timeIntervalSinceNow: interval)
@@ -115,10 +109,6 @@ enum BackgroundRefresh {
         }
     }
 
-    // MARK: One run
-
-    /// Runs the refresh off the main thread, records it, publishes the
-    /// AutoFill suggestions if the store changed, then calls `done`.
     @MainActor
     private static func start(stop: BackgroundStop, done: @escaping @MainActor (BackgroundRun) -> Void) {
         // The store is unreadable while the iPhone is locked: skip, and say so.
@@ -149,7 +139,7 @@ enum BackgroundRefresh {
         }
     }
 
-    /// The refresh itself. Blocks for at most `budgetSeconds`.
+    /// Blocks for at most `budgetSeconds`.
     private static func runNow(stop: BackgroundStop) -> BackgroundRun {
         guard let location = try? StoreLocation.standard(), location.isSetUp else {
             return skipped(.noStore)
@@ -166,8 +156,6 @@ enum BackgroundRefresh {
         return run
     }
 
-    /// The store the run changed, with its state folder, for AutoFill's
-    /// suggestions.
     private static func openStore() -> (store: PassStore, stateDir: String)? {
         guard let location = try? StoreLocation.standard(),
               let store = try? PassStore(dir: location.repoDir.path) else { return nil }
@@ -178,7 +166,6 @@ enum BackgroundRefresh {
         BackgroundRun(at: Date(), outcome: outcome, changed: false, needsLook: false)
     }
 
-    /// The core's report as a run.
     static func summary(of report: BackgroundRefreshReport, at: Date) -> BackgroundRun {
         let changed = report.integration.map { $0.fastForwarded > 0 || $0.replayed > 0 } ?? false
         // Held-back changes are said on Home already; they stop nothing here.
@@ -202,8 +189,6 @@ enum BackgroundRefresh {
         return BackgroundRun(at: at, outcome: outcome, changed: changed, needsLook: needsLook)
     }
 
-    // MARK: The record
-
     private static func record(_ run: BackgroundRun) {
         let defaults = UserDefaults.standard
         defaults.set(run.at.timeIntervalSince1970, forKey: atKey)
@@ -213,8 +198,7 @@ enum BackgroundRefresh {
         if run.needsLook { defaults.set(true, forKey: needsLookKey) }
     }
 
-    /// The last run, if there has been one. A record this build can't
-    /// read (an older one's sentence) is none.
+    /// A record this build can't read (an older one's sentence) is none.
     static func lastRun() -> BackgroundRun? {
         let defaults = UserDefaults.standard
         let at = defaults.double(forKey: atKey)

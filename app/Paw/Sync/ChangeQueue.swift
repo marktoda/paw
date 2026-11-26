@@ -1,10 +1,8 @@
 import Foundation
 import Observation
 
-/// The changes saved on this iPhone and not sent yet, as the core's queue
-/// holds them, read again whenever the store's entries may have changed.
-/// Undo and discard change it, a send empties it; each change is announced
-/// on the live store like any other write.
+/// The changes saved on this iPhone and not sent yet. Each change to the
+/// queue is announced on the live store like any other write.
 @MainActor @Observable
 final class ChangeQueue {
     /// Newest first.
@@ -44,8 +42,6 @@ final class ChangeQueue {
             problem = describe(error)
         }
     }
-
-    // MARK: Changing it
 
     /// Takes back the newest change. `task` names the time asked of iOS to
     /// finish it. `false`, with `problem` said, if it failed.

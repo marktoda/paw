@@ -1,8 +1,5 @@
 import SwiftUI
 
-/// One setup screen: the step counter, a rounded title, one or two
-/// sentences, the screen's own content, an inline problem if there is one,
-/// and its buttons pinned to the bottom, above the keyboard.
 struct SetupPage<Content: View, Buttons: View>: View {
     let step: Int?
     let title: String
@@ -45,7 +42,6 @@ struct SetupPage<Content: View, Buttons: View>: View {
                 content
             }
             .frame(maxWidth: PawMetrics.setupTextWidth, alignment: .leading)
-            // On iPad the column sits in the middle of the screen.
             .frame(maxWidth: .infinity, alignment: PadLayout.isPad ? .center : .leading)
             .padding(.horizontal, PawMetrics.screenMargin)
             .padding(.top, PawMetrics.Spacing.s)
@@ -77,8 +73,6 @@ extension PawMetrics {
     static let setupTextWidth: CGFloat = 340
 }
 
-/// A white card on the grouped background, for a key, a fingerprint or a
-/// public key.
 struct SetupCard<Content: View>: View {
     @ViewBuilder var content: Content
 
@@ -107,8 +101,6 @@ struct KeyButtonLabel: View {
     }
 }
 
-/// The inline problem: what happened, what to do, the lines to read
-/// closely, its one action, and the other way on it offers, if any.
 struct SetupProblemView: View {
     let problem: SetupProblem
     let act: () -> Void
@@ -169,7 +161,6 @@ struct SetupProblemView: View {
     }
 }
 
-/// A quiet "working" line under a screen's content.
 struct SetupWorkingLine: View {
     let text: String
 
@@ -232,7 +223,6 @@ struct FingerprintText: View {
 }
 
 extension KeyTouch {
-    /// How a slot's touch policy reads on "Your key".
     var phrase: String {
         switch self {
         case .eachUse: "touch every time"

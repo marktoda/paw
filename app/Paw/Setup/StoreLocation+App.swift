@@ -1,7 +1,5 @@
 import Foundation
 
-/// What only the app does with the store's folders: makes them, protects
-/// them, reports on them, and removes them.
 extension StoreLocation {
     /// Makes the folders, keeps them out of device backups and protects
     /// them at rest.
@@ -24,11 +22,6 @@ extension StoreLocation {
     /// `scripts/install.sh` signs with). A file created later in a
     /// protected folder takes the folder's class; this runs again when
     /// Home opens after setup, to catch any that didn't.
-    ///
-    /// Trade-off for later: background refresh (design 2.9) would need
-    /// `repo/` readable while the phone is locked, i.e.
-    /// `completeUntilFirstUserAuthentication` on the repository alone. Not
-    /// needed yet, so `complete` everywhere.
     ///
     /// Returns how many items could not be protected.
     @discardableResult

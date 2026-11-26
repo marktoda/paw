@@ -29,7 +29,6 @@ final class BackgroundTime {
         id = .invalid
     }
 
-    /// Runs `body` now, inside background time.
     static func run<T>(_ name: String, _ body: () throws -> T) rethrows -> T {
         let time = begin(name)
         defer { time.end() }

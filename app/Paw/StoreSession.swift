@@ -33,7 +33,6 @@ final class Signal<Value> {
     }
 }
 
-/// Why the store on disk changed, and what changed.
 enum StoreChange {
     /// A save, delete, undo or discard on this iPhone: the entries it
     /// touched, and the rename if it was one.
@@ -45,7 +44,6 @@ enum StoreChange {
     case synced(IntegrateReport?, replaced: Bool)
     /// A re-encrypt of held-back changes ended, however it ended.
     case reencrypted
-    /// The store is being removed from this iPhone.
     case removed
 
     struct Renamed: Equatable {
@@ -62,12 +60,10 @@ enum StoreChange {
     }
 }
 
-/// The store changed: why, and the store as it is now.
 struct StoreChanged {
     let change: StoreChange
     /// Read again after the change; the one before if that failed.
     let store: PassStore
-    /// Why the store could not be read again.
     let readProblem: Error?
 }
 
@@ -158,7 +154,6 @@ final class StoreSession {
         /// The copies' clock, the key port's and the clipboard's.
         let clock: Clock
         let keyPort: KeyPort
-        /// Where the key comes from.
         let keys: any KeyConnector
         /// The write side: `nil` where the store can't be written.
         let writing: Writing?
@@ -182,9 +177,7 @@ final class StoreSession {
     let keyPort: KeyPort
     /// What paw put on the pasteboard, ended on `clock`.
     let clipboard: Clipboard
-    /// The key going in and out, and reading it.
     let reader: KeyReader
-    /// Every key sheet's driver on this store.
     let keyTasks: KeyTaskDrivers
     /// Where the store keeps its own state; `nil` where it can't be
     /// written.
@@ -199,7 +192,6 @@ final class StoreSession {
     let gitHub: GitHubAccess?
     let autoFill: AutoFillSuggestions?
     let setUp: SetUpStore?
-    /// What the features ask of the screens.
     let requests: Signal<ScreenRequest>
     private var backgroundWatch: NSObjectProtocol?
 
@@ -263,7 +255,6 @@ final class StoreSession {
         syncing?.cameForward()
     }
 
-    /// The editor or the sync sheet is up.
     var sheetIsUp: Bool {
         edits?.form != nil || syncing?.sheet != nil
     }
@@ -297,7 +288,6 @@ final class KeyTaskDrivers {
     }
 
     #if DEBUG && targetEnvironment(simulator)
-    /// Key tasks not yet ended, across every driver made here.
     var pendingTasks: Int {
         made.reduce(0) { $0 + ($1.driver?.pendingTasks ?? 0) }
     }

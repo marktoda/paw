@@ -1,10 +1,7 @@
 import SwiftUI
 
 /// Settings › Store, Face ID copies on a device, and Key diagnostics
-/// (design.md 2.12). The address shows only on a set-up store; the
-/// server key and who can open the passwords show wherever the store can be
-/// written, the simulator's fixture included. Remove is its own section,
-/// `RemoveStoreSection`, last in Settings.
+/// (design.md 2.12).
 struct StoreSettingsSections: View {
     let model: AppModel
     @State private var showsDiagnostics = false
@@ -48,9 +45,6 @@ struct StoreSettingsSections: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("settings-key-diagnostics")
             .sheet(isPresented: $showsDiagnostics) {
-                // What the key session read when the key was plugged
-                // in, the touch timeout check (a key task, through the
-                // same session and its checks) and the key log.
                 KeyDiagnosticsView(model: model)
                     .privacyCover()
             }
@@ -59,7 +53,6 @@ struct StoreSettingsSections: View {
         }
     }
 
-    /// Address, the server key, and who can open the passwords.
     @ViewBuilder private var storeSection: some View {
         let syncing = model.storeSession.syncing
         let writer = model.storeSession.edits?.writer

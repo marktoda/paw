@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// The screen for a `Route.sync`.
 struct SyncRouteScreen: View {
     let model: AppModel
     let route: SyncRoute
@@ -27,7 +26,6 @@ struct SyncRouteScreen: View {
     }
 }
 
-/// A plain paragraph at the top of a sync screen, on the background.
 private struct SyncIntro: View {
     let headline: String
     let text: String
@@ -55,10 +53,8 @@ private struct SyncIntro: View {
 }
 
 /// Waiting changes paw will not send as they are: each one's ciphertext is
-/// for other keys than its folder's list says now. For each, who it is
-/// encrypted for and who it should be for, and the ways out: accept the new
-/// list, then re-encrypt them all with the key, or discard one. Sending it
-/// as it is is never offered.
+/// for other keys than its folder's list says now. Sending it as it is is
+/// never offered.
 struct HeldBackScreen: View {
     let model: AppModel
     let syncing: SyncModel

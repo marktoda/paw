@@ -43,7 +43,6 @@ struct SplitPath {
         folders + details
     }
 
-    /// The folder the middle column shows, `nil` when none is picked.
     var folder: String? {
         if case .folder(let folder)? = folders.last { return folder }
         return nil
@@ -69,7 +68,6 @@ extension AppModel {
         }
     }
 
-    /// The open entry on the right of the split view, if any.
     var splitShownEntry: OpenSession? {
         guard usesSplitView, case .entry(let id)? = SplitPath(path).details.last else { return nil }
         return session(id)

@@ -18,10 +18,8 @@ struct KeyActionLabel: View {
     }
 }
 
-/// Under the Home title: the sync status as a pill. Tapping it opens the
-/// sync sheet; with the disc ("Updates need your key") it goes straight to
-/// the key sheet that updates the store. The time it shows moves on by
-/// itself; nothing is fetched.
+/// Under the Home title: the sync status as a pill. The time it shows moves
+/// on by itself; nothing is fetched.
 struct HomeSyncPill: View {
     let model: AppModel
 
@@ -295,13 +293,11 @@ private struct SyncModifier: ViewModifier {
 }
 
 extension View {
-    /// The sync sheet; see `SyncModifier`.
     func pawSync(_ model: AppModel) -> some View {
         modifier(SyncModifier(model: model))
     }
 }
 
-/// One sheet for the status page and the key stages of a send or check.
 private struct SyncSheetHost: View {
     let model: AppModel
     let syncing: SyncModel
@@ -333,7 +329,6 @@ private struct SyncSheetHost: View {
         case .refresh:
             return "Update your store"
         case .reencrypt:
-            // "Re-encrypt 2 of 3" once the core has counted them.
             if let progress = syncing.progress, progress.total > 1 {
                 return "Re-encrypt \(min(progress.done + 1, progress.total)) of \(progress.total)"
             }
@@ -353,8 +348,6 @@ private struct SyncSheetHost: View {
     }
 }
 
-/// The status page: when paw last checked, where it syncs to, what went
-/// wrong and the next step, and the two things that need the key.
 private struct SyncStatusSheet: View {
     let model: AppModel
     let syncing: SyncModel
@@ -587,12 +580,10 @@ private struct SyncStatusSheet: View {
 }
 
 extension String {
-    /// `nil` for "".
     var nilIfEmpty: String? {
         isEmpty ? nil : self
     }
 
-    /// "Just now" from "just now".
     var capitalizedFirst: String {
         prefix(1).uppercased() + dropFirst()
     }

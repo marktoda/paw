@@ -1,7 +1,6 @@
 import Foundation
 import Observation
 
-/// What the add and edit sheet is for.
 enum EntryFormPurpose: Identifiable, Equatable {
     /// A new entry, starting in this folder ("" for the top).
     case add(folder: String)
@@ -39,7 +38,6 @@ final class StoreEdits {
     /// opened, and then nothing can be undone.
     let queue: ChangeQueue?
 
-    /// The add or edit sheet, while it is up.
     private(set) var form: EntryFormPurpose?
     /// The open entry whose delete is waiting for its inline confirm.
     private(set) var confirmingDelete: UUID?

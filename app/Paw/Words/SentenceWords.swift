@@ -7,7 +7,6 @@ func asSentence(_ text: String) -> String {
     return capitalised.hasSuffix(".") ? capitalised : capitalised + "."
 }
 
-/// `text` with its first letter capitalised.
 func capitalised(_ text: String) -> String {
     text.prefix(1).uppercased() + text.dropFirst()
 }

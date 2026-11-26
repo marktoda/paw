@@ -14,9 +14,7 @@ import Foundation
 /// Settings: an entry seen with a one-time code when last opened
 /// (`OneTimeCodeEntries`, a yes per entry) also gets a one-time-code
 /// identity for each of its sites, so iOS offers it in a code field. Off,
-/// the core lists none. The list is replaced whole after setup, on each
-/// launch, after a save, rename, delete or refresh (`AutoFillSuggestions`);
-/// removing the store clears it. App target only (not compiled into the
+/// the core lists none. App target only (not compiled into the
 /// extension).
 enum CredentialIdentities {
     struct Identity: Equatable, Sendable {

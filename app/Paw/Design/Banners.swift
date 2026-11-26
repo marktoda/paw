@@ -6,7 +6,7 @@ struct UnpushedBanner: View {
         /// Sending needs the key: the banner carries the gold disc.
         case waitingForKey
         case offline
-        /// Saved here, nothing tried yet: no colour, `arrow.up.circle`.
+        /// Saved here, nothing tried yet.
         case waiting
         /// The git remote refused the push. The only state that is a warning.
         case refused

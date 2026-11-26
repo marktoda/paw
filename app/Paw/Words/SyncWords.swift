@@ -11,7 +11,6 @@ extension SyncFailure {
         }
     }
 
-    /// The remote holds names paw won't check out.
     static let refusedRemoteProblem = "Your store has names paw can't download"
 
     static func refusedRemoteNextStep(unpushed: Int) -> String {
@@ -99,7 +98,7 @@ extension SyncFailure {
         }
     }
 
-    /// The remote's failure during a sync. `host` is the store's host.
+    /// The remote's failure during a sync.
     init(_ failure: RemoteFailure, during kind: SyncKind, unpushed: Int, host: String) {
         let waiting = Self.waiting(unpushed)
         let notDone = Self.notDone(kind)

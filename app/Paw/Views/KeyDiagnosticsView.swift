@@ -29,7 +29,6 @@ struct KeyDiagnosticsView: View {
         _touchCheck = State(initialValue: TouchTimeoutCheck(session: model.storeSession))
     }
 
-    /// The readers there are now, by name.
     private var readerNames: [String] {
         model.storeSession.reader.source.readerNames
     }
