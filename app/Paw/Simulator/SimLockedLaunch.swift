@@ -23,7 +23,7 @@ extension StoreRootModel {
         let copies = (try? FileManager.default.contentsOfDirectory(atPath: location.copiesDir.path).count) ?? 0
         let pin = keyPort.session()?.holdsPin() == true ? "held" : "none"
         let pasteboard = UIPasteboard.general.hasStrings ? "full" : "empty"
-        return "copies \(copies) · keychain resets \(keystore.resetCount()) · pin \(pin) · pasteboard \(pasteboard)"
+        return "copies \(copies) · keychain resets \(SimulatedKeystoreHolder.keystore.resetCount()) · pin \(pin) · pasteboard \(pasteboard)"
             + " · legacy \(legacyFolder)"
     }
 }

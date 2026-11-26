@@ -48,20 +48,11 @@ enum AutoFillEnd: String, Sendable {
 /// shown, the copies' small metadata files. Nothing is decrypted.
 enum StoreForAutoFill {
     static func open() -> AutoFillOpening {
-        guard let location = try? StoreLocation.standard(), location.isSetUp else {
-            return .noStore
-        }
         do {
+            let location = try StoreLocation.standard()
+            guard location.isSetUp else { return .noStore }
             return .ready(try AutoFillSource.open(
-                at: location, clock: SystemClock(), connect: { try KeyConnection.open() },
-                copies: { dir in
-                    #if targetEnvironment(simulator)
-                    // The simulator has no Secure Enclave the two processes share.
-                    return nil
-                    #else
-                    return PlatformCopies.make(dir: dir.path)
-                    #endif
-                }))
+                at: location, clock: SystemClock(), connect: { try KeyConnection.open() }))
         } catch {
             return isStoreBusy(error) ? .busy : .unreadable(String(describing: error))
         }
@@ -70,21 +61,18 @@ enum StoreForAutoFill {
 
 extension AutoFillSource {
     /// Everything the AutoFill screens read, for the store set up at
-    /// `location`, in this order: the store's folder names, a key port
-    /// writing the extension's key log, the enrolled key (any other key is
-    /// refused before a PIN is sent), the Face ID copies, the site pairings
-    /// and the list of entries with a code.
+    /// `location`, in this order: the store's folder names, the extension's
+    /// key side (`StoreKeys`; `copies` as there), the site pairings and the
+    /// list of entries with a code.
     static func open(
         at location: StoreLocation, clock: Clock, connect: @escaping KeyReader.Connect,
-        copies: (URL) -> CopyCache?
+        copies: ((URL) -> CopyCache?)? = nil
     ) throws -> AutoFillSource {
         let stateDir = location.stateDir.path
         let store = try PassStore(dir: location.repoDir.path)
-        let keyPort = KeyPort(clock: clock)
-        keyPort.setKeyLog(stateDir: stateDir, process: "fill")
-        _ = try keyPort.loadEnrolledKey(stateDir: stateDir)
+        let keys = StoreKeys(.fill, at: location, clock: clock, copies: copies)
         return AutoFillSource(
-            store: store, copies: copies(location.copiesDir), keyPort: keyPort, connect: connect,
+            store: store, copies: try keys.openEnrolled(), keyPort: keys.keyPort, connect: connect,
             pairings: SitePairings.open(stateDir: stateDir),
             codes: OneTimeCodeEntries.open(stateDir: stateDir))
     }

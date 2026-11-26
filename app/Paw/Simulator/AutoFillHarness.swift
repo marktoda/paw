@@ -109,16 +109,11 @@ private final class HarnessWorld: @unchecked Sendable {
             try writeFixtureStore(dir: location.repoDir.path)
             // `finance/northwind` and `contoso/alice`: named without a domain.
             try writeNameMatchEntries(dir: location.repoDir.path)
-            let keystore = SimKeystore()
-            switch LaunchArgument.simFaceId.string {
-            case "cancel": keystore.setFaceId(answer: .cancel)
-            case "nomatch": keystore.setFaceId(answer: .noMatch)
-            default: keystore.setFaceId(answer: .match)
-            }
             let clock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000)).asClock()
+            // Copies, as the app keeps in the simulator; the extension keeps none there.
             let source = try AutoFillSource.open(
                 at: location, clock: clock, connect: { try KeyConnection.open() },
-                copies: { CopyCache(dir: $0.path, keystore: keystore.asKeystore(), clock: clock) })
+                copies: { CopyCache(dir: $0.path, keystore: SimulatedKeystoreHolder.keystore.asKeystore(), clock: clock) })
             if LaunchArgument.simOneTimeCodes.bool {
                 try source.codes?.setEnabled(enabled: true)
             }
