@@ -18,6 +18,11 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::PawError;
 use crate::otp::{OtpProblem, Totp};
 
+/// The most decrypted text an entry may hold. Entries are a few lines; a
+/// tiny compressed file that expands without end would otherwise exhaust
+/// memory, which the AutoFill extension has very little of.
+pub(crate) const MAX_PLAINTEXT_BYTES: u64 = 1 << 20;
+
 /// Keys read as the user name, in order of preference.
 const USERNAME_KEYS: [&str; 4] = ["login", "username", "user", "email"];
 /// Keys read as the web address, in order of preference.

@@ -22,7 +22,8 @@ use super::keylog::{self, KeyLog, Sink};
 use super::apdu::{self, Verify};
 use super::task::TaskSide;
 use super::wire::Wire;
-use super::{FAST_REFUSAL, KeyError, MAX_PIN_LEN, MIN_PIN_LEN, PIN_BACKGROUND_LIMIT, Uptime};
+use super::{FAST_REFUSAL, KeyError, MAX_PIN_LEN, MIN_PIN_LEN, PIN_BACKGROUND_LIMIT};
+use crate::copies::Clock;
 use crate::ssh::SshPublicKey;
 use super::card::{self, CardConnection, CardInfo};
 use crate::PawError;
@@ -110,7 +111,7 @@ pub struct KeySession {
     me: Weak<KeySession>,
     wire: Arc<Wire>,
     identity: Identity,
-    uptime: Arc<dyn Uptime>,
+    uptime: Arc<dyn Clock>,
     ended: AtomicBool,
     state: Mutex<State>,
     card_free: Condvar,
@@ -136,7 +137,7 @@ impl KeySession {
     /// `again` says the port had read a key before.
     pub(crate) fn open(
         transport: Arc<dyn CardConnection>,
-        uptime: Arc<dyn Uptime>,
+        uptime: Arc<dyn Clock>,
         sink: Option<Arc<Sink>>,
         again: bool,
     ) -> Result<Arc<Self>, KeyError> {
@@ -159,7 +160,7 @@ impl KeySession {
         opened
     }
 
-    fn read(wire: Arc<Wire>, uptime: Arc<dyn Uptime>) -> Result<Arc<Self>, KeyError> {
+    fn read(wire: Arc<Wire>, uptime: Arc<dyn Clock>) -> Result<Arc<Self>, KeyError> {
         let info = card::card_info(wire.clone()).map_err(|e| read_error(&wire, e))?;
         let decryption_key = match info.decryption_fingerprint {
             Some(_) => Some(card::card_decryption_key(wire.clone()).map_err(|e| read_error(&wire, e))?),

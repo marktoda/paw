@@ -54,7 +54,7 @@ const MAX_ENTRY_BYTES: usize = 4096;
 const MAX_ID_BYTES: usize = 255;
 const MAX_WRAPPED_BYTES: usize = 4096;
 /// A copy holds an entry's text, so no more than an entry may hold.
-const MAX_TEXT_BYTES: usize = crate::key::MAX_PLAINTEXT_BYTES as usize;
+const MAX_TEXT_BYTES: usize = crate::entry::MAX_PLAINTEXT_BYTES as usize;
 
 /// Something is wrong with a copy: it was not written by paw with these
 /// keys, or it was changed since. Deliberately says nothing more.

@@ -17,9 +17,8 @@ use super::signer::{SessionSigner, authenticate};
 use super::task::{Body, Failure, KeyDone, Running, Stage, StageListener, TaskCore, TaskSide, Workflow};
 use super::{KeyError, KeyPurpose, LoginPurpose};
 use super::CardConnection;
-use super::Uptime;
 use crate::PawError;
-use crate::copies::CopyCache;
+use crate::copies::{Clock, CopyCache};
 use crate::files::content_id;
 use crate::store::PassStore;
 
@@ -73,7 +72,7 @@ fn enrolment_check(expected: Option<&KeyIdentity>, session: &KeySession) -> Opti
 
 #[derive(uniffi::Object)]
 pub struct KeyPort {
-    uptime: Arc<dyn Uptime>,
+    uptime: Arc<dyn Clock>,
     /// Counts plug-ins, so a task at `PlugIn` cannot miss one.
     plugged: AtomicU64,
     state: Mutex<State>,
@@ -96,15 +95,6 @@ fn read_and_check(store: &PassStore, entry: &str, session: &KeySession) -> Resul
 }
 
 impl KeyPort {
-    /// `uptime` measures time in the background for the PIN limit.
-    pub(crate) fn with_uptime(uptime: Arc<dyn Uptime>) -> Arc<Self> {
-        Arc::new(Self {
-            uptime,
-            plugged: AtomicU64::new(0),
-            state: Mutex::new(State { session: None, waiting: Vec::new(), enrolled: None, log: None }),
-        })
-    }
-
     fn lock(&self) -> MutexGuard<'_, State> {
         // Plain values only.
         self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -417,6 +407,17 @@ impl KeyPort {
 
 #[uniffi::export]
 impl KeyPort {
+    /// `clock` measures time in the background for the PIN limit (its
+    /// monotonic clock).
+    #[uniffi::constructor]
+    pub fn new(clock: Arc<dyn Clock>) -> Arc<Self> {
+        Arc::new(Self {
+            uptime: clock,
+            plugged: AtomicU64::new(0),
+            state: Mutex::new(State { session: None, waiting: Vec::new(), enrolled: None, log: None }),
+        })
+    }
+
     /// A key was plugged in: reads it (no PIN, no touch) and makes its
     /// session, ending any earlier one; a task waiting at `PlugIn` goes on.
     pub fn plugged_in(&self, connection: Arc<dyn CardConnection>) -> Result<Arc<KeySession>, KeyError> {

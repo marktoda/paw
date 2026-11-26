@@ -36,7 +36,6 @@ mod wire;
 use std::time::Duration;
 
 pub use card::{CardConnection, CardInfo, ConnectionError, KeyTouch};
-pub(crate) use decrypt::MAX_PLAINTEXT_BYTES;
 pub use decrypt::MAX_DECIPHERS;
 pub use enrolment::{KeyIdentity, KeyMismatch};
 pub use kdf::PinKdfStatus;
@@ -48,12 +47,6 @@ pub(crate) use task::TaskSide;
 pub use session::KeySession;
 pub use signer::SessionSigner;
 pub use task::{Failure, KeyDone, Running, Stage, StageListener, Workflow};
-
-/// Milliseconds since boot, counting sleep; never goes backwards within one
-/// boot. What the PIN's time in the background is measured with.
-pub(crate) trait Uptime: Send + Sync {
-    fn monotonic_ms(&self) -> i64;
-}
 
 /// paw forgets the PIN once it has spent this long in the background
 /// (owner's decision; locking the phone alone does not count).

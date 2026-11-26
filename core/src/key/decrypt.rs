@@ -36,10 +36,7 @@ use crate::recipients::{self, Access};
 /// password stores, and a failed open says the key could not decrypt it.
 pub const MAX_DECIPHERS: usize = 1;
 
-/// The most decrypted text an entry may hold. Entries are a few lines; a
-/// tiny compressed file that expands without end would otherwise exhaust
-/// memory, which the AutoFill extension has very little of.
-pub(crate) const MAX_PLAINTEXT_BYTES: u64 = 1 << 20;
+use crate::entry::MAX_PLAINTEXT_BYTES;
 
 /// Reads decrypted (and possibly decompressed) text into `out`, refusing
 /// anything longer than [`MAX_PLAINTEXT_BYTES`].
