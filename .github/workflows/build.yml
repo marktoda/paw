@@ -113,7 +113,7 @@ jobs:
           ONLY: ${{ inputs.only }}
         run: |
           python3 -I - <<'PY' >> "$GITHUB_OUTPUT"
-          import glob, json, os, re, sys
+          import glob, json, os, re, subprocess, sys
           # Seconds a test of each class takes on a runner (scripts/ci-report.sh
           # prints them). Only the balance between parts depends on these.
           # Measured on run 45500441073 (2026-11-24). Since then 3 AppTests and
@@ -136,11 +136,10 @@ jobs:
           w = lambda cls: weight.get(cls, 60)
           only = os.environ.get("ONLY", "").split()
           # A narrowed run always runs every unit test, in its first part, so
-          # a unit test class named (app/PawTests/<Class>.swift) needs no part
-          # of its own.
-          unit_classes = {"PawTests"} | {os.path.basename(p)[:-6] for p in glob.glob("app/PawTests/*.swift")}
+          # a unit test named needs no part of its own.
+          ids = subprocess.run(["scripts/test-id.sh", *only], capture_output=True, text=True, check=True).stdout.split()
           named_only = only
-          only = [n for n in only if n.split("/")[0] not in unit_classes]
+          only = [n for n, i in zip(only, ids) if i.split("/")[0] != "PawTests"]
           if named_only and not only:
               only = ["PawTests"]
           parts = []
