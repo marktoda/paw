@@ -126,9 +126,13 @@ struct RemoveStoreSection: View {
         }
     }
 
-    /// What Remove deletes, and the changes it would lose as they are now.
+    /// What Remove deletes, and the changes it would lose as they are now:
+    /// none where the store can't be written, unknown where its queue
+    /// can't be read.
     var warning: String {
-        removeStoreWarning(unpushed: model.storeSession.syncing?.queue.unsentCount ?? 0)
+        let session = model.storeSession
+        guard session.edits != nil else { return removeStoreWarning(unpushed: 0) }
+        return removeStoreWarning(unpushed: session.syncing?.queue.unsentCount)
     }
 
     private func remove(_ setUp: SetUpStore) {

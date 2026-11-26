@@ -6,12 +6,16 @@ func changeCount(_ count: Int) -> String {
 }
 
 /// What removing the store from this iPhone deletes, and the changes not
-/// sent yet that it loses.
-func removeStoreWarning(unpushed: Int) -> String {
+/// sent yet that it loses; `nil` when they could not be counted.
+func removeStoreWarning(unpushed: Int?) -> String {
     var text = Device.words("Deletes the store, its Face ID copies and your key's record from this iPhone. ")
         + "The store on the server is not touched."
-    if unpushed > 0 {
-        text += " \(changeCount(unpushed)) not sent yet will be lost."
+    if let unpushed {
+        if unpushed > 0 {
+            text += " \(changeCount(unpushed)) not sent yet will be lost."
+        }
+    } else {
+        text += " Changes not sent yet may be lost."
     }
     return text
 }
