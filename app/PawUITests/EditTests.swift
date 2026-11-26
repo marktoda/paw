@@ -404,7 +404,13 @@ final class EditTests: PawUITestCase {
         tap("add-button")
         expect("form-name")
         snapshot("add-large-text")
-        tap("form-options")
+        // A tap that lands while the sheet is still settling is lost: the
+        // row stays "hidden", so tap it again.
+        let options = scrollTo("form-options")
+        for _ in 0..<3 where (options.value as? String) != "shown" {
+            options.tap()
+            if waitUntil(timeout: 2, { (options.value as? String) == "shown" }) { break }
+        }
         scrollTo("form-strength")
         snapshot("add-large-text-options")
     }
