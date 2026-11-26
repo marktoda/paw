@@ -220,11 +220,6 @@ impl SimulatedKey {
         self.touched.notify_all();
     }
 
-    /// How many decrypts the key has performed.
-    pub fn decipher_count(&self) -> u32 {
-        self.lock().deciphers
-    }
-
     /// Pins this key's decryption key in the store set up in `state_dir`,
     /// as setup pins the card's: a key paw then has the public half of.
     /// Returns its fingerprint.
@@ -271,6 +266,47 @@ impl SimulatedKey {
         state.chain.clear();
     }
 
+    /// Another computer has used PIN tries (or reset them).
+    pub fn set_pin_tries_left(&self, tries: u8) {
+        self.lock().tries_left = tries;
+    }
+
+    /// VERIFY commands that carried a PIN, wrong or right: the tries paw
+    /// has put at risk.
+    /// Turns the PIN KDF on, as `ykman openpgp access set-kdf` would
+    /// (iterated and salted SHA-256, 100,000 bytes); or, with
+    /// `algorithm` other than 3, sets a KDF paw does not support.
+    pub fn set_pin_kdf(&self, algorithm: u8) {
+        let mut object = vec![0x81, 0x01, algorithm, 0x82, 0x01, 0x08, 0x83, 0x04];
+        object.extend(100_000u32.to_be_bytes());
+        object.extend([0x84, 0x08]);
+        object.extend(b"01234567");
+        self.lock().kdf = Some(object);
+    }
+
+    /// Whether a key operation is waiting for a touch right now.
+    pub fn waiting_for_touch(&self) -> bool {
+        self.lock().waiting_for_touch
+    }
+
+    pub fn pin_tries_left(&self) -> u8 {
+        self.lock().tries_left
+    }
+
+    /// The key as a card connection, to hand to `KeyPort.plugged_in` with
+    /// no Swift adapter.
+    pub fn as_connection(self: Arc<Self>) -> Arc<dyn CardConnection> {
+        self
+    }
+}
+
+/// For the Rust tests; Swift never calls these.
+impl SimulatedKey {
+    /// How many decrypts the key has performed.
+    pub fn decipher_count(&self) -> u32 {
+        self.lock().deciphers
+    }
+
     /// Whether a SELECT drops the verified PIN. Off unless set: whether a
     /// YubiKey does this through the iPhone's reader is not known.
     pub fn set_reselect_drops_pin(&self, drops: bool) {
@@ -285,11 +321,6 @@ impl SimulatedKey {
         state.verified = false;
     }
 
-    /// Another computer has used PIN tries (or reset them).
-    pub fn set_pin_tries_left(&self, tries: u8) {
-        self.lock().tries_left = tries;
-    }
-
     pub fn set_decryption_touch(&self, policy: SimTouch) {
         self.lock().policies[Slot::Decryption as usize] = policy;
     }
@@ -301,19 +332,6 @@ impl SimulatedKey {
     /// How long one touch lasts for a CACHED slot.
     pub fn set_touch_cache_ms(&self, ms: u32) {
         self.lock().touch_cache = Duration::from_millis(ms.into());
-    }
-
-    /// VERIFY commands that carried a PIN, wrong or right: the tries paw
-    /// has put at risk.
-    /// Turns the PIN KDF on, as `ykman openpgp access set-kdf` would
-    /// (iterated and salted SHA-256, 100,000 bytes); or, with
-    /// `algorithm` other than 3, sets a KDF paw does not support.
-    pub fn set_pin_kdf(&self, algorithm: u8) {
-        let mut object = vec![0x81, 0x01, algorithm, 0x82, 0x01, 0x08, 0x83, 0x04];
-        object.extend(100_000u32.to_be_bytes());
-        object.extend([0x84, 0x08]);
-        object.extend(b"01234567");
-        self.lock().kdf = Some(object);
     }
 
     pub fn verify_attempts(&self) -> u32 {
@@ -330,25 +348,10 @@ impl SimulatedKey {
         self.lock().verified
     }
 
-    /// Whether a key operation is waiting for a touch right now.
-    pub fn waiting_for_touch(&self) -> bool {
-        self.lock().waiting_for_touch
-    }
-
-    pub fn pin_tries_left(&self) -> u8 {
-        self.lock().tries_left
-    }
-
     /// Touches the key waited for and used, over both slots. A use covered
     /// by a cached touch adds none.
     pub fn touch_count(&self) -> u32 {
         self.lock().touches
-    }
-
-    /// The key as a card connection, to hand to `KeyPort.plugged_in` with
-    /// no Swift adapter.
-    pub fn as_connection(self: Arc<Self>) -> Arc<dyn CardConnection> {
-        self
     }
 
     /// The SSH public key line of the authentication slot, as setup shows

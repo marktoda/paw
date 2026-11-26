@@ -80,6 +80,29 @@ impl SimKeystore {
         lock(&self.state).face_id = answer;
     }
 
+    pub fn reset_count(&self) -> u32 {
+        lock(&self.state).resets
+    }
+
+    /// This keystore as the Secure Enclave seam, to hand straight to
+    /// `CopyCache` with no Swift adapter.
+    pub fn as_keystore(self: Arc<Self>) -> Arc<dyn DeviceKeystore> {
+        self
+    }
+
+    /// Makes new keys: nothing sealed before can be opened.
+    pub fn reset(&self) -> Result<(), KeystoreError> {
+        let mut state = lock(&self.state);
+        state.seal_key = random_key();
+        state.index_key = random_key();
+        state.invalidated = false;
+        state.resets += 1;
+        Ok(())
+    }
+}
+
+/// For the Rust tests; Swift never calls these.
+impl SimKeystore {
     /// A face is added or removed in Settings: the seal key is invalidated
     /// until [`Self::reset`] makes a new one.
     pub fn change_enrolment(&self) {
@@ -90,10 +113,6 @@ impl SimKeystore {
     /// working key).
     pub fn prompt_count(&self) -> u32 {
         lock(&self.state).prompts
-    }
-
-    pub fn reset_count(&self) -> u32 {
-        lock(&self.state).resets
     }
 
     pub fn seal(&self, secret: Vec<u8>) -> Result<Vec<u8>, KeystoreError> {
@@ -138,22 +157,6 @@ impl SimKeystore {
 
     pub fn index_key(&self) -> Result<Vec<u8>, KeystoreError> {
         Ok(lock(&self.state).index_key.to_vec())
-    }
-
-    /// This keystore as the Secure Enclave seam, to hand straight to
-    /// `CopyCache` with no Swift adapter.
-    pub fn as_keystore(self: Arc<Self>) -> Arc<dyn DeviceKeystore> {
-        self
-    }
-
-    /// Makes new keys: nothing sealed before can be opened.
-    pub fn reset(&self) -> Result<(), KeystoreError> {
-        let mut state = lock(&self.state);
-        state.seal_key = random_key();
-        state.index_key = random_key();
-        state.invalidated = false;
-        state.resets += 1;
-        Ok(())
     }
 }
 
@@ -203,18 +206,6 @@ impl SimClock {
         state.monotonic_ms = state.monotonic_ms.saturating_add(ms);
     }
 
-    /// The person sets the clock: only the wall clock moves.
-    pub fn set_wall_ms(&self, wall_ms: i64) {
-        lock(&self.state).wall_ms = wall_ms;
-    }
-
-    /// The phone restarts: a new boot id and the monotonic clock from zero.
-    pub fn reboot(&self) {
-        let mut state = lock(&self.state);
-        state.boot += 1;
-        state.monotonic_ms = 0;
-    }
-
     pub fn wall_ms(&self) -> i64 {
         lock(&self.state).wall_ms
     }
@@ -231,6 +222,21 @@ impl SimClock {
     /// `KeyPort` with no Swift adapter.
     pub fn as_clock(self: Arc<Self>) -> Arc<dyn Clock> {
         self
+    }
+}
+
+/// For the Rust tests; Swift never calls these.
+impl SimClock {
+    /// The person sets the clock: only the wall clock moves.
+    pub fn set_wall_ms(&self, wall_ms: i64) {
+        lock(&self.state).wall_ms = wall_ms;
+    }
+
+    /// The phone restarts: a new boot id and the monotonic clock from zero.
+    pub fn reboot(&self) {
+        let mut state = lock(&self.state);
+        state.boot += 1;
+        state.monotonic_ms = 0;
     }
 }
 
