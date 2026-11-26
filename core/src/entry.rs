@@ -26,7 +26,6 @@ const URL_KEYS: [&str; 5] = ["url", "link", "website", "web", "site"];
 /// addresses with the site ([`EntryDoc::addresses`]). The entry's own view
 /// shows these as ordinary fields.
 const MORE_ADDRESS_KEYS: [&str; 4] = ["uri", "loginurl", "siteurl", "websiteurl"];
-const OTP_SCHEME: &str = "otpauth://";
 
 /// `key` in lower case without spaces, `-` and `_`: `Login URL` is `loginurl`.
 fn folded_key(key: &str) -> String {
@@ -119,7 +118,8 @@ struct Line {
 /// What a line after the first one is.
 enum Kind<'a> {
     Field { key: &'a str, value: &'a str },
-    Otp,
+    /// A one-time-code line; its address starts at byte `start`.
+    Otp { start: usize },
     Note,
 }
 
@@ -139,12 +139,14 @@ fn split_field(text: &str) -> Option<(&str, &str)> {
 }
 
 fn kind(text: &str) -> Kind<'_> {
+    // Where `part`, a piece of `text`, starts in it.
+    let offset = |part: &str| part.as_ptr() as usize - text.as_ptr() as usize;
     if is_otp(text) {
-        return Kind::Otp;
+        return Kind::Otp { start: offset(text.trim_start()) };
     }
     match split_field(text) {
         // `otpauth: otpauth://...`, as some tools write it.
-        Some((_, value)) if is_otp(value) => Kind::Otp,
+        Some((_, value)) if is_otp(value) => Kind::Otp { start: offset(value.trim_start()) },
         Some((key, value)) => Kind::Field { key, value },
         None => Kind::Note,
     }
@@ -281,19 +283,17 @@ impl EntryDoc {
     /// Whether the entry carries a one-time-code secret. The address itself
     /// is never handed out: it is the secret.
     pub fn has_otp(&self) -> bool {
-        self.lines.iter().skip(1).any(|line| matches!(kind(&line.text), Kind::Otp))
+        self.lines.iter().skip(1).any(|line| matches!(kind(&line.text), Kind::Otp { .. }))
     }
 
     /// The first one-time-code line's address, from `otpauth://` on: a
     /// line may also be written `otpauth: otpauth://...`.
     fn otp_address(&self) -> Option<(usize, usize)> {
         self.lines.iter().enumerate().skip(1).find_map(|(index, line)| {
-            matches!(kind(&line.text), Kind::Otp).then(|| {
-                let lower = line.text.to_ascii_lowercase();
-                // `kind` found the scheme, so this always matches.
-                let start = Zeroizing::new(lower).find(OTP_SCHEME).unwrap_or(0);
-                (index, start)
-            })
+            match kind(&line.text) {
+                Kind::Otp { start } => Some((index, start)),
+                _ => None,
+            }
         })
     }
 
@@ -503,7 +503,7 @@ impl EntryDoc {
         let mut index = 0;
         self.lines.retain(|line| {
             index += 1;
-            index == 1 || !matches!(kind(&line.text), Kind::Otp)
+            index == 1 || !matches!(kind(&line.text), Kind::Otp { .. })
         });
         self.lines.len() != before
     }

@@ -157,7 +157,7 @@ impl Store {
 
     /// What the certificates in `certificate` would satisfy here.
     fn inspect(&self, certificate: &[u8]) -> Vec<CertificateSummary> {
-        certificate_summaries(&self.repo, &certificate_infos(certificate, now()).unwrap())
+        certificate_summaries(&self.repo, &certificate_infos(certificate, now()).unwrap()).unwrap()
     }
 }
 

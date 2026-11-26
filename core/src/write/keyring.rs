@@ -282,17 +282,22 @@ pub(crate) fn gpg_id_paths(root: &Path) -> Result<Vec<String>, WriteError> {
 
 /// Every key line of every `.gpg-id` committed in the store at `root`, as
 /// it is in the working copy: sorted, each once. A store with nothing
-/// committed yet has none, and a `.gpg-id` that can't be read adds none.
-fn all_gpg_id_lines(root: &Path) -> Vec<String> {
+/// committed yet has none; a `.gpg-id` that can't be read is an error, as
+/// in [`crate::store::gpg_id::recipients_for`].
+fn all_gpg_id_lines(root: &Path) -> Result<Vec<String>, WriteError> {
+    let unborn = git2::Repository::open(root).and_then(|repo| repo.head().map(drop));
+    if unborn.is_err_and(|e| e.code() == git2::ErrorCode::UnbornBranch) {
+        return Ok(Vec::new());
+    }
     let mut lines = Vec::new();
-    for path in gpg_id_paths(root).unwrap_or_default() {
-        if let Ok(Some(bytes)) = read_file(root, &path) {
-            lines.extend(parse_gpg_id(&String::from_utf8_lossy(&bytes)));
-        }
+    for path in gpg_id_paths(root)? {
+        let Some(bytes) = read_file(root, &path)? else { continue };
+        let text = String::from_utf8(bytes).map_err(|_| crate::PawError::Store(format!("{path} is not a text file")))?;
+        lines.extend(parse_gpg_id(&text));
     }
     lines.sort();
     lines.dedup();
-    lines
+    Ok(lines)
 }
 
 /// A public certificate, as the import screen shows it.
@@ -311,9 +316,9 @@ pub struct CertificateSummary {
 }
 
 /// How each certificate in `infos` stands with the store at `root`.
-pub fn certificate_summaries(root: &Path, infos: &[CertificateInfo]) -> Vec<CertificateSummary> {
-    let lines = all_gpg_id_lines(root);
-    infos
+pub fn certificate_summaries(root: &Path, infos: &[CertificateInfo]) -> Result<Vec<CertificateSummary>, WriteError> {
+    let lines = all_gpg_id_lines(root)?;
+    Ok(infos
         .iter()
         .map(|info| CertificateSummary {
             primary_fingerprint: info.primary.clone(),
@@ -323,7 +328,7 @@ pub fn certificate_summaries(root: &Path, infos: &[CertificateInfo]) -> Vec<Cert
             problem: info.encryption.as_ref().err().cloned(),
             satisfies: lines.iter().filter(|line| certificate_named_by(info, line)).cloned().collect(),
         })
-        .collect()
+        .collect())
 }
 
 /// The pinned keys, bindings and `.gpg-id` pins of one store.
@@ -413,7 +418,10 @@ impl Keyring {
                         fingerprints: unlist(fprs),
                         refused: Vec::new(),
                         emails: unlist(emails),
-                        expires: expires.parse().ok(),
+                        expires: match *expires {
+                            "-" => None,
+                            at => Some(at.parse().map_err(|_| failed("read", format!("the key {fpr} has a damaged expiry")))?),
+                        },
                         key,
                     });
                 }
@@ -782,16 +790,16 @@ mod tests {
     fn a_store_with_nothing_committed_has_no_lines() {
         let dir = tempfile::tempdir().unwrap();
         git2::Repository::init(dir.path()).unwrap();
-        assert!(all_gpg_id_lines(dir.path()).is_empty());
+        assert!(all_gpg_id_lines(dir.path()).unwrap().is_empty());
     }
 
     #[test]
-    fn a_gpg_id_that_cannot_be_read_is_skipped() {
+    fn a_gpg_id_that_cannot_be_read_is_an_error() {
         let dir = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(dir.path()).unwrap();
         commit(&repo, &[(".gpg-id", "AAAA1111\n"), ("work/.gpg-id", "BBBB2222\n")]);
         std::fs::remove_file(dir.path().join("work/.gpg-id")).unwrap();
         std::os::unix::fs::symlink("../.gpg-id", dir.path().join("work/.gpg-id")).unwrap();
-        assert_eq!(all_gpg_id_lines(dir.path()), ["AAAA1111"]);
+        assert!(all_gpg_id_lines(dir.path()).is_err());
     }
 }
