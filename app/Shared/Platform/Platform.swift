@@ -39,14 +39,7 @@ struct Platform {
         let clock = SystemClock()
         return Platform(
             process: process, keys: UsbKeyConnector(), clock: clock,
-            copies: { dir in
-                // Without paw's keychain group there are no copies, and
-                // every open uses the key (Settings says so). Face ID
-                // problems surface as the core's errors when a copy is
-                // sealed or opened.
-                guard (try? KeychainGroup.shared()) != nil else { return nil }
-                return CopyCache(dir: dir, keystore: EnclaveKeystore(), clock: clock)
-            },
+            copies: { dir in CopyCache(dir: dir, keystore: EnclaveKeystore(), clock: clock) },
             resetKeychain: { try EnclaveKeystore().deleteCopyKeys() },
             lockedOut: { nil }, removesLegacyStore: true)
     }
