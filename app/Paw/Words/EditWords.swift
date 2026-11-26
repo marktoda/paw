@@ -57,9 +57,22 @@ func editProblem(_ error: WriteError, folder: String) -> EditProblem {
             nextStep: "Fix it, then save.")
     case .Policy(let message):
         return EditProblem(problem: "That password can't be generated", nextStep: message)
+    case .Fault(.storeBusy):
+        return EditProblem(problem: StoreBusyWords.problem, nextStep: StoreBusyWords.nextStep)
     case .Fault(let fault):
         return EditProblem(problem: "Couldn't save this", nextStep: "Nothing was changed. Details: \(faultDetail(fault))")
     case .NotPinned:
         return EditProblem(problem: Device.words("A key for this folder isn't saved on this iPhone"), nextStep: "Nothing was changed.")
     }
+}
+
+/// What a save or a delete left undone beside the entry, said on Home;
+/// `nil` when it all was done. The first one is said: they share a cause.
+func followUpNotice(_ failures: [FollowUpFailure]) -> Notice? {
+    guard let failure = failures.first else { return nil }
+    let problem = switch failure.followUp {
+    case .faceIdCopy: "Face ID's copy wasn't updated"
+    case .sitePairings, .oneTimeCodeMark: "AutoFill wasn't updated"
+    }
+    return Notice(problem: problem, nextStep: asSentence(failure.message))
 }

@@ -3,14 +3,26 @@ import XCTest
 
 /// The key-task driver every key sheet uses, on its own: the core's states
 /// as sheet stages, the PIN field, each task's end heard exactly once, and
-/// a task's end after Cancel. Real tasks on the fixture's simulated key.
+/// a task's end after Cancel, and what each task holds until it ends. Real
+/// tasks on the fixture's simulated key, through the session's reader.
 @MainActor
 final class KeyTaskDriverTests: XCTestCase {
-    /// A workflow's words and ends, recorded.
+    /// Background time as a task holds it: how many times it was ended.
+    @MainActor
+    private final class Hold: KeyTaskHold {
+        var ends = 0
+
+        func end() {
+            ends += 1
+        }
+    }
+
+    /// A workflow's words, ends and holds, recorded.
     @MainActor
     private final class Recorder {
         var ends: [KeyTaskEnd<Never>] = []
-        var lateEnds: [(end: KeyTaskEnd<Never>, locked: Bool)] = []
+        var lateEnds: [KeyTaskEnd<Never>] = []
+        var holds: [Hold] = []
         var closedCount = 0
         let words = KeyErrorWords.Context(entry: "github.com")
 
@@ -22,16 +34,25 @@ final class KeyTaskDriverTests: XCTestCase {
                 ended: { [unowned self] end in
                     ends.append(end)
                     if case .done(.opened(let entry, _, _)) = end { entry.close() }
-                    return end.standardStage(words)
+                    return .standard
                 },
-                letGo: { [unowned self] end, locked in
-                    lateEnds.append((end, locked))
+                letGo: { [unowned self] end in
+                    lateEnds.append(end)
                     if case .done(.opened(let entry, _, _)) = end { entry.close() }
+                },
+                hold: { [unowned self] in
+                    let hold = Hold()
+                    holds.append(hold)
+                    return hold
                 },
                 closed: { [unowned self] in
                     closedCount += 1
                 })
         }
+    }
+
+    private func driver(_ fixture: Fixture) -> KeyTaskDriver {
+        fixture.model.storeSession.keyTasks.make()
     }
 
     private func open(_ path: String, with driver: KeyTaskDriver, _ recorder: Recorder, _ fixture: Fixture) {
@@ -98,7 +119,7 @@ final class KeyTaskDriverTests: XCTestCase {
     func testThePinStagesAndThePinField() async throws {
         let fixture = try Fixture()
         let owner = Recorder()
-        let driver = KeyTaskDriver()
+        let driver = self.driver(fixture)
         open("web/github.com", with: driver, owner, fixture)
         await waitForStage(driver, .pin(triesLeft: 3, forgotten: false))
 
@@ -127,7 +148,7 @@ final class KeyTaskDriverTests: XCTestCase {
     func testEachEndIsHeardOnceAndDoneClosesAfterASecond() async throws {
         let fixture = try Fixture()
         let owner = Recorder()
-        let driver = KeyTaskDriver()
+        let driver = self.driver(fixture)
         open("web/github.com", with: driver, owner, fixture)
         await waitForStage(driver, .pin(triesLeft: 3, forgotten: false))
         driver.pin = Fixture.pin
@@ -152,7 +173,7 @@ final class KeyTaskDriverTests: XCTestCase {
     func testATaskThatEndsAfterCancelIsHeardOnceAsLetGo() async throws {
         let fixture = try Fixture(touch: true)
         let owner = Recorder()
-        let driver = KeyTaskDriver()
+        let driver = self.driver(fixture)
         open("web/github.com", with: driver, owner, fixture)
         await waitForStage(driver, .pin(triesLeft: 3, forgotten: false))
         driver.pin = Fixture.pin
@@ -166,34 +187,78 @@ final class KeyTaskDriverTests: XCTestCase {
         await waitFor("the cancelled task to end") { driver.pendingTasks == 0 }
         XCTAssertEqual(owner.ends.count, 0, "Nothing reaches the sheet after Cancel")
         XCTAssertEqual(owner.lateEnds.count, 1)
-        XCTAssertEqual(owner.lateEnds.first?.locked, false)
         XCTAssertEqual(owner.closedCount, 1)
         XCTAssertFalse(driver.isShown)
     }
 
-    func testLockNowLetsGoOfEveryTaskAndSaysSoToEach() async throws {
+    func testCancelAllLetsGoOfEveryTaskAndSaysSoToEach() async throws {
         let fixture = try Fixture(touch: true)
         let owner = Recorder()
-        let driver = KeyTaskDriver()
+        let driver = self.driver(fixture)
         open("web/github.com", with: driver, owner, fixture)
         await waitForStage(driver, .pin(triesLeft: 3, forgotten: false))
         driver.pin = Fixture.pin
         driver.continueWithPin()
         await waitFor("the touch") { driver.stage == .touch && fixture.key.waitingForTouch() }
 
-        driver.lockNow()
+        driver.cancelAll()
         XCTAssertFalse(driver.isShown)
         fixture.key.touch()
         await waitFor("the let-go task to end") { driver.pendingTasks == 0 }
         XCTAssertEqual(owner.ends.count, 0)
         XCTAssertEqual(owner.lateEnds.count, 1)
-        XCTAssertEqual(owner.lateEnds.first?.locked, true, "Lock now came since it started")
+    }
+
+    func testEachTaskKeepsItsHoldUntilItHasReallyEnded() async throws {
+        let fixture = try Fixture(touch: true)
+        let owner = Recorder()
+        let driver = self.driver(fixture)
+        open("web/github.com", with: driver, owner, fixture)
+        await waitForStage(driver, .pin(triesLeft: 3, forgotten: false))
+        driver.pin = Fixture.pin
+        driver.continueWithPin()
+        await waitFor("the touch") { driver.stage == .touch && fixture.key.waitingForTouch() }
+        XCTAssertEqual(owner.holds.count, 1, "Taken as the task started")
+        XCTAssertEqual(owner.holds[0].ends, 0, "Kept while the task runs")
+
+        fixture.key.touch()
+        await waitForStage(driver, .done)
+        XCTAssertEqual(owner.holds[0].ends, 1, "Ended with the task, once")
+
+        // A task the sheet lets go of keeps its own until it ends too.
+        await waitFor("Done to close") { !driver.isShown }
+        open("web/github.com", with: driver, owner, fixture)
+        await waitFor("the second touch") { driver.stage == .touch && fixture.key.waitingForTouch() }
+        driver.retry()
+        XCTAssertEqual(owner.holds.count, 3, "Try again's task took its own")
+        XCTAssertEqual(owner.holds[1].ends, 1, "Let go by Try again: its task ended at once")
+        XCTAssertEqual(owner.holds[2].ends, 0)
+        driver.cancel()
+        XCTAssertEqual(owner.holds[2].ends, 1)
+        XCTAssertEqual(owner.holds.map(\.ends), [1, 1, 1], "Each ended once")
+    }
+
+    func testTheSignalCountsEveryDriversTasks() async throws {
+        let fixture = try Fixture(touch: true)
+        let keyTasks = fixture.model.storeSession.keyTasks
+        let other = keyTasks.make()
+        let owner = Recorder()
+        fixture.model.open(EntryRef(path: "web/github.com"))
+        await fixture.waitForStage(.pin(triesLeft: 3, forgotten: false))
+        open("email/fastmail", with: other, owner, fixture)
+        XCTAssertEqual(fixture.model.keyTask.pendingTasks, 1)
+        XCTAssertEqual(other.pendingTasks, 1)
+        XCTAssertEqual(keyTasks.pendingTasks, 2, "The app's open and the other driver's task")
+
+        fixture.model.cancelKeyTask()
+        other.cancel()
+        await waitFor("both tasks to end") { keyTasks.pendingTasks == 0 }
     }
 
     func testCancelEndsTheTaskAtOnceWhileTheKeyStillWaitsForATouch() async throws {
         let fixture = try Fixture(touch: true)
         let owner = Recorder()
-        let driver = KeyTaskDriver()
+        let driver = self.driver(fixture)
         let port = fixture.model.storeSession.keyPort
         driver.start(owner.job { listener in port.checkTouchTimeout(listener: listener) })
         await waitForStage(driver, .pin(triesLeft: 3, forgotten: false))
@@ -203,28 +268,25 @@ final class KeyTaskDriverTests: XCTestCase {
 
         driver.cancel()
         XCTAssertFalse(driver.isFollowing)
-        guard case .cancelled? = driver.state else {
-            return XCTFail("Cancel should end the check at once, the state is \(String(describing: driver.state))")
+        guard case .cancelled? = owner.lateEnds.first, owner.lateEnds.count == 1 else {
+            return XCTFail("Cancel should end the check at once, it ended \(owner.lateEnds)")
         }
         XCTAssertTrue(fixture.key.waitingForTouch(), "The key still waits for a touch")
         XCTAssertEqual(driver.pendingTasks, 0)
-        XCTAssertEqual(owner.lateEnds.count, 1)
 
         // The key is touched after the cancel: the core throws the answer away.
         fixture.key.touch()
         await waitFor("the key to stop waiting") { !fixture.key.waitingForTouch() }
-        guard case .cancelled? = driver.state else {
-            return XCTFail("The key's late answer should change nothing, the state is \(String(describing: driver.state))")
-        }
-        XCTAssertEqual(owner.lateEnds.count, 1)
+        XCTAssertEqual(owner.lateEnds.count, 1, "The key's late answer changes nothing")
         XCTAssertEqual(owner.ends.count, 0)
+        XCTAssertNil(driver.lastEnd, "Not the sheet's end")
     }
 
     func testALateFinishAfterCancelClosesTheSheetAndIsHeardOnceAsLetGo() async throws {
         let fixture = try Fixture()
         let owner = Recorder()
-        let driver = KeyTaskDriver()
-        SimulatedLateCancel.armed = true
+        let driver = self.driver(fixture)
+        fixture.keys.finishesNextAfterCancel = true
         open("web/github.com", with: driver, owner, fixture)
         await waitForStage(driver, .pin(triesLeft: 3, forgotten: false))
         driver.pin = Fixture.pin
@@ -232,8 +294,8 @@ final class KeyTaskDriverTests: XCTestCase {
         await waitFor("the open to end") { driver.pendingTasks == 0 }
         XCTAssertFalse(driver.isShown, "The sheet closed as for a cancel")
         XCTAssertEqual(owner.ends.count, 0, "Nothing reaches the sheet's own end")
-        guard case .done(.opened)? = owner.lateEnds.first?.end, owner.lateEnds.count == 1 else {
-            return XCTFail("The open should end late, once, it ended \(owner.lateEnds.map(\.end))")
+        guard case .done(.opened)? = owner.lateEnds.first, owner.lateEnds.count == 1 else {
+            return XCTFail("The open should end late, once, it ended \(owner.lateEnds)")
         }
     }
 
@@ -243,12 +305,12 @@ final class KeyTaskDriverTests: XCTestCase {
         let key = fixture.key
         let reads = FailingReads(1000)
         let port = KeyPort(clock: fixture.clock.asClock())
-        let reader = KeyReader(port: port) {
+        let reader = KeyReader(port: port, source: SimulatedKeySource(connect: {
             if reads.take() {
                 throw ConnectionError.Failed(message: "The key didn't answer while it was being read.")
             }
             return key.asConnection()
-        }
+        }))
         reader.watch()
         let driver = KeyTaskDriver(reader: reader)
         let couldNotRead = KeySheetStage.failed(

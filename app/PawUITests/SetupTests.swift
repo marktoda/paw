@@ -28,7 +28,7 @@ final class SetupTests: PawUITestCase {
         expect("setup-your-key")
         expectText("key-serial", contains: "serial")
         if shots { snapshot("your-key") }
-        tap("key-continue")
+        tapUntilGone("key-continue")
         expect("repo-address")
     }
 
@@ -231,7 +231,8 @@ final class SetupTests: PawUITestCase {
 
     func testAKeyThatFailsToBeReadShowsWhyAndTryAgainReadsIt() {
         // Dark here: a cheap screen to see in both.
-        launch(appearance: "dark", extra: ["-pawSimAttachFails", "1"])
+        // The key is read at launch and again on Set up: both fail.
+        launch(appearance: "dark", extra: ["-pawSimAttachFails", "2"])
         expect("setup-welcome")
         tap("setup-start")
         expectText("error-row", contains: "paw couldn't read your key")

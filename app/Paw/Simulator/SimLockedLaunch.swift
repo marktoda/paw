@@ -1,3 +1,4 @@
+import SwiftUI
 import UIKit
 
 #if DEBUG && targetEnvironment(simulator)
@@ -17,14 +18,39 @@ enum SimLockedLaunch {
     }
 }
 
-extension StoreRootModel {
-    /// "copies 0 · keychain resets 1 · pin none · pasteboard empty · legacy gone".
-    func debugState() -> String {
-        let copies = location.flatMap { try? FileManager.default.contentsOfDirectory(atPath: $0.copiesDir.path).count } ?? 0
-        let pin = keyPort?.session()?.holdsPin() == true ? "held" : "none"
+/// For the UI tests: what is left of a store after it was removed, read
+/// four times a second. "copies 0 · keychain resets 1 · pin none ·
+/// pasteboard empty · legacy gone".
+struct SimStoreState: View {
+    let phase: StoreRootModel.Phase
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+            let state = Self.state(phase)
+            Text(verbatim: state)
+                .font(.caption2)
+                .frame(width: 1, height: 1)
+                .opacity(0.02)
+                .accessibilityLabel("Store state")
+                .accessibilityValue(state)
+                .accessibilityIdentifier("sim-store-state")
+        }
+    }
+
+    @MainActor
+    private static func state(_ phase: StoreRootModel.Phase) -> String {
+        let copiesDir = (try? StoreLocation.standard())?.copiesDir
+        let copies = copiesDir.flatMap { try? FileManager.default.contentsOfDirectory(atPath: $0.path).count } ?? 0
+        let port: KeyPort? = switch phase {
+        case .home(let model): model.storeSession.keyPort
+        case .setup(let model): model.reader.port
+        case .failed, .waitingForUnlock: nil
+        }
+        let pin = port?.session()?.holdsPin() == true ? "held" : "none"
         let pasteboard = UIPasteboard.general.hasStrings ? "full" : "empty"
-        return "copies \(copies) · keychain resets \(SimulatedKeystoreHolder.keystore.resetCount()) · pin \(pin) · pasteboard \(pasteboard)"
-            + " · legacy \(legacyFolder)"
+        let legacy = LegacyStore.folderLeft ? "present" : "gone"
+        return "copies \(copies) · keychain resets \(SimulatedKeystoreHolder.keystore.resetCount()) · pin \(pin)"
+            + " · pasteboard \(pasteboard) · legacy \(legacy)"
     }
 }
 #endif

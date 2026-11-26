@@ -1,8 +1,14 @@
 import Foundation
 
-/// The words for a store another part of paw (or the AutoFill extension)
-/// was using for longer than paw waits. Nothing was changed.
-let storeBusyText = "the password store is busy: another part of paw (or the AutoFill extension) is using it; try again"
+/// What paw says wherever the store is busy: another part of paw, or the
+/// AutoFill extension, held it longer than paw waits. Nothing was changed,
+/// and trying again works.
+enum StoreBusyWords {
+    static let problem = "The store is busy"
+    static let nextStep = "Try again in a moment."
+    /// Where there is room for one line.
+    static let line = "\(problem). \(nextStep)"
+}
 
 /// Whether `error` says the store was busy: trying again will work, and the
 /// store is not broken.
@@ -51,7 +57,7 @@ private func oneLine(_ error: Swift.Error) -> String {
     case .Store(let message):
         return message
     case .StoreBusy:
-        return storeBusyText
+        return StoreBusyWords.line
     case .NotText:
         return "This entry is not text, so paw cannot show it."
     case .InvalidField(let message):
@@ -65,25 +71,7 @@ private func oneLine(_ error: Swift.Error) -> String {
     }
 }
 
-/// Why a host's key can't be forgotten or replaced: paw ships with it.
-func hostKeyBundled(_ host: String) -> String {
-    "\(host)'s keys come with paw and can't be forgotten. A different key means this connection isn't reaching "
-        + "the real \(host): try another network"
-}
-
 /// Sentences in a row, leaving out the empty ones.
 func sentences(_ parts: String...) -> String {
     parts.filter { !$0.isEmpty }.joined(separator: " ")
-}
-
-/// "it has no decryption key" as a sentence: "It has no decryption key."
-func asSentence(_ text: String) -> String {
-    let capitalised = capitalised(text)
-    guard !capitalised.isEmpty else { return capitalised }
-    return capitalised.hasSuffix(".") ? capitalised : capitalised + "."
-}
-
-/// `text` with its first letter capitalised.
-func capitalised(_ text: String) -> String {
-    text.prefix(1).uppercased() + text.dropFirst()
 }

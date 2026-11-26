@@ -70,9 +70,9 @@ extension SyncFailure {
             pill = cancelled.pill
         case .Fault(.storeBusy):
             self.kind = .other
-            problem = Self.couldNot(kind)
-            nextStep = sentences("Try again.", waiting)
-            details = [storeBusyText]
+            problem = StoreBusyWords.problem
+            nextStep = sentences(StoreBusyWords.nextStep, waiting)
+            details = []
             pill = notDone
         case .BeingSent, .NotWaiting, .QueueKeptChanging:
             self.kind = .other
@@ -278,6 +278,8 @@ extension SyncError: WordedError {
         switch self {
         case .UncommittedChanges(let paths):
             "The store has changes paw didn't make: \(paths.joined(separator: ", "))."
+        case .Fault(.storeBusy):
+            StoreBusyWords.line
         case .Fault(.cancelled):
             "Stopped."
         case .Fault(let fault):
@@ -338,6 +340,12 @@ extension ChangeQueue {
     var sendTitle: String {
         "Send \(changeCount(unpushed.count))"
     }
+}
+
+enum SyncWords {
+    /// The queue of unsent changes couldn't be opened: nothing sends or
+    /// checks for changes until paw opens the store again.
+    static let off = "Sync is off"
 }
 
 /// A key an entry is encrypted for, as its file names it.

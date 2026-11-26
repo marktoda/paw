@@ -128,9 +128,10 @@ enum CredentialIdentities {
 /// what its state folder keeps (pairings, entries with a one-time code).
 /// The one way they are published: when the store opens, when paw comes
 /// forward and whenever the store changes (`follow`), and after a
-/// background check brought changes in (`BackgroundRefresh`). Built for
-/// the set-up store only, never for a fixture, whose entries must not
-/// reach the system's suggestions.
+/// background check brought changes in (`BackgroundRefresh`). Settings
+/// changes what it keeps here, and it publishes again after each change.
+/// A fixture's submits nothing: its entries must not reach the system's
+/// suggestions.
 @MainActor
 final class AutoFillSuggestions {
     private let pairings: SitePairings
@@ -160,6 +161,35 @@ final class AutoFillSuggestions {
         if let store {
             publish(store)
         }
+    }
+
+    /// Settings › Suggest one-time codes.
+    var codesEnabled: Bool {
+        codes.enabled()
+    }
+
+    /// Off deletes the list of entries with a code, and their suggestions.
+    func setCodesEnabled(_ on: Bool) throws {
+        defer { republish() }
+        try codes.setEnabled(enabled: on)
+    }
+
+    /// Settings › Sites used: each entry named without a domain and the
+    /// sites it was filled on, by entry.
+    var sites: [Pairing] {
+        pairings.pairings().sorted { $0.entry < $1.entry }
+    }
+
+    /// The next fill of `entry` on `site` asks again.
+    func forgetSite(entry: String, site: String) throws {
+        defer { republish() }
+        try pairings.forgetSite(entry: entry, site: site)
+    }
+
+    /// The next fill on every site asks again.
+    func forgetAllSites() throws {
+        defer { republish() }
+        try pairings.clearPairings(entry: nil)
     }
 
     /// Publishes `live`'s store now and whenever its entries change, and

@@ -128,6 +128,13 @@ final class SharedWordsTests: XCTestCase {
         let other = FaceIdWords.notice(PawError.CopyUnavailable, entry: "github.com", table: .autoFill)
         XCTAssertEqual(other.problem, "Face ID didn't open github.com")
         XCTAssertEqual(other.nextStep, "")
-        XCTAssertFalse(FaceIdWords.notice(PawError.StoreBusy, entry: "github.com", table: .autoFill).offersKey)
+    }
+
+    func testABusyStoreDuringAFaceIdOpenAsksForAnotherTryNotTheKey() {
+        for table in [WordTable.app, .autoFill] {
+            let busy = FaceIdWords.notice(PawError.StoreBusy, entry: "github.com", table: table)
+            XCTAssertEqual(busy, FaceIdNotice(problem: "The store is busy", nextStep: "Try again in a moment.", offersKey: false))
+        }
+        XCTAssertEqual(describe(PawError.StoreBusy), "The store is busy. Try again in a moment.")
     }
 }

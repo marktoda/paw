@@ -20,20 +20,11 @@ struct SimSetupHostWatch: ViewModifier {
                 default: break
                 }
             }
-            .onChange(of: Self.failedNotByKey(model.keyTask.state)) { _, failed in
+            .onChange(of: model.keyTask.lastEnd?.failedNotByKey == true) { _, failed in
                 if failed, case .download = model.screen {
                     SimulatedHostHolder.shared.downloadFailed()
                 }
             }
-    }
-
-    /// The task ended for a reason that was not the key's: the host, the
-    /// repository, or what the key answered.
-    private static func failedNotByKey(_ state: KeyTaskState?) -> Bool {
-        switch state {
-        case .setupFailed?, .failed(.Reader)?, .failed(.Internal)?: true
-        default: false
-        }
     }
 }
 

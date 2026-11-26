@@ -35,17 +35,8 @@ final class BackgroundTime {
         defer { time.end() }
         return try body()
     }
-
-    /// Keeps background time while a core key task runs (a send, a check
-    /// for changes, setup's download), ending it once the task has ended.
-    static func hold(_ name: String, while task: KeyTask?) {
-        guard let task else { return }
-        let time = begin(name)
-        Task { @MainActor in
-            while !task.state().isFinal {
-                try? await Task.sleep(nanoseconds: 500_000_000)
-            }
-            time.end()
-        }
-    }
 }
+
+/// A key task that touches the store (a send, a check for changes,
+/// setup's download) keeps background time until it has really ended.
+extension BackgroundTime: KeyTaskHold {}

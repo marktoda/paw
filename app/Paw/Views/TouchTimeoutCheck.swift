@@ -17,15 +17,19 @@ final class TouchTimeoutCheck {
     }
 
     /// Its stages, shown inline rather than in a sheet.
-    let driver = KeyTaskDriver()
+    let driver: KeyTaskDriver
     private(set) var outcome: Outcome?
 
     private static let words = KeyErrorWords.Context(entry: "the check", purpose: .check)
 
+    init(session: StoreSession) {
+        driver = session.keyTasks.make()
+    }
+
     /// Started and not yet ended. Cancel ends it at once, even while the
     /// key still waits for a touch (`core/src/key/task.rs`).
     var running: Bool {
-        driver.isShown
+        driver.isFollowing
     }
 
     /// Starts the check; `finished` runs when it ends or is cancelled, so
@@ -38,7 +42,7 @@ final class TouchTimeoutCheck {
             working: { _ in ("Checking\u{2026}", nil) },
             ended: { [weak self] end in
                 self?.outcome = Self.outcome(end)
-                return nil
+                return .close
             },
             starting: { [weak self] in
                 self?.outcome = nil
@@ -105,17 +109,10 @@ struct TouchTimeoutSection: View {
                     line(tries)
                 }
             }
-            // As the key sheet's field: no content type, so iOS offers no
-            // password AutoFill and no "Save Password?".
-            SecureField("PIN", text: Bindable(check.driver).pin)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-                .submitLabel(.continue)
-                .onSubmit { check.driver.continueWithPin() }
-                .accessibilityIdentifier("pin-field")
-            Button("Continue") { check.driver.continueWithPin() }
+            KeyPinField(stage: stage, pin: Bindable(check.driver).pin) { check.driver.continueWithPin() }
+            Button(stage.continueTitle) { check.driver.continueWithPin() }
                 .foregroundStyle(PawColor.label)
-                .disabled(check.driver.pin.isEmpty)
+                .disabled(check.driver.pin.count < 6)
                 .accessibilityIdentifier("pin-continue")
         case .touch:
             line("Don't touch your key. It should give up after 15 seconds.")

@@ -51,8 +51,9 @@ final class PawAppDelegate: NSObject, UIApplicationDelegate {
     }
 }
 
-/// Setup until a store is set up, then Home on it (`StoreRoot`). In debug
-/// simulator builds, `-pawFixture 1` opens the made-up store instead.
+/// Setup until a store is set up, then Home on it (`StoreRoot`), on this
+/// iPhone's hardware. In debug simulator builds, on the launch's simulated
+/// hardware, and `-pawFixture 1` opens the made-up store instead.
 private struct LaunchRoot: View {
     var body: some View {
         #if DEBUG && targetEnvironment(simulator)
@@ -61,10 +62,10 @@ private struct LaunchRoot: View {
         } else if FixtureLaunch.isRequested {
             FixtureRoot()
         } else {
-            StoreRoot()
+            StoreRoot(platform: LaunchedHardware.app)
         }
         #else
-        StoreRoot()
+        StoreRoot(platform: .device(.app))
         #endif
     }
 }

@@ -58,7 +58,7 @@ final class SyncModel {
 
     @ObservationIgnored private let live: LiveStore
     @ObservationIgnored private let requests: Signal<ScreenRequest>
-    @ObservationIgnored private let reader: KeyReader
+    @ObservationIgnored private let keyPort: KeyPort
     @ObservationIgnored private let copies: CopyCache?
     /// The key task has had its touch: "Connecting" is over.
     @ObservationIgnored private var signedIn = false
@@ -74,16 +74,16 @@ final class SyncModel {
     @ObservationIgnored private let sheetId = UUID()
     private let workQueue = DispatchQueue(label: "paw-sync", qos: .userInitiated)
 
-    init(sync: StoreSync, live: LiveStore, requests: Signal<ScreenRequest>, reader: KeyReader, copies: CopyCache?,
-         gitHub: GitHubAccess?) {
+    init(sync: StoreSync, live: LiveStore, requests: Signal<ScreenRequest>, keyTasks: KeyTaskDrivers,
+         copies: CopyCache?, gitHub: GitHubAccess?) {
         self.sync = sync
         queue = ChangeQueue(sync: sync, live: live)
         self.live = live
         self.requests = requests
-        self.reader = reader
+        keyPort = keyTasks.reader.port
         self.copies = copies
         self.gitHub = gitHub
-        keyTask = KeyTaskDriver(reader: reader)
+        keyTask = keyTasks.make()
         address = sync.address()
         lastChecked = LastChecked.read(repoDir: live.repoDir)
         recomputeLocal()
@@ -509,16 +509,14 @@ extension SyncModel {
     /// A send, a check or a re-encrypt with the key.
     private func job(_ kind: SyncKind) -> KeyJob<SyncError> {
         let sync = sync
-        let port = reader.port
+        let port = keyPort
         return KeyJob(
             begin: { listener in
-                let task: KeyTask = switch kind {
+                switch kind {
                 case .send: sync.sendWithKey(port: port, listener: listener)
                 case .refresh: sync.refreshWithKey(port: port, listener: listener)
                 case .reencrypt: sync.reencryptWithKey(port: port, listener: listener)
                 }
-                BackgroundTime.hold("Sync", while: task)
-                return task
             },
             words: { [weak self] in
                 syncKeyWords(during: kind, unpushed: self?.unpushed ?? 0)
@@ -527,15 +525,16 @@ extension SyncModel {
                 self?.working(kind, progress) ?? ("", nil)
             },
             ended: { [weak self] end in
-                self?.ended(end, kind: kind)
+                self?.ended(end, kind: kind) ?? .close
             },
-            letGo: { [weak self] _, _ in
+            letGo: { [weak self] _ in
                 // A re-encrypt may have rewritten some changes, the last of
                 // them after its Cancel.
                 if kind == .reencrypt {
                     self?.live.announce(.reencrypted)
                 }
             },
+            hold: { BackgroundTime.begin("Sync") },
             starting: { [weak self] in
                 self?.taskStarting(kind)
             },
@@ -568,7 +567,7 @@ extension SyncModel {
         }
     }
 
-    private func ended(_ end: KeyTaskEnd<SyncError>, kind: SyncKind) -> KeySheetStage? {
+    private func ended(_ end: KeyTaskEnd<SyncError>, kind: SyncKind) -> KeySheetAfterEnd {
         // A re-encrypt may have rewritten some changes, however it ended.
         defer {
             if kind == .reencrypt {
@@ -578,16 +577,16 @@ extension SyncModel {
         switch end {
         case .done(let outcome):
             finished(kind, outcome: outcome)
-            return .done
+            return .standard
         case .stepFailed(let error):
             syncFailed(error, kind: kind, unpushed: unpushed)
-            return nil
+            return .close
         case .cancelled:
             cancelSheet()
-            return nil
+            return .close
         case .failed:
             running = nil
-            return end.standardStage(syncKeyWords(during: kind, unpushed: unpushed))
+            return .standard
         }
     }
 }

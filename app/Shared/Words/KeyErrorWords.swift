@@ -43,6 +43,13 @@ struct KeyErrorWords: Equatable {
     let problem: String
     let nextStep: String
 
+    /// The key is locked after too many wrong PINs: the sheet's own stage,
+    /// and the key's answer wherever else it comes.
+    static let locked = KeyErrorWords(
+        problem: "Your key is locked",
+        nextStep: "Unlock it on a computer with its reset code or admin PIN. "
+            + "Passwords that open with Face ID still work.")
+
     init(problem: String, nextStep: String) {
         self.problem = problem
         self.nextStep = nextStep
@@ -73,9 +80,7 @@ struct KeyErrorWords: Equatable {
             nextStep = "It may have been changed. Enter the current one. "
                 + KeySheetWords.triesLeft(Int(triesLeft), afterWrongPin: false)
         case .PinBlocked:
-            problem = "Your key is locked"
-            nextStep = "Unlock it on a computer with its reset code or admin PIN. "
-                + "Passwords that open with Face ID still work."
+            self = .locked
         case .PinFormat:
             problem = "A PIN has 6 to 127 characters"
             nextStep = "Enter it again; no try was used."
@@ -108,8 +113,8 @@ struct KeyErrorWords: Equatable {
             problem = "\(entry) can't be read"
             nextStep = "Its file may be damaged (\(detail))."
         case .StoreBusy:
-            problem = "The store is busy"
-            nextStep = "Try again in a moment."
+            problem = StoreBusyWords.problem
+            nextStep = StoreBusyWords.nextStep
         case .DecryptFailed:
             problem = "This key couldn't open \(entry)"
             nextStep = "It may be encrypted for another key."

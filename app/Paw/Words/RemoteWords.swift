@@ -98,7 +98,7 @@ func refusedMessage(_ paths: [RefusedPath]) -> String {
 /// What went wrong underneath a step, as one line under Details.
 func faultDetail(_ fault: Fault) -> String {
     switch fault {
-    case .storeBusy: storeBusyText
+    case .storeBusy: StoreBusyWords.line
     case .remote(let failure): remoteDetail(failure)
     case .refused(let paths): "not a safe name for an entry: " + refusedMessage(paths)
     case .local(let detail): detail
@@ -156,4 +156,10 @@ func signInEnded(_ failure: RemoteFailure) -> Bool {
     case .notSignedIn, .signedOut: true
     default: false
     }
+}
+
+/// Why a host's key can't be forgotten or replaced: paw ships with it.
+func hostKeyBundled(_ host: String) -> String {
+    "\(host)'s keys come with paw and can't be forgotten. A different key means this connection isn't reaching "
+        + "the real \(host): try another network"
 }

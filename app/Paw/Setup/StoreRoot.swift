@@ -26,40 +26,31 @@ final class StoreRootModel {
     @MainActor
     private struct Base {
         let location: StoreLocation
-        let clock: Clock
-        let keyPort: KeyPort
         let keys: StoreKeys
+        var keyPort: KeyPort { keys.keyPort }
 
-        init() throws {
+        init(_ platform: Platform) throws {
             let location = try StoreLocation.standard()
             #if DEBUG && targetEnvironment(simulator)
             if SetupLaunch.isRequested, !SetupLaunch.keepsState {
                 try location.removeAll()
             }
-            let clock = SimulatedClockHolder.shared.clock.asClock()
-            #else
-            let clock: Clock = SystemClock()
             #endif
             try location.prepare()
             self.location = location
-            self.clock = clock
-            keys = StoreKeys(.app, at: location, clock: clock)
-            keyPort = keys.keyPort
+            keys = StoreKeys(platform, at: location)
         }
     }
 
     private(set) var phase: Phase = .waitingForUnlock
-    /// Whether the store paw kept before the App Group is still on this
-    /// iPhone (`LegacyStore`): "present", "gone", or "unknown" until looked.
-    private(set) var legacyFolder = "unknown"
+    private let platform: Platform
     private var base: Base?
-    var location: StoreLocation? { base?.location }
-    var keyPort: KeyPort? { base?.keyPort }
     /// The GitHub sign-in, if this build has one (the simulator only with
     /// `-pawSimGitHub`).
     private(set) var gitHub: GitHubAccess?
-    private let connect: KeyReader.Connect = { try KeyConnection.open() }
-    init() {
+
+    init(platform: Platform) {
+        self.platform = platform
         route()
         // The model lives as long as the app, so the observer is never removed.
         NotificationCenter.default.addObserver(
@@ -69,15 +60,11 @@ final class StoreRootModel {
         }
         #if DEBUG && targetEnvironment(simulator)
         if LegacyStore.plantsInstead {
-            LegacyStore.plant { [weak self] left in self?.legacyFolder = left ? "present" : "gone" }
+            LegacyStore.plant()
             return
         }
         #endif
-        removeLegacy()
-    }
-
-    private func removeLegacy() {
-        LegacyStore.remove { [weak self] left in self?.legacyFolder = left ? "present" : "gone" }
+        LegacyStore.remove()
     }
 
     /// Opens the store again if it could not be read before: after the
@@ -110,7 +97,7 @@ final class StoreRootModel {
 
     private func makeBase() -> Base? {
         do {
-            let base = try Base()
+            let base = try Base(platform)
             self.base = base
             let location = base.location
             gitHub = GitHubSignInSource.access(stateDir: location.stateDir)
@@ -149,7 +136,7 @@ final class StoreRootModel {
     private func makeSetup(_ setup: Setup, _ base: Base) -> SetupModel {
         let location = base.location, keyPort = base.keyPort
         return SetupModel(
-            setup: setup, repoPath: location.repoDir.path, keyPort: keyPort, connect: connect,
+            setup: setup, repoPath: location.repoDir.path, keyPort: keyPort, keys: platform.keys,
             finished: { [weak self] in self?.openHome() },
             startOver: { [weak self] in self?.startOver() })
     }
@@ -157,20 +144,21 @@ final class StoreRootModel {
     /// Home on the cloned store, with the key enrolled at setup.
     private func openHome() {
         guard let base else { return }
-        let location = base.location, keyPort = base.keyPort, clock = base.clock
+        let location = base.location, stateDir = location.stateDir.path
         do {
             let copies = try base.keys.openEnrolled()
             // Setup wrote the pinned keys, the enrolment and the known hosts.
             location.protect()
-            let sync = try? StoreSync.open(stateDir: location.stateDir.path)
             // Setup pinned the key and accepted the recipients: saving
             // works from here with no further step.
             let session = try StoreSession(StoreSession.Parts(
-                repoDir: location.repoDir.path, copies: copies, clock: clock, keyPort: keyPort, connect: connect,
+                repoDir: location.repoDir.path, copies: copies, clock: platform.clock, keyPort: base.keyPort,
+                keys: platform.keys,
                 writing: StoreSession.Writing(
-                    writer: StoreWriter.open(stateDir: location.stateDir.path), sync: sync,
-                    stateDir: location.stateDir.path),
+                    writer: StoreWriter.open(stateDir: stateDir), sync: Result { try StoreSync.open(stateDir: stateDir) },
+                    stateDir: stateDir),
                 gitHub: gitHub,
+                autoFill: AutoFillSuggestions(stateDir: stateDir),
                 setUp: SetUpStore(location: location, remove: { [weak self] in self?.removeStore() })))
             phase = .home(AppModel(session: session))
         } catch {
@@ -211,16 +199,8 @@ final class StoreRootModel {
     /// Without the store's folders only what lies outside them goes.
     private func wipeAndRestart() -> StoreWipe.Problems {
         let location = reachableLocation
-        var problems = StoreWipe.wipe(
-            location, keyPort: keyPort,
-            resetKeychain: {
-                #if DEBUG && targetEnvironment(simulator)
-                try SimulatedKeystoreHolder.keystore.reset()
-                #else
-                try EnclaveKeystore().resetDetailed()
-                #endif
-            },
-            legacyLeft: { [weak self] left in self?.legacyFolder = left ? "present" : "gone" })
+        let platform = platform
+        var problems = StoreWipe.wipe(location, keyPort: base?.keyPort, resetKeychain: { try platform.resetKeychain() })
         guard problems.files == nil else { return problems }
         do {
             try location?.prepare()
@@ -244,15 +224,9 @@ enum StoreWipe {
     }
 
     /// The folders go only with a `location`. `keyPort` forgets the PIN
-    /// and the enrolled key; `resetKeychain`
-    /// deletes the Face ID copies' keychain items (the seal key, the index
-    /// key and the enrolment marker), whatever Lock now managed and even
-    /// with no Face ID copies on this iPhone; `legacyLeft` hears whether
-    /// the folder from before the App Group is still there.
-    static func wipe(
-        _ location: StoreLocation?, keyPort: KeyPort?, resetKeychain: () throws -> Void,
-        legacyLeft: (@MainActor @Sendable (_ folderLeft: Bool) -> Void)?
-    ) -> Problems {
+    /// and the enrolled key; `resetKeychain` deletes the Face ID copies'
+    /// keychain items (`Platform.resetKeychain`).
+    static func wipe(_ location: StoreLocation?, keyPort: KeyPort?, resetKeychain: () throws -> Void) -> Problems {
         var problems = Problems()
         // Drops the PIN at once; the card is de-verified on the session's
         // own thread, never here on the main thread.
@@ -264,7 +238,7 @@ enum StoreWipe {
             problems.keychain = error
         }
         CredentialIdentities.clear()
-        LegacyStore.remove(then: legacyLeft)
+        LegacyStore.remove()
         guard let location else { return problems }
         // Gone with the folder below too; cleared first in case that fails.
         try? SitePairings.open(stateDir: location.stateDir.path).clearPairings(entry: nil)
@@ -281,6 +255,7 @@ enum StoreWipe {
 /// Builds the root model once the first frame is up, then shows setup or
 /// Home, and says so inline if the store can't be read, with a way out.
 struct StoreRoot: View {
+    let platform: Platform
     @State private var root: StoreRootModel?
     @Environment(\.scenePhase) private var scenePhase
 
@@ -294,7 +269,7 @@ struct StoreRoot: View {
         }
         .preferredColorScheme(Self.appearance)
         .onAppear {
-            if root == nil { root = StoreRootModel() }
+            if root == nil { root = StoreRootModel(platform: platform) }
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
@@ -331,15 +306,7 @@ private struct StoreRootContent: View {
         }
         #if DEBUG && targetEnvironment(simulator)
         .background(alignment: .topLeading) {
-            // For the UI tests: what is left of a store after it was removed.
-            let state = root.debugState()
-            Text(verbatim: state)
-                .font(.caption2)
-                .frame(width: 1, height: 1)
-                .opacity(0.02)
-                .accessibilityLabel("Store state")
-                .accessibilityValue(state)
-                .accessibilityIdentifier("sim-store-state")
+            SimStoreState(phase: root.phase)
         }
         #endif
     }
@@ -415,7 +382,7 @@ private struct StoreProblemView: View {
         if busy {
             VStack(spacing: PawMetrics.Spacing.l) {
                 ProgressView()
-                Text("The store is busy. Trying again\u{2026}")
+                Text(StoreBusyWords.line)
                     .font(PawFont.subheadline)
                     .foregroundStyle(PawColor.labelSecondary)
                 Button("Try again", action: retry)

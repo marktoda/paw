@@ -78,7 +78,7 @@ struct HomeScreen: View {
     }
 
     private var searchPrompt: String {
-        searchPrompt(entryCount: model.storeSession.live.entryCount)
+        searchPromptWords(entryCount: model.storeSession.live.entryCount)
     }
 
     private var home: some View {
@@ -241,7 +241,7 @@ struct SearchResults: View {
                             subtitleHighlights: hit.folderRanges.map(\.nsRange))
                     }
                 } header: {
-                    PawSectionHeader(hits.count == 1 ? "1 match" : "\(hits.count) matches")
+                    PawSectionHeader(counted(hits.count, "match", "matches"))
                         .accessibilityIdentifier("search-count")
                 }
             }
