@@ -13,13 +13,4 @@ enum KeyConnection {
         return try UsbCardConnection()
         #endif
     }
-
-    /// The readers the system lists, for Key diagnostics.
-    static var readerNames: [String] {
-        #if DEBUG && targetEnvironment(simulator)
-        return ["Simulated key"]
-        #else
-        return UsbCardConnection.slotNames()
-        #endif
-    }
 }
