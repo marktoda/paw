@@ -248,7 +248,7 @@ pub fn fingerprint_groups(text: String) -> Vec<String> {
 /// `fingerprint`, upper case, in two groups ("2C11", "41DE"). Fewer if it
 /// has fewer digits.
 #[uniffi::export]
-pub fn fingerprint_ending(fingerprint: String) -> Vec<String> {
+pub fn fingerprint_tail(fingerprint: String) -> Vec<String> {
     let hex: String = fingerprint.chars().filter(char::is_ascii_hexdigit).map(|c| c.to_ascii_uppercase()).collect();
     let tail = &hex[hex.len().saturating_sub(8)..];
     let (first, last) = tail.split_at(tail.len().min(4));
@@ -298,13 +298,13 @@ pub fn access(bytes: &[u8], card_fingerprint: &str) -> Access {
 
 #[cfg(test)]
 mod tests {
-    use super::{fingerprint_ending, fingerprint_groups};
+    use super::{fingerprint_groups, fingerprint_tail};
 
     #[test]
     fn fingerprints_read_in_groups_of_four_and_end_in_two() {
         assert_eq!(fingerprint_groups("AAAA BBBB CCCC D".into()), ["AAAA", "BBBB", "CCCC", "D"]);
         assert_eq!(fingerprint_groups("uNiVztFv8Wq2".into()), ["uNiV", "ztFv", "8Wq2"]);
-        assert_eq!(fingerprint_ending("0x0123456789abcdef2c1141de".into()), ["2C11", "41DE"]);
-        assert_eq!(fingerprint_ending("ABCDE".into()), ["ABCD", "E"]);
+        assert_eq!(fingerprint_tail("0x0123456789abcdef2c1141de".into()), ["2C11", "41DE"]);
+        assert_eq!(fingerprint_tail("ABCDE".into()), ["ABCD", "E"]);
     }
 }

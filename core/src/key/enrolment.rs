@@ -92,7 +92,7 @@ impl KeyIdentity {
         let tail = self
             .decryption_fingerprint
             .clone()
-            .map(|fpr| format!(", decryption key ending {}", crate::recipients::fingerprint_ending(fpr).join(" ")))
+            .map(|fpr| format!(", decryption key ending {}", crate::recipients::fingerprint_tail(fpr).join(" ")))
             .unwrap_or_default();
         format!("serial {}{tail}", self.serial())
     }
