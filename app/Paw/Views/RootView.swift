@@ -55,8 +55,7 @@ struct RootView: View {
                 // Copies end with time, not only with taps: look again now and then.
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(30))
-                    model.refreshCopies()
-                    model.storeSession.clipboard.clearIfExpired()
+                    model.timePassed()
                 }
             }
             .privacyCover()

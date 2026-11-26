@@ -17,11 +17,7 @@ final class SyncModel {
     let serverKeys: ServerKeysModel
 
     let keyTask: KeyTaskDriver
-    private(set) var running: SyncKind? {
-        didSet {
-            if running == nil, oldValue != nil { recomputeLocal() }
-        }
-    }
+    private(set) var running: SyncKind?
     private(set) var progress: TaskProgress?
     private(set) var lastChecked: Date?
     private(set) var failure: SyncFailure?
@@ -36,11 +32,7 @@ final class SyncModel {
     private(set) var reencryptLeft: [String: LeftReason] = [:]
     var summary: SyncSummary?
     /// Taking a replaced history is under way, or why it failed.
-    private(set) var accepting = false {
-        didSet {
-            if !accepting, oldValue { recomputeLocal() }
-        }
-    }
+    private(set) var accepting = false
     var acceptProblem: String?
     /// The GitHub sign-in, which checks for changes without the key when
     /// it is for this store's repository.
@@ -223,8 +215,8 @@ final class SyncModel {
             keyTask.cancel()
             if running != nil {
                 failure = SyncFailure.cancelled(during: keyKind, unpushed: unpushed)
+                stoppedQuietly()
             }
-            running = nil
         }
         statusUp = false
         keyPathNote = nil
@@ -374,7 +366,15 @@ final class SyncModel {
             } else {
                 failure = SyncFailure.signInCheckFailed(error, unpushed: unpushed)
             }
+            recomputeLocal()
         }
+    }
+
+    /// A sync stopped before announcing anything: what it may have left
+    /// refused or held back is read here.
+    private func stoppedQuietly() {
+        running = nil
+        recomputeLocal()
     }
 
     /// The card on Home: what a sync brought in, and which Face ID copies
@@ -438,6 +438,7 @@ final class SyncModel {
             requests.send(.toast(keepChanges ? "Using the new store. Your changes are kept." : "Using the new store."))
         case .failure(let error):
             acceptProblem = describe(error)
+            recomputeLocal()
         }
     }
 
@@ -541,15 +542,15 @@ extension SyncModel {
             }
             return .standard
         case .stepFailed(let error):
-            running = nil
             failure = SyncFailure(error, during: kind, unpushed: unpushed, host: host)
+            stoppedQuietly()
             statusUp = true
             return .close
         case .cancelled:
             cancelSheet()
             return .close
         case .failed:
-            running = nil
+            stoppedQuietly()
             return .standard
         }
     }
