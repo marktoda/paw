@@ -5,20 +5,22 @@ import SwiftUI
 /// The store's GitHub sign-in as the screens see it: whether one is kept,
 /// which repository was chosen, and signing out. The core keeps the
 /// tokens (in the vault it was given); nothing here ever holds one. Every
-/// call into the core runs on `queue`, never on the main thread.
+/// call into the core goes through `run` or `waitForCode`, off the main
+/// thread, and `signedIn` and `link` are read again after each.
 @MainActor @Observable
 final class GitHubAccess {
+    /// For reading only (diagnostics): calls go through `run`.
     let core: GitHubAccount
     private(set) var signedIn = false
     private(set) var link: GitHubLink?
-    let queue = DispatchQueue(label: "paw-github", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "paw-github", qos: .userInitiated)
     /// Whether this GitHub hosts the store at an address.
     private let hosts: (_ address: String) -> Bool
 
     init(core: GitHubAccount, hosts: @escaping (_ address: String) -> Bool) {
         self.core = core
         self.hosts = hosts
-        reload()
+        run { _ in }
     }
 
     /// Whether Settings offers the sign-in for the store at `address`: one
@@ -27,22 +29,57 @@ final class GitHubAccess {
         signedIn || link != nil || hosts(address)
     }
 
-    /// Reads whether a sign-in is kept and which repository is chosen.
-    /// Reads the vault and a file; sends nothing.
-    func reload() {
+    /// Runs `work` on the core, then reads again whether a sign-in is kept
+    /// and which repository is chosen (`work` may have changed either)
+    /// before `done` hears how it went.
+    func run<Value>(_ work: @escaping @Sendable (GitHubAccount) throws -> Value,
+                    done: @escaping @MainActor (Result<Value, Error>) -> Void = { _ in }) {
         let core = core
         queue.async { [weak self] in
-            // A vault that can't be read holds no sign-in paw can use:
-            // checks go on with the key, and Settings offers to sign in.
-            let signedIn = (try? core.isSignedIn()) ?? false
-            let link = Handoff(value: core.linkedRepository())
+            let result = Handoff(value: Result { try work(core) })
+            let kept = GitHubAccess.kept(core)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    self?.signedIn = signedIn
-                    self?.link = link.value
+                    self?.heard(kept)
+                    done(result.value)
                 }
             }
         }
+    }
+
+    /// Waits for the person to enter `signIn`'s code, on a thread of its
+    /// own: each `poll` waits GitHub's interval itself.
+    func waitForCode(_ signIn: DeviceSignIn, done: @escaping @MainActor (Result<SignInState, Error>) -> Void) {
+        let core = core
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var outcome: Result<SignInState, Error>
+            while true {
+                outcome = Result { try signIn.poll() }
+                if case .success(.waiting) = outcome { continue }
+                break
+            }
+            let result = Handoff(value: outcome)
+            let kept = GitHubAccess.kept(core)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self?.heard(kept)
+                    done(result.value)
+                }
+            }
+        }
+    }
+
+    /// Whether a sign-in is kept and which repository is chosen. Reads the
+    /// vault and a file; sends nothing.
+    private nonisolated static func kept(_ core: GitHubAccount) -> Handoff<(signedIn: Bool, link: GitHubLink?)> {
+        // A vault that can't be read holds no sign-in paw can use:
+        // checks go on with the key, and Settings offers to sign in.
+        Handoff(value: (signedIn: (try? core.isSignedIn()) ?? false, link: core.linkedRepository()))
+    }
+
+    private func heard(_ kept: Handoff<(signedIn: Bool, link: GitHubLink?)>) {
+        signedIn = kept.value.signedIn
+        link = kept.value.link
     }
 
     /// Whether "Check for changes" on the store at `address` can use the
@@ -56,16 +93,7 @@ final class GitHubAccess {
     /// Forgets the sign-in on this iPhone and, with `revoke`, asks GitHub
     /// to revoke it too. `done` gets the core's report or why not.
     func signOut(revoke: Bool, done: @escaping @MainActor (Result<SignOutReport, Error>) -> Void) {
-        let core = core
-        queue.async { [weak self] in
-            let result = Handoff(value: Result { try core.signOut(revoke: revoke) })
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    self?.reload()
-                    done(result.value)
-                }
-            }
-        }
+        run({ try $0.signOut(revoke: revoke) }, done: done)
     }
 }
 

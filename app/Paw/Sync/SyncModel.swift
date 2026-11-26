@@ -347,22 +347,15 @@ final class SyncModel {
         running = .refresh
         progress = nil
         keyPathNote = nil
-        let core = gitHub.core
         let time = BackgroundTime.begin("Sync")
-        workQueue.async { [weak self] in
-            let checked = Handoff(value: Result { try core.refreshStore() })
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    time.end()
-                    self?.checkedWithSignIn(checked.value)
-                }
-            }
+        gitHub.run({ try $0.refreshStore() }) { [weak self] checked in
+            time.end()
+            self?.checkedWithSignIn(checked)
         }
     }
 
     private func checkedWithSignIn(_ result: Result<SyncReport, Error>) {
         running = nil
-        gitHub?.reload()
         switch result {
         case .success(let report):
             if absorb(report, kind: .refresh) {

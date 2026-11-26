@@ -78,7 +78,9 @@ final class StoreRootModel {
 
     func route() {
         guard let base = base ?? makeBase() else { return }
-        gitHub?.reload()
+        // Read again each time: the phone may have been locked, or the
+        // store wiped.
+        gitHub = GitHubSignInSource.access(stateDir: base.location.stateDir)
         do {
             #if DEBUG && targetEnvironment(simulator)
             if SimLockedLaunch.isLocked { throw SimLockedLaunch.Unreadable() }
@@ -98,8 +100,6 @@ final class StoreRootModel {
         do {
             let base = try Base(platform)
             self.base = base
-            let location = base.location
-            gitHub = GitHubSignInSource.access(stateDir: location.stateDir)
             return base
         } catch {
             fail(error)

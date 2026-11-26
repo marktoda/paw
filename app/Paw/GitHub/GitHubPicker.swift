@@ -74,14 +74,8 @@ final class GitHubPicker: Identifiable {
         generation += 1
         let generation = generation
         stage = .starting
-        let core = access.core
-        access.queue.async { [weak self] in
-            let result = Handoff(value: Result { try core.startSignIn() })
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    self?.started(result.value, generation: generation)
-                }
-            }
+        access.run({ try $0.startSignIn() }) { [weak self] result in
+            self?.started(result, generation: generation)
         }
     }
 
@@ -100,22 +94,9 @@ final class GitHubPicker: Identifiable {
         }
     }
 
-    /// `poll` waits for GitHub's interval itself: call it until it stops
-    /// saying `waiting`, on a thread of its own.
     private func poll(_ signIn: DeviceSignIn, generation: Int) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            var outcome: Result<SignInState, Error>
-            while true {
-                outcome = Result { try signIn.poll() }
-                if case .success(.waiting) = outcome { continue }
-                break
-            }
-            let result = Handoff(value: outcome)
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    self?.polled(result.value, generation: generation)
-                }
-            }
+        access.waitForCode(signIn) { [weak self] result in
+            self?.polled(result, generation: generation)
         }
     }
 
@@ -124,7 +105,6 @@ final class GitHubPicker: Identifiable {
         signIn = nil
         switch result {
         case .success(.signedIn):
-            access.reload()
             list()
         case .success(.denied):
             stage = .ended(.denied)
@@ -163,14 +143,8 @@ final class GitHubPicker: Identifiable {
         generation += 1
         let generation = generation
         stage = .listing
-        let core = access.core
-        access.queue.async { [weak self] in
-            let result = Handoff(value: Result { try core.repositories() })
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    self?.listed(result.value, generation: generation)
-                }
-            }
+        access.run({ try $0.repositories() }) { [weak self] result in
+            self?.listed(result, generation: generation)
         }
     }
 
@@ -192,7 +166,6 @@ final class GitHubPicker: Identifiable {
                 stage = .repositories(repositories, installUrl: installUrl)
             }
         case .failure(let error):
-            if GitHubWords.endedSignIn(error) { access.reload() }
             stage = .listFailed(GitHubWords.problem(error), signInAgain: GitHubWords.endedSignIn(error))
         }
     }
@@ -203,15 +176,9 @@ final class GitHubPicker: Identifiable {
         generation += 1
         let generation = generation
         stage = .choosing(repository.fullName)
-        let core = access.core
         let name = repository.fullName
-        access.queue.async { [weak self] in
-            let result = Handoff(value: Result { try core.selectRepository(fullName: name) })
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    self?.chosen(result.value, generation: generation)
-                }
-            }
+        access.run({ try $0.selectRepository(fullName: name) }) { [weak self] result in
+            self?.chosen(result, generation: generation)
         }
     }
 
@@ -219,7 +186,6 @@ final class GitHubPicker: Identifiable {
         guard generation == self.generation else { return }
         switch result {
         case .success(let address):
-            access.reload()
             switch purpose {
             case .pick(let chosen): chosen(address)
             case .link(_, let linked): linked()
@@ -227,10 +193,5 @@ final class GitHubPicker: Identifiable {
         case .failure(let error):
             stage = .listFailed(GitHubWords.problem(error), signInAgain: GitHubWords.endedSignIn(error))
         }
-    }
-
-    /// The core's order: most recently pushed first.
-    static func ordered(_ repositories: [GitHubRepository]) -> [GitHubRepository] {
-        repositories
     }
 }
