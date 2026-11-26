@@ -47,9 +47,18 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Setup {
-    /// Connections go where `route` says (a simulation playing a host).
+    /// The setup kept in `state_dir`, connecting through `routes` (a
+    /// simulation playing a host).
     #[cfg(feature = "sim")]
-    pub(crate) fn set_route(&self, route: Route) {
+    pub fn open_routed(state_dir: String, routes: &crate::sim::remote::SimRoutes) -> Result<Arc<Self>, SetupError> {
+        let setup = Self::open(state_dir)?;
+        setup.set_route(routes.route());
+        Ok(setup)
+    }
+
+    /// Connections go where `route` says.
+    #[cfg(feature = "sim")]
+    fn set_route(&self, route: Route) {
         self.flow().set_route(route);
     }
 

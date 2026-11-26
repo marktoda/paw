@@ -23,7 +23,7 @@ fn closed_port() -> u16 {
 }
 
 fn at_check_host(routes: &SimRoutes, dir: &std::path::Path, port: &Arc<KeyPort>, address: &str) -> Arc<Setup> {
-    let setup = routes.open_setup(dir.to_string_lossy().into_owned()).unwrap();
+    let setup = Setup::open_routed(dir.to_string_lossy().into_owned(), routes).unwrap();
     setup.read_key_from_session(port.session().unwrap()).unwrap();
     setup.set_address(address.into()).unwrap();
     setup

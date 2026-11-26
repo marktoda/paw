@@ -254,16 +254,14 @@ impl SimRoutes {
         }
     }
 
-    /// The setup kept in `state_dir`, connecting through these routes.
-    pub fn open_setup(&self, state_dir: String) -> Result<Arc<crate::ffi::sync::Setup>, crate::setup::SetupError> {
-        let setup = crate::ffi::sync::Setup::open(state_dir)?;
+    /// Where connections go, as these routes say.
+    pub(crate) fn route(&self) -> crate::sync::Route {
         let routes = self.0.clone();
-        setup.set_route(crate::sync::Route::new(move |host, port| {
+        crate::sync::Route::new(move |host, port| {
             let routes = routes.lock().unwrap_or_else(|p| p.into_inner());
             let found = routes.iter().find(|((h, p), _)| h.eq_ignore_ascii_case(host) && *p == port);
             found.map(|(_, to)| ("127.0.0.1".to_owned(), *to))
-        }));
-        Ok(setup)
+        })
     }
 }
 
