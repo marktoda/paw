@@ -15,9 +15,10 @@
 #   anywhere in the bytes (`grep -a`), which would mean the fixture was
 #   compiled in even if no symbol names it;
 # - with --app, the Swift debug surfaces: the launch arguments that switch
-#   harnesses on, the types of the simulator and debug folders and the
-#   gallery, anywhere in the bytes (type names are in Swift's metadata even
-#   when symbols are gone).
+#   harnesses on, the names of the types the simulator and debug folders
+#   declare at top level (private ones too) and the gallery's root, anywhere
+#   in the bytes (type names are in Swift's metadata even when symbols are
+#   gone).
 #
 # --expect keeps the patterns honest: run on a build that has the simulation
 # (the simulator library; with --app, the Debug simulator app and
@@ -73,16 +74,19 @@ needles=(
 # The app's debug surfaces (`#if DEBUG`, and `#if DEBUG &&
 # targetEnvironment(simulator)` for everything simulated): every declared
 # launch argument (scripts/launch-arguments.sh, which also checks the
-# declaration against the UI tests), any `-pawSim…` one, every type
-# declared in the simulator and debug folders, and the gallery's root. Those
-# folders add nothing to types declared elsewhere: a member's name is not
-# in a stripped build, so it could not be scanned for. Only with --app.
+# declaration against the UI tests), any `-pawSim…` one, every type the
+# simulator and debug folders declare at the start of a line, with or
+# without `private`, `fileprivate` or `final`, and the gallery's root.
+# Not scanned: types nested in those (short names such as `Row` that the
+# device build has too), and what those folders' extensions add to types
+# declared elsewhere (`View`, `EnvironmentValues`, `KeyReader`): a member's
+# name is not in a stripped build. Only with --app.
 app_needles=()
 if [[ "$app" == yes ]]; then
   here="$(cd "$(dirname "$0")" && pwd)"
   arguments="$("$here/launch-arguments.sh")"
   folders=("$here"/../app/Paw/Simulator/*.swift "$here"/../app/Shared/Simulator/*.swift "$here"/../app/Paw/Debug/*.swift)
-  types="$(sed -nE 's/^(final class|class|struct|enum|actor) ([A-Za-z]+).*/\2/p' "${folders[@]}" | sort -u)"
+  types="$(sed -nE 's/^((private|fileprivate) )?(final )?(class|struct|enum|actor) ([A-Za-z]+).*/\5/p' "${folders[@]}" | sort -u)"
   [[ -n "$arguments" && -n "$types" ]] || { echo "check-no-sim: no debug surfaces found in app/" >&2; exit 2; }
   app_needles=('pawSim' 'GalleryRoot' $arguments $types)
 fi

@@ -240,8 +240,8 @@ jobs:
   # The build for real devices: Release (optimised, no DEBUG) against the
   # core built without the `sim` feature, unsigned. It is signed on the
   # developer's own machine (scripts/install.sh), so the signing key never
-  # leaves it. The scan proves the simulated hardware, the PIN-taking test
-  # path and the debug harnesses are not in what gets installed.
+  # leaves it. The scan proves the simulated hardware, the fixture and the
+  # debug harnesses are not in what gets installed.
   device:
     # The Rust tests run alongside; a failure there still fails the run.
     needs: [core-ios]
