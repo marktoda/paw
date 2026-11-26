@@ -32,10 +32,10 @@ use crate::ssh::SshPublicKey;
 use crate::store::PassStore;
 use crate::sync::address::{AddressNotice, AddressProblem, StoreAddress};
 use crate::sync::hosts::{self, KnownHosts};
-use crate::sync::{self, Cloned, Connection, PresentedHostKey, SyncError};
+use crate::sync::{self, Cloned, Connection, PresentedHostKey};
 use crate::write::{Keyring, LineStatus, WriteError};
-use crate::PawError;
-use crate::remote::RemoteFailure;
+use crate::fault::Fault;
+use crate::remote::{PortFallback, RemoteFailure};
 use crate::key::touch_clock::{TouchClock, TouchExpectation};
 
 /// The key as setup shows it on "Your key". Public data only.
@@ -76,9 +76,6 @@ pub enum SetupState {
 pub enum SetupError {
     #[error("not an address paw can use: {problem:?}")]
     BadAddress { problem: AddressProblem },
-    /// The host, the network or the repository there. Nothing was kept.
-    #[error(transparent)]
-    Remote { failure: RemoteFailure },
     #[error("that store is empty")]
     EmptyRepository,
     #[error("that repository isn't a pass store: it has no .gpg-id file at the top")]
@@ -89,12 +86,13 @@ pub enum SetupError {
     UnusableKey { reason: UnusableKeyReason },
     #[error("{message}")]
     WrongStep { message: String },
-    /// See [`PawError::StoreBusy`].
-    #[error("{}", crate::lock::STORE_BUSY)]
-    StoreBusy,
-    #[error("{message}")]
-    Failed { message: String },
+    /// Underneath the step: the store, the host, the network or the
+    /// repository there. Nothing was kept.
+    #[error(transparent)]
+    Fault { fault: Fault },
 }
+
+crate::fault::workflow_error!(SetupError);
 
 /// Why a key cannot set up a store.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Enum)]
@@ -119,32 +117,7 @@ pub enum UnusableKeyReason {
 }
 
 fn failed(error: impl std::fmt::Display) -> SetupError {
-    SetupError::Failed { message: error.to_string() }
-}
-
-impl From<PawError> for SetupError {
-    fn from(error: PawError) -> Self {
-        match error {
-            PawError::StoreBusy => Self::StoreBusy,
-            other => failed(other),
-        }
-    }
-}
-
-impl From<SyncError> for SetupError {
-    fn from(error: SyncError) -> Self {
-        match error {
-            SyncError::Remote { failure } => Self::Remote { failure },
-            SyncError::StoreBusy => Self::StoreBusy,
-            other => failed(other),
-        }
-    }
-}
-
-impl From<RemoteFailure> for SetupError {
-    fn from(failure: RemoteFailure) -> Self {
-        Self::Remote { failure }
-    }
+    Fault::local(error).into()
 }
 
 /// Whether new entries can be saved once setup is done. Reading works
@@ -163,9 +136,12 @@ pub struct SetupWriteReadiness {
     pub folders_needing_keys: Vec<String>,
 }
 
-/// A wrong step or a damaged store, as setup words it.
-fn write_failed(error: WriteError) -> SetupError {
-    failed(format!("could not record the store's keys: {error}"))
+/// The pinned keys could not be read or written, said as setup's step.
+fn write_failed(fault: Fault) -> SetupError {
+    match fault {
+        Fault::Local { detail } => failed(format!("could not record the store's keys: {detail}")),
+        other => other.into(),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -292,7 +268,7 @@ fn notice_line(notice: &AddressNotice) -> String {
         AddressNotice::GitHubShortForm { owner, repo, address } => format!("github-short-form {owner} {repo} {address}"),
         AddressNotice::GitHubWithoutUser { address } => format!("github-without-user {address}"),
         AddressNotice::GitHubWebAddress { address } => format!("github-web-address {address}"),
-        AddressNotice::PortFallback { from_host, from_port, host, port } => {
+        AddressNotice::PortFallback { fallback: PortFallback { from_host, from_port, host, port } } => {
             format!("port-fallback {from_host} {from_port} {host} {port}")
         }
     }
@@ -310,10 +286,12 @@ fn notice_from(line: &str) -> Option<AddressNotice> {
         ["github-without-user", address] => AddressNotice::GitHubWithoutUser { address: text(address) },
         ["github-web-address", address] => AddressNotice::GitHubWebAddress { address: text(address) },
         ["port-fallback", from_host, from_port, host, port] => AddressNotice::PortFallback {
-            from_host: text(from_host),
-            from_port: from_port.parse().ok()?,
-            host: text(host),
-            port: port.parse().ok()?,
+            fallback: PortFallback {
+                from_host: text(from_host),
+                from_port: from_port.parse().ok()?,
+                host: text(host),
+                port: port.parse().ok()?,
+            },
         },
         _ => return None,
     })
@@ -557,15 +535,12 @@ impl SetupFlow {
         let Some(key) = self.unconfirmed.take() else {
             return Err(SetupError::WrongStep { message: "no host key is waiting to be confirmed".into() });
         };
-        let trusted = self.known_hosts().trust(address.connect_host(), address.port, || Ok(key.clone()), fingerprint);
-        match trusted {
-            Ok(true) => self.ask_host(),
-            Ok(false) => {
-                self.unconfirmed = Some(key);
-                Err(RemoteFailure::HostKeyNotConfirmed { host: address.host }.into())
-            }
-            Err(e) => Err(failed(e)),
+        let trusted = self.known_hosts().trust(address.connect_host(), address.port, || Ok(key.clone()), fingerprint)?;
+        if !trusted {
+            self.unconfirmed = Some(key);
+            return Err(RemoteFailure::HostKeyNotConfirmed { host: address.host }.into());
         }
+        self.ask_host()
     }
 
     /// "I expected this change": forgets the key pinned for the store's
@@ -605,12 +580,7 @@ impl SetupFlow {
             return Err(SetupError::WrongStep { message: "no other way to reach the host is offered now".into() });
         };
         self.saved.address = Some(fallback.address(&address).display());
-        self.saved.notice = Some(AddressNotice::PortFallback {
-            from_host: fallback.from_host,
-            from_port: fallback.from_port,
-            host: fallback.host,
-            port: fallback.port,
-        });
+        self.saved.notice = Some(AddressNotice::PortFallback { fallback });
         self.go(Step::CheckHost)
     }
 
@@ -656,7 +626,7 @@ impl SetupFlow {
     /// A repository with no commits, or with no `.gpg-id` at the top, is
     /// the wrong address rather than a failed download: setup goes back to
     /// the address, with the address kept.
-    pub(crate) fn finish_download(&mut self, cloned: Result<Cloned, SyncError>) -> Result<SetupState, SetupError> {
+    pub(crate) fn finish_download(&mut self, cloned: Result<Cloned, Fault>) -> Result<SetupState, SetupError> {
         let repo = self.repo_dir();
         let outcome = match cloned {
             Err(e) => Err(SetupError::from(e)),
@@ -759,7 +729,9 @@ impl SetupFlow {
         match bound {
             // Several unknown lines: the person picks the card's later.
             Ok(_) | Err(WriteError::MissingRecipients { .. }) => {}
-            Err(e) => return Err(write_failed(e)),
+            Err(WriteError::Fault { fault }) => return Err(write_failed(fault)),
+            // The card's key was pinned just above.
+            Err(other) => return Err(write_failed(Fault::local(other))),
         }
         keyring.accept_all_recipients_at_setup(&held, &repo).map_err(write_failed)?;
         save_enrolment(&self.dir, identity).map_err(SetupError::from)?;
@@ -842,7 +814,9 @@ mod tests {
             AddressNotice::GitHubShortForm { owner: "you".into(), repo: "store.git".into(), address: "git@github.com:you/store.git".into() },
             AddressNotice::GitHubWithoutUser { address: "git@github.com:you/store.git".into() },
             AddressNotice::GitHubWebAddress { address: "git@github.com:you/store.git".into() },
-            AddressNotice::PortFallback { from_host: "github.com".into(), from_port: 22, host: "ssh.github.com".into(), port: 443 },
+            AddressNotice::PortFallback {
+                fallback: PortFallback { from_host: "github.com".into(), from_port: 22, host: "ssh.github.com".into(), port: 443 },
+            },
         ];
         for notice in notices {
             assert_eq!(notice_from(&notice_line(&notice)), Some(notice));

@@ -12,6 +12,7 @@ use super::integrate::{IntegrateReport, Integration, Replaced, integrate_locked}
 use super::transport::{ConnectError, Connection, Remote};
 use super::{PushError, SyncError, TransferCallback, current_branch, fetch_branches, git_err, push_tip};
 use crate::key::KeyError;
+use crate::fault::Fault;
 use crate::remote::RemoteFailure;
 use crate::lock::{Exclusive, StoreLock};
 use crate::ssh::{SshPublicKey, SshSigner};
@@ -162,7 +163,7 @@ pub(crate) fn run_until<E: From<KeyError> + From<SyncError>>(
     let connection = match Connection::open(remote, &counting) {
         Ok(connection) => connection,
         Err(ConnectError::Key(error)) => return Err(error.into()),
-        Err(ConnectError::Sync(error)) => return Err(error.into()),
+        Err(ConnectError::Fault(error)) => return Err(SyncError::from(error).into()),
     };
     let mut report = run_on(&connection, dir, holds_back, send, stop, progress)?;
     report.signatures = counting.count.load(Ordering::SeqCst);
@@ -170,7 +171,7 @@ pub(crate) fn run_until<E: From<KeyError> + From<SyncError>>(
 }
 
 /// [`run_until`] on a connection already logged in. A stop ends it with
-/// [`SyncError::Cancelled`], only between whole steps (after the login,
+/// [`Fault::Cancelled`], only between whole steps (after the login,
 /// after a fetch and its integrate, before a push): nothing is left half
 /// done.
 fn run_on(
@@ -182,7 +183,7 @@ fn run_on(
     mut progress: Option<TransferCallback<'_>>,
 ) -> Result<SyncReport, SyncError> {
     if stop() {
-        return Err(SyncError::Cancelled);
+        return Err(Fault::Cancelled.into());
     }
     let mut report = SyncReport::new();
 
@@ -199,7 +200,7 @@ fn run_on(
         return Ok(report);
     };
     if send && waiting > 0 && stop() {
-        return Err(SyncError::Cancelled);
+        return Err(Fault::Cancelled.into());
     }
     // A waiting change encrypted for recipients its entry no longer has
     // is not sent: nothing is, until the person has dealt with it.
@@ -207,7 +208,7 @@ fn run_on(
         return Ok(report);
     }
     let Some(pushing) = &pushing else {
-        return Err(SyncError::Failed { message: "internal: a send without its push lock".into() });
+        return Err(Fault::local("internal: a send without its push lock").into());
     };
     let (repo, branch, tip) = branch_tip(dir)?;
 
@@ -215,7 +216,7 @@ fn run_on(
         Ok(()) => {}
         Err(PushError::NotFastForward) => {
             if stop() {
-                return Err(SyncError::Cancelled);
+                return Err(Fault::Cancelled.into());
             }
             report.retried = true;
             let (again, held) =
@@ -232,11 +233,11 @@ fn run_on(
                 match push_tip(connection, &store, &repo, &branch, tip, held, pushing, crate::lock::RECORD_WAIT) {
                     Ok(()) => {}
                     Err(PushError::NotFastForward) => return Err(RemoteFailure::KeptMoving.into()),
-                    Err(PushError::Failed(error)) => return Err(error),
+                    Err(PushError::Failed(error)) => return Err(error.into()),
                 }
             }
         }
-        Err(PushError::Failed(error)) => return Err(error),
+        Err(PushError::Failed(error)) => return Err(error.into()),
     }
     report.pushed = waiting;
     report.state = SyncState::UpToDate;

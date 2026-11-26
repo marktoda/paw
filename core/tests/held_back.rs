@@ -328,7 +328,7 @@ fn a_save_while_each_one_is_opened_does_not_add_up_to_a_failure() {
         w.save("Notes", &format!("n{saved}"), "pw");
         decrypt(&w.card, PIN, bytes)
             .map(zeroize::Zeroizing::new)
-            .map_err(|e| held_back::OpenFailure::Stop(paw_core::sync::SyncError::Failed { message: e.to_string() }))
+            .map_err(|e| held_back::OpenFailure::Stop(paw_core::sync::SyncError::Fault { fault: paw_core::fault::Fault::Local { detail: e.to_string() } }))
     };
 
     let report = held_back::reencrypt_each(&w.repo(), w.state.path(), &mut open, &mut |_, _| {}).unwrap();

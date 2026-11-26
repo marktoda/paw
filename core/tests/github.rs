@@ -23,6 +23,7 @@ use paw_core::sim::SimulatedKey;
 use paw_core::sim::github::{SIM_USER_CODE, SimBystander, SimDeviceOutcome, SimGitHub, SimPollClock, SimTokenVault};
 use paw_core::sim::remote::SimRemote;
 use paw_core::sync::operation::{self, SyncState};
+use paw_core::fault::Fault;
 use paw_core::remote::RemoteFailure;
 use paw_core::sync::{self, SyncError};
 
@@ -414,8 +415,8 @@ fn a_repository_not_in_the_list_cannot_be_chosen() {
 fn with_the_vault_empty_nothing_is_sent_anywhere() {
     let w = world();
     assert!(!w.account.is_signed_in().unwrap());
-    assert_eq!(w.account.repositories().unwrap_err(), GitHubError::Remote { failure: RemoteFailure::NotSignedIn });
-    assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::NotSignedIn);
+    assert_eq!(w.account.repositories().unwrap_err(), GitHubError::Fault { fault: Fault::Remote { failure: RemoteFailure::NotSignedIn } });
+    assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::Failed { fault: Fault::Remote { failure: RemoteFailure::NotSignedIn } });
     assert!(w.account.refresh_store().is_err());
     assert!(!w.account.sign_out(true).unwrap().revoked);
     assert_eq!(w.github.request_count(), 0);
@@ -521,7 +522,7 @@ fn killed_after_github_rotated_but_before_the_keychain_write_ends_the_sign_in_cl
     assert!(w.account.is_signed_in().unwrap());
 
     let report = w.account.background_refresh(secs(25));
-    assert_eq!(report.outcome, BackgroundOutcome::SignedOut);
+    assert_eq!(report.outcome, BackgroundOutcome::Failed { fault: Fault::Remote { failure: RemoteFailure::SignedOut } });
     assert!(!w.account.is_signed_in().unwrap());
     assert_eq!(w.head(), head);
     w.assert_consistent();
@@ -587,11 +588,11 @@ fn a_revoked_sign_in_ends_cleanly_and_leaves_the_store_alone() {
     w.github.revoke_authorisation();
 
     let error = w.account.refresh_store().unwrap_err();
-    assert!(matches!(&error, SyncError::Remote { failure: RemoteFailure::SignedOut }), "{error}");
+    assert!(matches!(&error, SyncError::Fault { fault: Fault::Remote { failure: RemoteFailure::SignedOut } }), "{error}");
     assert!(!w.account.is_signed_in().unwrap());
     assert_eq!(w.head(), head);
     w.assert_consistent();
-    assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::NotSignedIn);
+    assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::Failed { fault: Fault::Remote { failure: RemoteFailure::NotSignedIn } });
 }
 
 #[test]
@@ -628,9 +629,11 @@ fn a_hostile_tree_fetched_over_https_is_refused_exactly_as_over_ssh() {
     let over_https = w.account.refresh_store().unwrap_err();
     let over_ssh = ssh_refresh(&w, twin.path()).unwrap_err();
 
-    assert!(matches!((&over_https, &over_ssh), (SyncError::Remote { failure: RemoteFailure::RefusedContent { .. } }, SyncError::Remote { failure: RemoteFailure::RefusedContent { .. } })));
-    assert_eq!(over_https.to_string(), over_ssh.to_string());
-    assert!(over_https.to_string().starts_with("the remote contains something paw will not check out"), "{over_https}");
+    let refused = |error: &SyncError| match error {
+        SyncError::Fault { fault: Fault::Remote { failure: RemoteFailure::RefusedContent { paths } } } => paths.clone(),
+        other => panic!("not refused for the remote's content: {other:?}"),
+    };
+    assert_eq!(refused(&over_https), refused(&over_ssh));
     assert_eq!(sync::refused_remote(&w.repo()).unwrap(), sync::refused_remote(&twin.path().join(paw_core::files::layout::REPO)).unwrap());
     assert_eq!(w.head(), head);
     assert!(!w.repo().join("escape").exists());
@@ -736,7 +739,11 @@ fn a_token_for_another_repository_is_not_used_for_this_store() {
     let before = w.git_requests();
 
     let error = w.account.refresh_store().unwrap_err();
-    assert!(error.to_string().contains("GitHub sign-in is for you/other-0001"), "{error}");
+    let wrong = |granted: &str| granted == "you/other-0001";
+    assert!(
+        matches!(&error, SyncError::Fault { fault: Fault::Remote { failure: RemoteFailure::WrongRepository { granted, .. } } } if wrong(granted)),
+        "{error:?}"
+    );
     let report = w.account.background_refresh(secs(25));
     assert!(matches!(report.outcome, BackgroundOutcome::Failed { .. }), "{report:?}");
     assert_eq!(w.git_requests(), before);
@@ -809,7 +816,7 @@ fn a_connection_dropped_mid_pack_changes_nothing_and_the_next_refresh_works() {
     w.github.set_drop_mid_pack(true);
 
     let report = w.account.background_refresh(secs(25));
-    assert!(matches!(report.outcome, BackgroundOutcome::Offline { .. } | BackgroundOutcome::Failed { .. }), "{report:?}");
+    assert!(matches!(report.outcome, BackgroundOutcome::Failed { .. }), "{report:?}");
     assert_eq!(w.head(), head);
     w.assert_consistent();
 
@@ -841,7 +848,7 @@ fn a_store_with_no_chosen_repository_is_not_refreshed() {
     let w = world();
     w.sign_in();
     let before = w.github.request_count();
-    assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::NotLinked);
+    assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::Failed { fault: Fault::Remote { failure: RemoteFailure::NotLinked } });
     assert_eq!(w.github.request_count(), before);
 }
 
@@ -940,7 +947,7 @@ fn a_store_in_use_ends_the_background_run_busy_and_changes_nothing() {
     release.0.send(()).unwrap();
     holder.join().unwrap();
 
-    assert_eq!(report.outcome, BackgroundOutcome::Busy, "{report:?}");
+    assert_eq!(report.outcome, BackgroundOutcome::Failed { fault: Fault::StoreBusy }, "{report:?}");
     assert!(took < secs(10), "waited {took:?} for the store");
     assert_eq!(w.head(), head);
     w.assert_consistent();

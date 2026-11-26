@@ -4,23 +4,14 @@
 
 use std::path::Path;
 
-use git2::{Oid, Repository};
+use git2::Oid;
 
 use super::{Keyring, WriteError, encrypt, now_secs};
+use crate::fault::Fault;
 use crate::key::KeyError;
-use crate::lock::{Exclusive, StoreLock};
-use crate::sync::history::{ensure_clean, index_entry, move_branch};
-use crate::sync::queue::{Waiting, waiting};
-use crate::sync::{SyncError, check_not_being_sent, git_err, guard};
-
-impl From<WriteError> for SyncError {
-    fn from(error: WriteError) -> Self {
-        match error {
-            WriteError::StoreBusy => Self::StoreBusy,
-            other => Self::Failed { message: other.to_string() },
-        }
-    }
-}
+use crate::lock::StoreLock;
+use crate::sync::SyncError;
+use crate::sync::queue::{Rewritten, WaitingFile, rewrite_ciphertexts, waiting_files};
 
 /// A waiting change whose ciphertext is not encrypted for exactly the
 /// recipients its entry has now: its `.gpg-id` changed after it was saved
@@ -80,25 +71,22 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
     if !keyring.confirmed() {
         return Ok(Vec::new());
     }
-    let repo = guard::open(dir)?;
-    let local = waiting(&repo)?;
+    let (_, files) = waiting_files(dir)?;
     let now = now_secs();
     let mut held = Vec::new();
-    for commit in &local.commits {
-        let Some((path, blob)) = commit.change.ciphertext() else { continue };
-        if !crate::path::is_entry_file(path) {
+    for file in files {
+        if !crate::path::is_entry_file(&file.path) {
             continue;
         }
-        let folder = crate::path::folder_of(path);
-        let bytes = repo.find_blob(blob).map_err(git_err)?.content().to_vec();
-        let found = crate::recipients::entry_recipients(&bytes).ok();
+        let folder = crate::path::folder_of(&file.path);
+        let found = crate::recipients::entry_recipients(&file.ciphertext).ok();
         let encrypted_for: Vec<String> = found
             .as_ref()
             .map(|f| f.keys.iter().map(crate::recipients::Recipient::describe).collect())
             .unwrap_or_default();
         let hold = |gpg_id: Option<String>, recipients: Vec<String>, list: HeldBackList| HeldBack {
-            id: commit.commit.id().to_string(),
-            entry: commit.entry(),
+            id: file.id.clone(),
+            entry: file.entry.clone(),
             gpg_id,
             encrypted_for: encrypted_for.clone(),
             recipients,
@@ -123,47 +111,6 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
         }
     }
     Ok(held)
-}
-
-/// Rebuilds the queue from the first change that holds one of `swaps`'
-/// (path, old blob) pairs, with the new blob there and wherever a later
-/// change still has that old blob at that path, and moves the branch once.
-/// `None` if no change holds any of them. Called under the exclusive lock.
-fn rewrite_with(
-    held: &Exclusive,
-    store: &StoreLock,
-    repo: &Repository,
-    local: &Waiting<'_>,
-    swaps: &std::collections::HashMap<(String, Oid), Oid>,
-) -> Result<Option<()>, SyncError> {
-    let Some(first) = local.commits.iter().position(|c| {
-        c.change.ciphertext().is_some_and(|(path, blob)| swaps.contains_key(&(path.to_owned(), blob)))
-    }) else {
-        return Ok(None);
-    };
-    check_not_being_sent(held, store, repo, &local.short, local.commits[first].commit.id())?;
-    let mut tip = local.commits[first].commit.parent_id(0).map_err(git_err)?;
-    for commit in &local.commits[first..] {
-        let tree = commit.commit.tree().map_err(git_err)?;
-        let mut index = git2::Index::new().map_err(git_err)?;
-        index.read_tree(&tree).map_err(git_err)?;
-        for ((path, old), new) in swaps {
-            if let Ok(entry) = tree.get_path(Path::new(path))
-                && entry.id() == *old
-            {
-                index.add(&index_entry(path, *new, entry.filemode() as u32)).map_err(git_err)?;
-            }
-        }
-        let tree = repo.find_tree(index.write_tree_to(repo).map_err(git_err)?).map_err(git_err)?;
-        let parent = repo.find_commit(tip).map_err(git_err)?;
-        let committer = commit.commit.committer();
-        let committer =
-            git2::Signature::now(committer.name().unwrap_or("paw"), committer.email().unwrap_or("")).map_err(git_err)?;
-        let message = String::from_utf8_lossy(commit.commit.message_bytes()).into_owned();
-        tip = repo.commit(None, &commit.commit.author(), &committer, &message, &tree, &[&parent]).map_err(git_err)?;
-    }
-    move_branch(held, repo, &local.branch, local.head, tip, None, "paw: re-encrypt waiting changes")?;
-    Ok(Some(()))
 }
 
 /// Why [`reencrypt_each`] left a held-back change as it was. It stays held
@@ -261,29 +208,26 @@ enum Look {
     Left(LeftReason),
 }
 
-fn look(
-    item: &HeldBack,
-    local: &Waiting<'_>,
-    keyring: &Keyring,
-    dir: &Path,
-    now: u32,
-) -> Option<Look> {
-    let commit = local.commits.iter().find(|c| c.commit.id().to_string() == item.id)?;
-    let (path, blob) = commit.change.ciphertext()?;
-    let path = path.to_owned();
+/// Why a change in a folder whose keys can't be resolved is left.
+fn left_reason(error: WriteError) -> LeftReason {
+    match error {
+        WriteError::MissingRecipients { missing, .. } => LeftReason::MissingKeys { missing },
+        WriteError::RecipientsChanged { .. } => LeftReason::NotAccepted,
+        _ => LeftReason::NoList,
+    }
+}
+
+fn look(item: &HeldBack, files: &[WaitingFile], keyring: &Keyring, dir: &Path, now: u32) -> Option<Look> {
+    let file = files.iter().find(|file| file.id == item.id)?;
     match item.list {
         HeldBackList::Unreadable => return Some(Look::Left(LeftReason::NoList)),
         HeldBackList::NotAccepted => return Some(Look::Left(LeftReason::NotAccepted)),
         HeldBackList::Accepted => {}
     }
-    let folder = crate::path::folder_of(&path);
+    let folder = crate::path::folder_of(&file.path);
     Some(match keyring.resolve(dir, folder, now) {
-        Ok(_) => Look::Ready { path, blob },
-        Err(WriteError::MissingRecipients { missing, .. }) => {
-            Look::Left(LeftReason::MissingKeys { missing })
-        }
-        Err(WriteError::RecipientsChanged { .. }) => Look::Left(LeftReason::NotAccepted),
-        Err(_) => Look::Left(LeftReason::NoList),
+        Ok(_) => Look::Ready { path: file.path.clone(), blob: file.blob },
+        Err(error) => Look::Left(left_reason(error)),
     })
 }
 
@@ -298,12 +242,11 @@ fn looked(
     let held = held_back(dir, state_dir)?;
     let _reading = StoreLock::for_repo(dir).shared()?;
     let keyring = Keyring::open(state_dir)?;
-    let repo = guard::open(dir)?;
-    let local = waiting(&repo)?;
+    let (_, files) = waiting_files(dir)?;
     let now = now_secs();
     let mut check = ReencryptCheck { ready: 0, left: Vec::new() };
     for item in &held {
-        let reason = match look(item, &local, &keyring, dir, now) {
+        let reason = match look(item, &files, &keyring, dir, now) {
             Some(Look::Ready { path, blob }) => match skipped.get(&(path, blob)) {
                 Some(reason) => reason.clone(),
                 None => {
@@ -374,27 +317,19 @@ fn reencrypt_each_until<S>(
             let held = held_back(dir, state_dir)?;
             let _reading = StoreLock::for_repo(dir).shared()?;
             let keyring = Keyring::open(state_dir)?;
-            let repo = guard::open(dir)?;
-            let local = waiting(&repo)?;
+            let (head, files) = waiting_files(dir)?;
             let now = now_secs();
-            let mut next = None;
-            for item in held {
-                if let Some(Look::Ready { path, blob }) = look(&item, &local, &keyring, dir, now)
-                    && !skipped.contains_key(&(path.clone(), blob))
-                {
-                    let bytes = repo.find_blob(blob).map_err(git_err)?.content().to_vec();
-                    next = Some((item, path, blob, bytes, local.head));
-                    break;
+            held.into_iter().find_map(|item| match look(&item, &files, &keyring, dir, now) {
+                Some(Look::Ready { path, blob }) if !skipped.contains_key(&(path.clone(), blob)) => {
+                    let bytes = files.iter().find(|file| file.id == item.id).map(|file| file.ciphertext.clone())?;
+                    Some((item, path, blob, bytes, head))
                 }
-            }
-            next
+                _ => None,
+            })
         };
         let Some((item, path, blob, bytes, head)) = next else { break };
         if written.contains(&(path.clone(), blob)) {
-            return Err(SyncError::Failed {
-                message: "a change paw re-encrypted is still held back; nothing was sent".into(),
-            }
-            .into());
+            return Err(Fault::local("a change paw re-encrypted is still held back; nothing was sent").into());
         }
         total = total.max(done + 1);
         progress(done, total);
@@ -413,35 +348,49 @@ fn reencrypt_each_until<S>(
             }
         }
 
-        // 3. Encrypted for the folder's list and written, under the
-        // exclusive lock, if the queue is still what was read.
-        let store = StoreLock::for_repo(dir);
-        let held = store.exclusive()?;
-        let repo = guard::open(dir)?;
-        let local = waiting(&repo)?;
-        if local.head != head {
-            // A save or a discard in between: look again (the text is kept).
-            moved += 1;
-            if moved > MOST_LOOKS_AGAIN {
-                return Err(SyncError::QueueKeptChanging.into());
-            }
-            continue;
-        }
-        ensure_clean(&repo)?;
-        let keyring = Keyring::open(state_dir)?;
-        let folder = crate::path::folder_of(&path);
-        let keys = keyring.resolve(dir, folder, now_secs())?;
+        // 3. Encrypted for the folder's list and written, if the queue is
+        // still what was read.
         let Some(text) = texts.get(&blob) else {
-            return Err(SyncError::Failed { message: "internal: a held-back change's text went missing".into() }.into());
+            return Err(Fault::local("internal: a held-back change's text went missing").into());
         };
-        let ciphertext = encrypt(&keys, text.as_slice())?;
-        let new_blob = repo.blob(&ciphertext).map_err(git_err)?;
-        let mut swaps = HashMap::new();
-        swaps.insert((path.clone(), blob), new_blob);
-        if rewrite_with(&held, &store, &repo, &local, &swaps)?.is_none() {
-            return Err(SyncError::Failed { message: "internal: a held-back change was not in the queue".into() }.into());
+        let mut left = None;
+        let mut new_blob = None;
+        let mut encrypt_again = |at: &str, old: Oid| -> Result<Option<Vec<u8>>, SyncError> {
+            if (at, old) != (path.as_str(), blob) {
+                return Ok(None);
+            }
+            let folder = crate::path::folder_of(&path);
+            let keys = match Keyring::open(state_dir)?.resolve(dir, folder, now_secs()) {
+                Ok(keys) => keys,
+                Err(WriteError::Fault { fault }) => return Err(fault.into()),
+                Err(other) => {
+                    left = Some(left_reason(other));
+                    return Ok(None);
+                }
+            };
+            let ciphertext = encrypt(&keys, text.as_slice())?;
+            new_blob = Some(Oid::hash_object(git2::ObjectType::Blob, &ciphertext).map_err(crate::sync::git_err)?);
+            Ok(Some(ciphertext))
+        };
+        match rewrite_ciphertexts(dir, head, &mut encrypt_again)? {
+            Rewritten::Moved => {
+                // A save or a discard in between: look again (the text is kept).
+                moved += 1;
+                if moved > MOST_LOOKS_AGAIN {
+                    return Err(SyncError::QueueKeptChanging.into());
+                }
+                continue;
+            }
+            Rewritten::Unchanged => {
+                let Some(reason) = left else {
+                    return Err(Fault::local("internal: a held-back change was not in the queue").into());
+                };
+                skipped.insert((path, blob), reason);
+                continue;
+            }
+            Rewritten::Done => {}
         }
-        written.insert((path, new_blob));
+        written.extend(new_blob.map(|new_blob| (path, new_blob)));
         moved = 0;
         done += 1;
         progress(done, total);

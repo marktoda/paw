@@ -50,6 +50,7 @@ pub use refresh::{BackgroundOutcome, BackgroundRefreshReport, BackgroundStop, Gi
 pub use repos::{GitHubRepository, RepositoryList};
 pub use session::{TokenVault, VaultError};
 
+use crate::fault::Fault;
 use crate::remote::RemoteFailure;
 
 /// paw's GitHub App's client id. Public: it identifies the app, it is not
@@ -176,9 +177,6 @@ impl Endpoints {
 /// by one of these.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
 pub enum GitHubError {
-    /// GitHub, the network, the sign-in or the chosen repository.
-    #[error(transparent)]
-    Remote { failure: RemoteFailure },
     /// The app's settings on GitHub do not allow device sign-in.
     #[error("GitHub sign-in is turned off for paw's app")]
     DeviceFlowDisabled,
@@ -188,12 +186,13 @@ pub enum GitHubError {
     /// The keychain could not keep or read the sign-in.
     #[error("the sign-in could not be kept: {message}")]
     Vault { message: String },
-    /// See [`crate::PawError::StoreBusy`].
-    #[error("{}", crate::lock::STORE_BUSY)]
-    StoreBusy,
-    #[error("{message}")]
-    Failed { message: String },
+    /// Underneath: GitHub, the network, the sign-in, the chosen
+    /// repository, or the store on this device.
+    #[error(transparent)]
+    Fault { fault: Fault },
 }
+
+crate::fault::workflow_error!(GitHubError);
 
 /// The host GitHub's failures name.
 const GITHUB: &str = "github.com";
@@ -211,27 +210,16 @@ impl GitHubError {
     }
 }
 
-impl From<RemoteFailure> for GitHubError {
-    fn from(failure: RemoteFailure) -> Self {
-        Self::Remote { failure }
-    }
-}
-
-impl crate::remote::AboutRemote for GitHubError {
-    fn remote_failure(&self) -> Option<&RemoteFailure> {
-        match self {
-            Self::Remote { failure } => Some(failure),
-            _ => None,
-        }
-    }
-}
-
+/// The sign-in's failure as it reaches a fetch over HTTPS: its fault, or,
+/// for the keychain (the only one of GitHub's own cases a fetch can meet),
+/// a local one.
 impl From<GitHubError> for crate::sync::SyncError {
     fn from(error: GitHubError) -> Self {
         match error {
-            GitHubError::Remote { failure } => Self::Remote { failure },
-            GitHubError::StoreBusy => Self::StoreBusy,
-            other => Self::Failed { message: other.to_string() },
+            GitHubError::Fault { fault } => fault.into(),
+            other @ (GitHubError::Vault { .. } | GitHubError::DeviceFlowDisabled | GitHubError::NotListed { .. }) => {
+                Fault::local(other).into()
+            }
         }
     }
 }

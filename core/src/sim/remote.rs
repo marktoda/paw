@@ -1114,7 +1114,7 @@ pub mod steps {
     /// Clones the remote's default branch into `dir`, which must be empty
     /// or not exist yet, as setup's download does.
     pub fn clone(connection: &Connection, remote: &Remote, dir: &Path) -> Result<Cloned, SyncError> {
-        sync::clone_with_transfer(connection, remote, dir, None)
+        Ok(sync::clone_with_transfer(connection, remote, dir, None)?)
     }
 
     /// Updates `origin/*` from the remote and returns the new tip of the

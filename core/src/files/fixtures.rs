@@ -52,10 +52,12 @@ fn the_setup_step() {
         SetupState::CheckHost {
             address: "ssh://git@example.com/you/store.git".into(),
             notice: Some(crate::sync::address::AddressNotice::PortFallback {
-                from_host: "github.com".into(),
-                from_port: 22,
-                host: "ssh.github.com".into(),
-                port: 443,
+                fallback: crate::remote::PortFallback {
+                    from_host: "github.com".into(),
+                    from_port: 22,
+                    host: "ssh.github.com".into(),
+                    port: 443,
+                },
             }),
         }
     );

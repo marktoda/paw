@@ -28,6 +28,7 @@ use super::keyring::{FolderRecipients, Keyring};
 use super::{WriteError, author, encrypt, now_secs};
 use crate::PawError;
 use crate::copies::CopyCache;
+use crate::fault::Fault;
 use crate::files::content_id;
 use crate::entry::EntryDoc;
 use crate::entry::opened::OpenedEntry;
@@ -191,7 +192,7 @@ impl WriteStore {
         Ok(self.lock().exclusive()?)
     }
 
-    pub fn keyring(&self) -> Result<Keyring, WriteError> {
+    pub fn keyring(&self) -> Result<Keyring, Fault> {
         Keyring::open(&self.state_dir)
     }
 
@@ -221,7 +222,7 @@ impl WriteStore {
     /// whether paw can save there now.
     pub fn folder_recipients(&self, folder: &str) -> Result<FolderRecipients, WriteError> {
         let _reading = self.lock().shared()?;
-        self.keyring()?.folder_recipients(&self.repo, folder, now_secs())
+        Ok(self.keyring()?.folder_recipients(&self.repo, folder, now_secs())?)
     }
 
     /// Every `.gpg-id` in the store, top first, with its keys and the

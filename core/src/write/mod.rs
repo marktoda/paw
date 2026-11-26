@@ -22,7 +22,7 @@ pub mod scopes;
 use pgp::packet::PublicKey;
 use rand::rngs::OsRng;
 
-use crate::PawError;
+use crate::fault::Fault;
 use crate::sync::Author;
 pub use draft::{DraftField, DraftProblem, EntryDraft};
 pub use keyring::{FolderRecipients, KeySource, Keyring, LineStatus, RecipientLine};
@@ -62,21 +62,12 @@ pub enum WriteError {
     /// A password policy that cannot be used.
     #[error("{message}")]
     Policy { message: String },
-    /// See [`PawError::StoreBusy`].
-    #[error("{}", crate::lock::STORE_BUSY)]
-    StoreBusy,
-    #[error("{message}")]
-    Failed { message: String },
+    /// Underneath the change: the store, a refused name, or the files.
+    #[error(transparent)]
+    Fault { fault: Fault },
 }
 
-impl From<PawError> for WriteError {
-    fn from(error: PawError) -> Self {
-        match error {
-            PawError::StoreBusy => Self::StoreBusy,
-            other => Self::Failed { message: other.to_string() },
-        }
-    }
-}
+crate::fault::workflow_error!(WriteError);
 
 impl From<crate::generate::PolicyError> for WriteError {
     fn from(error: crate::generate::PolicyError) -> Self {
@@ -95,7 +86,7 @@ pub(crate) fn author() -> Author {
 /// `gpg -e -r ... -r ...`: SEIPD v1 with AES-256, one recipient packet per
 /// key, no compression. The plaintext is streamed from the caller's buffer
 /// rather than copied into a new one.
-pub(crate) fn encrypt(keys: &[PublicKey], plaintext: &[u8]) -> Result<Vec<u8>, WriteError> {
+pub(crate) fn encrypt(keys: &[PublicKey], plaintext: &[u8]) -> Result<Vec<u8>, Fault> {
     encrypt_with(OsRng, keys, plaintext)
 }
 
@@ -104,14 +95,14 @@ pub(crate) fn encrypt_with<R: rand::Rng + rand::CryptoRng>(
     mut rng: R,
     keys: &[PublicKey],
     plaintext: &[u8],
-) -> Result<Vec<u8>, WriteError> {
+) -> Result<Vec<u8>, Fault> {
     use pgp::composed::MessageBuilder;
     use pgp::crypto::sym::SymmetricKeyAlgorithm;
 
     if keys.is_empty() {
-        return Err(WriteError::Failed { message: "there is no key to encrypt to".into() });
+        return Err(Fault::local("there is no key to encrypt to"));
     }
-    let failed = |e: pgp::errors::Error| WriteError::Failed { message: format!("could not encrypt: {e}") };
+    let failed = |e: pgp::errors::Error| Fault::local(format!("could not encrypt: {e}"));
     let mut builder = MessageBuilder::from_reader("", plaintext).seipd_v1(&mut rng, SymmetricKeyAlgorithm::AES256);
     for key in keys {
         builder.encrypt_to_key(&mut rng, key).map_err(failed)?;

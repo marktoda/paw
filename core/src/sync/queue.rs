@@ -4,6 +4,7 @@
 //! Only commits after the remote-tracking tip are ever rewritten. Pushed
 //! history is never touched.
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use git2::{Oid, Repository};
@@ -74,6 +75,27 @@ pub fn unpushed(dir: &Path) -> Result<Vec<QueueItem>, SyncError> {
     Ok(local.commits.iter().rev().map(item).collect())
 }
 
+/// Rewrites the waiting changes from the one at `from` on, and moves the
+/// branch once: refused if that change, or one built on it, is being sent,
+/// or if the working copy is not clean. `rebuild` makes the new tip from
+/// the parent of the change at `from`. Every rewrite of the queue goes
+/// through here, under `held`.
+fn rewrite_from(
+    held: &Exclusive,
+    dir: &Path,
+    repo: &Repository,
+    local: &Waiting<'_>,
+    from: usize,
+    why: &str,
+    rebuild: impl FnOnce(Oid) -> Result<Oid, SyncError>,
+) -> Result<(), SyncError> {
+    check_not_being_sent(held, &StoreLock::for_repo(dir), repo, &local.short, local.commits[from].commit.id())?;
+    ensure_clean(repo)?;
+    let base = local.commits[from].commit.parent_id(0).map_err(git_err)?;
+    let tip = rebuild(base)?;
+    move_branch(held, repo, &local.branch, local.head, tip, None, why)
+}
+
 /// Takes back the unpushed change `id`. Later changes are kept, rebuilt
 /// without it. Returns the queue afterwards.
 pub fn discard(dir: &Path, id: &str) -> Result<Vec<QueueItem>, SyncError> {
@@ -88,14 +110,13 @@ fn discard_locked(held: &Exclusive, dir: &Path, id: &str) -> Result<(), SyncErro
     let Some(position) = local.commits.iter().position(|c| c.commit.id().to_string() == id) else {
         return Err(SyncError::NotWaiting { id: id.to_owned() });
     };
-    check_not_being_sent(held, &StoreLock::for_repo(dir), &repo, &local.short, local.commits[position].commit.id())?;
-    ensure_clean(&repo)?;
-    let base = local.commits[position].commit.parent_id(0).map_err(git_err)?;
-    let mut replay = Replay::onto(&repo, base)?;
-    for later in &local.commits[position + 1..] {
-        replay.apply(later)?;
-    }
-    move_branch(held, &repo, &local.branch, local.head, replay.tip(), None, "paw: discard a change")
+    rewrite_from(held, dir, &repo, &local, position, "paw: discard a change", |base| {
+        let mut replay = Replay::onto(&repo, base)?;
+        for later in &local.commits[position + 1..] {
+            replay.apply(later)?;
+        }
+        Ok(replay.tip())
+    })
 }
 
 /// Takes back the most recent unpushed change. Returns the queue afterwards.
@@ -116,11 +137,94 @@ pub fn discard_all(dir: &Path) -> Result<(), SyncError> {
     let held = StoreLock::for_repo(dir).exclusive()?;
     let repo = super::guard::open(dir)?;
     let local = waiting(&repo)?;
-    let Some(oldest) = local.commits.first() else {
+    if local.commits.is_empty() {
         return Ok(());
-    };
-    check_not_being_sent(&held, &StoreLock::for_repo(dir), &repo, &local.short, oldest.commit.id())?;
-    ensure_clean(&repo)?;
-    let base = oldest.commit.parent_id(0).map_err(git_err)?;
-    move_branch(&held, &repo, &local.branch, local.head, base, None, "paw: discard all changes")
+    }
+    rewrite_from(&held, dir, &repo, &local, 0, "paw: discard all changes", Ok)
+}
+
+/// A waiting change that leaves a file (an add, an edit or a rename), with
+/// the ciphertext it would send.
+pub(crate) struct WaitingFile {
+    /// As in [`QueueItem::id`].
+    pub id: String,
+    pub entry: String,
+    pub path: String,
+    pub blob: Oid,
+    pub ciphertext: Vec<u8>,
+}
+
+/// The waiting changes that leave a file, oldest first, and the queue's
+/// head as read, for [`rewrite_ciphertexts`]. Call it holding the store's
+/// lock.
+pub(crate) fn waiting_files(dir: &Path) -> Result<(Oid, Vec<WaitingFile>), SyncError> {
+    let repo = super::guard::open(dir)?;
+    let local = waiting(&repo)?;
+    let mut files = Vec::new();
+    for commit in &local.commits {
+        let Some((path, blob)) = commit.change.ciphertext() else { continue };
+        files.push(WaitingFile {
+            id: commit.commit.id().to_string(),
+            entry: commit.entry(),
+            path: path.to_owned(),
+            blob,
+            ciphertext: repo.find_blob(blob).map_err(git_err)?.content().to_vec(),
+        });
+    }
+    Ok((local.head, files))
+}
+
+/// Gives a waiting change's new ciphertext from its path and blob, or
+/// `None` to keep it; for [`rewrite_ciphertexts`].
+pub(crate) type Replace<'a> = &'a mut dyn FnMut(&str, Oid) -> Result<Option<Vec<u8>>, SyncError>;
+
+/// What [`rewrite_ciphertexts`] did.
+pub(crate) enum Rewritten {
+    Done,
+    /// The queue changed since its head was read: nothing was done.
+    Moved,
+    /// Every ciphertext was kept: nothing was done.
+    Unchanged,
+}
+
+/// Replaces waiting changes' ciphertexts in place, keeping the same changes
+/// in the same order with the same messages and times. `replace` is asked
+/// once for each (path, ciphertext) the waiting changes leave, oldest
+/// first, and gives the new ciphertext, or `None` to keep it. Only if the
+/// queue is still at `head`; under the store's lock throughout.
+pub(crate) fn rewrite_ciphertexts(
+    dir: &Path,
+    head: Oid,
+    replace: Replace<'_>,
+) -> Result<Rewritten, SyncError> {
+    let held = StoreLock::for_repo(dir).exclusive()?;
+    let repo = super::guard::open(dir)?;
+    let local = waiting(&repo)?;
+    if local.head != head {
+        return Ok(Rewritten::Moved);
+    }
+    let mut asked = HashSet::new();
+    let mut swaps = HashMap::new();
+    let mut first = None;
+    for (at, commit) in local.commits.iter().enumerate() {
+        let Some((path, blob)) = commit.change.ciphertext() else { continue };
+        let key = (path.to_owned(), blob);
+        if asked.insert(key.clone())
+            && let Some(ciphertext) = replace(path, blob)?
+        {
+            swaps.insert(key.clone(), repo.blob(&ciphertext).map_err(git_err)?);
+        }
+        if swaps.contains_key(&key) {
+            first.get_or_insert(at);
+        }
+    }
+    let Some(first) = first else { return Ok(Rewritten::Unchanged) };
+    rewrite_from(&held, dir, &repo, &local, first, "paw: re-encrypt waiting changes", |base| {
+        let mut replay = Replay::onto(&repo, base)?.swapping(swaps);
+        for commit in &local.commits[first..] {
+            replay.apply(commit)?;
+        }
+        Ok(replay.tip())
+    })?;
+    Ok(Rewritten::Done)
 }

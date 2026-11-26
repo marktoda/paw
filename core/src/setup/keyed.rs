@@ -42,7 +42,7 @@ pub(crate) fn download(
             }
             return Err(match error {
                 ConnectError::Key(error) => error.into(),
-                ConnectError::Sync(error) => Failure::Work(SetupError::from(error)),
+                ConnectError::Fault(error) => Failure::Work(SetupError::from(error)),
             });
         }
     };

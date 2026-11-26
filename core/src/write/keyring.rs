@@ -51,6 +51,7 @@ use pgp::packet::{Packet, PacketParser, PacketTrait, PublicKey};
 use sha2::{Digest, Sha256};
 
 use super::WriteError;
+use crate::fault::Fault;
 use crate::recipients::{fingerprint_of, hex, key_id};
 use crate::path::{folder_and_parents, folder_of, folder_of_gpg_id, gpg_id_in, governing};
 use crate::store::gpg_id::{governing_gpg_id, key_digits, parse_gpg_id};
@@ -246,8 +247,8 @@ struct Accepted {
 
 /// Every `.gpg-id` committed in the store at `root` (its current branch),
 /// outside hidden folders, as `(path, bytes)`.
-fn all_gpg_ids(root: &Path) -> Result<Vec<(String, Vec<u8>)>, WriteError> {
-    let git = |e: git2::Error| WriteError::Failed { message: format!("could not read the store: {}", e.message()) };
+fn all_gpg_ids(root: &Path) -> Result<Vec<(String, Vec<u8>)>, Fault> {
+    let git = |e: git2::Error| Fault::local(format!("could not read the store: {}", e.message()));
     let repo = git2::Repository::open(root).map_err(git)?;
     let tree = repo.head().and_then(|h| h.peel_to_tree()).map_err(git)?;
     let mut found = Vec::new();
@@ -271,7 +272,7 @@ fn all_gpg_ids(root: &Path) -> Result<Vec<(String, Vec<u8>)>, WriteError> {
 
 /// The paths of every `.gpg-id` committed in the store at `root`, outside
 /// hidden folders, e.g. `.gpg-id` and `archive/.gpg-id`.
-pub(crate) fn gpg_id_paths(root: &Path) -> Result<Vec<String>, WriteError> {
+pub(crate) fn gpg_id_paths(root: &Path) -> Result<Vec<String>, Fault> {
     Ok(all_gpg_ids(root)?.into_iter().map(|(path, _)| path).collect())
 }
 
@@ -285,11 +286,11 @@ pub struct Keyring {
     accepted: Option<Vec<Accepted>>,
 }
 
-fn failed(what: &str, e: impl std::fmt::Display) -> WriteError {
-    WriteError::Failed { message: format!("could not {what} the pinned keys: {e}") }
+fn failed(what: &str, e: impl std::fmt::Display) -> Fault {
+    Fault::local(format!("could not {what} the pinned keys: {e}"))
 }
 
-fn key_bytes(key: &PublicKey) -> Result<Vec<u8>, WriteError> {
+fn key_bytes(key: &PublicKey) -> Result<Vec<u8>, Fault> {
     let mut bytes = Vec::new();
     key.to_writer_with_header(&mut bytes).map_err(|e| failed("save", e))?;
     Ok(bytes)
@@ -335,7 +336,7 @@ impl Keyring {
 
     /// The keyring of the store whose state directory is `state_dir`.
     /// Empty if nothing has been pinned yet.
-    pub fn open(state_dir: &Path) -> Result<Self, WriteError> {
+    pub fn open(state_dir: &Path) -> Result<Self, Fault> {
         let file = state_dir.join(crate::files::layout::RECIPIENTS);
         let bytes = read_bounded(&file, MAX_FILE_BYTES).map_err(|e| failed("read", e))?.unwrap_or_default();
         let text = String::from_utf8(bytes).map_err(|e| failed("read", e))?;
@@ -394,7 +395,7 @@ impl Keyring {
         Ok(keyring)
     }
 
-    fn save(&self, held: &Exclusive) -> Result<(), WriteError> {
+    fn save(&self, held: &Exclusive) -> Result<(), Fault> {
         debug_assert!(held.covers(&self.repo()), "the keyring changed without its store's lock");
         let mut text = format!("{HEADER}\n");
         for key in &self.keys {
@@ -439,7 +440,7 @@ impl Keyring {
         self.accepted.is_some()
     }
 
-    fn pin(&mut self, held: &Exclusive, key: PinnedKey) -> Result<String, WriteError> {
+    fn pin(&mut self, held: &Exclusive, key: PinnedKey) -> Result<String, Fault> {
         let fingerprint = key.fingerprint.clone();
         self.keys.retain(|old| old.fingerprint != fingerprint);
         self.keys.push(key);
@@ -449,7 +450,7 @@ impl Keyring {
 
     /// Pins the card's decryption key (from its key session).
     /// Returns its fingerprint. Pinning it again replaces it.
-    pub fn pin_card_key(&mut self, held: &Exclusive, key: &PublicKey) -> Result<String, WriteError> {
+    pub fn pin_card_key(&mut self, held: &Exclusive, key: &PublicKey) -> Result<String, Fault> {
         let fingerprint = fingerprint_of(key);
         self.pin(held, PinnedKey {
             fingerprint,
@@ -475,7 +476,7 @@ impl Keyring {
         let line = line.trim().to_owned();
         self.bindings.retain(|(spec, _)| *spec != line);
         self.bindings.push((line, fingerprint));
-        self.save(held)
+        Ok(self.save(held)?)
     }
 
     /// How `line` is satisfied at `now` (seconds since 1970).
@@ -529,10 +530,10 @@ impl Keyring {
     /// How the recipients for entries in `folder` of the store at `root`
     /// are satisfied, and whether they are the ones accepted. Reads the
     /// working copy; changes nothing.
-    pub fn folder_recipients(&self, root: &Path, folder: &str, now: u32) -> Result<FolderRecipients, WriteError> {
+    pub fn folder_recipients(&self, root: &Path, folder: &str, now: u32) -> Result<FolderRecipients, Fault> {
         let (gpg_id, bytes) = governing_gpg_id(root, folder)?;
         let text = String::from_utf8(bytes.clone())
-            .map_err(|_| WriteError::Failed { message: format!("{gpg_id} is not a text file") })?;
+            .map_err(|_| Fault::local(format!("{gpg_id} is not a text file")))?;
         let accepted = self.accepted.as_deref().and_then(|all| {
             let path = governing(folder, |file| all.iter().any(|a| a.path == file))?;
             all.iter().find(|a| a.path == path)
@@ -606,7 +607,7 @@ impl Keyring {
     /// Setup: records every `.gpg-id` in the store as accepted, replacing
     /// any earlier record. The only acceptance that is not about one folder
     /// the person reviewed; call it once the store is cloned and shown.
-    pub fn accept_all_recipients_at_setup(&mut self, held: &Exclusive, root: &Path) -> Result<(), WriteError> {
+    pub fn accept_all_recipients_at_setup(&mut self, held: &Exclusive, root: &Path) -> Result<(), Fault> {
         let all = all_gpg_ids(root)?
             .into_iter()
             .map(|(path, bytes)| Accepted { sha: sha256_hex(&bytes), text: String::from_utf8_lossy(&bytes).into_owned(), path })
@@ -633,7 +634,7 @@ impl Keyring {
         }
         accepted.retain(|a| a.path != path);
         accepted.push(Accepted { sha: sha256_hex(&bytes), text: String::from_utf8_lossy(&bytes).into_owned(), path });
-        self.save(held)
+        Ok(self.save(held)?)
     }
 
     /// After setup's test decrypt opened `entry` (a path in the store,

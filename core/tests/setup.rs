@@ -23,7 +23,8 @@ use paw_core::setup::{SetupError, SetupFlow, SetupState};
 use paw_core::sim::{SimTouch, SimulatedKey};
 use paw_core::ssh::SshPublicKey;
 use paw_core::sync::hosts::{self, GITHUB_HOST_KEYS, KnownHosts};
-use paw_core::sync::{Connection, HostKeyPin, RefusedReason, SyncError};
+use paw_core::remote::RefusedReason;
+use paw_core::sync::{Connection, HostKeyPin};
 use paw_core::write::LineStatus;
 use support::{GitServer, git};
 
@@ -236,7 +237,7 @@ fn a_wrong_fingerprint_does_not_pin_the_host() {
 
     let error = rig.setup.confirm_host("SHA256:not-what-was-shown".into()).unwrap_err();
 
-    assert!(matches!(error, SetupError::Remote { failure: RemoteFailure::HostKeyNotConfirmed { .. } }), "{error:?}");
+    assert!(matches!(error, SetupError::Fault { fault: paw_core::fault::Fault::Remote { failure: RemoteFailure::HostKeyNotConfirmed { .. } } }), "{error:?}");
     assert!(!rig.dir.path().join(paw_core::files::layout::KNOWN_HOSTS).exists());
     assert!(matches!(rig.setup.state(), SetupState::ConfirmHost { .. }));
 }
@@ -255,8 +256,8 @@ fn an_unreachable_host_is_its_own_failure() {
 
     // Refused, or reset by the closing server.
     let host = match &error {
-        SetupError::Remote { failure: RemoteFailure::NoConnection { host, fallback: None, .. } }
-        | SetupError::Remote { failure: RemoteFailure::Unreachable { host, .. } } => host,
+        SetupError::Fault { fault: paw_core::fault::Fault::Remote { failure: RemoteFailure::NoConnection { host, fallback: None, .. } } }
+        | SetupError::Fault { fault: paw_core::fault::Fault::Remote { failure: RemoteFailure::Unreachable { host, .. } } } => host,
         _ => panic!("{error:?}"),
     };
     assert_eq!(host, "127.0.0.1");
@@ -273,7 +274,7 @@ fn the_key_check_asks_without_a_signature() {
     let other = SshPublicKey::ed25519(&[3u8; 32]);
     let refused = Connection::probe(&server.remote(), &other).unwrap_err();
     let not_accepted = RemoteFailure::KeyNotAccepted { host: "127.0.0.1".into(), public_key: other.authorized_key() };
-    assert!(matches!(&refused, SyncError::Remote { failure } if *failure == not_accepted), "{refused:?}");
+    assert!(matches!(&refused, paw_core::fault::Fault::Remote { failure } if *failure == not_accepted), "{refused:?}");
     assert_eq!(sim.authentication_count(), 0);
     assert_eq!(server.logins(), 0);
 }
@@ -330,8 +331,7 @@ fn a_store_with_a_link_in_it_is_refused_and_says_where() {
 
     let error = rig.download().unwrap_err();
 
-    let SetupError::Remote { failure: RemoteFailure::RefusedContent { paths: refused } } = &error else { panic!("{error:?}") };
-    assert!(error.to_string().starts_with("the remote contains something paw will not check out"), "{error}");
+    let SetupError::Fault { fault: paw_core::fault::Fault::Remote { failure: RemoteFailure::RefusedContent { paths: refused } } } = &error else { panic!("{error:?}") };
     assert_eq!(refused.len(), 1, "{refused:?}");
     assert_eq!((refused[0].path.as_str(), &refused[0].reasons[..]), ("up", &[RefusedReason::SymbolicLink][..]));
     assert!(!rig.repo().exists());
@@ -493,7 +493,7 @@ fn a_second_login_within_the_cached_window_does_not_ask_for_a_touch() {
     // The first login asks; the repository is not there, so it is tried again.
     let first = Driver::helpful(PIN, &sim);
     let error = rig.result(rig.download_by(&first)).unwrap_err();
-    assert!(matches!(error, SetupError::Remote { failure: RemoteFailure::RepositoryMissing { .. } }), "{error:?}");
+    assert!(matches!(error, SetupError::Fault { fault: paw_core::fault::Fault::Remote { failure: RemoteFailure::RepositoryMissing { .. } } }), "{error:?}");
     assert_eq!(first.count(is_touch), 1);
     assert_eq!(rig.setup.state(), SetupState::NeedPin { address: address(&server), touch: TouchExpectation::NotNeeded });
 

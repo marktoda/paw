@@ -652,7 +652,7 @@ fn a_sync_with_a_key_the_host_does_not_know_stops_before_the_pin() {
 
     let error = sync_failure(steps::sync(&server.remote(), &signer(&w.card), phone(&w), w.state.path(), true).unwrap_err());
 
-    assert!(matches!(error, SyncError::Remote { failure: RemoteFailure::KeyNotAccepted { .. } }), "{error:?}");
+    assert!(matches!(error, SyncError::Fault { fault: paw_core::fault::Fault::Remote { failure: RemoteFailure::KeyNotAccepted { .. } } }), "{error:?}");
     assert_eq!(w.card.authentication_count(), signatures);
     assert_eq!(w.card.pin_tries_left(), 3);
 }
@@ -668,7 +668,7 @@ fn a_sync_to_a_host_with_another_key_is_refused_with_both_fingerprints() {
     let error = sync_failure(steps::sync(&remote, &signer(&w.card), phone(&w), w.state.path(), true).unwrap_err());
 
     match error {
-        SyncError::Remote { failure: RemoteFailure::HostKeyChanged { expected, presented, .. } } => {
+        SyncError::Fault { fault: paw_core::fault::Fault::Remote { failure: RemoteFailure::HostKeyChanged { expected, presented, .. } } } => {
             assert_eq!(expected, [pinned]);
             assert_eq!(presented, real);
         }

@@ -129,7 +129,7 @@ fn write(path: &Path, bytes: &[u8]) -> Result<(), PawError> {
 /// Encrypts `text` for `keys` as paw saves an entry, for tests that craft
 /// entries of their own.
 pub fn encrypt(keys: &[PublicKey], text: &[u8]) -> Result<Vec<u8>, WriteError> {
-    crate::write::encrypt(keys, text)
+    Ok(crate::write::encrypt(keys, text)?)
 }
 
 fn seeded_encrypt(seed: u64, key: &PublicKey, contents: &str) -> Result<Vec<u8>, PawError> {

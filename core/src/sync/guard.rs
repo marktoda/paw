@@ -26,111 +26,16 @@ use git2::{ConfigLevel, Oid, Repository};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::PawError;
-use crate::path::{UnsafePart, is_gpg_id_alias, is_hfs_ignored, unsafe_part};
-
-/// A path in a repository that paw will not check out, and why.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct RefusedPath {
-    /// The path as the repository names it (lossy if it is not UTF-8).
-    pub path: String,
-    /// Why: at least one reason, in the order they were found.
-    pub reasons: Vec<RefusedReason>,
-}
-
-/// Why [`check_tree`] refuses a path.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
-pub enum RefusedReason {
-    /// The whole tree, at path `/`: it has more than `max_entries` files
-    /// and folders, or more than `max_mib` MiB of names.
-    TooBig { max_entries: u32, max_mib: u32 },
-    NotUtf8,
-    HasSlash,
-    PathTooLong,
-    UnsafeName { part: UnsafePart },
-    /// Some file system would take the name for `.gpg-id`.
-    GpgIdAlias,
-    GpgIdNotFile,
-    NestedTooDeep,
-    SymbolicLink,
-    Submodule,
-    NotRegularFile,
-    AppearsTwice,
-    /// Case, Unicode normalisation or ignored code points make it the
-    /// same name as `first` on the phone's file system.
-    SameNameAs { first: String },
-}
-
-/// The words a commit that names the path is refused with (the write path
-/// says them); the app words a refused remote itself.
-impl std::fmt::Display for RefusedReason {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::TooBig { max_entries, max_mib } => write!(
-                f,
-                "the repository holds more than {max_entries} files and folders, or more than {max_mib} MiB of names"
-            ),
-            Self::NotUtf8 => f.write_str("its name is not UTF-8"),
-            Self::HasSlash => f.write_str("its name contains a slash"),
-            Self::PathTooLong => f.write_str("its path is too long"),
-            Self::UnsafeName { part } => f.write_str(part.words()),
-            Self::GpgIdAlias => f.write_str("some file systems would take it for .gpg-id"),
-            Self::GpgIdNotFile => f.write_str("a .gpg-id must be a file"),
-            Self::NestedTooDeep => f.write_str("its folders are nested too deeply"),
-            Self::SymbolicLink => f.write_str("it is a symbolic link"),
-            Self::Submodule => f.write_str("it is a submodule, a link to another repository"),
-            Self::NotRegularFile => f.write_str("it is not a regular file"),
-            Self::AppearsTwice => f.write_str("it appears twice in the same folder"),
-            Self::SameNameAs { first } => write!(f, "on an iPhone it is the same name as {first}"),
-        }
-    }
-}
-
-impl RefusedPath {
-    /// Every reason, in words, as one phrase.
-    fn reason_words(&self) -> String {
-        self.reasons.iter().map(ToString::to_string).collect::<Vec<_>>().join(", and ")
-    }
-}
+use crate::path::{is_gpg_id_alias, is_hfs_ignored, unsafe_part};
+use crate::remote::{RefusedPath, RefusedReason};
 
 /// The repository contains something paw will not check out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Refused(pub Vec<RefusedPath>);
 
-/// At most this many paths are named in a refusal's message.
-const NAMED_IN_MESSAGE: usize = 5;
 /// Folders this deep or deeper are refused: no store needs them, and a crafted
 /// tree could otherwise make the walk very long.
 const MAX_DEPTH: usize = 32;
-/// What [`refused_message`] starts with.
-const REFUSED_PREFIX: &str = "the remote contains something paw will not check out";
-
-impl std::fmt::Display for Refused {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&refused_message(&self.0))
-    }
-}
-
-/// "the remote contains something paw will not check out: ..." with the
-/// first few paths and why.
-pub(crate) fn refused_message(paths: &[RefusedPath]) -> String {
-    let named: Vec<String> = paths
-        .iter()
-        .take(NAMED_IN_MESSAGE)
-        .map(|refused| format!("{} ({})", refused.path, refused.reason_words()))
-        .collect();
-    let mut message = format!("{REFUSED_PREFIX}: {}", named.join("; "));
-    if paths.len() > NAMED_IN_MESSAGE {
-        message.push_str(&format!("; and {} more", paths.len() - NAMED_IN_MESSAGE));
-    }
-    message
-}
-
-impl From<Refused> for PawError {
-    fn from(refused: Refused) -> Self {
-        PawError::UnsafePath(refused.to_string())
-    }
-}
-
 impl From<Refused> for super::SyncError {
     fn from(refused: Refused) -> Self {
         crate::remote::RemoteFailure::RefusedContent { paths: refused.0 }.into()
@@ -315,14 +220,6 @@ impl From<CheckError> for super::SyncError {
     }
 }
 
-impl From<CheckError> for PawError {
-    fn from(error: CheckError) -> Self {
-        match error {
-            CheckError::Refused(refused) => refused.into(),
-            CheckError::Git(error) => super::git_err(error),
-        }
-    }
-}
 
 /// Settings libgit2 reads from the repository's own configuration, and
 /// the value paw needs.

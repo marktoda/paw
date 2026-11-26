@@ -17,6 +17,7 @@ use std::path::Path;
 
 use super::hosts::{GITHUB_SSH, is_github};
 use crate::PawError;
+use crate::remote::PortFallback;
 
 /// Where a store lives, parsed.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -79,9 +80,9 @@ pub enum AddressNotice {
     GitHubWithoutUser { address: String },
     /// A GitHub repository's web address was read as its SSH `address`.
     GitHubWebAddress { address: String },
-    /// `from_host` could not be reached on `from_port`, so paw uses `host`
-    /// on `port`.
-    PortFallback { from_host: String, from_port: u16, host: String, port: u16 },
+    /// The address's host could not be reached on its port, so paw uses
+    /// the other way in.
+    PortFallback { fallback: PortFallback },
 }
 
 fn valid_host(host: &str) -> bool {

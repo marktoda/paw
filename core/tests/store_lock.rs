@@ -402,7 +402,7 @@ fn refresh_save_undo_read_and_send_at_once_lose_nothing() {
         workers.push(std::thread::spawn(move || {
             while !stop.load(Ordering::SeqCst) {
                 match w.send() {
-                    Ok(_) | Err(sync::SyncError::Remote { failure: paw_core::remote::RemoteFailure::KeptMoving }) => {}
+                    Ok(_) | Err(sync::SyncError::Fault { fault: paw_core::fault::Fault::Remote { failure: paw_core::remote::RemoteFailure::KeptMoving } }) => {}
                     Err(other) => panic!("send failed: {other}"),
                 }
                 sends.fetch_add(1, Ordering::SeqCst);
@@ -873,7 +873,7 @@ fn every_mutating_entry_point_returns_even_when_its_thread_holds_the_lock() {
             note("refresh_with_token", w.account.refresh_store().map(drop).map_err(|e| text(&e)));
             let background = w.account.background_refresh(Duration::from_secs(25));
             note("background_refresh", match background.outcome {
-                paw_core::github::BackgroundOutcome::Failed { message } => Err(message),
+                paw_core::github::BackgroundOutcome::Failed { fault } => Err(fault.to_string()),
                 _ => Ok(()),
             });
             results
@@ -1041,7 +1041,7 @@ fn a_refused_push_reports_the_refusal_not_busy_while_the_store_is_held() {
     assert!(
         matches!(
             error,
-            sync::PushError::Failed(sync::SyncError::Remote { failure: paw_core::remote::RemoteFailure::PushRefused { .. } })
+            sync::PushError::Failed(paw_core::fault::Fault::Remote { failure: paw_core::remote::RemoteFailure::PushRefused { .. } })
         ),
         "{error}"
     );
@@ -1052,24 +1052,20 @@ fn a_refused_push_reports_the_refusal_not_busy_while_the_store_is_held() {
 #[test]
 fn busy_stays_busy_through_every_error_type() {
     use paw_core::PawError;
-    let busy = PawError::StoreBusy.to_string();
-    assert!(matches!(WriteError::from(PawError::StoreBusy), WriteError::StoreBusy));
-    assert!(matches!(sync::SyncError::from(PawError::StoreBusy), sync::SyncError::StoreBusy));
-    assert!(matches!(sync::SyncError::from(WriteError::StoreBusy), sync::SyncError::StoreBusy));
-    assert!(matches!(paw_core::setup::SetupError::from(PawError::StoreBusy), paw_core::setup::SetupError::StoreBusy));
-    for error in [
-        WriteError::StoreBusy.to_string(),
-        sync::SyncError::StoreBusy.to_string(),
-        paw_core::setup::SetupError::StoreBusy.to_string(),
-        paw_core::key::KeyError::StoreBusy.to_string(),
-    ] {
-        assert_eq!(error, busy);
-    }
-    assert!(!matches!(sync::SyncError::from(PawError::Git("timed out".into())), sync::SyncError::StoreBusy));
+    use paw_core::fault::Fault;
+    use paw_core::github::GitHubError;
+    use paw_core::setup::SetupError;
+    assert!(matches!(WriteError::from(PawError::StoreBusy), WriteError::Fault { fault: Fault::StoreBusy }));
+    assert!(matches!(sync::SyncError::from(PawError::StoreBusy), sync::SyncError::Fault { fault: Fault::StoreBusy }));
+    assert!(matches!(SetupError::from(PawError::StoreBusy), SetupError::Fault { fault: Fault::StoreBusy }));
+    assert!(matches!(GitHubError::from(PawError::StoreBusy), GitHubError::Fault { fault: Fault::StoreBusy }));
+    assert!(matches!(
+        sync::SyncError::from(GitHubError::Fault { fault: Fault::StoreBusy }),
+        sync::SyncError::Fault { fault: Fault::StoreBusy }
+    ));
+    assert!(!matches!(sync::SyncError::from(PawError::Git("timed out".into())), sync::SyncError::Fault { fault: Fault::StoreBusy }));
     let unreachable = paw_core::remote::RemoteFailure::Unreachable { host: "h".into(), detail: "timed out".into() };
-    assert!(!matches!(paw_core::setup::SetupError::from(sync::SyncError::from(unreachable)), paw_core::setup::SetupError::StoreBusy));
-    assert!(matches!(paw_core::setup::SetupError::from(sync::SyncError::StoreBusy), paw_core::setup::SetupError::StoreBusy));
-    assert!(matches!(sync::SyncError::from(paw_core::github::GitHubError::StoreBusy), sync::SyncError::StoreBusy));
+    assert!(!matches!(SetupError::from(unreachable), SetupError::Fault { fault: Fault::StoreBusy }));
 }
 
 #[test]

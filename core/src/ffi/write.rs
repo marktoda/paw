@@ -128,7 +128,7 @@ impl StoreWriter {
     /// An edit form for `entry`, filled from `opened` (which must be that
     /// entry). Saving is refused if the file changed since it was opened.
     pub fn edit_draft(&self, opened: Arc<OpenedEntry>, entry: String) -> Result<Arc<EntryDraft>, WriteError> {
-        let doc = opened.duplicate_doc().ok_or_else(|| WriteError::Failed { message: "the entry was closed".into() })?;
+        let doc = opened.duplicate_doc().ok_or_else(|| WriteError::from(crate::fault::Fault::local("the entry was closed")))?;
         let content_id = opened.content_id().to_vec();
         Ok(EntryDraft::wrap(core::EntryDraft::edit(&entry, doc, content_id)))
     }

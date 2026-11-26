@@ -18,11 +18,11 @@
 
 use std::path::{Path, PathBuf};
 
-use super::SyncError;
 use super::address::StoreAddress;
 use super::transport::{HostKeyPin, PresentedHostKey, Remote};
 use crate::PawError;
-use crate::remote::RemoteFailure;
+use crate::fault::Fault;
+use crate::remote::{PortFallback, RemoteFailure};
 
 /// github.com's SSH host keys, ed25519 first, with their fingerprints.
 ///
@@ -122,18 +122,6 @@ pub(crate) fn is_github(host: &str, port: u16) -> bool {
     is(GITHUB_SSH, host, port) || is(GITHUB_SSH_443, host, port)
 }
 
-/// Another way in to a host whose usual port a network may block, with the
-/// same keys: "Port 22 seems blocked. Try GitHub's port 443?"
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct PortFallback {
-    /// The host and port that could not be reached, e.g. github.com, 22.
-    pub from_host: String,
-    pub from_port: u16,
-    /// Where to try instead, e.g. ssh.github.com, 443.
-    pub host: String,
-    pub port: u16,
-}
-
 impl PortFallback {
     /// The store at `address` reached this way: the same user and
     /// repository on the other endpoint.
@@ -172,7 +160,7 @@ pub fn is_bundled(host: &str, port: u16) -> bool {
 }
 
 /// Why a bundled host's key is not forgotten or replaced.
-fn refuse_if_bundled(host: &str, port: u16) -> Result<(), SyncError> {
+fn refuse_if_bundled(host: &str, port: u16) -> Result<(), Fault> {
     if is_bundled(host, port) {
         return Err(RemoteFailure::HostKeyBundled { host: host.to_owned() }.into());
     }
@@ -230,7 +218,7 @@ impl KnownHosts {
     }
 
     /// The confirmed key for `host`, if one was confirmed.
-    pub fn lookup(&self, host: &str, port: u16) -> Result<Option<HostKeyPin>, SyncError> {
+    pub fn lookup(&self, host: &str, port: u16) -> Result<Option<HostKeyPin>, Fault> {
         let lines: Vec<String> = self
             .read()?
             .into_iter()
@@ -246,7 +234,7 @@ impl KnownHosts {
 
     /// The keys `host` must present: the bundled ones, else a confirmed
     /// one, else `None` (the host must be confirmed first).
-    pub fn pin(&self, host: &str, port: u16) -> Result<Option<HostKeyPin>, SyncError> {
+    pub fn pin(&self, host: &str, port: u16) -> Result<Option<HostKeyPin>, Fault> {
         match bundled(host, port) {
             Some(pin) => Ok(Some(pin)),
             None => self.lookup(host, port),
@@ -255,7 +243,7 @@ impl KnownHosts {
 
     /// The remote at `address`, held to its host's keys; `None` while the
     /// host is not confirmed.
-    pub fn remote(&self, address: &StoreAddress) -> Result<Option<Remote>, SyncError> {
+    pub fn remote(&self, address: &StoreAddress) -> Result<Option<Remote>, Fault> {
         let pin = self.pin(address.connect_host(), address.port)?;
         Ok(pin.map(|host_key| Remote {
             host: address.connect_host().to_owned(),
@@ -270,7 +258,7 @@ impl KnownHosts {
     /// Pins `key_line` for `host`, replacing nothing: a host that already
     /// has a pinned key must be forgotten first. Refused for a host whose
     /// keys ship with paw.
-    pub fn add(&self, host: &str, port: u16, key_line: &str) -> Result<(), SyncError> {
+    pub fn add(&self, host: &str, port: u16, key_line: &str) -> Result<(), Fault> {
         refuse_if_bundled(host, port)?;
         if key_line.contains(['\n', '\r']) || host.contains([' ', '\n', '\r']) {
             return Err(PawError::Store("not a host key line".into()).into());
@@ -292,9 +280,9 @@ impl KnownHosts {
         &self,
         host: &str,
         port: u16,
-        presented: impl FnOnce() -> Result<PresentedHostKey, SyncError>,
+        presented: impl FnOnce() -> Result<PresentedHostKey, Fault>,
         checked: &str,
-    ) -> Result<bool, SyncError> {
+    ) -> Result<bool, Fault> {
         refuse_if_bundled(host, port)?;
         let presented = presented()?;
         if presented.fingerprint() != checked.trim() {
@@ -308,7 +296,7 @@ impl KnownHosts {
     /// key, or "I expected this change" in setup. Refused for a host whose
     /// keys ship with paw: a different key from one of them is always
     /// refused.
-    pub fn forget(&self, host: &str, port: u16) -> Result<(), SyncError> {
+    pub fn forget(&self, host: &str, port: u16) -> Result<(), Fault> {
         refuse_if_bundled(host, port)?;
         let _held = self.lock()?;
         let mut entries = self.read()?;

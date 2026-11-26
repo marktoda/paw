@@ -25,7 +25,7 @@ use russh::keys::agent::AgentIdentity;
 use russh::keys::{Algorithm, HashAlg, PublicKey, PublicKeyOrCertificate};
 use russh::{Channel, ChannelMsg, Disconnect};
 
-use super::SyncError;
+use crate::fault::Fault;
 use crate::PawError;
 use crate::key::KeyError;
 use crate::remote::RemoteFailure;
@@ -48,12 +48,12 @@ const STDERR_LIMIT: usize = 2048;
 
 /// [`RemoteFailure::NoConnection`] to `host:port`, offering the other way
 /// in if it has one.
-fn no_connection(host: &str, port: u16, why: &str) -> SyncError {
+fn no_connection(host: &str, port: u16, why: &str) -> Fault {
     let fallback = super::hosts::port_fallback(host, port);
     RemoteFailure::NoConnection { host: host.to_owned(), detail: format!("could not connect: {why}"), fallback }.into()
 }
 
-fn unreachable(host: &str, detail: impl ToString) -> SyncError {
+fn unreachable(host: &str, detail: impl ToString) -> Fault {
     RemoteFailure::Unreachable { host: host.to_owned(), detail: detail.to_string() }.into()
 }
 
@@ -171,7 +171,7 @@ impl HostKeyPin {
     /// Each pinned key's type as people know it ("Ed25519", "ECDSA",
     /// "RSA") and its `SHA256:...` fingerprint, preferred first.
     pub fn described(&self) -> Vec<(String, String)> {
-        self.0.iter().map(|key| (key_type_words(&key.algorithm().to_string()), fingerprint_of(key))).collect()
+        self.0.iter().map(|key| (key_type_words(key.algorithm().as_ref()), fingerprint_of(key))).collect()
     }
 
     /// The pinned keys as public key lines, preferred first.
@@ -380,13 +380,13 @@ impl LoginError {
         match self {
             Self::Key(error) => ConnectError::Key(error),
             Self::Closed | Self::OnlyAsking => {
-                ConnectError::Sync(unreachable(&remote.host, "the connection closed during login"))
+                ConnectError::Fault(unreachable(&remote.host, "the connection closed during login"))
             }
         }
     }
 }
 
-fn runtime(host: &str) -> Result<tokio::runtime::Runtime, SyncError> {
+fn runtime(host: &str) -> Result<tokio::runtime::Runtime, Fault> {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
@@ -396,7 +396,7 @@ fn runtime(host: &str) -> Result<tokio::runtime::Runtime, SyncError> {
 
 /// Connects and checks the host key against `remote`'s pin. Nothing has
 /// been sent that identifies the user when this returns.
-async fn handshake(remote: &Remote) -> Result<client::Handle<PinnedHost>, SyncError> {
+async fn handshake(remote: &Remote) -> Result<client::Handle<PinnedHost>, Fault> {
     let pin = remote.host_key.clone();
     let mut config = client::Config {
         inactivity_timeout: Some(INACTIVITY_TIMEOUT),
@@ -431,7 +431,7 @@ async fn handshake(remote: &Remote) -> Result<client::Handle<PinnedHost>, SyncEr
 /// Connects to `host` and returns the host key it presents, without
 /// accepting it or sending anything else. For a host that is not pinned
 /// yet: the key is shown to the person, and pinned only once confirmed.
-pub fn scan_host_key(host: &str, port: u16, route: &Route) -> Result<PresentedHostKey, SyncError> {
+pub fn scan_host_key(host: &str, port: u16, route: &Route) -> Result<PresentedHostKey, Fault> {
     let runtime = runtime(host)?;
     let presented = Arc::new(Mutex::new(None));
     let handler = RecordHost { presented: presented.clone() };
@@ -463,12 +463,12 @@ pub enum ConnectError {
     Key(KeyError),
     /// The host, the network or the host key.
     #[error(transparent)]
-    Sync(SyncError),
+    Fault(Fault),
 }
 
-impl From<SyncError> for ConnectError {
-    fn from(error: SyncError) -> Self {
-        Self::Sync(error)
+impl From<Fault> for ConnectError {
+    fn from(fault: Fault) -> Self {
+        Self::Fault(fault)
     }
 }
 
@@ -518,7 +518,7 @@ impl Connection {
                 .map_err(|e| e.on(remote))?;
             match login {
                 AuthResult::Success => Ok(session),
-                AuthResult::Failure { .. } => Err(ConnectError::Sync(not_accepted(remote, signer.public_key()))),
+                AuthResult::Failure { .. } => Err(ConnectError::Fault(not_accepted(remote, signer.public_key()))),
             }
         })?;
 
@@ -537,7 +537,7 @@ impl Connection {
     /// Asks the host whether it would accept `key` for `remote.user`,
     /// without a signature: no PIN, no touch. Checks the host key first,
     /// exactly as [`Self::open`] does. Returns whether the key is accepted.
-    pub fn probe(remote: &Remote, key: &SshPublicKey) -> Result<(), SyncError> {
+    pub fn probe(remote: &Remote, key: &SshPublicKey) -> Result<(), Fault> {
         let runtime = runtime(&remote.host)?;
         let accepted = runtime.block_on(async {
             let mut session = handshake(remote).await?;
@@ -571,7 +571,7 @@ impl Connection {
         &self,
         repo: &git2::Repository,
         operation: impl FnOnce(&mut git2::Remote<'_>) -> Result<T, git2::Error>,
-    ) -> Result<T, SyncError> {
+    ) -> Result<T, Fault> {
         register_transport();
         *self.shared.diagnostics.lock().unwrap() = Diagnostics::default();
 
@@ -586,11 +586,11 @@ impl Connection {
 }
 
 /// The key `key` as russh offers it for a login.
-fn login_key(key: &SshPublicKey) -> Result<PublicKey, SyncError> {
+fn login_key(key: &SshPublicKey) -> Result<PublicKey, Fault> {
     PublicKey::from_bytes(key.blob()).map_err(|e| RemoteFailure::LoginKeyUnusable { detail: e.to_string() }.into())
 }
 
-fn not_accepted(remote: &Remote, key: &SshPublicKey) -> SyncError {
+fn not_accepted(remote: &Remote, key: &SshPublicKey) -> Fault {
     RemoteFailure::KeyNotAccepted { host: remote.host.clone(), public_key: key.authorized_key() }.into()
 }
 
@@ -638,7 +638,7 @@ impl Shared {
     /// Turns a libgit2 failure into the most specific error we know. A
     /// fetch the host refused, saying the repository is not there, is
     /// [`RemoteFailure::RepositoryMissing`].
-    fn explain(&self, error: git2::Error) -> SyncError {
+    fn explain(&self, error: git2::Error) -> Fault {
         let mut diagnostics = self.diagnostics.lock().unwrap();
         if let Some(limit) = diagnostics.too_big.take() {
             return PawError::Git(format!(

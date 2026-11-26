@@ -16,9 +16,9 @@ use paw_core::sim::remote::steps;
 use paw_core::key::{KeyError, LoginPurpose};
 use paw_core::sim::SimulatedKey;
 use paw_core::ssh::{SshPublicKey, SshSigner};
+use paw_core::fault::Fault;
 use paw_core::remote::RemoteFailure;
 use paw_core::sync::{self, Author, Cloned, Connection, HostKeyPin, SyncError};
-use paw_core::PawError;
 use support::{GitServer, git};
 
 const ENTRY: &str = "web/example.com.gpg";
@@ -53,8 +53,8 @@ fn commit_entry(dir: &Path) -> String {
 /// `Connection` has no `Debug`, so `unwrap_err` is not available.
 fn refusal(result: Result<Connection, sync::ConnectError>) -> RemoteFailure {
     match result.err().expect("the connection should have been refused") {
-        sync::ConnectError::Sync(SyncError::Remote { failure }) => failure,
-        sync::ConnectError::Sync(error) => panic!("expected the host's refusal, got {error:?}"),
+        sync::ConnectError::Fault(Fault::Remote { failure }) => failure,
+        sync::ConnectError::Fault(error) => panic!("expected the host's refusal, got {error:?}"),
         sync::ConnectError::Key(error) => panic!("expected the host's refusal, got the key's: {error:?}"),
     }
 }
@@ -62,7 +62,7 @@ fn refusal(result: Result<Connection, sync::ConnectError>) -> RemoteFailure {
 fn key_refusal(result: Result<Connection, sync::ConnectError>) -> KeyError {
     match result.err().expect("the connection should have been refused") {
         sync::ConnectError::Key(error) => error,
-        sync::ConnectError::Sync(error) => panic!("expected the key's refusal, got {error:?}"),
+        sync::ConnectError::Fault(error) => panic!("expected the key's refusal, got {error:?}"),
     }
 }
 
@@ -172,7 +172,7 @@ fn a_push_the_host_refuses_is_reported() {
     commit_entry(dir.path());
 
     match steps::push(&connection, dir.path()) {
-        Err(sync::PushError::Failed(SyncError::Remote { failure: RemoteFailure::PushRefused { detail: message } })) => {
+        Err(sync::PushError::Failed(Fault::Remote { failure: RemoteFailure::PushRefused { detail: message } })) => {
             assert!(message.contains("refused the push"), "{message}")
         }
         other => panic!("expected a refusal, got {other:?}"),
@@ -287,7 +287,10 @@ fn cloned(server: &GitServer, card: &Arc<SimulatedKey>) -> tempfile::TempDir {
 /// The reason `commit` gives for refusing `path`.
 fn refused_path(dir: &Path, path: &str) -> String {
     match sync::commit(dir, path, b"x", MESSAGE, &author()) {
-        Err(PawError::UnsafePath(why)) => why,
+        Err(Fault::Local { detail }) => match detail.strip_prefix("not a safe name for an entry: ") {
+            Some(why) => why.to_owned(),
+            None => panic!("expected {path:?} to be refused as unsafe, got {detail:?}"),
+        },
         other => panic!("expected {path:?} to be refused, got {other:?}"),
     }
 }
@@ -361,7 +364,7 @@ fn a_clone_with_links_in_it_is_refused() {
     let Ok(Cloned::Refused(refused)) = result else { panic!("{result:?}") };
     let paths: Vec<&str> = refused.iter().map(|refused| refused.path.as_str()).collect();
     assert_eq!(paths, ["shared", "victim.gpg"]);
-    assert!(refused.iter().all(|refused| refused.reasons == [sync::RefusedReason::SymbolicLink]));
+    assert!(refused.iter().all(|refused| refused.reasons == [paw_core::remote::RefusedReason::SymbolicLink]));
     assert!(!dir.path().join("shared").exists());
     assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 1);
 }
@@ -457,7 +460,7 @@ fn a_download_larger_than_the_limit_is_stopped() {
     let fetching = steps::fetch(&connection, small.path());
 
     for result in [cloning.map(|_| String::new()), fetching] {
-        let Err(SyncError::Failed { message }) = result else { panic!("{result:?}") };
+        let Err(SyncError::Fault { fault: Fault::Local { detail: message } }) = result else { panic!("{result:?}") };
         assert!(message.contains("more than 1 MiB"), "{message}");
     }
     assert!(!dir.path().join("huge.gpg").exists());

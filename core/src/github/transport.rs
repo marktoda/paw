@@ -281,7 +281,7 @@ mod tests {
         let http = Http::new(&Endpoints::github(), Some(std::time::Instant::now()));
         let remote = HttpsRemote::new(http, "you/store", Secret::new("ghu_test".into()), None);
         let pushed = remote.with_remote(&repo, |r| r.push(&["refs/heads/main:refs/heads/main"], None));
-        let Err(SyncError::Failed { message }) = pushed else { panic!("{pushed:?}") };
-        assert!(message.contains("never pushes"), "{message}");
+        let Err(SyncError::Fault { fault: crate::fault::Fault::Local { detail } }) = pushed else { panic!("{pushed:?}") };
+        assert!(detail.contains("never pushes"), "{detail}");
     }
 }

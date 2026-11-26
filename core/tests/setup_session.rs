@@ -265,7 +265,7 @@ fn a_refused_key_is_reported_at_the_host_check_before_any_pin() {
     let SetupState::ConfirmHost { fingerprint, .. } = w.setup.check_host().unwrap() else { panic!() };
     let error = w.setup.confirm_host(fingerprint).unwrap_err();
     assert!(
-        matches!(&error, SetupError::Remote { failure: RemoteFailure::KeyNotAccepted { public_key, .. } } if *public_key == w.sim.ssh_public_key()),
+        matches!(&error, SetupError::Fault { fault: paw_core::fault::Fault::Remote { failure: RemoteFailure::KeyNotAccepted { public_key, .. } } } if *public_key == w.sim.ssh_public_key()),
         "{error:?}"
     );
     assert_eq!(w.sim.verify_attempts(), 0);
@@ -288,7 +288,7 @@ fn a_changed_host_key_stops_setup_with_both_fingerprints() {
     // Checked again before the PIN: refused, nothing sent.
     let error = w.setup.check_host().unwrap_err();
     assert!(
-        matches!(&error, SetupError::Remote { failure: RemoteFailure::HostKeyChanged { expected, presented: p, bundled: false, .. } } if *expected == [pinned.clone()] && *p == presented),
+        matches!(&error, SetupError::Fault { fault: paw_core::fault::Fault::Remote { failure: RemoteFailure::HostKeyChanged { expected, presented: p, bundled: false, .. } } } if *expected == [pinned.clone()] && *p == presented),
         "{error:?}"
     );
 
@@ -296,7 +296,7 @@ fn a_changed_host_key_stops_setup_with_both_fingerprints() {
     let driver = Driver::helpful(PIN, &w.sim);
     let state = download(&w, &driver);
     assert!(
-        matches!(state, KeyTaskState::SetupFailed { error: SetupError::Remote { failure: RemoteFailure::HostKeyChanged { .. } } }),
+        matches!(state, KeyTaskState::SetupFailed { error: SetupError::Fault { fault: paw_core::fault::Fault::Remote { failure: RemoteFailure::HostKeyChanged { .. } } } }),
         "{state:?}"
     );
     assert_eq!(w.sim.authentication_count(), 0);
@@ -372,7 +372,7 @@ fn a_repository_the_key_cannot_see_is_told_apart_from_a_refused_key() {
     w.setup.set_address(address(&w)).unwrap();
     let SetupState::ConfirmHost { fingerprint, .. } = w.setup.check_host().unwrap() else { panic!() };
     let error = w.setup.confirm_host(fingerprint).unwrap_err();
-    assert!(matches!(error, SetupError::Remote { failure: RemoteFailure::KeyNotAccepted { .. } }), "{error:?}");
+    assert!(matches!(error, SetupError::Fault { fault: paw_core::fault::Fault::Remote { failure: RemoteFailure::KeyNotAccepted { .. } } }), "{error:?}");
     w.server.sim.set_refuse_key(false);
     assert!(matches!(w.setup.check_host().unwrap(), SetupState::NeedPin { .. }));
 
@@ -381,7 +381,7 @@ fn a_repository_the_key_cannot_see_is_told_apart_from_a_refused_key() {
     let driver = Driver::helpful(PIN, &w.sim);
     let state = download(&w, &driver);
 
-    let KeyTaskState::SetupFailed { error: SetupError::Remote { failure } } = state else { panic!("{state:?}") };
+    let KeyTaskState::SetupFailed { error: SetupError::Fault { fault: paw_core::fault::Fault::Remote { failure } } } = state else { panic!("{state:?}") };
     let RemoteFailure::RepositoryMissing { host, repository, said, .. } = failure else { panic!("{failure:?}") };
     assert_eq!(
         (host.as_str(), repository.as_str(), said.as_deref()),
@@ -434,7 +434,7 @@ fn an_expected_host_key_change_is_forgotten_and_confirmed_again_without_leaving_
     let old = w.server.sim.host_key_fingerprint();
     w.server.sim.set_changed_host_key(true);
     let new = w.server.sim.host_key_fingerprint();
-    let Err(SetupError::Remote { failure: RemoteFailure::HostKeyChanged { expected, presented, .. } }) = w.setup.check_host()
+    let Err(SetupError::Fault { fault: paw_core::fault::Fault::Remote { failure: RemoteFailure::HostKeyChanged { expected, presented, .. } } }) = w.setup.check_host()
     else {
         panic!()
     };
@@ -466,7 +466,7 @@ fn a_bundled_hosts_key_cannot_be_forgotten() {
 
         let error = w.setup.forget_host_key().unwrap_err();
 
-        assert!(matches!(&error, SetupError::Remote { failure: RemoteFailure::HostKeyBundled { .. } }), "{error:?}");
+        assert!(matches!(&error, SetupError::Fault { fault: paw_core::fault::Fault::Remote { failure: RemoteFailure::HostKeyBundled { .. } } }), "{error:?}");
         assert!(known.lookup(host, port).unwrap().is_some());
         // The bundled keys are what counts for it, whatever was saved.
         let pinned = known.pin(host, port).unwrap().unwrap();
@@ -483,7 +483,7 @@ fn settings_cannot_forget_a_bundled_hosts_key_either() {
     let error = sync.forget_host_key().unwrap_err();
 
     assert!(
-        matches!(&error, paw_core::sync::SyncError::Remote { failure: RemoteFailure::HostKeyBundled { .. } }),
+        matches!(&error, paw_core::sync::SyncError::Fault { fault: paw_core::fault::Fault::Remote { failure: RemoteFailure::HostKeyBundled { .. } } }),
         "{error:?}"
     );
 }

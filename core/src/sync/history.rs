@@ -232,6 +232,9 @@ pub(crate) struct Replay<'r> {
     /// Entries whose local version was saved under another name: later
     /// local commits to the same entry follow it there.
     moved: HashMap<String, String>,
+    /// Blobs replaced as they are replayed: `(path, old)` becomes `new`,
+    /// in each change and in the tree it started from.
+    swaps: HashMap<(String, Oid), Oid>,
     pub notes: ReplayNotes,
 }
 
@@ -241,8 +244,18 @@ impl<'r> Replay<'r> {
             repo,
             tip: repo.find_commit(onto).map_err(git_err)?,
             moved: HashMap::new(),
+            swaps: HashMap::new(),
             notes: ReplayNotes::default(),
         })
+    }
+
+    /// Replays with `swaps`: each change's blob `old` at `path` is `new`.
+    pub fn swapping(self, swaps: HashMap<(String, Oid), Oid>) -> Self {
+        Self { swaps, ..self }
+    }
+
+    fn swapped(&self, path: &str, (id, mode): Blob) -> Blob {
+        (self.swaps.get(&(path.to_owned(), id)).copied().unwrap_or(id), mode)
     }
 
     pub fn tip(&self) -> Oid {
@@ -257,8 +270,9 @@ impl<'r> Replay<'r> {
         let date = date_of(&local.commit.author().when());
 
         let mut write = |this: &mut Self, edits: &mut Vec<Edit>, path: &str, blob: Blob| {
+            let blob = this.swapped(path, blob);
             let target = this.moved.get(path).cloned().unwrap_or_else(|| path.to_owned());
-            let started_from = at(&local.parent_tree, path);
+            let started_from = at(&local.parent_tree, path).map(|was| this.swapped(path, was));
             match at(&base, &target) {
                 now if now == started_from || now == Some(blob) => {
                     edits.push(Edit::Put(target, blob));
@@ -289,7 +303,9 @@ impl<'r> Replay<'r> {
             match at(&base, &target) {
                 // Deleted on both sides.
                 None => {}
-                now if now == at(&local.parent_tree, path) => edits.push(Edit::Remove(target)),
+                now if now == at(&local.parent_tree, path).map(|was| this.swapped(path, was)) => {
+                    edits.push(Edit::Remove(target))
+                }
                 // Changed there, deleted here: the change wins.
                 Some(_) => this.notes.dropped_deletes.push(entry_name(path)),
             }

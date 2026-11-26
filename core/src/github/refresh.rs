@@ -39,13 +39,15 @@ use super::account::GitHubAccount;
 use super::http::Http;
 use super::transport::HttpsRemote;
 use super::{GitHubError, Secret};
+use crate::fault::Fault;
 use crate::files::{layout, values};
-use crate::remote::RemoteFailure;
+use crate::remote::{AboutRemote, RemoteFailure};
 use crate::lock::{Exclusive, Fetching, StoreLock};
 use crate::sync::address::{StoreAddress, github_repository, saved_address};
 use crate::sync::integrate::{IntegrateReport, RecipientsChange, Replaced};
 use crate::sync::operation::{SyncReport, SyncState};
-use crate::sync::{RefusedPath, SyncError, TransferProgress};
+use crate::remote::RefusedPath;
+use crate::sync::{SyncError, TransferProgress};
 
 /// The longest a background refresh waits for the store lock or for
 /// another fetch of the store: past it the run ends `Busy`, having changed
@@ -63,8 +65,8 @@ pub struct GitHubLink {
 }
 
 impl GitHubLink {
-    pub(crate) fn save(&self, state_dir: &Path) -> Result<(), GitHubError> {
-        let failed = |e: std::io::Error| GitHubError::Failed { message: format!("could not save the chosen repository: {e}") };
+    pub(crate) fn save(&self, state_dir: &Path) -> Result<(), Fault> {
+        let failed = |e: std::io::Error| Fault::local(format!("could not save the chosen repository: {e}"));
         std::fs::create_dir_all(state_dir).map_err(failed)?;
         let (full_name, id, ssh) =
             (self.full_name.replace(['\n', '\r'], ""), self.id.to_string(), self.ssh_address.replace(['\n', '\r'], ""));
@@ -135,26 +137,22 @@ pub enum RefreshDecision {
 /// How a background refresh ended.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum BackgroundOutcome {
-    /// No sign-in is kept: nothing was sent anywhere.
-    NotSignedIn,
-    /// No repository chosen for this store: nothing was sent.
-    NotLinked,
     /// The store already had everything.
     UpToDate,
     /// New changes came in (see `integration`).
     Updated,
     /// Stopped for the person: see `decisions`.
     NeedsDecision,
-    /// GitHub no longer accepts the sign-in; it was forgotten. Sign in again.
-    SignedOut,
-    /// GitHub could not be reached.
-    Offline { message: String },
     /// The deadline came first; the store is as it was or fully updated.
     OutOfTime,
-    /// Another part of paw (or the AutoFill extension) was using the store
-    /// or fetching it. Nothing was changed; the next run tries again.
-    Busy,
-    Failed { message: String },
+    /// Nothing was changed, because of `fault`. No sign-in kept, a sign-in
+    /// GitHub ended (it was forgotten), no repository chosen and GitHub
+    /// unreachable are its remote failures; a busy store (another part of
+    /// paw, or the AutoFill extension, was using or fetching it) is
+    /// [`Fault::StoreBusy`], and the next run tries again. A sync's own
+    /// refusals are local here: the person sees them on the next refresh in
+    /// front.
+    Failed { fault: Fault },
 }
 
 /// What a background refresh did, compactly.
@@ -182,8 +180,7 @@ impl GitHubAccount {
     /// The chosen repository, if the store's remote is it. Reads files only.
     fn checked_link(&self) -> Result<GitHubLink, GitHubError> {
         let link = GitHubLink::load(&self.state_dir).ok_or(RemoteFailure::NotLinked)?;
-        let store = saved_address(&self.state_dir)
-            .map_err(|e| GitHubError::Failed { message: e.to_string() })?;
+        let store = saved_address(&self.state_dir)?;
         if !link.is_store(&store) {
             return Err(RemoteFailure::WrongRepository { store: store.display(), granted: link.full_name }.into());
         }
@@ -253,33 +250,26 @@ impl GitHubAccount {
         let stopping = |step| stop(step) || Instant::now() >= deadline;
         // How long to wait for a lock: briefly, and never past the deadline.
         let lock_wait = || BACKGROUND_LOCK_WAIT.min(deadline.saturating_duration_since(Instant::now()));
-        let failed = |e: &dyn std::fmt::Display| BackgroundRefreshReport::ended(BackgroundOutcome::Failed { message: e.to_string() });
+        let out_of_time = || BackgroundRefreshReport::ended(BackgroundOutcome::OutOfTime);
+        let failed = |e: SyncError| {
+            let unreachable = matches!(e.remote_failure(), Some(RemoteFailure::Unreachable { .. }));
+            if unreachable && Instant::now() >= deadline {
+                return out_of_time();
+            }
+            let fault = match e {
+                SyncError::Fault { fault } => fault,
+                own => Fault::local(own),
+            };
+            BackgroundRefreshReport::ended(BackgroundOutcome::Failed { fault })
+        };
         match self.keeper.signed_in() {
             Ok(true) => {}
-            Ok(false) => return BackgroundRefreshReport::ended(BackgroundOutcome::NotSignedIn),
-            Err(e) => return failed(&e),
+            Ok(false) => return failed(RemoteFailure::NotSignedIn.into()),
+            Err(e) => return failed(e.into()),
         }
         let link = match self.checked_link() {
             Ok(link) => link,
-            Err(GitHubError::Remote { failure: RemoteFailure::NotLinked }) => {
-                return BackgroundRefreshReport::ended(BackgroundOutcome::NotLinked);
-            }
-            Err(e) => return failed(&e),
-        };
-        let out_of_time = || BackgroundRefreshReport::ended(BackgroundOutcome::OutOfTime);
-        let ended = |e: SyncError| {
-            BackgroundRefreshReport::ended(match e {
-                SyncError::Remote { failure: RemoteFailure::SignedOut } => BackgroundOutcome::SignedOut,
-                SyncError::Remote { failure: RemoteFailure::NotSignedIn } => BackgroundOutcome::NotSignedIn,
-                SyncError::Remote { failure: RemoteFailure::Unreachable { .. } } if Instant::now() >= deadline => {
-                    BackgroundOutcome::OutOfTime
-                }
-                SyncError::Remote { failure: RemoteFailure::Unreachable { detail, .. } } => {
-                    BackgroundOutcome::Offline { message: detail }
-                }
-                SyncError::StoreBusy => BackgroundOutcome::Busy,
-                other => BackgroundOutcome::Failed { message: other.to_string() },
-            })
+            Err(e) => return failed(e.into()),
         };
 
         if stopping(RefreshStep::Token) {
@@ -288,7 +278,7 @@ impl GitHubAccount {
         let http = Http::new(&self.endpoints, Some(deadline));
         // Refreshed here if need be, so the fetch below starts with a good one.
         if let Err(e) = self.keeper.access_token(&http, None) {
-            return ended(e.into());
+            return failed(e.into());
         }
         if stopping(RefreshStep::Fetch) {
             return out_of_time();
@@ -297,7 +287,7 @@ impl GitHubAccount {
         let fetching = match self.fetch_with_token(&http, &link, lock_wait(), Some(&mut in_time)) {
             Ok(fetching) => fetching,
             Err(_) if stopping(RefreshStep::Fetch) => return out_of_time(),
-            Err(e) => return ended(e),
+            Err(e) => return failed(e),
         };
         // From here to the end, local work only, with the store lock held:
         // published, checked and integrated as one step.
@@ -307,7 +297,7 @@ impl GitHubAccount {
         }
         let held = match self.publish(fetching, lock_wait()) {
             Ok(held) => held,
-            Err(e) => return ended(e),
+            Err(e) => return failed(e),
         };
 
         if stopping(RefreshStep::Check) {
@@ -318,12 +308,12 @@ impl GitHubAccount {
         match crate::sync::refused_remote(&dir) {
             Ok(paths) if !paths.is_empty() => decisions.push(RefreshDecision::RefusedRemote { paths }),
             Ok(_) => {}
-            Err(e) => return failed(&e),
+            Err(e) => return failed(e.into()),
         }
         match crate::sync::integrate::pending_recipients_changes(&dir) {
             Ok(changes) if !changes.is_empty() => decisions.push(RefreshDecision::RecipientsChanged { changes }),
             Ok(_) => {}
-            Err(e) => return failed(&e),
+            Err(e) => return failed(e),
         }
         let Waiting { held_back, unpushed } = Waiting::count(&dir, &self.state_dir);
         if held_back > 0 {
@@ -339,7 +329,7 @@ impl GitHubAccount {
         }
         let report = match crate::sync::operation::integrate_fetched(&held, &dir) {
             Ok(report) => report,
-            Err(e) => return failed(&e),
+            Err(e) => return failed(e),
         };
         let integration = report.integration;
         let unpushed = match report.state {

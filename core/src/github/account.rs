@@ -173,12 +173,7 @@ impl GitHubAccount {
             .find(|r| r.full_name.eq_ignore_ascii_case(full_name))
             .ok_or_else(|| GitHubError::NotListed { full_name: full_name.to_owned() })?;
         let link = GitHubLink { full_name: chosen.full_name.clone(), id: chosen.id, ssh_address: chosen.ssh_address.clone() };
-        let _held = crate::lock::StoreLock::for_state_dir(&self.state_dir)
-            .exclusive()
-            .map_err(|e| match e {
-                crate::PawError::StoreBusy => GitHubError::StoreBusy,
-                other => GitHubError::Failed { message: other.to_string() },
-            })?;
+        let _held = crate::lock::StoreLock::for_state_dir(&self.state_dir).exclusive()?;
         link.save(&self.state_dir)?;
         Ok(chosen.ssh_address.clone())
     }

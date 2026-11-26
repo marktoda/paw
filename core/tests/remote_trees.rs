@@ -15,14 +15,13 @@ use std::sync::Arc;
 
 use git2::{Oid, Repository, Signature};
 use paw_core::sim::remote::steps;
-use paw_core::PawError;
 use paw_core::sim::SimulatedKey;
-use paw_core::remote::RemoteFailure;
+use paw_core::fault::Fault;
+use paw_core::remote::{RefusedPath, RefusedReason, RemoteFailure};
 use paw_core::sync::{self, Author, Cloned, Connection, SyncError, queue};
 use key_common::{PIN, signer};
 use support::{GitServer, git};
 
-const REFUSED: &str = "the remote contains something paw will not check out";
 
 /// One entry of a crafted tree.
 enum Node {
@@ -167,9 +166,20 @@ fn author() -> Author {
     Author { name: "iPhone".into(), email: "iphone@example.com".into() }
 }
 
-fn assert_refusal_names(message: &str, path: &str, what: &str) {
-    assert!(message.starts_with(REFUSED), "{what}: {message}");
-    assert!(message.contains(path), "{what}: {message} does not name {path}");
+fn assert_refusal_names(paths: &[RefusedPath], path: &str, what: &str) {
+    let names = |refused: &RefusedPath| {
+        refused.path.starts_with(path)
+            || refused.reasons.iter().any(|reason| matches!(reason, RefusedReason::SameNameAs { first } if first.starts_with(path)))
+    };
+    assert!(paths.iter().any(names), "{what}: {paths:?} does not name {path}");
+}
+
+/// What a sync refused because of the remote's content.
+fn refused_content<T: std::fmt::Debug>(result: Result<T, SyncError>) -> Vec<RefusedPath> {
+    match result {
+        Err(SyncError::Fault { fault: Fault::Remote { failure: RemoteFailure::RefusedContent { paths } } }) => paths,
+        other => panic!("not refused for the remote's content: {other:?}"),
+    }
 }
 
 /// What is in the state directory, apart from paw's lock files.
@@ -198,8 +208,7 @@ fn a_clone_of_a_hostile_tree_checks_out_nothing() {
         let Ok(Cloned::Refused(paths)) = result else {
             panic!("{what}: the clone was not refused: {result:?}");
         };
-        let message = RemoteFailure::RefusedContent { paths }.to_string();
-        assert_refusal_names(&message, path, what);
+        assert_refusal_names(&paths, path, what);
         assert_eq!(files(&dir), BTreeSet::new(), "{what}: something was checked out");
         assert_eq!(beside(state.path()), [paw_core::files::layout::REPO], "{what}: wrote beside the store");
     }
@@ -208,7 +217,12 @@ fn a_clone_of_a_hostile_tree_checks_out_nothing() {
 /// A clone of a good store, then `extra` pushed by the desktop, then a
 /// fetch; with a change waiting to be pushed if `queued`. Returns what
 /// integrate said and checks that nothing moved.
-fn integrate_after(card: &Arc<SimulatedKey>, what: &str, extra: Vec<(&'static str, Node)>, queued: bool) -> String {
+fn integrate_after(
+    card: &Arc<SimulatedKey>,
+    what: &str,
+    extra: Vec<(&'static str, Node)>,
+    queued: bool,
+) -> Vec<RefusedPath> {
     let server = server(card);
     host_commit(&server, &store(Vec::new()));
     let state = tempfile::tempdir().unwrap();
@@ -227,10 +241,7 @@ fn integrate_after(card: &Arc<SimulatedKey>, what: &str, extra: Vec<(&'static st
     steps::fetch(&connection, &dir).unwrap();
     let result = sync::integrate(&dir);
 
-    let message = match result {
-        Err(error @ SyncError::Remote { failure: RemoteFailure::RefusedContent { .. } }) => error.to_string(),
-        other => panic!("{what}: integrate was not refused: {other:?}"),
-    };
+    let paths = refused_content(result);
     assert_eq!(git(&dir, &["rev-parse", "HEAD"]), head, "{what}");
     assert_eq!(files(&dir), before, "{what}: the working copy changed");
     assert_eq!(git(&dir, &["status", "--porcelain"]), "", "{what}");
@@ -239,15 +250,15 @@ fn integrate_after(card: &Arc<SimulatedKey>, what: &str, extra: Vec<(&'static st
     // The app can say what was refused, from what was fetched.
     let refused = sync::refused_remote(&dir).unwrap();
     assert!(!refused.is_empty(), "{what}");
-    message
+    paths
 }
 
 #[test]
 fn a_fast_forward_to_a_hostile_tree_is_refused() {
     let card = card();
     for (what, extra, path) in hostile_trees() {
-        let message = integrate_after(&card, what, extra, false);
-        assert_refusal_names(&message, path, what);
+        let paths = integrate_after(&card, what, extra, false);
+        assert_refusal_names(&paths, path, what);
     }
 }
 
@@ -255,8 +266,8 @@ fn a_fast_forward_to_a_hostile_tree_is_refused() {
 fn a_hostile_tree_under_waiting_changes_is_refused_and_the_queue_kept() {
     let card = card();
     for (what, extra, path) in hostile_trees() {
-        let message = integrate_after(&card, what, extra, true);
-        assert_refusal_names(&message, path, what);
+        let paths = integrate_after(&card, what, extra, true);
+        assert_refusal_names(&paths, path, what);
     }
 }
 
@@ -296,9 +307,7 @@ fn a_local_name_that_collides_with_a_remote_one_is_not_replayed() {
 
     let result = sync::integrate(dir.path());
 
-    let Err(error @ SyncError::Remote { failure: RemoteFailure::RefusedContent { .. } }) = result else { panic!("{result:?}") };
-    let message = error.to_string();
-    assert_refusal_names(&message, "web/bank.gpg", "replay");
+    assert_refusal_names(&refused_content(result), "web/bank.gpg", "replay");
     assert_eq!(git(dir.path(), &["rev-parse", "HEAD"]), head);
     assert_eq!(queue::unpushed(dir.path()).unwrap().len(), 1);
     // The remote alone is fine; the collision is with this device's change.
@@ -316,7 +325,7 @@ fn saving_a_name_that_collides_with_one_in_the_store_is_refused() {
 
     for path in ["Web/x.gpg", "web/Example.com.gpg", "WEB"] {
         let result = sync::commit(dir.path(), path, b"x", "Add.", &author());
-        assert!(matches!(result, Err(PawError::UnsafePath(_))), "{path}: {result:?}");
+        assert!(matches!(&result, Err(Fault::Refused { .. })), "{path}: {result:?}");
     }
     assert_eq!(git(dir.path(), &["rev-parse", "HEAD"]), head);
 }
@@ -348,13 +357,9 @@ fn a_folder_turned_into_a_link_under_a_waiting_change_is_refused() {
 
     let result = sync::integrate(&dir);
 
-    let Err(error @ SyncError::Remote { failure: RemoteFailure::RefusedContent { .. } }) = result else { panic!("{result:?}") };
-    let message = error.to_string();
-    assert_eq!(message, format!("{REFUSED}: web (it is a symbolic link)"));
-    assert_eq!(
-        sync::refused_remote(&dir).unwrap(),
-        vec![sync::RefusedPath { path: "web".into(), reasons: vec![sync::RefusedReason::SymbolicLink] }]
-    );
+    let link = vec![RefusedPath { path: "web".into(), reasons: vec![RefusedReason::SymbolicLink] }];
+    assert_eq!(refused_content(result), link);
+    assert_eq!(sync::refused_remote(&dir).unwrap(), link);
     assert_eq!(queue::unpushed(&dir).unwrap().len(), 1);
     assert!(dir.join("web").is_dir() && !dir.join("web").is_symlink());
     assert_eq!(std::fs::read(dir.join("web/new.gpg")).unwrap(), b"mine");
@@ -459,12 +464,13 @@ fn a_pull_cannot_write_beside_the_store_on_a_casefold_file_system() {
     let result = sync::integrate(&dir);
 
     assert!(!state.join(paw_core::files::layout::RECIPIENTS).exists(), "a pull wrote outside the store: {result:?}");
-    let Err(error @ SyncError::Remote { failure: RemoteFailure::RefusedContent { .. } }) = result else { panic!("{result:?}") };
-    let message = error.to_string();
-    assert!(message.starts_with(REFUSED), "{message}");
     // The NFC link and the NFD folder are one name here.
-    let named = "caf\u{e9} (it is a symbolic link, and on an iPhone it is the same name as cafe\u{301})";
-    assert!(message.contains(named), "{message}");
+    let named = RefusedPath {
+        path: "caf\u{e9}".into(),
+        reasons: vec![RefusedReason::SymbolicLink, RefusedReason::SameNameAs { first: "cafe\u{301}".into() }],
+    };
+    let paths = refused_content(result);
+    assert!(paths.contains(&named), "{paths:?}");
 
     // Without the link, the two spellings of one name are refused too: on
     // this file system the second would overwrite the first.
@@ -479,9 +485,9 @@ fn a_pull_cannot_write_beside_the_store_on_a_casefold_file_system() {
     );
     repo.reference("refs/remotes/origin/main", third, true, "fetch").unwrap();
     let result = sync::integrate(&dir);
-    let Err(error @ SyncError::Remote { failure: RemoteFailure::RefusedContent { .. } }) = result else { panic!("{result:?}") };
-    let message = error.to_string();
-    assert!(message.contains("same name as"), "{message}");
+    let paths = refused_content(result);
+    let same_name = |reason: &RefusedReason| matches!(reason, RefusedReason::SameNameAs { .. });
+    assert!(paths.iter().any(|refused| refused.reasons.iter().any(same_name)), "{paths:?}");
     assert!(!state.join(paw_core::files::layout::RECIPIENTS).exists());
 }
 
@@ -500,7 +506,7 @@ fn a_clone_on_a_casefold_file_system_writes_no_link() {
     let result = steps::clone(&connect(&server, &card), &server.remote(), &dir);
 
     let Ok(Cloned::Refused(paths)) = result else { panic!("{result:?}") };
-    assert!(RemoteFailure::RefusedContent { paths }.to_string().starts_with(REFUSED));
+    assert!(!paths.is_empty());
     assert!(!dir.join("caf\u{e9}").exists());
     assert_eq!(files(&dir), BTreeSet::new());
 }

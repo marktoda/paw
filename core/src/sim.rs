@@ -228,7 +228,7 @@ impl SimulatedKey {
         let key = self.decryption_key()?;
         let store = crate::write::WriteStore::open(std::path::Path::new(&state_dir));
         let held = store.exclusive()?;
-        store.keyring()?.pin_card_key(&held, &key)
+        Ok(store.keyring()?.pin_card_key(&held, &key)?)
     }
 
     /// Hex OpenPGP v4 fingerprint of the decryption key.

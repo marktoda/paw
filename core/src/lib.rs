@@ -10,6 +10,7 @@
 
 pub mod copies;
 pub mod entry;
+pub mod fault;
 pub mod ffi;
 pub mod path;
 pub mod recipients;

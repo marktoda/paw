@@ -24,7 +24,6 @@ use std::time::{Duration, Instant};
 
 use git2::{AutotagOption, Direction, FetchOptions, FileMode, PushOptions, RemoteCallbacks, Repository};
 
-pub use guard::{RefusedPath, RefusedReason};
 pub use history::{ChangeKind, KeptBoth};
 pub use integrate::{IntegrateReport, Integration, RecipientsChange, Replaced, accept_replaced_remote};
 #[cfg(feature = "sim")]
@@ -32,9 +31,10 @@ pub use integrate::integrate;
 pub use transport::{ConnectError, Connection, DOWNLOAD_LIMIT, HostKeyPin, PresentedHostKey, Remote, Route, key_type_words, scan_host_key};
 
 use crate::PawError;
+use crate::fault::Fault;
 use crate::files::refs;
 use crate::lock::{Exclusive, FETCH_WAIT, Fetching, StoreLock};
-use crate::remote::RemoteFailure;
+use crate::remote::{RefusedPath, RemoteFailure};
 use crate::path::{unsafe_path, unsafe_path_err};
 
 /// Why a sync, an integrate or a change to the queue did not happen. In
@@ -50,10 +50,6 @@ pub enum SyncError {
     /// overwritten.
     #[error("the store has changes that were never saved: {}", .paths.join(", "))]
     UncommittedChanges { paths: Vec<String> },
-    /// The remote, its host or the GitHub sign-in that reads it. The store
-    /// and the waiting changes stay as they were.
-    #[error(transparent)]
-    Remote { failure: RemoteFailure },
     /// The change to discard is being sent right now. Nothing was changed.
     #[error("this change is being sent right now; wait for the send to finish")]
     BeingSent,
@@ -64,39 +60,13 @@ pub enum SyncError {
     /// again. Those already done stay done.
     #[error("the waiting changes kept changing while paw was re-encrypting them; try again")]
     QueueKeptChanging,
-    /// See [`PawError::StoreBusy`].
-    #[error("{}", crate::lock::STORE_BUSY)]
-    StoreBusy,
-    /// Stopped between two steps, as asked. Nothing is left half done.
-    #[error("stopped")]
-    Cancelled,
-    #[error("{message}")]
-    Failed { message: String },
+    /// Underneath the sync: the store, the remote, a refusal or a stop.
+    /// The store and the waiting changes stay as they were.
+    #[error(transparent)]
+    Fault { fault: Fault },
 }
 
-impl From<PawError> for SyncError {
-    fn from(error: PawError) -> Self {
-        match error {
-            PawError::StoreBusy => Self::StoreBusy,
-            other => Self::Failed { message: other.to_string() },
-        }
-    }
-}
-
-impl From<RemoteFailure> for SyncError {
-    fn from(failure: RemoteFailure) -> Self {
-        Self::Remote { failure }
-    }
-}
-
-impl crate::remote::AboutRemote for SyncError {
-    fn remote_failure(&self) -> Option<&RemoteFailure> {
-        match self {
-            Self::Remote { failure } => Some(failure),
-            _ => None,
-        }
-    }
-}
+crate::fault::workflow_error!(SyncError);
 
 /// How far a clone or fetch has got, for a progress bar. Return `false`
 /// to stop.
@@ -286,7 +256,7 @@ pub(crate) fn fetch_branches(
     store: &StoreLock,
     repo: &Repository,
     progress: Option<TransferCallback<'_>>,
-) -> Result<(Option<String>, Exclusive), SyncError> {
+) -> Result<(Option<String>, Exclusive), Fault> {
     let fetching = begin_fetch(store, repo)?;
     let default = connection.with_remote(repo, |remote| fetch_connected(remote, progress))?;
     let held = store.exclusive()?;
@@ -346,7 +316,7 @@ pub fn clone_with_transfer(
     remote: &Remote,
     dir: &Path,
     progress: Option<TransferCallback<'_>>,
-) -> Result<Cloned, SyncError> {
+) -> Result<Cloned, Fault> {
     // A new repository at `<state>/repo` is made under its store's lock;
     // one anywhere else is known to nobody until it exists.
     let repo = {
@@ -383,10 +353,10 @@ pub fn clone_with_transfer(
 
 /// What the fetched tip of the current branch's remote counterpart holds
 /// that paw will not check out; empty if nothing (or nothing was fetched).
-/// A sync that failed with a message starting "the remote contains
-/// something paw will not check out" failed because of these: the store
-/// and the unpushed changes were left as they were.
-pub fn refused_remote(dir: &Path) -> Result<Vec<RefusedPath>, SyncError> {
+/// A sync that failed with [`RemoteFailure::RefusedContent`] failed
+/// because of these: the store and the unpushed changes were left as they
+/// were.
+pub fn refused_remote(dir: &Path) -> Result<Vec<RefusedPath>, Fault> {
     let _reading = StoreLock::for_repo(dir).shared()?;
     let repo = guard::open(dir)?;
     let (_, short) = current_branch(&repo)?;
@@ -404,7 +374,8 @@ pub fn refused_remote(dir: &Path) -> Result<Vec<RefusedPath>, SyncError> {
 /// and the file reaches the working copy through libgit2's checkout. A
 /// cloned repository is not trusted and may contain symbolic links, so a
 /// path that runs through one, in the tree or on disk, is refused with
-/// [`PawError::UnsafePath`] before anything is written.
+/// [`PawError::UnsafePath`] (or [`Fault::Refused`], for a name the tree
+/// refuses) before anything is written.
 ///
 /// `message` is the subject line, in `pass`'s own wording
 /// ("Add given password for web/example to store.") so the history reads the
@@ -415,7 +386,7 @@ pub fn commit(
     contents: &[u8],
     message: &str,
     author: &Author,
-) -> Result<String, PawError> {
+) -> Result<String, Fault> {
     let held = StoreLock::for_repo(dir).exclusive()?;
     commit_edits(&held, dir, &[TreeEdit::Write { path, contents }], message, author)
 }
@@ -471,11 +442,11 @@ pub(crate) fn commit_edits(
     edits: &[TreeEdit<'_>],
     message: &str,
     author: &Author,
-) -> Result<String, PawError> {
+) -> Result<String, Fault> {
     debug_assert!(held.covers(dir), "commit_edits without its store's lock");
     for path in edits.iter().flat_map(TreeEdit::paths) {
         if let Some(why) = unsafe_path(path) {
-            return Err(unsafe_path_err(path, why));
+            return Err(unsafe_path_err(path, why).into());
         }
     }
     let repo = guard::open(dir)?;
@@ -524,7 +495,7 @@ pub(crate) fn commit_edits(
     // A new name can collide with one already there (`Web/x` beside `web/`).
     let refused = guard::check_tree(&repo, tree_id).map_err(git_err)?;
     if !refused.is_empty() {
-        return Err(guard::Refused(refused).into());
+        return Err(Fault::Refused { paths: refused });
     }
     let tree = repo.find_tree(tree_id).map_err(git_err)?;
 
@@ -592,7 +563,7 @@ pub enum PushError {
     #[error("the remote has changes that are not in this copy")]
     NotFastForward,
     #[error(transparent)]
-    Failed(SyncError),
+    Failed(Fault),
 }
 
 impl From<PawError> for PushError {

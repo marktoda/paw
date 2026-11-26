@@ -27,7 +27,8 @@ use crate::sync::hosts::{KnownHosts, is_bundled};
 use crate::sync::operation;
 use crate::sync::queue::{self, QueueItem};
 use crate::write::held_back::{self, HeldBack, OpenFailure, ReencryptCheck};
-use crate::sync::{IntegrateReport, RefusedPath, SyncError, TransferProgress, accept_replaced_remote};
+use crate::remote::RefusedPath;
+use crate::sync::{IntegrateReport, SyncError, TransferProgress, accept_replaced_remote};
 
 /// First-run setup; see [`crate::setup`]. Each call is one step and returns
 /// the state to show next.
@@ -321,7 +322,7 @@ impl StoreSync {
     /// host that is not bundled asks to confirm its key again. A bundled
     /// host's keys (github.com's, ...) cannot be forgotten: `Failed`.
     pub fn forget_host_key(&self) -> Result<(), SyncError> {
-        self.known_hosts().forget(self.address.connect_host(), self.address.port)
+        Ok(self.known_hosts().forget(self.address.connect_host(), self.address.port)?)
     }
 
     /// Whether the next login will wait for a touch, given the slot's policy.
@@ -426,7 +427,7 @@ impl StoreSync {
     /// with why; empty if nothing. A sync that fails with
     /// `RemoteFailure::RefusedContent` names the same paths.
     pub fn refused_remote(&self) -> Result<Vec<RefusedPath>, SyncError> {
-        crate::sync::refused_remote(&self.repo())
+        Ok(crate::sync::refused_remote(&self.repo())?)
     }
 
     /// After `RemoteReplaced`: take the remote's history, keeping or
