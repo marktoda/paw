@@ -111,8 +111,7 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
 pub enum LeftReason {
     /// Its folder's new list is not accepted on this device yet.
     NotAccepted,
-    /// paw has no public key (or only an expired one) for these lines of
-    /// its folder's new list.
+    /// paw has no public key for these lines of its folder's new list.
     MissingKeys { missing: Vec<String> },
     /// paw can't read its folder's list of keys.
     NoList,

@@ -35,8 +35,8 @@ pub enum WriteError {
     /// The form has problems; each says what to fix.
     #[error("{}", .problems.iter().map(|p| p.message.as_str()).collect::<Vec<_>>().join(" "))]
     Invalid { problems: Vec<DraftProblem> },
-    /// Some recipients `.gpg-id` names have no public key on this device
-    /// (or theirs expired). Saving would encrypt to fewer keys than
+    /// Some recipients `.gpg-id` names have no public key on this device.
+    /// Saving would encrypt to fewer keys than
     /// `.gpg-id` says, so paw does not.
     #[error("paw doesn't have the key for {} (listed in {gpg_id})", .missing.join(", "))]
     MissingRecipients { gpg_id: String, missing: Vec<String> },
