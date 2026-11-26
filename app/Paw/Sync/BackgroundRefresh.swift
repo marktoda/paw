@@ -95,7 +95,7 @@ enum BackgroundRefresh {
         // UI tests: iOS never runs the task in the simulator, so
         // `-pawSimBackgroundRefresh 1` runs its body on every trip to the
         // background instead.
-        if LaunchArguments.bool("pawSimBackgroundRefresh") {
+        if LaunchArgument.simBackgroundRefresh.bool {
             let time = BackgroundTime.begin("Background refresh")
             start(stop: BackgroundStop()) { _ in time.end() }
         }

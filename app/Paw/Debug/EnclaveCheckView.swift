@@ -12,7 +12,7 @@ import SwiftUI
 /// real Face ID copies.
 enum EnclaveCheckLaunch {
     static var isRequested: Bool {
-        LaunchArguments.bool("pawEnclaveCheck")
+        LaunchArgument.enclaveCheck.bool
     }
 }
 

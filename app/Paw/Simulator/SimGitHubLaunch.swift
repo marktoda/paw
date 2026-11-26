@@ -1,6 +1,6 @@
 import Foundation
 
-#if targetEnvironment(simulator)
+#if DEBUG && targetEnvironment(simulator)
 /// The core's simulated GitHub, for the GitHub screens and their UI tests.
 /// `-pawSimGitHub <mode>` turns it on; without it the simulator has no
 /// GitHub sign-in at all. It serves the simulated git host's store as
@@ -29,7 +29,7 @@ final class SimGitHubLaunch: @unchecked Sendable {
     private var firstSignInEnded = false
 
     private init() {
-        let mode = LaunchArguments.string("pawSimGitHub").flatMap(SimGitHubMode.init(rawValue:))
+        let mode = LaunchArgument.simGitHub.string.flatMap(SimGitHubMode.init(rawValue:))
         self.mode = mode
         guard let mode, let host = SimulatedHostHolder.shared.host,
               let github = try? SimGitHub.start(remote: host, repository: Self.repository) else {

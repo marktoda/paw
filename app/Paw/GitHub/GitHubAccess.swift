@@ -68,7 +68,7 @@ enum GitHubRefresh {
     /// a device, the simulated one (if `-pawSimGitHub` asked for it) in the
     /// simulator. The one place it is opened, from any thread.
     static func account(stateDir: String) -> GitHubAccount? {
-        #if targetEnvironment(simulator)
+        #if DEBUG && targetEnvironment(simulator)
         return SimGitHubLaunch.shared.makeCore(stateDir: stateDir)
         #else
         return GitHubAccount.open(stateDir: stateDir, vault: KeychainTokenVault())

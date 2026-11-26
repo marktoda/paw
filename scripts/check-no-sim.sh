@@ -16,9 +16,9 @@
 #   anywhere in the bytes (`grep -a`), which would mean the fixture was
 #   compiled in even if no symbol names it;
 # - with --app, the Swift debug surfaces: the launch arguments that switch
-#   harnesses on, and the types of the fixture launch, the simulated key,
-#   the AutoFill harness, the gallery and the enclave check, anywhere in the
-#   bytes (type names are in Swift's metadata even when symbols are gone).
+#   harnesses on, and the types of the simulator and debug folders and
+#   the gallery, anywhere in the bytes (type names are in Swift's metadata even
+#   when symbols are gone).
 #
 # --expect keeps the patterns honest: run on a build that has the simulation
 # (the simulator library; with --app, the Debug simulator app and
@@ -71,35 +71,22 @@ needles=(
   'kB+w7P9NzlaYwa0zuD/P3nJG8zxGMSKapeTExcKjUTPp2L4xoi/2K9vmAAAAqE1dnpZNXZ'
 )
 
-# The app's debug surfaces (`#if DEBUG` and `#if targetEnvironment(simulator)`
-# in app/): launch arguments, and the types that run them.
-app_needles=(
-  'pawFixture'
-  # Every `-pawSim…` launch argument, then the named ones below it.
-  'pawSim'
-  'pawAppearance'
-  'pawSetup'
-  'pawPlantLegacy'
-  'pawHarnessDismiss'
-  'pawSimPin'
-  'pawNoAnimations'
-  'pawGallery'
-  'pawEnclaveCheck'
-  'pawHostProvider'
-  'pawSimRemote'
-  'pawSimBackgroundRefresh'
-  'pawSimPairings'
-  'pawSimOneTimeCodes'
-  'SimulatedSitePairings'
-  'FixtureLaunch'
-  'WritableFixture'
-  'SimulatedKeyHolder'
-  'SimRemoteHandle'
-  'SimGitHubLaunch'
-  'AutoFillHarness'
-  'GalleryRoot'
-  'EnclaveCheckView'
-)
+# The app's debug surfaces (`#if DEBUG`, and `#if DEBUG &&
+# targetEnvironment(simulator)` for everything simulated): every declared
+# launch argument (scripts/launch-arguments.sh, which also checks the
+# declaration against the UI tests), any `-pawSim…` one, and every type
+# declared in the simulator and debug folders, and the gallery's root.
+# Only with --app.
+app_needles=()
+if [[ "$app" == yes ]]; then
+  here="$(cd "$(dirname "$0")" && pwd)"
+  arguments="$("$here/launch-arguments.sh")"
+  types="$(sed -nE 's/^(final class|class|struct|enum|actor) ([A-Za-z]+).*/\2/p' \
+    "$here"/../app/Paw/Simulator/*.swift "$here"/../app/Shared/Simulator/*.swift \
+    "$here"/../app/Paw/Debug/*.swift | sort -u)"
+  [[ -n "$arguments" && -n "$types" ]] || { echo "check-no-sim: no debug surfaces found in app/" >&2; exit 2; }
+  app_needles=('pawSim' 'GalleryRoot' $arguments $types)
+fi
 
 if [[ "$app" == yes && "$expect" == yes ]]; then
   symbols=()

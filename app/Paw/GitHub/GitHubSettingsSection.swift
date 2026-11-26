@@ -68,7 +68,7 @@ struct GitHubSettingsSection: View {
     }
 
     private func shows(_ gitHub: GitHubAccess, address: String) -> Bool {
-        #if targetEnvironment(simulator)
+        #if DEBUG && targetEnvironment(simulator)
         return true
         #else
         return gitHub.signedIn || gitHub.link != nil || isGithubAddress(address: address)

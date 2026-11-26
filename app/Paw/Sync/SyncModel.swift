@@ -206,10 +206,6 @@ final class SyncModel {
     /// Taking a replaced history is under way, or why it failed.
     private(set) var accepting = false
     var acceptProblem: String?
-    /// The simulated host's tip and logins, and what its debug controls
-    /// last did, for UI tests. Empty on a device.
-    private(set) var simSummary = ""
-    private(set) var simStatus = ""
     /// The GitHub sign-in, which checks for changes without the key when
     /// it is for this store's repository.
     let gitHub: GitHubAccess?
@@ -248,9 +244,8 @@ final class SyncModel {
         keyTask = KeyTaskDriver(reader: reader)
         address = sync.address()
         lastChecked = LastChecked.read(repoDir: live.repoDir)
-        #if targetEnvironment(simulator)
-        SimRemoteHandle.shared.storeReady(repoDir: live.repoDir)
-        refreshSimSummary()
+        #if DEBUG && targetEnvironment(simulator)
+        SimRemotePanel.shared.storeReady(repoDir: live.repoDir)
         #endif
         recomputeLocal()
         backgroundRun = BackgroundRefresh.lastRun()
@@ -454,9 +449,8 @@ final class SyncModel {
     /// into the status page, with the failure said inline.
     private func syncFailed(_ error: SyncError, kind: SyncKind, unpushed: Int) {
         running = nil
-        #if targetEnvironment(simulator)
-        SimRemoteHandle.shared.syncFailed()
-        refreshSimSummary()
+        #if DEBUG && targetEnvironment(simulator)
+        SimRemotePanel.shared.syncFailed()
         #endif
         failure = SyncFailure(error, during: kind, unpushed: unpushed, host: host)
         recomputeLocal()
@@ -503,8 +497,8 @@ final class SyncModel {
         }
         live.announce(.synced(report?.integration, replaced: false))
         refused = (try? sync.refusedRemote()) ?? []
-        #if targetEnvironment(simulator)
-        refreshSimSummary()
+        #if DEBUG && targetEnvironment(simulator)
+        SimRemotePanel.shared.refresh()
         #endif
         return needsLook
     }
@@ -686,48 +680,6 @@ final class SyncModel {
     func notNow() {
         requests.send(.leave(.sync(.replaced)))
     }
-
-    // MARK: The simulated host
-
-    #if targetEnvironment(simulator)
-    func refreshSimSummary() {
-        simSummary = SimRemoteHandle.shared.summary
-    }
-
-    /// Runs off the main thread: a rewrite starts a new host.
-    func applySimChange(_ change: SimRemoteChange) {
-        simStatus = "Working\u{2026}"
-        workQueue.async { [weak self] in
-            let said: String
-            do {
-                said = try SimRemoteHandle.shared.apply(change)
-            } catch {
-                said = "Failed: \(describe(error))"
-            }
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    self?.simStatus = said
-                    self?.refreshSimSummary()
-                }
-            }
-        }
-    }
-
-    func setSimRefusesPushes(_ refuse: Bool) {
-        SimRemoteHandle.shared.setRefusesPushes(refuse)
-        simStatus = refuse ? "Refusing pushes." : "Accepting pushes."
-    }
-
-    func simDropNextConnection() {
-        SimRemoteHandle.shared.dropNextConnection()
-        simStatus = "The next connection drops half way."
-    }
-
-    func setSimChangedHostKey(_ changed: Bool) {
-        SimRemoteHandle.shared.setChangedHostKey(changed)
-        simStatus = changed ? "Presenting another host key." : "Presenting the usual host key."
-    }
-    #endif
 }
 
 extension SyncModel: KeyTaskOwner {
@@ -789,7 +741,7 @@ extension SyncModel: KeyTaskOwner {
             return nil
         case .failed(let error):
             running = nil
-            #if targetEnvironment(simulator)
+            #if DEBUG && targetEnvironment(simulator)
             if error != .PinBlocked {
                 SimRemoteHandle.shared.syncFailed()
             }

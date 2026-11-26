@@ -378,7 +378,7 @@ private struct AddressScreen: View {
     }
 
     private var simulatorActions: [SimulatorAction] {
-        #if targetEnvironment(simulator)
+        #if DEBUG && targetEnvironment(simulator)
         if let simulator = model.simulator {
             return [SimulatorAction(title: "use the simulated host", identifier: "simulated-address") {
                 model.addressText = simulator.address
@@ -508,7 +508,7 @@ private struct KeyNotAcceptedScreen: View {
     }
 
     private var simulatorActions: [SimulatorAction] {
-        #if targetEnvironment(simulator)
+        #if DEBUG && targetEnvironment(simulator)
         if let simulator = model.simulator {
             return [SimulatorAction(title: "add the key on the host", identifier: "simulated-accept-key") {
                 simulator.acceptKey()
@@ -563,7 +563,7 @@ private struct DownloadScreen: View {
     }
 
     private var simulatorActions: [SimulatorAction] {
-        #if targetEnvironment(simulator)
+        #if DEBUG && targetEnvironment(simulator)
         if model.touchLeftWaiting, model.sheet == nil {
             return [SimulatorAction(title: "time out the key's touch", identifier: "simulated-time-out-touch") {
                 model.simulatedTouchTimeout()

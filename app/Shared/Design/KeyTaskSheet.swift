@@ -34,10 +34,10 @@ struct KeyTaskSheet: View {
         case .touch:
             return [
                 SimulatorAction(title: "touch the key", identifier: "simulated-touch") {
-                    KeyConnection.simulateTouch()
+                    SimulatedKeyHolder.shared.key.touch()
                 },
                 SimulatorAction(title: "time out the touch", identifier: "simulated-touch-timeout") {
-                    KeyConnection.simulateTouchTimeout()
+                    SimulatedKeyHolder.shared.key.timeOutTouch()
                 },
             ]
         case .plugIn:
@@ -47,7 +47,7 @@ struct KeyTaskSheet: View {
             }]
         case .failed where driver.readProblem != nil:
             return [SimulatorAction(title: "let the key answer again", identifier: "simulated-key-answers") {
-                KeyConnection.simulateKeyAnswersAgain()
+                SimulatedKeyHolder.shared.stopAttachFailures()
             }]
         default:
             return []

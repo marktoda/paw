@@ -55,7 +55,9 @@ struct SetupPage<Content: View, Buttons: View>: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: PawMetrics.Spacing.s) {
                 buttons
+                #if DEBUG && targetEnvironment(simulator)
                 SimulatorStrip(actions: simulatorActions)
+                #endif
             }
             .frame(maxWidth: PawMetrics.setupTextWidth)
             .padding(.horizontal, PawMetrics.screenMargin)
@@ -88,21 +90,6 @@ struct SetupCard<Content: View>: View {
         .background(PawColor.surface, in: RoundedRectangle(cornerRadius: PawMetrics.cardRadius, style: .continuous))
     }
 }
-
-#if targetEnvironment(simulator)
-/// A stand-in for something outside paw (the key, the git host), on a
-/// screen that takes it in its content. `SetupPage(simulatorActions:)`
-/// puts them under the buttons instead.
-struct SetupSimulatorButton: View {
-    let title: String
-    let identifier: String
-    let perform: () -> Void
-
-    var body: some View {
-        SimulatorStrip(actions: [SimulatorAction(title: title, identifier: identifier, perform: perform)])
-    }
-}
-#endif
 
 /// A primary button whose tap asks for the key: the gold disc leads it
 /// (design.md 2.1, rule 1).

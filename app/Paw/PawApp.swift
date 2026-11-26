@@ -35,7 +35,7 @@ final class PawAppDelegate: NSObject, UIApplicationDelegate {
         #if DEBUG && targetEnvironment(simulator)
         // UI tests: pushes, sheets and menus finish at once, so no step
         // waits for one to settle.
-        if LaunchArguments.bool("pawNoAnimations") {
+        if LaunchArgument.noAnimations.bool {
             UIView.setAnimationsEnabled(false)
         }
         #endif

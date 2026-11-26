@@ -59,7 +59,7 @@ enum LegacyStore {
     /// `-pawPlantLegacy 1`: a store left where paw kept it before, for the
     /// test that launch deletes it. That launch deletes nothing.
     static var plantsInstead: Bool {
-        LaunchArguments.bool("pawPlantLegacy")
+        LaunchArgument.plantLegacy.bool
     }
 
     static func plant(then done: @escaping @MainActor @Sendable (_ folderLeft: Bool) -> Void) {

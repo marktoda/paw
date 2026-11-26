@@ -1,6 +1,6 @@
-import Foundation
+import SwiftUI
 
-#if targetEnvironment(simulator)
+#if DEBUG && targetEnvironment(simulator)
 /// What another computer does to the simulated git host, for the sync
 /// screens and their UI tests. `-pawSimRemoteChange <mode>` applies one at
 /// launch, once the store is set up and before paw has fetched it, so the
@@ -27,7 +27,7 @@ enum SimRemoteChange: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 
     static var atLaunch: SimRemoteChange? {
-        LaunchArguments.string("pawSimRemoteChange").flatMap(SimRemoteChange.init(rawValue:))
+        LaunchArgument.simRemoteChange.string.flatMap(SimRemoteChange.init(rawValue:))
     }
 
     /// The debug button's words.
@@ -58,8 +58,8 @@ final class SimRemoteHandle: @unchecked Sendable {
     private var repoDir: String?
     private var rewrites = 0
     private var launchChangeApplied = false
-    private var refusesPushes = LaunchArguments.bool("pawSimRemoteRefusePushes")
-    private var dropsNext = LaunchArguments.bool("pawSimRemoteDrop")
+    private var refusesPushes = LaunchArgument.simRemoteRefusePushes.bool
+    private var dropsNext = LaunchArgument.simRemoteDrop.bool
 
     var host: SimRemote? {
         lock.withLock { current }
@@ -232,5 +232,116 @@ final class SimRemoteHandle: @unchecked Sendable {
 
 struct SimRemoteProblem: LocalizedError {
     let errorDescription: String?
+}
+/// The simulated host's tip and logins, and what its debug controls last
+/// did, for the sync screens' debug section and the UI tests.
+@MainActor @Observable
+final class SimRemotePanel {
+    static let shared = SimRemotePanel()
+
+    private(set) var summary = ""
+    private(set) var status = ""
+    @ObservationIgnored private let queue = DispatchQueue(label: "paw-sim-remote", qos: .userInitiated)
+
+    /// A sync model opened on the store at `repoDir`.
+    func storeReady(repoDir: String) {
+        SimRemoteHandle.shared.storeReady(repoDir: repoDir)
+        status = ""
+        refresh()
+    }
+
+    func syncFailed() {
+        SimRemoteHandle.shared.syncFailed()
+        refresh()
+    }
+
+    func refresh() {
+        summary = SimRemoteHandle.shared.summary
+    }
+
+    /// Runs off the main thread: a rewrite starts a new host.
+    func apply(_ change: SimRemoteChange) {
+        status = "Working\u{2026}"
+        queue.async { [weak self] in
+            let said: String
+            do {
+                said = try SimRemoteHandle.shared.apply(change)
+            } catch {
+                said = "Failed: \(describe(error))"
+            }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self?.status = said
+                    self?.refresh()
+                }
+            }
+        }
+    }
+
+    func setRefusesPushes(_ refuse: Bool) {
+        SimRemoteHandle.shared.setRefusesPushes(refuse)
+        status = refuse ? "Refusing pushes." : "Accepting pushes."
+    }
+
+    func dropNextConnection() {
+        SimRemoteHandle.shared.dropNextConnection()
+        status = "The next connection drops half way."
+    }
+
+    func setChangedHostKey(_ changed: Bool) {
+        SimRemoteHandle.shared.setChangedHostKey(changed)
+        status = changed ? "Presenting another host key." : "Presenting the usual host key."
+    }
+}
+
+/// The simulated host's tip, as an element UI tests read.
+struct SimRemoteSummary: View {
+    var body: some View {
+        Text(SimRemotePanel.shared.summary)
+            .font(.caption2)
+            .frame(width: 1, height: 1)
+            .opacity(0.02)
+            .accessibilityIdentifier("sim-remote-summary")
+    }
+}
+
+/// Debug controls for the simulated git host, drawn so a screenshot never
+/// shows them as part of the design.
+struct SimRemoteSection: View {
+    @State private var shown = false
+    private var panel: SimRemotePanel { .shared }
+
+    var body: some View {
+        Section {
+            SimulatorDisclosureRow(shown: $shown)
+            if shown {
+                controls
+            }
+        }
+    }
+
+    @ViewBuilder private var controls: some View {
+            // First, so it is on screen as soon as the controls open.
+            Text(panel.status.isEmpty ? panel.summary : "\(panel.status) \(panel.summary)")
+                .font(PawFont.footnote.monospaced())
+                .foregroundStyle(PawColor.labelSecondary)
+                .accessibilityIdentifier("sim-remote-status")
+            ForEach(SimRemoteChange.allCases) { change in
+                Button(change.title) { panel.apply(change) }
+                    .foregroundStyle(PawColor.label)
+                    .accessibilityIdentifier("sim-remote-\(change.rawValue)")
+            }
+            Button(SimRemoteHandle.shared.refusingPushes ? "Accept pushes again" : "Refuse pushes") {
+                panel.setRefusesPushes(!SimRemoteHandle.shared.refusingPushes)
+            }
+            .foregroundStyle(PawColor.label)
+            .accessibilityIdentifier("sim-remote-refuse-pushes")
+            Button("Drop the next connection") { panel.dropNextConnection() }
+                .foregroundStyle(PawColor.label)
+                .accessibilityIdentifier("sim-remote-drop")
+            Button("Present another host key") { panel.setChangedHostKey(true) }
+                .foregroundStyle(PawColor.label)
+                .accessibilityIdentifier("sim-remote-host-key")
+    }
 }
 #endif

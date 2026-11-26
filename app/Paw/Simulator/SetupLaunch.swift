@@ -1,6 +1,6 @@
 import Foundation
 
-#if targetEnvironment(simulator)
+#if DEBUG && targetEnvironment(simulator)
 /// Setup in the simulator. `-pawSetup 1` starts with nothing set up (add
 /// `-pawSetupKeep 1` to keep what earlier launches set up), with the core's
 /// simulated git host running inside the app, serving the fixture store
@@ -15,15 +15,15 @@ import Foundation
 /// The simulated key's own arguments (`-pawSimPin` and the rest) apply too.
 enum SetupLaunch {
     static var isRequested: Bool {
-        LaunchArguments.bool("pawSetup")
+        LaunchArgument.setup.bool
     }
 
     static var keepsState: Bool {
-        LaunchArguments.bool("pawSetupKeep")
+        LaunchArgument.setupKeep.bool
     }
 
     fileprivate static var remoteMode: String? {
-        LaunchArguments.string("pawSimRemote")
+        LaunchArgument.simRemote.string
     }
 }
 

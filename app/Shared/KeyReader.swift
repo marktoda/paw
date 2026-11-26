@@ -1,6 +1,6 @@
 import Foundation
 import Observation
-#if !targetEnvironment(simulator)
+#if !(DEBUG && targetEnvironment(simulator))
 import CryptoTokenKit
 #endif
 
@@ -45,7 +45,7 @@ final class KeyReader {
     /// `stopWatching` ran: nothing queued before it reads the key or
     /// follows a reader again.
     @ObservationIgnored private var stopped = false
-    #if !targetEnvironment(simulator)
+    #if !(DEBUG && targetEnvironment(simulator))
     @ObservationIgnored private var slotWatch: NSKeyValueObservation?
     @ObservationIgnored private var slotStateWatch: NSKeyValueObservation?
     #endif
@@ -67,7 +67,7 @@ final class KeyReader {
     func watch(startsUnplugged: Bool) {
         guard !watching, !stopped else { return }
         watching = true
-        #if targetEnvironment(simulator)
+        #if DEBUG && targetEnvironment(simulator)
         present = !startsUnplugged || port.session() != nil
         #else
         // Minimal, and unverified on hardware: a reader appearing plugs in,
@@ -92,7 +92,7 @@ final class KeyReader {
     /// Stops following the readers, for good: the screen is going away.
     func stopWatching() {
         stopped = true
-        #if !targetEnvironment(simulator)
+        #if !(DEBUG && targetEnvironment(simulator))
         slotWatch = nil
         slotStateWatch = nil
         #endif
@@ -188,7 +188,7 @@ final class KeyReader {
     }
     #endif
 
-    #if !targetEnvironment(simulator)
+    #if !(DEBUG && targetEnvironment(simulator))
     private func readersChanged(present: Bool) {
         guard !stopped else { return }
         self.present = present

@@ -172,7 +172,7 @@ private struct PrivacyCover: ViewModifier {
 
     #if DEBUG && targetEnvironment(simulator)
     /// `-pawSimPrivacyCover 1`: the cover stays up, so a test can see it.
-    private static let held = LaunchArguments.bool("pawSimPrivacyCover")
+    private static let held = LaunchArgument.simPrivacyCover.bool
     #else
     private static let held = false
     #endif
@@ -199,16 +199,6 @@ private struct PrivacyCover: ViewModifier {
         }
     }
 }
-
-#if DEBUG && targetEnvironment(simulator)
-/// For the UI tests: the cover is up only while paw is not active, when a
-/// test can't look at it, so it counts each time it is drawn.
-@MainActor @Observable
-final class PrivacyCoverLog {
-    static let shared = PrivacyCoverLog()
-    var shown = 0
-}
-#endif
 
 extension View {
     /// Covers the whole view whenever the scene is not active. Apply at the

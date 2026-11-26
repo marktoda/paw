@@ -64,7 +64,7 @@ enum WritableFixture {
         let connection = key.asConnection()
         let host = try SimRemote.start(key: key)
         // Owned by the handle alone, which the sync screens' debug controls
-        // drive (`Sync/SimRemoteControls.swift`).
+        // drive (`SimRemoteControls.swift`).
         SimRemoteHandle.shared.register(host, key: key)
         // Its own key port, as the app has one: the PIN is typed once.
         let port = KeyPort(clock: SystemClock())
@@ -83,7 +83,7 @@ enum WritableFixture {
             throw Failure(errorDescription: "Setup stopped at \(state).")
         }
         let sync = try? StoreSync.open(stateDir: stateDir.path)
-        if let mode = LaunchArguments.string("pawSimRecipients"), let sync {
+        if let mode = LaunchArgument.simRecipients.string, let sync {
             var lines = key.fingerprintHex() + "\n"
             if mode == "missing" {
                 lines += SimulatedKey.newOther(pin: pin, touchRequired: false, touchTimeoutMs: 1_000).fingerprintHex() + "\n"

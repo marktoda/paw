@@ -11,19 +11,11 @@ import SwiftUI
 /// (`WritableFixture`, `-pawSimRecipients changed|missing`).
 enum FixtureLaunch {
     static var isRequested: Bool {
-        LaunchArguments.bool("pawFixture")
-    }
-
-    static var colorScheme: ColorScheme? {
-        switch LaunchArguments.string("pawAppearance") {
-        case "dark": return .dark
-        case "light": return .light
-        default: return nil
-        }
+        LaunchArgument.fixture.bool
     }
 
     private static var faceId: SimFaceId {
-        switch LaunchArguments.string("pawSimFaceId") {
+        switch LaunchArgument.simFaceId.string {
         case "cancel": return .cancel
         case "nomatch": return .noMatch
         case "lockout": return .lockedOut
@@ -56,11 +48,8 @@ enum FixtureLaunch {
         let clock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000))
         // One clock for the copies and the key port, so moving it on ends
         // copies and, in the background, the held PIN.
-        let sharedClock = SimClockAdapter(sim: clock)
-        let copies = CopyCache(
-            dir: copiesDir.path, keystore: SimKeystoreAdapter(sim: keystore), clock: sharedClock)
-        let key = SimulatedKeyHolder.shared
-        let away = LaunchArguments.int("pawSimAwayMs") ?? 0
+        let sharedClock = clock.asClock()
+        let copies = CopyCache(dir: copiesDir.path, keystore: keystore.asKeystore(), clock: sharedClock)
         // The key log goes into the fixture's own folder, so Settings ›
         // Key diagnostics shows it; set before the key is first read.
         let keyPort = KeyPort(clock: sharedClock)
@@ -68,42 +57,10 @@ enum FixtureLaunch {
         let session = try StoreSession(StoreSession.Parts(
             repoDir: storePath, copies: copies, clock: sharedClock, keyPort: keyPort,
             connect: { try KeyConnection.open() },
-            simulator: SimulatorControls(
-                advanceClock: { clock.advanceMs(ms: $0) },
-                plugIn: { key.key.plugIn() },
-                startsUnplugged: key.startsUnplugged,
-                awayMs: UInt64(max(away, 0))),
+            simulator: .simulated(clock: clock, keyPort: keyPort),
             writing: try? writable.get().writing, gitHub: nil, setUp: nil))
         return AppModel(session: session, notice: WritableFixture.notice(writable))
     }
-}
-
-/// The core's simulated keystore and clock do not reach Swift as the
-/// `DeviceKeystore` and `Clock` traits they implement in Rust, so these
-/// pass the calls through.
-private final class SimKeystoreAdapter: DeviceKeystore {
-    let sim: SimKeystore
-
-    init(sim: SimKeystore) {
-        self.sim = sim
-    }
-
-    func seal(secret: Data) throws -> Data { try sim.seal(secret: secret) }
-    func unseal(sealed: Data, reason: String) throws -> Data { try sim.unseal(sealed: sealed, reason: reason) }
-    func indexKey() throws -> Data { try sim.indexKey() }
-    func reset() throws { try sim.reset() }
-}
-
-private final class SimClockAdapter: Clock {
-    let sim: SimClock
-
-    init(sim: SimClock) {
-        self.sim = sim
-    }
-
-    func wallMs() -> Int64 { sim.wallMs() }
-    func monotonicMs() -> Int64 { sim.monotonicMs() }
-    func bootId() -> String { sim.bootId() }
 }
 
 /// Builds the fixture model once the first frame is up, and says so
@@ -123,7 +80,7 @@ struct FixtureRoot: View {
                 PawColor.bg.ignoresSafeArea()
             }
         }
-        .preferredColorScheme(FixtureLaunch.colorScheme)
+        .preferredColorScheme(LaunchArgument.colorScheme)
         .onAppear {
             guard model == nil, problem == nil else { return }
             do {
