@@ -42,7 +42,8 @@ final class RemoteWordsTests: XCTestCase {
             "That was a GitHub address without its user name. \(instead)")
         XCTAssertEqual(addressNoticeWords(.gitHubWebAddress(address: address)), "That was a web address. \(instead)")
         XCTAssertEqual(
-            addressNoticeWords(.portFallback(fromHost: "github.com", fromPort: 22, host: "ssh.github.com", port: 443)),
+            addressNoticeWords(.portFallback(fallback: PortFallback(
+                fromHost: "github.com", fromPort: 22, host: "ssh.github.com", port: 443))),
             "Port 22 of github.com could not be reached, so paw will use ssh.github.com on port 443 instead.")
     }
 
@@ -108,7 +109,7 @@ final class RemoteWordsTests: XCTestCase {
             XCTAssertEqual(remoteDetail(failure), line)
         }
         XCTAssertEqual(
-            SyncError.Remote(failure: .noSavedHostKey(host: "git.example")).sentence,
+            SyncError.Fault(fault: .remote(failure: .noSavedHostKey(host: "git.example"))).sentence,
             "Git.example has no saved key; set the store up again.")
     }
 
@@ -125,22 +126,22 @@ final class RemoteWordsTests: XCTestCase {
 
     func testGitHubSaysAnUnacceptedSignInAndAnUnlistedRepositoryAsBefore() {
         XCTAssertEqual(
-            GitHubWords.problem(GitHubError.Remote(failure: .unauthorised)),
+            GitHubWords.problem(GitHubError.Fault(fault: .remote(failure: .unauthorised))),
             "GitHub didn't allow it: GitHub did not accept paw's sign-in. Try again.")
         XCTAssertEqual(
             GitHubWords.problem(GitHubError.NotListed(fullName: "you/store")),
             "GitHub didn't allow it: you/store is not in the list; list the repositories again. Try again.")
         XCTAssertEqual(
-            GitHubWords.problem(GitHubError.Remote(failure: .unreachable(host: "github.com", detail: "offline"))),
+            GitHubWords.problem(GitHubError.Fault(fault: .remote(failure: .unreachable(host: "github.com", detail: "offline")))),
             "Couldn't reach GitHub. Check your connection and try again.")
-        XCTAssertTrue(GitHubWords.endedSignIn(GitHubError.Remote(failure: .signedOut)))
-        XCTAssertFalse(GitHubWords.endedSignIn(GitHubError.Remote(failure: .notLinked)))
+        XCTAssertTrue(GitHubWords.endedSignIn(GitHubError.Fault(fault: .remote(failure: .signedOut))))
+        XCTAssertFalse(GitHubWords.endedSignIn(GitHubError.Fault(fault: .remote(failure: .notLinked))))
     }
 
     func testSetupSaysNoStoreAtThatAddressWithWhatTheHostSaid() {
         let missing = RemoteFailure.repositoryMissing(
             host: "github.com", repository: "you/store.git", said: "ERROR: Repository not found.", detail: "git error")
-        let words = SetupWords.words(.Remote(failure: missing), during: .downloading)
+        let words = SetupWords.words(.Fault(fault: .remote(failure: missing)), during: .downloading)
         XCTAssertEqual(words.problem, "No store at that address")
         XCTAssertEqual(
             words.nextStep,
@@ -150,7 +151,7 @@ final class RemoteWordsTests: XCTestCase {
 
         let fallback = PortFallback(fromHost: "github.com", fromPort: 22, host: "ssh.github.com", port: 443)
         let blocked = SetupWords.words(
-            .Remote(failure: .noConnection(host: "github.com", detail: "could not connect: timed out", fallback: fallback)),
+            .Fault(fault: .remote(failure: .noConnection(host: "github.com", detail: "could not connect: timed out", fallback: fallback))),
             during: .checkingHost)
         XCTAssertEqual(blocked.problem, "Can't reach github.com")
         XCTAssertEqual(blocked.details, ["could not connect: timed out"])

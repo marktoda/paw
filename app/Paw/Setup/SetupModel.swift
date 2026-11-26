@@ -570,13 +570,13 @@ final class SetupModel {
         switch error {
         case .BadAddress(let problem):
             addressProblem = addressProblemWords(problem)
-        case .Remote(.keyNotAccepted(let host, let publicKey)):
+        case .Fault(.remote(.keyNotAccepted(let host, let publicKey))):
             notAccepted = KeyNotAccepted(host: host, publicKey: publicKey)
-        case .Remote(.hostKeyBundled(let host)) where moment == .forgettingHostKey:
+        case .Fault(.remote(.hostKeyBundled(let host))) where moment == .forgettingHostKey:
             problem = SetupWords.hostKeyKept(hostKeyBundled(host))
-        case .Failed(let message) where moment == .forgettingHostKey:
-            problem = SetupWords.hostKeyKept(message)
-        case .StoreBusy where moment == .forgettingHostKey:
+        case .Fault(.local(let detail)) where moment == .forgettingHostKey:
+            problem = SetupWords.hostKeyKept(detail)
+        case .Fault(.storeBusy) where moment == .forgettingHostKey:
             problem = SetupWords.hostKeyKept(storeBusyText)
         default:
             problem = SetupWords.words(error, during: moment)

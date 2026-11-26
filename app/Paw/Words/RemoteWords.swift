@@ -78,8 +78,9 @@ func addressNoticeWords(_ notice: AddressNotice) -> String {
         return "That was a GitHub address without its user name. " + instead(address)
     case .gitHubWebAddress(let address):
         return "That was a web address. " + instead(address)
-    case .portFallback(let fromHost, let fromPort, let host, let port):
-        return "Port \(fromPort) of \(fromHost) could not be reached, so paw will use \(host) on port \(port) instead."
+    case .portFallback(let fallback):
+        return "Port \(fallback.fromPort) of \(fallback.fromHost) could not be reached, so paw will use "
+            + "\(fallback.host) on port \(fallback.port) instead."
     }
 }
 
@@ -92,6 +93,17 @@ func refusedMessage(_ paths: [RefusedPath]) -> String {
         message += "; and \(paths.count - 5) more"
     }
     return message
+}
+
+/// What went wrong underneath a step, as one line under Details.
+func faultDetail(_ fault: Fault) -> String {
+    switch fault {
+    case .storeBusy: storeBusyText
+    case .remote(let failure): remoteDetail(failure)
+    case .refused(let paths): "not a safe name for an entry: " + refusedMessage(paths)
+    case .local(let detail): detail
+    case .cancelled: "stopped"
+    }
 }
 
 /// What went wrong with the remote, as one line under Details, or as the

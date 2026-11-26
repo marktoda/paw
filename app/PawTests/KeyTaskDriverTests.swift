@@ -56,7 +56,7 @@ final class KeyTaskDriverTests: XCTestCase {
             XCTAssertNil(KeyTaskEnd<SyncError>(state), "\(state)")
             XCTAssertFalse(state.isFinal, "\(state)")
         }
-        let rejected = SyncError.Remote(failure: .keyNotAccepted(host: "h", publicKey: "k"))
+        let rejected = SyncError.Fault(fault: .remote(failure: .keyNotAccepted(host: "h", publicKey: "k")))
         let ended: [KeyTaskState] = [
             .done(outcome: .signedIn), .failed(error: .TouchTimeout), .syncFailed(error: rejected),
             .setupFailed(error: .EmptyRepository), .cancelled, .failed(error: .Cancelled),
@@ -80,7 +80,7 @@ final class KeyTaskDriverTests: XCTestCase {
         XCTAssertEqual(KeyTaskEnd<Never>.failed(.TouchTimeout).standardStage(words), .failed(
             problem: "Your key wasn't touched in time", nextStep: "Try again and touch the gold part while it blinks."))
         XCTAssertNil(KeyTaskEnd<Never>.cancelled.standardStage(words))
-        let rejected = SyncError.Remote(failure: .keyNotAccepted(host: "h", publicKey: "k"))
+        let rejected = SyncError.Fault(fault: .remote(failure: .keyNotAccepted(host: "h", publicKey: "k")))
         XCTAssertNil(KeyTaskEnd<SyncError>.stepFailed(rejected).standardStage(words))
         XCTAssertNil(KeyTaskEnd<SetupError>.stepFailed(.EmptyRepository).standardStage(words))
     }

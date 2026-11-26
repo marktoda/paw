@@ -15,7 +15,7 @@ final class SyncWordsTests: XCTestCase {
 
     func testNoNetworkIsOfflineNotAnError() {
         let failure = SyncFailure(
-            SyncError.Remote(failure: .unreachable(host: "github.com", detail: "timed out")), during: .send, unpushed: 1, host: "github.com")
+            SyncError.Fault(fault: .remote(failure: .unreachable(host: "github.com", detail: "timed out"))), during: .send, unpushed: 1, host: "github.com")
         XCTAssertEqual(failure.kind, .offline)
         XCTAssertEqual(failure.problem, "Can't reach github.com")
         XCTAssertEqual(failure.nextStep, "Check your connection. Your change is saved on this iPhone.")
@@ -27,8 +27,8 @@ final class SyncWordsTests: XCTestCase {
 
     func testAChangedHostKeyStopsSyncAndPointsToSettings() {
         let failure = SyncFailure(
-            SyncError.Remote(failure: .hostKeyChanged(
-                host: "git.example", expected: ["SHA256:aaa", "SHA256:bbb"], presented: "SHA256:ccc", bundled: false)),
+            SyncError.Fault(fault: .remote(failure: .hostKeyChanged(
+                host: "git.example", expected: ["SHA256:aaa", "SHA256:bbb"], presented: "SHA256:ccc", bundled: false))),
             during: .refresh, unpushed: 0, host: "git.example")
         XCTAssertEqual(failure.kind, .hostKeyChanged)
         XCTAssertEqual(failure.problem, "git.example's identity changed")
@@ -39,7 +39,7 @@ final class SyncWordsTests: XCTestCase {
     }
 
     func testARejectedKeySaysWhatWasNotDone() {
-        let rejected = SyncError.Remote(failure: .keyNotAccepted(host: "github.com", publicKey: "ssh-ed25519 AAAA"))
+        let rejected = SyncError.Fault(fault: .remote(failure: .keyNotAccepted(host: "github.com", publicKey: "ssh-ed25519 AAAA")))
         let check = SyncFailure(rejected, during: .refresh, unpushed: 0, host: "github.com")
         XCTAssertEqual(check.kind, .keyNotAccepted)
         XCTAssertEqual(check.problem, "github.com didn't accept this key")
@@ -53,7 +53,7 @@ final class SyncWordsTests: XCTestCase {
 
     func testARefusedPushAMissingStoreAndARefusedRemoteHaveTheirOwnWords() {
         let refused = SyncFailure(
-            SyncError.Remote(failure: .pushRefused(detail: "The host refused the push: protected branch")),
+            SyncError.Fault(fault: .remote(failure: .pushRefused(detail: "The host refused the push: protected branch"))),
             during: .send, unpushed: 2, host: "h")
         XCTAssertEqual(refused.kind, .pushRefused)
         XCTAssertEqual(refused.problem, "h refused your changes")
@@ -62,15 +62,15 @@ final class SyncWordsTests: XCTestCase {
         XCTAssertEqual(refused.details, ["The host refused the push: protected branch"])
 
         let gone = SyncFailure(
-            SyncError.Remote(failure: .repositoryMissing(
-                host: "h", repository: "store.git", said: nil, detail: "Repository not found")),
+            SyncError.Fault(fault: .remote(failure: .repositoryMissing(
+                host: "h", repository: "store.git", said: nil, detail: "Repository not found"))),
             during: .send, unpushed: 0, host: "h")
         XCTAssertEqual(gone.kind, .repositoryGone)
         XCTAssertEqual(gone.pill, "Not sent \u{00B7} store not found")
 
         let remote = SyncFailure(
-            SyncError.Remote(failure: .refusedContent(
-                paths: [RefusedPath(path: "Web/github.com", reasons: [.appearsTwice])])),
+            SyncError.Fault(fault: .remote(failure: .refusedContent(
+                paths: [RefusedPath(path: "Web/github.com", reasons: [.appearsTwice])]))),
             during: .refresh, unpushed: 1, host: "h")
         XCTAssertEqual(remote.kind, .refusedRemote)
         XCTAssertEqual(remote.problem, "Your store has names paw can't download")
@@ -78,13 +78,13 @@ final class SyncWordsTests: XCTestCase {
         XCTAssertEqual(remote.pill, "Sync paused \u{00B7} Review")
         XCTAssertEqual(remote.actionTitle, "Show names")
 
-        let other = SyncFailure(.Failed(message: "boom"), during: .refresh, unpushed: 0, host: "h")
+        let other = SyncFailure(.Fault(fault: .local(detail: "boom")), during: .refresh, unpushed: 0, host: "h")
         XCTAssertEqual(other.kind, .other)
         XCTAssertEqual(other.problem, "Couldn't check for changes")
         XCTAssertEqual(other.nextStep, "Try again.")
         XCTAssertEqual(other.details, ["boom"])
 
-        let busy = SyncFailure(.StoreBusy, during: .refresh, unpushed: 0, host: "h")
+        let busy = SyncFailure(.Fault(fault: .storeBusy), during: .refresh, unpushed: 0, host: "h")
         XCTAssertEqual(busy.kind, .other)
         XCTAssertEqual(busy.problem, "Couldn't check for changes")
         XCTAssertEqual(busy.details, [storeBusyText])
@@ -198,10 +198,10 @@ final class SyncWordsTests: XCTestCase {
         XCTAssertFalse(updated.needsLook)
 
         XCTAssertEqual(background(.upToDate).outcome.words, "Up to date")
-        XCTAssertEqual(background(.notSignedIn).outcome.words, "Not signed in to GitHub")
-        XCTAssertEqual(background(.signedOut).outcome.words, "GitHub sign-in ended")
+        XCTAssertEqual(background(.failed(fault: .remote(failure: .notSignedIn))).outcome.words, "Not signed in to GitHub")
+        XCTAssertEqual(background(.failed(fault: .remote(failure: .signedOut))).outcome.words, "GitHub sign-in ended")
 
-        let offline = background(.offline(message: "no route"))
+        let offline = background(.failed(fault: .remote(failure: .unreachable(host: "github.com", detail: "no route"))))
         XCTAssertEqual(offline.outcome.words, "Couldn't reach GitHub")
         XCTAssertFalse(offline.success)
         XCTAssertEqual(background(.outOfTime).outcome.words, "Ran out of time")

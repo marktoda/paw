@@ -188,15 +188,15 @@ enum BackgroundRefresh {
         }
         let outcome: BackgroundRun.Outcome
         switch report.outcome {
-        case .notSignedIn: outcome = .notSignedIn
-        case .notLinked: outcome = .notLinked
         case .upToDate: outcome = .upToDate
         case .updated: outcome = .broughtIn
         case .needsDecision: outcome = needsLook ? .paused : changed ? .broughtIn : .upToDate
-        case .signedOut: outcome = .signedOut
-        case .offline: outcome = .offline
         case .outOfTime: outcome = .outOfTime
-        case .busy: outcome = .busy
+        case .failed(.remote(.notSignedIn)): outcome = .notSignedIn
+        case .failed(.remote(.notLinked)): outcome = .notLinked
+        case .failed(.remote(.signedOut)): outcome = .signedOut
+        case .failed(.remote(.unreachable)): outcome = .offline
+        case .failed(.storeBusy): outcome = .busy
         case .failed: outcome = .failed
         }
         return BackgroundRun(at: at, outcome: outcome, changed: changed, needsLook: needsLook)

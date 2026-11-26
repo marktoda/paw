@@ -97,7 +97,7 @@ enum SetupWords {
     static func words(_ error: SetupError, during moment: SetupModel.Moment) -> SetupProblem {
         let downloading = moment == .downloading
         switch error {
-        case .Remote(let failure):
+        case .Fault(.remote(let failure)):
             return remoteWords(failure, during: moment)
         case .EmptyRepository:
             return SetupProblem(
@@ -120,10 +120,8 @@ enum SetupWords {
             return SetupProblem(
                 problem: "Setup got out of step", nextStep: "Go back one step and try again.",
                 details: [message])
-        case .Failed(let message):
-            return didNotWork(message, downloading: downloading)
-        case .StoreBusy:
-            return didNotWork(storeBusyText, downloading: downloading)
+        case .Fault(let fault):
+            return didNotWork(faultDetail(fault), downloading: downloading)
         case .BadAddress(let problem):
             return SetupProblem(problem: "Check the address", nextStep: addressProblemWords(problem))
         }

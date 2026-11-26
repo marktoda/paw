@@ -43,7 +43,7 @@ extension SyncFailure {
         let notDone = Self.notDone(kind)
         self.during = kind
         switch error {
-        case .Remote(let failure):
+        case .Fault(.remote(let failure)):
             let remote = SyncFailure(failure, during: kind, unpushed: unpushed, host: host)
             self.kind = remote.kind
             problem = remote.problem
@@ -62,13 +62,13 @@ extension SyncFailure {
             nextStep = "Nothing was overwritten or sent."
             details = paths
             pill = "Sync stopped"
-        case .Cancelled:
+        case .Fault(.cancelled):
             let cancelled = Self.cancelled(during: kind, unpushed: unpushed)
             self.kind = cancelled.kind
             problem = cancelled.problem
             nextStep = cancelled.nextStep
             pill = cancelled.pill
-        case .StoreBusy:
+        case .Fault(.storeBusy):
             self.kind = .other
             problem = Self.couldNot(kind)
             nextStep = sentences("Try again.", waiting)
@@ -80,11 +80,11 @@ extension SyncFailure {
             nextStep = sentences("Try again.", waiting)
             details = [Self.queueDetail(error) ?? ""]
             pill = notDone
-        case .Failed(let message):
+        case .Fault(let fault):
             self.kind = .other
             problem = Self.couldNot(kind)
             nextStep = sentences("Try again.", waiting)
-            details = [message]
+            details = [faultDetail(fault)]
             pill = notDone
         }
     }
@@ -278,16 +278,12 @@ extension SyncError: WordedError {
         switch self {
         case .UncommittedChanges(let paths):
             "The store has changes paw didn't make: \(paths.joined(separator: ", "))."
-        case .Failed(let message):
-            capitalised(message) + "."
-        case .Remote(let failure):
-            capitalised(remoteDetail(failure)) + "."
-        case .StoreBusy:
-            capitalised(storeBusyText) + "."
+        case .Fault(.cancelled):
+            "Stopped."
+        case .Fault(let fault):
+            capitalised(faultDetail(fault)) + "."
         case .BeingSent, .NotWaiting, .QueueKeptChanging:
             capitalised(SyncFailure.queueDetail(self) ?? "") + "."
-        case .Cancelled:
-            "Stopped."
         case .NotPawHistory:
             String(describing: self)
         }

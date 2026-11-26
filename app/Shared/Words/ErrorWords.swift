@@ -9,11 +9,17 @@ let storeBusyText = "the password store is busy: another part of paw (or the Aut
 func isStoreBusy(_ error: Swift.Error) -> Bool {
     if case .StoreBusy? = error as? PawError { return true }
     if case .StoreBusy? = error as? KeyError { return true }
-    if case .StoreBusy? = error as? SyncError { return true }
-    if case .StoreBusy? = error as? SetupError { return true }
-    if case .StoreBusy? = error as? WriteError { return true }
-    if case .StoreBusy? = error as? GitHubError { return true }
-    return false
+    return fault(of: error) == .storeBusy
+}
+
+/// What went wrong underneath a sync, setup, save or GitHub step, if it was
+/// not the step's own refusal.
+func fault(of error: Swift.Error) -> Fault? {
+    if case .Fault(let fault)? = error as? SyncError { return fault }
+    if case .Fault(let fault)? = error as? SetupError { return fault }
+    if case .Fault(let fault)? = error as? WriteError { return fault }
+    if case .Fault(let fault)? = error as? GitHubError { return fault }
+    return nil
 }
 
 /// An error that says itself in one sentence, where a screen has room for

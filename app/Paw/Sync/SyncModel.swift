@@ -424,7 +424,7 @@ final class SyncModel {
                 statusUp = true
             }
         case .failure(let error):
-            if case .Remote(let failure)? = error as? SyncError, signInEnded(failure) {
+            if case .Fault(.remote(let failure))? = error as? SyncError, signInEnded(failure) {
                 start(.refresh)
                 keyPathNote = "Your GitHub sign-in ended, so this check uses your key."
                 return

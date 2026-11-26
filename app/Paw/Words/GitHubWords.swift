@@ -6,18 +6,16 @@ enum GitHubWords {
     static func problem(_ error: Error) -> String {
         guard let error = error as? GitHubError else { return "Something went wrong. \(describe(error))" }
         switch error {
-        case .Remote(let failure):
+        case .Fault(.remote(let failure)):
             return remoteProblem(failure)
         case .DeviceFlowDisabled:
             return "GitHub sign-in is turned off for paw. Type the address instead."
         case .Vault:
             return Device.words("paw couldn't keep the sign-in on this iPhone. Try again.")
-        case .Failed(let message):
-            return "GitHub didn't allow it: \(message). Try again."
         case .NotListed(let fullName):
             return "GitHub didn't allow it: \(fullName) is not in the list; list the repositories again. Try again."
-        case .StoreBusy:
-            return "GitHub didn't allow it: \(storeBusyText). Try again."
+        case .Fault(let fault):
+            return "GitHub didn't allow it: \(faultDetail(fault)). Try again."
         }
     }
 
@@ -43,7 +41,7 @@ enum GitHubWords {
 
     /// Whether the person must sign in again.
     static func endedSignIn(_ error: Error) -> Bool {
-        guard case .Remote(let failure)? = error as? GitHubError else { return false }
+        guard case .Fault(.remote(let failure))? = error as? GitHubError else { return false }
         return signInEnded(failure)
     }
 }
