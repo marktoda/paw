@@ -141,8 +141,8 @@ fn reborrow<'b>(progress: &'b mut Option<TransferCallback<'_>>) -> Option<Transf
 /// before the push. After integrating, if `holds_back` says a waiting
 /// change is not encrypted for exactly its entry's accepted recipients
 /// (`crate::write::held_back`), nothing is pushed and the state is
-/// [`SyncState::Waiting`]. Stops between steps
-/// once `stop` says so, and reports each fetch's progress to `progress`.
+/// [`SyncState::Waiting`]. Stops between steps once `stop` says so, with
+/// the key's `Cancelled`, and reports each fetch's progress to `progress`.
 ///
 /// Fails with the key's own error if the key did not sign the login, else
 /// with the sync's.
@@ -161,15 +161,16 @@ pub(crate) fn run_until<E: From<KeyError> + From<SyncError>>(
         Err(ConnectError::Key(error)) => return Err(error.into()),
         Err(ConnectError::Fault(error)) => return Err(SyncError::from(error).into()),
     };
-    let mut report = run_on(&connection, dir, holds_back, send, stop, progress)?;
+    let Some(mut report) = run_on(&connection, dir, holds_back, send, stop, progress)? else {
+        return Err(KeyError::Cancelled.into());
+    };
     report.signatures = counting.count.load(Ordering::SeqCst);
     Ok(report)
 }
 
 /// [`run_until`] on a connection already logged in. A stop ends it with
-/// [`Fault::Cancelled`], only between whole steps (after the login,
-/// after a fetch and its integrate, before a push): nothing is left half
-/// done.
+/// `None`, only between whole steps (after the login, after a fetch and
+/// its integrate, before a push): nothing is left half done.
 fn run_on(
     connection: &Connection,
     dir: &Path,
@@ -177,9 +178,9 @@ fn run_on(
     send: bool,
     stop: &dyn Fn() -> bool,
     mut progress: Option<TransferCallback<'_>>,
-) -> Result<SyncReport, SyncError> {
+) -> Result<Option<SyncReport>, SyncError> {
     if stop() {
-        return Err(Fault::Cancelled.into());
+        return Ok(None);
     }
     let mut report = SyncReport::new();
 
@@ -191,15 +192,15 @@ fn run_on(
     let pushing = if send { Some(store.pushing(crate::lock::FETCH_WAIT)?) } else { None };
     let (waiting, held) = fetch_and_integrate(connection, &store, dir, &mut report, reborrow(&mut progress))?;
     let Some(mut waiting) = waiting else {
-        return Ok(report);
+        return Ok(Some(report));
     };
     if send && waiting > 0 && stop() {
-        return Err(Fault::Cancelled.into());
+        return Ok(None);
     }
     // A waiting change encrypted for recipients its entry no longer has
     // is not sent: nothing is, until the person has dealt with it.
     if !send || waiting == 0 || holds_back()? {
-        return Ok(report);
+        return Ok(Some(report));
     }
     let Some(pushing) = &pushing else {
         return Err(Fault::local("internal: a send without its push lock").into());
@@ -210,17 +211,17 @@ fn run_on(
         Ok(()) => {}
         Err(PushError::NotFastForward) => {
             if stop() {
-                return Err(Fault::Cancelled.into());
+                return Ok(None);
             }
             report.retried = true;
             let (again, held) =
                 fetch_and_integrate(connection, &store, dir, &mut report, reborrow(&mut progress))?;
             let Some(again) = again else {
-                return Ok(report);
+                return Ok(Some(report));
             };
             waiting = again;
             if waiting > 0 && holds_back()? {
-                return Ok(report);
+                return Ok(Some(report));
             }
             let (repo, branch, tip) = branch_tip(dir)?;
             if waiting > 0 {
@@ -235,7 +236,7 @@ fn run_on(
     }
     report.pushed = waiting;
     report.state = SyncState::UpToDate;
-    Ok(report)
+    Ok(Some(report))
 }
 
 /// After a fetch by some other transport (GitHub's HTTPS, in

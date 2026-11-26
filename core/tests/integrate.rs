@@ -573,6 +573,20 @@ fn a_change_to_a_gpg_id_is_reported_with_both_versions() {
     assert_eq!(report.replayed, 1);
 }
 
+#[test]
+fn a_gpg_id_that_is_not_utf8_is_reported_as_far_as_it_reads() {
+    let w = world();
+    std::fs::write(w.desktop.path().join(".gpg-id"), b"AAAA1111\nBBBB\xff2222\n").unwrap();
+    desktop_push(&w, "Edit .gpg-id on the desktop.");
+
+    let report = integrated(&w);
+
+    assert_eq!(
+        report.recipients_changed,
+        [RecipientsChange { path: ".gpg-id".into(), before: vec!["AAAA1111".into()], after: vec!["AAAA1111".into(), "BBBB\u{FFFD}2222".into()] }]
+    );
+}
+
 // --- one sync, one login ---------------------------------------------------
 
 #[test]

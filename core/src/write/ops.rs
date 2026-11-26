@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use super::draft::{EntryDraft, folder_problems, name_problems};
 use super::keyring::{FolderRecipients, Keyring};
-use super::{WriteError, author, encrypt, now_secs};
+use super::{WriteError, author, encrypt};
 use crate::PawError;
 use crate::copies::CopyCache;
 use crate::fault::Fault;
@@ -214,7 +214,7 @@ impl WriteStore {
     /// whether paw can save there now.
     pub fn folder_recipients(&self, folder: &str) -> Result<FolderRecipients, WriteError> {
         let _reading = self.lock().shared()?;
-        Ok(self.keyring()?.folder_recipients(&self.repo, folder, now_secs())?)
+        Ok(self.keyring()?.folder_recipients(&self.repo, folder)?)
     }
 
     /// Every `.gpg-id` in the store, top first, with its keys and the
@@ -222,7 +222,7 @@ impl WriteStore {
     /// only; decrypts nothing.
     pub fn recipient_scopes(&self) -> Result<Vec<super::RecipientScope>, WriteError> {
         let _reading = self.lock().shared()?;
-        super::scopes::recipient_scopes(&self.keyring()?, &self.repo, now_secs())
+        super::scopes::recipient_scopes(&self.keyring()?, &self.repo)
     }
 
     /// After "Who can open … changed": accepts the folder's current
@@ -277,13 +277,12 @@ impl WriteStore {
         let folder = folder_of(&target);
         let author = author();
         let keyring = self.keyring()?;
-        let now = now_secs();
 
         let Some(original) = draft.original_path() else {
             if read_file(&self.repo, &file(&target))?.is_some() {
                 return Err(WriteError::AlreadyExists { entry: target });
             }
-            let keys = keyring.resolve(&self.repo, folder, now)?;
+            let keys = keyring.resolve(&self.repo, folder)?;
             let ciphertext = encrypt(&keys, &doc.to_bytes())?;
             let message = if draft.generated() {
                 format!("Add generated password for {target}.")
@@ -303,7 +302,7 @@ impl WriteStore {
         let moved = target != original;
         let reencrypt = moved && !self.same_recipients(folder_of(original), folder)?;
         // Everything that can be refused is asked before the first commit.
-        let keys = if changed || reencrypt { Some(keyring.resolve(&self.repo, folder, now)?) } else { None };
+        let keys = if changed || reencrypt { Some(keyring.resolve(&self.repo, folder)?) } else { None };
 
         let mut commits = Vec::new();
         let mut latest = current;

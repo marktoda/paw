@@ -682,7 +682,7 @@ impl SetupFlow {
         // that entry names the card's key, says which line is the card's.
         let store = PassStore::open(repo.to_string_lossy().into_owned()).map_err(SetupError::from)?;
         let ciphertext = store.read_entry(&entry).map_err(SetupError::from)?;
-        let bound = keyring.bind_card_for_opened_entry(&held, &repo, &fingerprint, &entry, &ciphertext, crate::write::now_secs());
+        let bound = keyring.bind_card_for_opened_entry(&held, &repo, &fingerprint, &entry, &ciphertext);
         match bound {
             // Several unknown lines: the person picks the card's later.
             Ok(_) | Err(WriteError::MissingRecipients { .. }) => {}
@@ -704,8 +704,7 @@ impl SetupFlow {
         self.expect(&[Step::Done], "say whether entries can be saved")?;
         let repo = self.repo_dir();
         let keyring = Keyring::open(&self.dir).map_err(write_failed)?;
-        let now = crate::write::now_secs();
-        let top = keyring.folder_recipients(&repo, "", now).map_err(write_failed)?;
+        let top = keyring.folder_recipients(&repo, "").map_err(write_failed)?;
         let missing_recipients = if top.writable {
             Vec::new()
         } else {
@@ -721,7 +720,7 @@ impl SetupFlow {
             if folder.is_empty() {
                 continue;
             }
-            let recipients = keyring.folder_recipients(&repo, folder, now).map_err(write_failed)?;
+            let recipients = keyring.folder_recipients(&repo, folder).map_err(write_failed)?;
             if !recipients.writable {
                 folders_needing_keys.push(gpg_id);
             }

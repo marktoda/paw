@@ -24,7 +24,7 @@ use paw_core::sim::SimulatedKey;
 use paw_core::sim::copies::{SimClock, SimKeystore};
 use paw_core::sim::fixture::{encrypt, other_key};
 use paw_core::store::pairings::{PairingFile, SitePairings};
-use paw_core::write::{KeySource, Keyring, LineStatus};
+use paw_core::write::{Keyring, LineStatus};
 use key_common::PIN;
 use support::git;
 
@@ -112,7 +112,7 @@ fn scopes_list_each_gpg_id_and_entries_for_other_keys() {
     assert_eq!(top.entry_count, 4);
     assert_eq!(top.keys.len(), 1);
     assert!(top.keys[0].this_key);
-    assert!(matches!(top.keys[0].status, LineStatus::Ready { source: KeySource::Card, .. }));
+    assert!(matches!(top.keys[0].status, LineStatus::Ready { .. }));
     let fpr = card().fingerprint_hex();
     assert_eq!(top.keys[0].short_id.as_deref(), Some(&fpr[24..]));
     // Every key of the top is known, so the two are certain.

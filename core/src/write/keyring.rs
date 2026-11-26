@@ -4,9 +4,7 @@
 //! but encrypting needs their public keys, and the repository is not a
 //! trusted place to get them from. So the keys live here, in the store's
 //! state directory (not in the git repository). The only way in is the
-//! card's own decryption key, pinned at setup; the file also has room for
-//! keys taken from a certificate (`certificate` keys, with their primary
-//! key, user IDs, expiry and refused subkeys), which nothing adds yet.
+//! card's own decryption key, pinned at setup.
 //!
 //! A `.gpg-id` line is satisfied by:
 //! 1. a binding: an explicit record that this line means this pinned key.
@@ -14,20 +12,14 @@
 //!    `.gpg-id` usually names the primary key's fingerprint while the card
 //!    exposes only its encryption subkey, and nothing on the phone can
 //!    prove the two belong together except the person and that decrypt;
-//! 2. otherwise, exactly one pinned key that the line names: the full
-//!    fingerprint or long key ID of the key itself or of its certificate's
-//!    verified primary key, or an e-mail address in one of its verified
-//!    user IDs (exact, any letter case; GnuPG would also accept a part of a
-//!    user ID, paw does not). Any other subkey of the certificate (older,
-//!    revoked, expired, not for encryption, or not vouched for by the
-//!    primary key) never satisfies a line: the line is refused with the
-//!    reason, and only an explicit binding can make it mean a pinned key.
+//! 2. otherwise, exactly one pinned key that the line names by its full
+//!    fingerprint or long key ID.
 //!
-//! Short key IDs and names are never matched by themselves: they need a
-//! binding. Resolving a folder is all or nothing: if any line of its
-//! `.gpg-id` is not satisfied, or a key has expired, saving there is
-//! refused with every such line named. paw never encrypts to fewer keys
-//! than `.gpg-id` names.
+//! Short key IDs, names and e-mail addresses are never matched by
+//! themselves: they need a binding. Resolving a folder is all or nothing:
+//! if any line of its `.gpg-id` is not satisfied, saving there is refused
+//! with every such line named. paw never encrypts to fewer keys than
+//! `.gpg-id` names.
 //!
 //! paw always says when recipients change. Setup records every `.gpg-id`
 //! in the store, with its contents ([`Keyring::accept_all_recipients_at_setup`]);
@@ -41,7 +33,10 @@
 //! is refused everywhere ([`WriteError::RecipientsNotConfirmed`]).
 //!
 //! The file is small text, written whole by rename. Nothing in it is
-//! secret.
+//! secret. A `key` line keeps the fields an earlier paw had for a key
+//! taken from a certificate (primary key, expiry, fingerprints, e-mail
+//! addresses), always `-` for the card's key. No phone was ever given such
+//! a key; its `key` and `sub` lines are not read.
 
 use std::path::{Path, PathBuf};
 
@@ -61,38 +56,17 @@ use crate::lock::{Exclusive, StoreLock};
 const HEADER: &str = "# paw pinned recipients, version 1";
 const TEMP_PREFIX: &str = ".recipients.tmp-";
 
-/// Where a pinned key came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum KeySource {
-    /// The plugged-in card's decryption key, pinned at setup.
-    Card,
-    /// An imported certificate.
-    Certificate,
-}
-
-/// A public key paw may encrypt to.
+/// A public key paw may encrypt to: the card's decryption key.
 #[derive(Clone)]
 pub struct PinnedKey {
     /// The fingerprint of the key itself, upper-case hex.
     pub fingerprint: String,
-    pub source: KeySource,
-    /// For a certificate: its primary key's fingerprint.
-    pub primary: Option<String>,
-    /// The certificate's fingerprints a line may name it by: its primary
-    /// key's (and the key's own, which is always allowed).
-    pub fingerprints: Vec<String>,
-    /// The certificate's other subkeys, with why paw does not use them.
-    pub refused: Vec<(String, String)>,
-    /// E-mail addresses from its verified user IDs.
-    pub emails: Vec<String>,
-    /// When it stops being usable, seconds since 1970.
-    pub expires: Option<u32>,
     pub key: PublicKey,
 }
 
 impl std::fmt::Debug for PinnedKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "PinnedKey({} {:?})", self.fingerprint, self.source)
+        write!(f, "PinnedKey({})", self.fingerprint)
     }
 }
 
@@ -103,9 +77,8 @@ enum Spec {
     Fingerprint(String),
     /// 16 hex digits.
     LongId(String),
-    /// An e-mail address, lower case.
-    Email(String),
-    /// A short key ID, a name or anything else: only a binding helps.
+    /// A short key ID, a name, an e-mail address or anything else: only a
+    /// binding helps.
     Other,
 }
 
@@ -117,7 +90,7 @@ impl Spec {
         match self {
             Self::Fingerprint(wanted) => wanted == fingerprint,
             Self::LongId(id) => key_id(fingerprint) == Some(id.as_str()),
-            Self::Email(_) | Self::Other => false,
+            Self::Other => false,
         }
     }
 }
@@ -128,67 +101,15 @@ pub(crate) fn line_key_id(line: &str) -> Option<String> {
     match spec(line) {
         Spec::Fingerprint(fingerprint) => key_id(&fingerprint).map(str::to_owned),
         Spec::LongId(id) => Some(id),
-        Spec::Email(_) | Spec::Other => None,
+        Spec::Other => None,
     }
 }
 
 fn spec(line: &str) -> Spec {
-    if let Some(digits) = key_digits(line) {
-        return match digits.len() {
-            40 | 64 => Spec::Fingerprint(digits),
-            16 => Spec::LongId(digits),
-            _ => Spec::Other,
-        };
-    }
-    let line = line.trim();
-    let bare = line.strip_suffix('!').unwrap_or(line);
-    if bare.contains('@') {
-        let address = bare.strip_prefix('=').unwrap_or(bare);
-        if let Some(email) = email_in(address) {
-            return Spec::Email(email);
-        }
-    }
-    Spec::Other
-}
-
-/// The e-mail address in a user ID or a `.gpg-id` line: inside `<...>` if
-/// there is such a part, else the whole text if it looks like an address.
-/// Lower case.
-fn email_in(user_id: &str) -> Option<String> {
-    let candidate = match (user_id.rfind('<'), user_id.rfind('>')) {
-        (Some(open), Some(close)) if open < close => &user_id[open + 1..close],
-        _ => user_id,
-    };
-    let candidate = candidate.trim();
-    let plausible = candidate.split('@').count() == 2
-        && !candidate.starts_with('@')
-        && !candidate.ends_with('@')
-        && !candidate.chars().any(|c| c.is_whitespace() || c.is_control() || c == ',' || c == '<' || c == '>');
-    plausible.then(|| candidate.to_lowercase())
-}
-
-impl PinnedKey {
-    fn all_fingerprints(&self) -> impl Iterator<Item = &str> {
-        std::iter::once(self.fingerprint.as_str()).chain(self.fingerprints.iter().map(String::as_str))
-    }
-
-    /// Whether `line` names this key by itself (no binding).
-    fn named_by(&self, line: &str) -> bool {
-        match spec(line) {
-            Spec::Email(email) => self.emails.contains(&email),
-            spec => self.all_fingerprints().any(|own| spec.names(own)),
-        }
-    }
-
-    /// If `line` names one of the certificate's other subkeys, why that
-    /// subkey is not used.
-    fn refusal(&self, line: &str) -> Option<&str> {
-        let spec = spec(line);
-        self.refused.iter().find(|(fpr, _)| spec.names(fpr)).map(|(_, why)| why.as_str())
-    }
-
-    fn expired(&self, now: u32) -> bool {
-        self.expires.is_some_and(|end| end <= now)
+    match key_digits(line) {
+        Some(digits) if matches!(digits.len(), 40 | 64) => Spec::Fingerprint(digits),
+        Some(digits) if digits.len() == 16 => Spec::LongId(digits),
+        _ => Spec::Other,
     }
 }
 
@@ -197,17 +118,11 @@ impl PinnedKey {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum LineStatus {
     /// Encrypting uses the pinned key with this fingerprint.
-    Ready { fingerprint: String, source: KeySource, bound: bool },
-    /// No pinned key matches: import the recipient's public key.
+    Ready { fingerprint: String, bound: bool },
+    /// No pinned key matches.
     Missing,
     /// Several pinned keys match; bind the line to one.
     Ambiguous { fingerprints: Vec<String> },
-    /// The key it resolves to has expired; import a refreshed one.
-    Expired { fingerprint: String },
-    /// It names a subkey of the certificate pinned as `fingerprint` that
-    /// paw does not encrypt to, for `reason`. Binding the line to a pinned
-    /// key is the only way to use it.
-    Refused { fingerprint: String, subkey: String, reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -309,14 +224,6 @@ fn un_b64(text: &str) -> Option<String> {
     B64.decode(text).ok().and_then(|bytes| String::from_utf8(bytes).ok())
 }
 
-fn list(items: &[String]) -> String {
-    if items.is_empty() { "-".into() } else { items.join(",") }
-}
-
-fn unlist(text: &str) -> Vec<String> {
-    if text == "-" { Vec::new() } else { text.split(',').map(str::to_owned).collect() }
-}
-
 fn sha256_hex(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
@@ -341,38 +248,17 @@ impl Keyring {
         for line in text.lines() {
             let parts: Vec<&str> = line.split(' ').collect();
             match parts.as_slice() {
-                ["key", fpr, source, primary, expires, fprs, emails, packet] => {
-                    let source = match *source {
-                        "card" => KeySource::Card,
-                        "certificate" => KeySource::Certificate,
-                        _ => return Err(failed("read", "unknown key source")),
-                    };
+                ["key", _, "certificate", ..] => {}
+                ["key", fpr, "card", _primary, _expires, _fingerprints, _emails, packet] => {
                     let key = B64
                         .decode(packet)
                         .ok()
                         .and_then(|bytes| key_from_bytes(&bytes))
                         .filter(|key| fingerprint_of(key) == *fpr)
                         .ok_or_else(|| failed("read", format!("the key {fpr} is damaged")))?;
-                    keyring.keys.push(PinnedKey {
-                        fingerprint: (*fpr).to_owned(),
-                        source,
-                        primary: (*primary != "-").then(|| (*primary).to_owned()),
-                        fingerprints: unlist(fprs),
-                        refused: Vec::new(),
-                        emails: unlist(emails),
-                        expires: match *expires {
-                            "-" => None,
-                            at => Some(at.parse().map_err(|_| failed("read", format!("the key {fpr} has a damaged expiry")))?),
-                        },
-                        key,
-                    });
+                    keyring.keys.push(PinnedKey { fingerprint: (*fpr).to_owned(), key });
                 }
-                ["sub", fpr, subkey, reason] => {
-                    let reason = un_b64(reason).ok_or_else(|| failed("read", "a damaged subkey note"))?;
-                    if let Some(key) = keyring.keys.iter_mut().find(|k| k.fingerprint == *fpr) {
-                        key.refused.push(((*subkey).to_owned(), reason));
-                    }
-                }
+                ["key", ..] => return Err(failed("read", "unknown key source")),
                 ["accepted"] => {
                     keyring.accepted.get_or_insert_with(Vec::new);
                 }
@@ -396,22 +282,7 @@ impl Keyring {
         debug_assert!(held.covers(&self.repo()), "the keyring changed without its store's lock");
         let mut text = format!("{HEADER}\n");
         for key in &self.keys {
-            let source = match key.source {
-                KeySource::Card => "card",
-                KeySource::Certificate => "certificate",
-            };
-            text.push_str(&format!(
-                "key {} {source} {} {} {} {} {}\n",
-                key.fingerprint,
-                key.primary.as_deref().unwrap_or("-"),
-                key.expires.map_or("-".into(), |e| e.to_string()),
-                list(&key.fingerprints),
-                list(&key.emails),
-                B64.encode(key_bytes(&key.key)?),
-            ));
-            for (subkey, reason) in &key.refused {
-                text.push_str(&format!("sub {} {subkey} {}\n", key.fingerprint, b64(reason)));
-            }
+            text.push_str(&format!("key {} card - - - - {}\n", key.fingerprint, B64.encode(key_bytes(&key.key)?)));
         }
         for (spec, fpr) in &self.bindings {
             text.push_str(&format!("bind {fpr} {}\n", b64(spec)));
@@ -448,16 +319,7 @@ impl Keyring {
     /// Returns its fingerprint. Pinning it again replaces it.
     pub fn pin_card_key(&mut self, held: &Exclusive, key: &PublicKey) -> Result<String, Fault> {
         let fingerprint = fingerprint_of(key);
-        self.pin(held, PinnedKey {
-            fingerprint,
-            source: KeySource::Card,
-            primary: None,
-            fingerprints: Vec::new(),
-            refused: Vec::new(),
-            emails: Vec::new(),
-            expires: None,
-            key: key.clone(),
-        })
+        self.pin(held, PinnedKey { fingerprint, key: key.clone() })
     }
 
     /// Records that the `.gpg-id` line `line` is satisfied by the pinned key
@@ -475,8 +337,8 @@ impl Keyring {
         Ok(self.save(held)?)
     }
 
-    /// How `line` is satisfied at `now` (seconds since 1970).
-    pub fn line_status(&self, line: &str, now: u32) -> LineStatus {
+    /// How `line` is satisfied.
+    pub fn line_status(&self, line: &str) -> LineStatus {
         let trimmed = line.trim();
         let bound = self
             .bindings
@@ -486,28 +348,10 @@ impl Keyring {
         let (key, bound) = match bound {
             Some(key) => (key, true),
             None => {
-                // A key named by its own full fingerprint is that key, even
-                // if another certificate lists the same fingerprint.
-                let exact = match spec(trimmed) {
-                    Spec::Fingerprint(fpr) => self.keys.iter().find(|key| key.fingerprint == fpr),
-                    _ => None,
-                };
-                let named: Vec<&PinnedKey> = match exact {
-                    Some(key) => vec![key],
-                    None => self.keys.iter().filter(|key| key.named_by(trimmed)).collect(),
-                };
+                let spec = spec(trimmed);
+                let named: Vec<&PinnedKey> = self.keys.iter().filter(|key| spec.names(&key.fingerprint)).collect();
                 match named.as_slice() {
-                    [] => {
-                        return self
-                            .keys
-                            .iter()
-                            .find_map(|key| {
-                                let reason = key.refusal(trimmed)?;
-                                let subkey = key.refused.iter().find(|(_, why)| why == reason).map(|(f, _)| f.clone())?;
-                                Some(LineStatus::Refused { fingerprint: key.fingerprint.clone(), subkey, reason: reason.to_owned() })
-                            })
-                            .unwrap_or(LineStatus::Missing);
-                    }
+                    [] => return LineStatus::Missing,
                     [key] => (*key, false),
                     several => {
                         return LineStatus::Ambiguous {
@@ -517,16 +361,13 @@ impl Keyring {
                 }
             }
         };
-        if key.expired(now) {
-            return LineStatus::Expired { fingerprint: key.fingerprint.clone() };
-        }
-        LineStatus::Ready { fingerprint: key.fingerprint.clone(), source: key.source, bound }
+        LineStatus::Ready { fingerprint: key.fingerprint.clone(), bound }
     }
 
     /// How the recipients for entries in `folder` of the store at `root`
     /// are satisfied, and whether they are the ones accepted. Reads the
     /// working copy; changes nothing.
-    pub fn folder_recipients(&self, root: &Path, folder: &str, now: u32) -> Result<FolderRecipients, Fault> {
+    pub fn folder_recipients(&self, root: &Path, folder: &str) -> Result<FolderRecipients, Fault> {
         let (gpg_id, bytes) = governing_gpg_id(root, folder)?;
         let text = gpg_id_text(&gpg_id, &bytes)?;
         let accepted = self.accepted.as_deref().and_then(|all| {
@@ -537,7 +378,7 @@ impl Keyring {
             && accepted.is_none_or(|a| a.path != gpg_id || a.sha != sha256_hex(&bytes));
         let lines: Vec<RecipientLine> = parse_gpg_id(text)
             .into_iter()
-            .map(|line| RecipientLine { status: self.line_status(&line, now), line })
+            .map(|line| RecipientLine { status: self.line_status(&line), line })
             .collect();
         let confirmed = self.confirmed();
         let ready = lines.iter().all(|l| matches!(l.status, LineStatus::Ready { .. }));
@@ -556,8 +397,8 @@ impl Keyring {
     /// key, in `.gpg-id` order. Refused unless the recipients are the
     /// accepted ones and every line is satisfied; every unsatisfied line is
     /// named. Accepts nothing by itself.
-    pub fn resolve(&self, root: &Path, folder: &str, now: u32) -> Result<Vec<PublicKey>, WriteError> {
-        let recipients = self.folder_recipients(root, folder, now)?;
+    pub fn resolve(&self, root: &Path, folder: &str) -> Result<Vec<PublicKey>, WriteError> {
+        let recipients = self.folder_recipients(root, folder)?;
         if !recipients.confirmed {
             return Err(WriteError::RecipientsNotConfirmed);
         }
@@ -584,10 +425,6 @@ impl Keyring {
                 }
                 LineStatus::Missing => missing.push(line.clone()),
                 LineStatus::Ambiguous { .. } => missing.push(format!("{line} (more than one key matches)")),
-                LineStatus::Expired { .. } => missing.push(format!("{line} (its key has expired)")),
-                LineStatus::Refused { reason, .. } => {
-                    missing.push(format!("{line} (it names a subkey paw does not encrypt to: {reason})"))
-                }
             }
         }
         if recipients.lines.is_empty() {
@@ -655,10 +492,9 @@ impl Keyring {
         card_fingerprint: &str,
         entry: &str,
         ciphertext: &[u8],
-        now: u32,
     ) -> Result<Vec<String>, WriteError> {
         let card_fingerprint = card_fingerprint.trim().to_ascii_uppercase();
-        if !self.keys.iter().any(|k| k.fingerprint == card_fingerprint && k.source == KeySource::Card) {
+        if !self.keys.iter().any(|k| k.fingerprint == card_fingerprint) {
             return Err(WriteError::NotPinned { fingerprint: card_fingerprint });
         }
         let names_card = crate::recipients::entry_recipients(ciphertext)
@@ -667,7 +503,7 @@ impl Keyring {
             return Ok(Vec::new());
         }
         let folder = folder_of(entry);
-        let recipients = self.folder_recipients(root, folder, now)?;
+        let recipients = self.folder_recipients(root, folder)?;
         self.bind_one_open_line(held, recipients, &card_fingerprint)
     }
 

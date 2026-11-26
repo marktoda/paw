@@ -61,12 +61,6 @@ extension SyncFailure {
             nextStep = "Nothing was overwritten or sent."
             details = paths
             pill = "Sync stopped"
-        case .Fault(.cancelled):
-            let cancelled = Self.cancelled(during: kind, unpushed: unpushed)
-            self.kind = cancelled.kind
-            problem = cancelled.problem
-            nextStep = cancelled.nextStep
-            pill = cancelled.pill
         case .Fault(.storeBusy):
             self.kind = .other
             problem = StoreBusyWords.problem
@@ -279,8 +273,6 @@ extension SyncError: WordedError {
             "The store has changes paw didn't make: \(paths.joined(separator: ", "))."
         case .Fault(.storeBusy):
             StoreBusyWords.line
-        case .Fault(.cancelled):
-            "Stopped."
         case .Fault(let fault):
             capitalised(faultDetail(fault)) + "."
         case .BeingSent, .NotWaiting, .QueueKeptChanging:

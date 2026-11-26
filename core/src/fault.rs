@@ -24,9 +24,6 @@ pub enum Fault {
     /// failed. `detail` never holds an entry's contents.
     #[error("{detail}")]
     Local { detail: String },
-    /// Stopped between two steps, as asked. Nothing is left half done.
-    #[error("cancelled")]
-    Cancelled,
 }
 
 impl Fault {

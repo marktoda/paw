@@ -117,29 +117,65 @@ fn the_known_hosts() {
     assert_eq!(get(again.path(), layout::KNOWN_HOSTS), bytes.as_bytes());
 }
 
-#[test]
-fn the_pinned_recipients() {
+/// A card key line as every paw has written it: the fields for a key from
+/// a certificate are `-`.
+const CARD_KEY_LINE: &str = "key 678417EACF97C347CEF3717187853EFA4A0E0CFF card - - - - \
+    xjgEZVPxABIKKwYBBAGXVQEFAQEHQFfbSzWfI65eFG5OJRIFZwRyJQY0jBUMFHU9DJM9BNQhAwEIBw==\n";
+const CARD_KEY: &str = "678417EACF97C347CEF3717187853EFA4A0E0CFF";
+
+fn pinned_recipients(keys: &str) -> String {
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD as B64;
     use sha2::{Digest, Sha256};
     let gpg_id = "AAAA1111\n";
     let sha: String = Sha256::digest(gpg_id.as_bytes()).iter().map(|b| format!("{b:02X}")).collect();
-    let bytes = format!(
-        "# paw pinned recipients, version 1\nbind {FINGERPRINT} {}\naccepted\ngpgid {sha} {} {}\n",
+    format!(
+        "# paw pinned recipients, version 1\n{keys}bind {CARD_KEY} {}\naccepted\ngpgid {sha} {} {}\n",
         B64.encode("AAAA1111"),
         B64.encode(".gpg-id"),
         B64.encode(gpg_id),
-    );
+    )
+}
+
+fn store_with_recipients(bytes: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = state();
     put(dir.path(), layout::RECIPIENTS, bytes.as_bytes());
     let repo = layout::repo_dir(dir.path());
     std::fs::create_dir_all(&repo).unwrap();
-    put(&repo, ".gpg-id", gpg_id.as_bytes());
-    let keyring = crate::write::Keyring::open(dir.path()).unwrap();
-    let folder = keyring.folder_recipients(&repo, "", 0).unwrap();
+    put(&repo, ".gpg-id", b"AAAA1111\n");
+    (dir, repo)
+}
+
+#[test]
+fn the_pinned_recipients() {
+    let bytes = pinned_recipients(CARD_KEY_LINE);
+    let (dir, repo) = store_with_recipients(&bytes);
+    let mut keyring = crate::write::Keyring::open(dir.path()).unwrap();
+    let folder = keyring.folder_recipients(&repo, "").unwrap();
     assert!(folder.confirmed);
     assert!(!folder.changed);
+    assert!(folder.writable);
     assert_eq!(folder.accepted_lines, ["AAAA1111"]);
+    assert_eq!(folder.lines[0].status, crate::write::LineStatus::Ready { fingerprint: CARD_KEY.into(), bound: true });
+
+    // Binding the line again saves the file again, as it was.
+    let held = keyring.lock().exclusive().unwrap();
+    keyring.bind(&held, "AAAA1111", CARD_KEY).unwrap();
+    assert_eq!(get(dir.path(), layout::RECIPIENTS), bytes.as_bytes());
+}
+
+#[test]
+fn pinned_recipients_with_a_key_from_a_certificate_still_read() {
+    // What an earlier paw's certificate import wrote; no phone has it, but
+    // the file must not stop reading if one did.
+    let certificate = "key 0123456789ABCDEF0123456789ABCDEF01234567 certificate \
+        FEDCBA9876543210FEDCBA9876543210FEDCBA98 1800000000 FEDCBA9876543210FEDCBA9876543210FEDCBA98 \
+        team@example.com AAAA\nsub 0123456789ABCDEF0123456789ABCDEF01234567 \
+        1111222233334444555566667777888899990000 cmV2b2tlZA==\n";
+    let (dir, repo) = store_with_recipients(&pinned_recipients(&format!("{CARD_KEY_LINE}{certificate}")));
+    let keyring = crate::write::Keyring::open(dir.path()).unwrap();
+    assert_eq!(keyring.keys().iter().map(|k| k.fingerprint.as_str()).collect::<Vec<_>>(), [CARD_KEY]);
+    assert!(keyring.folder_recipients(&repo, "").unwrap().writable);
 }
 
 #[test]
@@ -177,3 +213,4 @@ fn the_key_log() {
     assert_eq!(lines.len(), 1);
     assert_eq!((lines[0].at_ms, lines[0].process.as_str(), lines[0].text.as_str()), (1000, "fill", "key plugged in"));
 }
+

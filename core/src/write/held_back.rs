@@ -6,7 +6,7 @@ use std::path::Path;
 
 use git2::Oid;
 
-use super::{Keyring, WriteError, encrypt, now_secs};
+use super::{Keyring, WriteError, encrypt};
 use crate::fault::Fault;
 use crate::key::KeyError;
 use crate::lock::StoreLock;
@@ -68,7 +68,6 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
         return Ok(Vec::new());
     }
     let (_, files) = waiting_files(dir)?;
-    let now = now_secs();
     let mut held = Vec::new();
     for file in files {
         if !crate::path::is_entry_file(&file.path) {
@@ -85,7 +84,7 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
             recipients,
             list,
         };
-        let recipients = match keyring.folder_recipients(dir, folder, now) {
+        let recipients = match keyring.folder_recipients(dir, folder) {
             Ok(recipients) => recipients,
             Err(_) => {
                 held.push(hold(None, Vec::new(), HeldBackList::Unreadable));
@@ -95,7 +94,7 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
         let accepted = !recipients.changed;
         let exact = accepted
             && found.as_ref().is_some_and(|found| {
-                keyring.resolve(dir, folder, now).is_ok_and(|keys| encrypted_for_exactly(found, &keys))
+                keyring.resolve(dir, folder).is_ok_and(|keys| encrypted_for_exactly(found, &keys))
             });
         if !exact {
             let lines = recipients.lines.into_iter().map(|line| line.line).collect();
@@ -202,7 +201,7 @@ fn left_reason(error: WriteError) -> LeftReason {
     }
 }
 
-fn look(item: &HeldBack, files: &[WaitingFile], keyring: &Keyring, dir: &Path, now: u32) -> Option<Look> {
+fn look(item: &HeldBack, files: &[WaitingFile], keyring: &Keyring, dir: &Path) -> Option<Look> {
     let file = files.iter().find(|file| file.id == item.id)?;
     match item.list {
         HeldBackList::Unreadable => return Some(Look::Left(LeftReason::NoList)),
@@ -210,7 +209,7 @@ fn look(item: &HeldBack, files: &[WaitingFile], keyring: &Keyring, dir: &Path, n
         HeldBackList::Accepted => {}
     }
     let folder = crate::path::folder_of(&file.path);
-    Some(match keyring.resolve(dir, folder, now) {
+    Some(match keyring.resolve(dir, folder) {
         Ok(_) => Look::Ready { path: file.path.clone(), blob: file.blob },
         Err(error) => Look::Left(left_reason(error)),
     })
@@ -228,10 +227,9 @@ fn looked(
     let _reading = StoreLock::for_repo(dir).shared()?;
     let keyring = Keyring::open(state_dir)?;
     let (_, files) = waiting_files(dir)?;
-    let now = now_secs();
     let mut check = ReencryptCheck { ready: 0, left: Vec::new() };
     for item in &held {
-        let reason = match look(item, &files, &keyring, dir, now) {
+        let reason = match look(item, &files, &keyring, dir) {
             Some(Look::Ready { path, blob }) => match skipped.get(&(path, blob)) {
                 Some(reason) => reason.clone(),
                 None => {
@@ -302,8 +300,7 @@ fn reencrypt_each_until<S>(
             let _reading = StoreLock::for_repo(dir).shared()?;
             let keyring = Keyring::open(state_dir)?;
             let (head, files) = waiting_files(dir)?;
-            let now = now_secs();
-            held.into_iter().find_map(|item| match look(&item, &files, &keyring, dir, now) {
+            held.into_iter().find_map(|item| match look(&item, &files, &keyring, dir) {
                 Some(Look::Ready { path, blob }) if !skipped.contains_key(&(path.clone(), blob)) => {
                     let bytes = files.iter().find(|file| file.id == item.id).map(|file| file.ciphertext.clone())?;
                     Some((item, path, blob, bytes, head))
@@ -342,7 +339,7 @@ fn reencrypt_each_until<S>(
                 return Ok(None);
             }
             let folder = crate::path::folder_of(&path);
-            let keys = match Keyring::open(state_dir)?.resolve(dir, folder, now_secs()) {
+            let keys = match Keyring::open(state_dir)?.resolve(dir, folder) {
                 Ok(keys) => keys,
                 Err(WriteError::Fault { fault }) => return Err(fault.into()),
                 Err(other) => {
