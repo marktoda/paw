@@ -130,7 +130,7 @@ final class SetupModel {
 
     private let workQueue = DispatchQueue(label: "paw-setup", qos: .userInitiated)
 
-    init(setup: Setup, repoPath: String, keyPort: KeyPort, keys: any KeySource,
+    init(setup: Setup, repoPath: String, keyPort: KeyPort, keys: any KeyConnector,
          finished: @escaping () -> Void, startOver: @escaping () -> Void) {
         self.setup = setup
         self.repoPath = repoPath

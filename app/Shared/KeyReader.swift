@@ -17,7 +17,7 @@ enum KeyReadProblem {
 final class KeyReader {
     let port: KeyPort
     /// Where the key comes from.
-    let source: any KeySource
+    let source: any KeyConnector
     /// A key is in, as the source last said.
     private(set) var present = false
     /// Why the last read failed; `nil` once one works.
@@ -36,7 +36,7 @@ final class KeyReader {
     @ObservationIgnored private var following: AnyObject?
     @ObservationIgnored private let queue = DispatchQueue(label: "paw-card", qos: .userInitiated)
 
-    init(port: KeyPort, source: any KeySource) {
+    init(port: KeyPort, source: any KeyConnector) {
         self.port = port
         self.source = source
     }

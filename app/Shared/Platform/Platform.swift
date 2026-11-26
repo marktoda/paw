@@ -10,14 +10,14 @@ import Foundation
 struct Platform {
     let process: StoreProcess
     /// Where the key comes from.
-    let keys: any KeySource
+    let keys: any KeyConnector
     /// The copies' clock, the key port's and the clipboard's.
     let clock: Clock
     private let makeCopies: (_ dir: String) -> CopyCache?
     private let wipeKeychain: () throws -> Void
 
     private init(
-        process: StoreProcess, keys: any KeySource, clock: Clock, copies: @escaping (_ dir: String) -> CopyCache?,
+        process: StoreProcess, keys: any KeyConnector, clock: Clock, copies: @escaping (_ dir: String) -> CopyCache?,
         resetKeychain: @escaping () throws -> Void
     ) {
         self.process = process
@@ -84,7 +84,7 @@ struct Platform {
 
 /// Where the key comes from: the YubiKey on the USB-C port, or a simulated
 /// key.
-protocol KeySource: Sendable {
+protocol KeyConnector: Sendable {
     /// The readers there are now, by name, for Key diagnostics.
     var readerNames: [String] { get }
 
@@ -103,14 +103,14 @@ protocol KeySource: Sendable {
     @MainActor func adapted<Step>(_ job: KeyJob<Step>) -> KeyJob<Step>
 }
 
-extension KeySource {
+extension KeyConnector {
     @MainActor func adapted<Step>(_ job: KeyJob<Step>) -> KeyJob<Step> {
         job
     }
 }
 
 /// The YubiKey on the USB-C port, through the system's smart card support.
-struct UsbKeySource: KeySource {
+struct UsbKeySource: KeyConnector {
     var readerNames: [String] {
         UsbCardConnection.slotNames()
     }

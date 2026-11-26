@@ -159,7 +159,7 @@ final class StoreSession {
         let clock: Clock
         let keyPort: KeyPort
         /// Where the key comes from.
-        let keys: any KeySource
+        let keys: any KeyConnector
         /// The write side: `nil` where the store can't be written.
         let writing: Writing?
         let gitHub: GitHubAccess?

@@ -8,7 +8,7 @@ struct AutoFillSource: @unchecked Sendable {
     let copies: CopyCache?
     let keyPort: KeyPort
     /// Where the key comes from.
-    let keys: any KeySource
+    let keys: any KeyConnector
     /// What a one-time code is made at.
     let clock: Clock
     /// The sites each name-only entry has filled on.

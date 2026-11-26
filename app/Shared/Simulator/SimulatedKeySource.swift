@@ -1,11 +1,11 @@
 import Foundation
 
 #if DEBUG && targetEnvironment(simulator)
-/// A simulated key as the platform's `KeySource`: the launch's key
+/// A simulated key as the platform's `KeyConnector`: the launch's key
 /// (`SimulatedKeyHolder`), which is in unless `-pawSimUnplugged` and goes
 /// in by the debug control, or a key of a test's or the gallery's own,
 /// always in.
-final class SimulatedKeySource: KeySource, @unchecked Sendable {
+final class SimulatedKeySource: KeyConnector, @unchecked Sendable {
     /// The launch's simulated key.
     static let launched = SimulatedKeySource(
         connect: { try SimulatedKeyHolder.shared.open() }, isIn: { SimulatedKeyHolder.shared.isPluggedIn })
