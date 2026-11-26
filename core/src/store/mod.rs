@@ -72,6 +72,31 @@ impl PassStore {
             .ok_or_else(|| PawError::Store(format!("there is no folder called {path}")))
     }
 
+    /// Every entry in the store, sorted by path. With [`Self::all_folders`]
+    /// it is everything the scan could read; [`Self::skipped`] says what it
+    /// could not.
+    pub fn all_entries(&self) -> Vec<EntryRef> {
+        self.tree.entries().to_vec()
+    }
+
+    /// Every folder that holds entries, sorted by path; not the top.
+    pub fn all_folders(&self) -> Vec<String> {
+        self.tree.folders()
+    }
+
+    /// Paths the scan left out: links, folders nested too deep or that
+    /// could not be read, and names paw refuses. Nothing below one is in
+    /// the lists.
+    pub fn skipped(&self) -> Vec<String> {
+        self.tree.skipped().to_vec()
+    }
+
+    /// The entry at `path`, if the store has it.
+    pub fn entry(&self, path: String) -> Option<EntryRef> {
+        let (folder, _) = crate::path::split(&path);
+        self.tree.folder(folder)?.entries.iter().find(|entry| entry.path == path).cloned()
+    }
+
     /// How many entries the store holds.
     pub fn entry_count(&self) -> u32 {
         self.tree.entries().len() as u32

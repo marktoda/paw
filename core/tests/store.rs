@@ -399,3 +399,30 @@ fn recipients_are_not_read_through_links_or_from_outside() {
     assert!(matches!(recipients_for(&store, "work"), Err(PawError::UnsafePath(_))));
     assert_eq!(recipients_for(&store, "web").unwrap(), ["you@example.com"]);
 }
+
+#[test]
+fn the_whole_store_and_path_parts_come_from_the_core() {
+    use paw_core::store::tree::{entry_ref, gpg_id_folder, top_folder_of};
+    let dir = tempfile::tempdir().unwrap();
+    for file in ["top.gpg", "web/github.com.gpg", "web/work/jira.gpg", "mail/me.gpg"] {
+        let path = dir.path().join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, b"").unwrap();
+    }
+    std::os::unix::fs::symlink("/", dir.path().join("elsewhere")).unwrap();
+    let store = PassStore::open(dir.path().to_str().unwrap().into()).unwrap();
+    let paths: Vec<String> = store.all_entries().into_iter().map(|e| e.path).collect();
+    assert_eq!(paths, ["mail/me", "top", "web/github.com", "web/work/jira"]);
+    assert_eq!(store.all_folders(), ["mail", "web", "web/work"]);
+    assert_eq!(store.skipped(), ["elsewhere"]);
+    assert_eq!(store.entry("web/work/jira".into()).map(|e| e.name), Some("jira".into()));
+    assert_eq!(store.entry("web/nothing".into()), None);
+
+    let entry = entry_ref("web/work/jira".into());
+    assert_eq!((entry.name.as_str(), entry.folder.as_str()), ("jira", "web/work"));
+    assert_eq!(entry_ref("top".into()).folder, "");
+    assert_eq!(top_folder_of("web/work".into()).as_deref(), Some("web"));
+    assert_eq!(top_folder_of(String::new()), None);
+    assert_eq!(gpg_id_folder("web/work/.gpg-id".into()), "web/work");
+    assert_eq!(gpg_id_folder(".gpg-id".into()), "");
+}

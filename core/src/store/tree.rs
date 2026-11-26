@@ -27,6 +27,27 @@ pub struct EntryRef {
     pub folder: String,
 }
 
+/// The entry at `path` (e.g. `web/github.com`): its name and its folder.
+#[uniffi::export]
+pub fn entry_ref(path: String) -> EntryRef {
+    let (folder, name) = crate::path::split(&path);
+    EntryRef { name: name.to_owned(), folder: folder.to_owned(), path }
+}
+
+/// The top-level folder `folder` is in, which picks its tint: `web` for
+/// `web/work`; `None` at the top of the store.
+#[uniffi::export]
+pub fn top_folder_of(folder: String) -> Option<String> {
+    folder.split('/').next().filter(|top| !top.is_empty()).map(str::to_owned)
+}
+
+/// The folder whose recipients the `.gpg-id` at `path` lists: `work` for
+/// `work/.gpg-id`, empty for the top one.
+#[uniffi::export]
+pub fn gpg_id_folder(path: String) -> String {
+    crate::path::folder_of_gpg_id(&path).to_owned()
+}
+
 /// One folder, as a row in its parent's list.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FolderRef {
@@ -141,6 +162,13 @@ impl StoreTree {
     /// Every entry in the store, sorted by path.
     pub fn entries(&self) -> &[EntryRef] {
         &self.entries
+    }
+
+    /// Every folder that holds entries, sorted by path; not the top.
+    pub fn folders(&self) -> Vec<String> {
+        let mut folders: Vec<String> = self.listings.keys().filter(|path| !path.is_empty()).cloned().collect();
+        folders.sort_by(|a, b| sort_key(a).cmp(&sort_key(b)));
+        folders
     }
 
     /// Paths that were left out because they are links, are nested too deep,
