@@ -15,13 +15,13 @@ Markers: **UNPROVEN** means the design depends on a fact nobody has verified. **
 
 paw is a thin SwiftUI app over one Rust crate, `paw-core`, which owns all state and runs every flow as a state machine. Swift renders snapshots and implements four platform traits: card reader, card connection, device keystore and clock.
 
-Every use of the YubiKey (open an entry, clone, push, setup check) is a core object, `KeyTask`, rendered by one sheet, `KeySheet`: plug in, PIN, touch. An entry opened with the key gets a copy sealed under a Secure Enclave key and stays available by Face ID for a fixed length of time measured from that touch (8 hours by default). Each copy has its own deadline.
+Every use of the YubiKey (open an entry, clone, push, setup check) is a core object, `KeyTask`, started from a workflow's `KeyJob` on one driver, `KeyTaskDriver` (app/Shared/KeyTaskDriver.swift), and drawn by one sheet, `KeySheet`: plug in, PIN, touch. An entry opened with the key gets a copy sealed under a Secure Enclave key and stays available by Face ID for a fixed length of time measured from that touch (8 hours by default). Each copy has its own deadline.
 
 Saving never needs the key or the network. Edits are single-path local commits, and the "not yet pushed" queue is the commits ahead of the server. Pull is silent with a read-only Secure Enclave deploy key. Local commits are replayed onto whatever the server has, never merged. When both sides changed one entry, both versions are kept automatically.
 
 The AutoFill extension uses a narrow, read-only slice of the core. It fills from Face ID copies whether or not it can reach the key. When it cannot reach the key, it hands off to the app, which makes a copy the extension can open.
 
-Every hardware dependency has a simulated twin in a separate crate, so each flow runs on Linux and in the simulator.
+Every hardware dependency has a simulated twin in the core's `sim` module, behind the default `sim` cargo feature, so each flow runs on Linux and in the simulator; a Release device build leaves it out (`--no-default-features`, checked by `scripts/check-no-sim.sh`).
 
 Things that changed relative to the owner's stated decisions, and need confirming:
 
@@ -36,7 +36,7 @@ Things that changed relative to the owner's stated decisions, and need confirmin
 ### 2.1 Rules that hold across every flow
 
 1. **The gold disc means "the key is needed" and nothing else.** It appears on a row, button or banner only when the next tap will ask for the YubiKey. It is derived from `Access::NeedsKey` or an operation's key requirement, never from "the user owns a YubiKey". No gesture opens the key sheet from a control that did not show the disc.
-2. **One key sheet.** Every key operation uses `KeySheet` with the same stages. Only the title changes.
+2. **One key sheet.** Every key operation is a `KeyJob` on a `KeyTaskDriver`, drawn by `KeySheet` with the same stages. Only the title changes. The touch timeout check in Key diagnostics shows the same stages, in the same words, inline.
 3. **Saving never needs the key.** Encryption uses pinned public keys. Add, edit, delete and rename commit locally at once. Only push needs the key.
 4. **Nothing waits on the network, and nothing presents itself.** Local actions finish first. Sync is reported in two places only (attention row, sync footer). No sheet opens without a tap.
 5. **Errors say what happened, what is safe, and what to do**, in that order. They appear inline in the stage they belong to, never as alerts. Raw library text sits under "Details".
@@ -70,9 +70,9 @@ Things that changed relative to the owner's stated decisions, and need confirmin
 
 ### 2.3 Shared components
 
-**The key sheet (`KeySheet`).** A medium-height sheet (a centred form sheet on iPad). The title comes from the purpose: "Open github.com", "Download your store", "Send 2 changes", "Check your key", "Update your store", "Fill github.com". Cancel is always present.
+**The key sheet (`KeySheet`, drawn for a driver by `KeyTaskSheet`; its words in `app/Shared/Words/KeySheetWords.swift`).** A medium-height sheet (a centred form sheet on iPad). The title comes from the purpose: "Open github.com", "Download your store", "Send 2 changes", "Check your key", "Update your store", "Fill github.com". Cancel is always present.
 
-| Stage (`SheetStage`) | Headline | Body | Controls |
+| Stage (`KeySheetStage`) | Headline | Body | Controls |
 |---|---|---|---|
 | `PlugIn` | Plug in your YubiKey | USB-C, on the bottom of your iPhone. | Cancel |
 | `Pin` | Enter your key's PIN | The PIN for the key, not your iPhone passcode. Asked once while the key stays plugged in. | Secure field `pin-field`, "Show" toggle, **Continue** (`pin-continue`, off until `min_len`, 6) |
@@ -505,7 +505,7 @@ Remove confirmation: "This deletes the downloaded store, Face ID copies and this
 
 ### 3.1 Crates and modules
 
-Two crates, plus an umbrella for the simulator slice. A separate crate won over a `sim/` module behind a cargo feature because the simulated key's secret is a constant in a public repo (5.5). Today `core/src/lib.rs` has `pub mod sim;`, so the device static library contains it.
+One crate. The simulated hardware is the `sim/` module behind the default `sim` cargo feature; a Release device build is made with `--no-default-features`, and `scripts/check-no-sim.sh` proves the simulated key's constant secret is not in it (5.5). The tree below is the plan the crate grew from; `core/src` is the truth.
 
 ```
 core/            paw-core (device and simulator)
@@ -532,7 +532,7 @@ core/            paw-core (device and simulator)
     unlock/
       session.rs    KeySession: plug-in session, zeroising PIN
       attempt.rs    UnlockAttempt: the card half of a key operation
-      task.rs       KeyTask: what the sheet binds to (attempt + optional SyncOp)
+      task.rs       KeyTask (now key/task.rs): what the sheet's driver follows; Cancel marks it cancelled at once
     window/
       seal.rs       sealed-copy format (AEAD with AAD)
       cache.rs      CopyCache: add, open, check, sweep, end_all
@@ -548,8 +548,7 @@ core/            paw-core (device and simulator)
     autofill.rs     plan(row, reach) -> AutofillPlan
     setup.rs        SetupFlow, SetupStep
     ffi/            PawCore, Store, OpenEntry, EntryDraft, KeyTask, SyncHandle, AutofillCore
-sim/             paw-sim: SimulatedKey, SimKeystore, SimClock, SimRemote, SimWorld, scenarios
-sim-umbrella/    re-exports paw-core + paw-sim; built only for the simulator slice
+  src/sim/        feature `sim` (default on): SimulatedKey, SimKeystore, SimClock, SimRemote, the fixture store
 ```
 
 Import rules:
@@ -596,21 +595,18 @@ pub trait Clock: Send + Sync {
 
 | Seam | Device | Simulator and Linux |
 |---|---|---|
-| Card | `UsbCardReader` over `TKSmartCardSlotManager`; later an NFC reader | `SimulatedKey` (Rust) |
-| Keystore and biometrics | `SecureEnclaveKeystore` | `SimKeystore`: software P-256; `unwrap` blocks until `SimWorld::face_id(match)` |
+| Card | `KeyReader` over `TKSmartCardSlotManager`, `UsbCardConnection`; later an NFC reader | `SimulatedKey` (Rust), held once per launch by `SimulatedKeyHolder` |
+| Keystore and biometrics | `EnclaveKeystore` | `SimKeystore`: software P-256; `unwrap` blocks until `SimWorld::face_id(match)` |
 | Clock | system clocks | `SimClock`, with `SimWorld::advance(seconds)` and `SimWorld::reboot()` |
 | Network | `SshConnector` (russh) | `LocalConnector` to a bare repo, wrapped by `SimRemote` for faults; it demands and verifies a signature from the configured `SshSigner` and answers key queries |
 
 Notes:
-- Swift reports presence with `KeyMonitor::reader_changed(present)`, from KVO on `TKSmartCardSlotManager.slotNames`, and lifecycle with `PawCore::app_event(Backgrounded | Foregrounded | DeviceLocked)`.
+- `KeyReader` follows presence by KVO on `TKSmartCardSlotManager.slotNames` and reads a key that comes in into the `KeyPort`'s session; in the simulator it watches `SimulatedKeyHolder` instead. Lifecycle reaches the session as `noteBackgrounded` / `noteForegrounded`.
 - **Late session grant.** In today's `UsbCardConnection.init`, a `beginSession` that times out after 10 s stays queued. A late grant then gives an exclusive session to an object nobody holds, which produces "Another app is using the key" against paw itself. `UsbCardReader` must call `endSession` in the completion handler when the grant arrives after the timeout.
-- Platform selection stays one `#if targetEnvironment(simulator)` in `PlatformFactory.swift`.
+- Each seam picks its simulated twin in one place, under `#if DEBUG && targetEnvironment(simulator)`: `KeyConnection.open` (card), `PlatformCopies.make` (keystore), `SimulatedClockHolder` (clock). Simulator-only Swift lives in `app/Shared/Simulator` and `app/Paw/Simulator`; real types carry no simulator members.
 
-**Simulation controls.** `SimWorld` is built from launch arguments.
-- `-pawScenario <name>` picks a scenario defined in Rust: `fresh`, `seeded`, `seeded-pending`, `copies-live`, `copies-expired`, `conflict`, `pin-blocked`, `two-recipients`. A Linux test and an XCUITest of the same name run on identical data, really encrypted to the simulated key. Multi-recipient fixtures encrypt to the simulated key plus throwaway public keys.
-- **A scenario seeds only an empty container.** All `SimWorld` state (PIN tries, verified flag, remote repository, clock offset, boot counter, Face ID answers) is persisted in the container, so a relaunch continues where the last launch stopped. Today `SimulatedKeyHolder` is rebuilt per launch, which would make `testSetupResumesAfterKill` and the PIN-try tests meaningless. `-pawReset 1` wipes the container first.
-- Orthogonal overrides: `-pawSimKey` (`present`, `absent`, `wrong`, `nodecrypt`, `noauth`, `blocked`, `tries1`, `kdf`, `touchcached`, `touchoff`), `-pawSimRemote` (`ok`, `offline`, `authfail`, `diverged`, `conflict`, `replaced`, `hostkeychanged`, `recipientschanged`), `-pawSimNow <ISO time>`, `-pawHostProvider <URL>`, `-pawSimReach` (`works`, `blocked`), and the existing `-pawSimPin`, `-pawSimTouch`, `-pawSimTouchTimeoutMs`.
-- A simulator-only strip (`SimStrip`) carries `sim-plug`, `sim-unplug`, `simulated-touch` (exists), `sim-faceid-match`, `sim-faceid-fail`, `sim-faceid-lockout`, `sim-advance-1h`, `sim-reboot`, `sim-device-lock`, `sim-device-unlock`, and a permanent "Simulated key" badge.
+**Simulation controls.** Launch arguments, declared once in `LaunchArgument` (app/Shared/LaunchArguments.swift; `scripts/launch-arguments.sh` checks every one the UI tests pass is declared and read): the simulated key (`-pawSimPin`, `-pawSimTouch`, `-pawSimTouchTimeoutMs`, `-pawSimPinTries`, `-pawSimUnplugged`, `-pawSimAttachFails`, `-pawSimKdf`), Face ID (`-pawSimFaceId`), the clock (`-pawSimAwayMs`), the git host (`-pawSimRemote…`), and the harnesses (`-pawFixture`, `-pawSetup`, `-pawHostProvider`, `-pawEnclaveCheck`). The simulated key, clock and host are one per launch.
+- Stand-ins for the hardware are drawn by `SimulatorStrip`, a dashed strip under a screen: the key sheet's (`simulated-touch`, `simulated-touch-timeout`, `simulated-plug-in`, `simulated-key-answers`, from `SimulatedKeyControls`), setup's, and Settings › Simulator (`sim-advance-1h`, `sim-advance-9h`, `sim-device-lock`, `sim-late-cancel-next`, …). They act on the simulated hardware; the app's models never call into the simulator, which observes them instead.
 
 **`SimulatedKey` is mostly new work.** Today's `core/src/sim.rs` (256 lines) is short-APDU only, has no authentication key, hard-codes the auth slot's touch policy to off (`D8 = 00`), and treats an empty VERIFY as a wrong PIN that burns a try. It needs:
 - an ed25519 auth slot with INTERNAL AUTHENTICATE and its own touch policy;
