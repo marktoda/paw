@@ -153,7 +153,7 @@ fn new_entry(folder: &str, name: &str, password: &str) -> EntryDraft {
 
 fn open(s: &Store, entry: &str) -> EntryDraft {
     let doc = EntryDoc::parse(s.decrypt(entry).into_bytes()).unwrap();
-    EntryDraft::edit(entry, doc, Some(content_id(&s.file(entry))))
+    EntryDraft::edit(entry, doc, content_id(&s.file(entry)))
 }
 
 /// A certificate for the simulated card: a fresh primary key that binds the

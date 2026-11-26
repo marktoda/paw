@@ -255,7 +255,7 @@ fn git_log_shows_one_entry_per_commit_in_pass_wording() {
     write.save(&generated).unwrap();
     write.save(&new_entry("Web", "given", "pw")).unwrap();
     let opened = EntryDoc::parse(gpg.decrypt(&store.file("Web/given")).0.into_bytes()).unwrap();
-    let mut edit = EntryDraft::edit("Web/given", opened, Some(content_id(&store.file("Web/given"))));
+    let mut edit = EntryDraft::edit("Web/given", opened, content_id(&store.file("Web/given")));
     edit.set_username("alice");
     write.save(&edit).unwrap();
     support::move_entry(&write, "Web/given", "Web/renamed", None).unwrap();
@@ -290,7 +290,7 @@ fn an_entry_written_by_gpg_and_edited_by_paw_differs_only_in_the_edited_line() {
 
     let ciphertext = store.file("Bank/acme");
     let opened = EntryDoc::parse(gpg.decrypt(&ciphertext).0.into_bytes()).unwrap();
-    let mut draft = EntryDraft::edit("Bank/acme", opened, Some(content_id(&ciphertext)));
+    let mut draft = EntryDraft::edit("Bank/acme", opened, content_id(&ciphertext));
     draft.set_field("security answer", "Rex");
     store.write().save(&draft).unwrap();
 

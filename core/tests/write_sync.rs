@@ -77,7 +77,7 @@ impl World {
     fn open(&self, entry: &str) -> EntryDraft {
         let bytes = std::fs::read(self.repo().join(format!("{entry}.gpg"))).unwrap();
         let doc = EntryDoc::parse(self.decrypt(&self.repo(), entry).into_bytes()).unwrap();
-        EntryDraft::edit(entry, doc, Some(content_id(&bytes)))
+        EntryDraft::edit(entry, doc, content_id(&bytes))
     }
 }
 

@@ -61,9 +61,9 @@ enum OtpEdit {
 struct Original {
     path: String,
     doc: EntryDoc,
-    /// The content id of the file it was opened from, if known: saving is
-    /// refused if the file has changed since.
-    content_id: Option<Vec<u8>>,
+    /// The content id of the file it was opened from: saving is refused if
+    /// the file has changed since.
+    content_id: Vec<u8>,
 }
 
 /// An entry being added or edited.
@@ -219,9 +219,8 @@ impl EntryDraft {
     }
 
     /// An edit of the entry `path`, opened as `doc`. `content_id` is that
-    /// of the file it was decrypted from ([`crate::files::content_id`]),
-    /// if known.
-    pub fn edit(path: &str, doc: EntryDoc, content_id: Option<Vec<u8>>) -> Self {
+    /// of the file it was decrypted from ([`crate::files::content_id`]).
+    pub fn edit(path: &str, doc: EntryDoc, content_id: Vec<u8>) -> Self {
         let (folder, name) = split(path);
         let mut draft = Self::new(folder);
         draft.name = name.to_owned();
@@ -239,7 +238,7 @@ impl EntryDraft {
     }
 
     pub(crate) fn original_content_id(&self) -> Option<&[u8]> {
-        self.original.as_ref().and_then(|o| o.content_id.as_deref())
+        self.original.as_ref().map(|o| o.content_id.as_slice())
     }
 
     /// Whether the password was made by the generator and not changed

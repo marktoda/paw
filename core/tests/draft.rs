@@ -15,7 +15,7 @@ fn text(doc: &EntryDoc) -> String {
 }
 
 fn edit(text: &str) -> EntryDraft {
-    EntryDraft::edit("Work/github.com", parse(text), None)
+    EntryDraft::edit("Work/github.com", parse(text), vec![0; 32])
 }
 
 fn saved(draft: &EntryDraft) -> String {

@@ -182,12 +182,12 @@ pub fn move_entry(
         Some(doc) => doc.duplicate(),
         None => EntryDoc::parse(b"placeholder\n".to_vec()).unwrap(),
     };
-    let mut draft = paw_core::write::EntryDraft::edit(from, doc, None);
+    let before = std::fs::read(store.repo().join(format!("{from}.gpg"))).ok();
+    let id = paw_core::files::content_id(before.as_deref().unwrap_or_default());
+    let mut draft = paw_core::write::EntryDraft::edit(from, doc, id);
     let (folder, name) = to.rsplit_once('/').unwrap_or(("", to));
     draft.set_folder(folder);
     draft.set_name(name);
-    let before = store.repo().join(format!("{from}.gpg"));
-    let before = std::fs::read(before).ok();
     let saved = store.save(&draft)?;
     if placeholder {
         let after = std::fs::read(store.repo().join(format!("{to}.gpg"))).ok();

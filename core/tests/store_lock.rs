@@ -241,7 +241,8 @@ fn save_in(writer: &WriteStore, name: &str) -> Result<paw_core::write::Saved, Wr
 /// Moves `lock/from` to `lock/to` as the edit form does.
 fn move_in(writer: &WriteStore, from: &str, to: &str) -> Result<paw_core::write::Saved, WriteError> {
     let doc = paw_core::entry::EntryDoc::parse(format!("pw-{from}\n").into_bytes()).unwrap();
-    let mut draft = EntryDraft::edit(&format!("lock/{from}"), doc, None);
+    let file = std::fs::read(writer.repo().join(format!("lock/{from}.gpg"))).unwrap_or_default();
+    let mut draft = EntryDraft::edit(&format!("lock/{from}"), doc, paw_core::files::content_id(&file));
     draft.set_name(to);
     writer.save(&draft)
 }
