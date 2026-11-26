@@ -97,8 +97,8 @@ pub enum KeyError {
     KeyRemoved,
     /// None of the keys the entry is encrypted for is the one plugged in.
     /// Found before the PIN or a touch was asked for.
-    #[error("this entry is encrypted for another key ({})", .recipients.join(", "))]
-    NotForThisKey { recipients: Vec<String> },
+    #[error("not for this key: {recipients:?}")]
+    NotForThisKey { recipients: Vec<crate::recipients::Recipient> },
     /// The key plugged in is not the one the store was set up with. Found
     /// before any PIN reached it.
     #[error("{}", enrolment::mismatch_message(.mismatch))]

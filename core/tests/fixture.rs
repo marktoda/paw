@@ -231,7 +231,7 @@ fn an_entry_for_another_key_is_refused_before_the_pin_or_a_touch() {
         match done.result {
             Err(KeyError::NotForThisKey { recipients }) => {
                 let other = other_key_fingerprint_hex().unwrap();
-                assert_eq!(recipients, [format!("key ID {}", &other[other.len() - 16..])]);
+                assert_eq!(recipients, [Recipient::KeyId { id: other[other.len() - 16..].to_owned() }]);
             }
             other => panic!("expected NotForThisKey, got {:?}", other.map(|_| "an opened entry")),
         }

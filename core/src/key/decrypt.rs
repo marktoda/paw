@@ -77,9 +77,7 @@ impl<'a> Plan<'a> {
     /// by the rule Home's badge uses ([`recipients::access`]), so the two
     /// never disagree.
     pub(crate) fn new(ciphertext: &'a [u8], key: &PublicKey) -> Result<Self, KeyError> {
-        let not_for_this_key = |keys: &[recipients::Recipient]| KeyError::NotForThisKey {
-            recipients: keys.iter().map(recipients::Recipient::describe).collect(),
-        };
+        let not_for_this_key = |keys: &[recipients::Recipient]| KeyError::NotForThisKey { recipients: keys.to_vec() };
         match recipients::access(ciphertext, &recipients::fingerprint_of(key)) {
             Access::CanOpen | Access::MightOpen => {}
             Access::NotForThisKey { recipients } => return Err(not_for_this_key(&recipients)),

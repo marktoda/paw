@@ -26,9 +26,8 @@ pub struct HeldBack {
     /// The `.gpg-id` that governs the entry now, e.g. `work/.gpg-id`;
     /// `None` if it can't be read.
     pub gpg_id: Option<String>,
-    /// Who the waiting ciphertext is encrypted for, as recipients are
-    /// described elsewhere ("key ID 0123...").
-    pub encrypted_for: Vec<String>,
+    /// Who the waiting ciphertext is encrypted for.
+    pub encrypted_for: Vec<crate::recipients::Recipient>,
     /// The key lines of that `.gpg-id` now.
     pub recipients: Vec<String>,
     pub list: HeldBackList,
@@ -80,10 +79,7 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
         }
         let folder = crate::path::folder_of(&file.path);
         let found = crate::recipients::entry_recipients(&file.ciphertext).ok();
-        let encrypted_for: Vec<String> = found
-            .as_ref()
-            .map(|f| f.keys.iter().map(crate::recipients::Recipient::describe).collect())
-            .unwrap_or_default();
+        let encrypted_for = found.as_ref().map(|f| f.keys.clone()).unwrap_or_default();
         let hold = |gpg_id: Option<String>, recipients: Vec<String>, list: HeldBackList| HeldBack {
             id: file.id.clone(),
             entry: file.entry.clone(),

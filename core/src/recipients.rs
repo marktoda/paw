@@ -39,15 +39,6 @@ impl Recipient {
             Self::Hidden => false,
         }
     }
-
-    /// The recipient as a person would write it.
-    pub fn describe(&self) -> String {
-        match self {
-            Self::KeyId { id } => format!("key ID {id}"),
-            Self::Fingerprint { fingerprint } => format!("key {fingerprint}"),
-            Self::Hidden => "a hidden recipient".into(),
-        }
-    }
 }
 
 /// Everything an entry's clear-text headers say about who can open it.

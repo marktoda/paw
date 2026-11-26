@@ -9,6 +9,11 @@
 //!
 //! Nothing is checked as it is typed; [`EntryDraft::problems`] lists what
 //! would stop a save, each with a sentence a person can act on.
+//!
+//! Words for people are the app's, with one exception: these sentences
+//! ([`DraftProblem`], and the [`crate::otp::OtpProblem`] reasons they
+//! include) are made here, beside the rules they explain, and shown as they
+//! are.
 
 use zeroize::Zeroizing;
 
