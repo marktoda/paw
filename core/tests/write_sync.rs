@@ -108,10 +108,10 @@ fn world() -> World {
     let connection = Connection::open(&w.server.remote(), &signer(&w.card)).unwrap();
     steps::clone(&connection, &w.server.remote(), &w.repo()).unwrap();
     let mut keyring = Keyring::open(w.state.path()).unwrap();
-    keyring.pin_card_key(&w.card.decryption_key().unwrap()).unwrap();
+    keyring.pin_card_key(&keyring.lock().exclusive().unwrap(), &w.card.decryption_key().unwrap()).unwrap();
     // The fixture's other key, pinned as a key paw may encrypt to.
-    keyring.pin_card_key(&other).unwrap();
-    keyring.accept_all_recipients_at_setup(&w.repo()).unwrap();
+    keyring.pin_card_key(&keyring.lock().exclusive().unwrap(), &other).unwrap();
+    keyring.accept_all_recipients_at_setup(&keyring.lock().exclusive().unwrap(), &w.repo()).unwrap();
     w
 }
 
@@ -261,7 +261,7 @@ fn a_waiting_change_is_not_pushed_after_its_recipients_changed() {
     assert_eq!(held[0].list, held_back::HeldBackList::NotAccepted);
 
     // Accepting the new recipients does not make the old ciphertext right.
-    Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Work").unwrap();
+    Keyring::open(w.state.path()).unwrap().accept_recipients(&paw_core::lock::StoreLock::for_repo(&w.repo()).exclusive().unwrap(), &w.repo(), "Work").unwrap();
     let held = held_back::held_back(&w.repo(), w.state.path()).unwrap();
     assert!(held.len() == 1 && held[0].list == held_back::HeldBackList::Accepted, "{held:?}");
     assert_eq!(send().state, SyncState::Waiting { unpushed: 1 });
@@ -336,7 +336,7 @@ fn held_back_changes_are_encrypted_again_once_the_new_recipients_are_accepted_an
     assert!(opened.borrow().is_empty());
     assert_eq!(head(&w.repo()), tip);
 
-    Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Work").unwrap();
+    Keyring::open(w.state.path()).unwrap().accept_recipients(&paw_core::lock::StoreLock::for_repo(&w.repo()).exclusive().unwrap(), &w.repo(), "Work").unwrap();
     let report = reencrypt(&w, &opened).unwrap();
 
     assert_eq!((report.reencrypted, left(&report)), (2, vec![]));
@@ -372,7 +372,7 @@ fn a_held_back_change_that_cannot_be_opened_is_left_as_it_was() {
     let w = world();
     w.write().save(&new_entry("Work", "new", "new-pw")).unwrap();
     add_a_recipient(&w);
-    Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Work").unwrap();
+    Keyring::open(w.state.path()).unwrap().accept_recipients(&paw_core::lock::StoreLock::for_repo(&w.repo()).exclusive().unwrap(), &w.repo(), "Work").unwrap();
     let tip = head(&w.repo());
 
     let mut open =
@@ -410,7 +410,7 @@ fn personal_gets_two_keys_then_reencrypt(w: &World, expected: u32) {
     let other_fpr = hex(paw_core::sim::fixture::other_key().unwrap().fingerprint().as_bytes());
     w.desktop_push(&[("Personal/.gpg-id", format!("{card_fpr}\n{other_fpr}\n").into_bytes())], "Personal.");
     w.pull();
-    Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Personal").unwrap();
+    Keyring::open(w.state.path()).unwrap().accept_recipients(&paw_core::lock::StoreLock::for_repo(&w.repo()).exclusive().unwrap(), &w.repo(), "Personal").unwrap();
     let opened = std::cell::RefCell::new(Vec::new());
     let before = queued(w);
 
@@ -460,7 +460,7 @@ fn a_rename_chain_through_another_scope_is_re_encrypted_only_there() {
     let other_fpr = hex(paw_core::sim::fixture::other_key().unwrap().fingerprint().as_bytes());
     w.desktop_push(&[("Personal/.gpg-id", format!("{card_fpr}\n{other_fpr}\n").into_bytes())], "Personal.");
     w.pull();
-    Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Personal").unwrap();
+    Keyring::open(w.state.path()).unwrap().accept_recipients(&paw_core::lock::StoreLock::for_repo(&w.repo()).exclusive().unwrap(), &w.repo(), "Personal").unwrap();
     let opened = std::cell::RefCell::new(Vec::new());
     let report = reencrypt(&w, &opened).unwrap();
 
@@ -518,7 +518,7 @@ fn a_move_re_encrypted_for_its_new_scope_keeps_that_ciphertext_when_the_old_scop
     let shared = git(&w.repo(), &["rev-parse", "HEAD:Shared/a.gpg"]);
     // The desktop adds the other key to the whole store.
     add_a_recipient(&w);
-    Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Work").unwrap();
+    Keyring::open(w.state.path()).unwrap().accept_recipients(&paw_core::lock::StoreLock::for_repo(&w.repo()).exclusive().unwrap(), &w.repo(), "Work").unwrap();
 
     let opened = std::cell::RefCell::new(Vec::new());
     let report = reencrypt(&w, &opened).unwrap();

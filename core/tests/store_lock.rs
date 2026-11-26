@@ -839,7 +839,7 @@ fn every_mutating_entry_point_returns_even_when_its_thread_holds_the_lock() {
 
             let ffi_writer = paw_core::ffi::write::StoreWriter::open(w.state().to_string_lossy().into_owned());
             note("accept_recipients", ffi_writer.accept_recipients(String::new()).map_err(|e| text(&e)));
-            note("pin_card_key", ffi_writer.pin_card_key(port_with(&w.key).session().unwrap()).map(drop).map_err(|e| text(&e)));
+            note("pin_as_card", w.key.clone().pin_as_card(w.state().to_string_lossy().into_owned()).map(drop).map_err(|e| text(&e)));
             let sync_api = StoreSync::open(w.state().to_string_lossy().into_owned()).unwrap();
             note("store_sync.discard_all", sync_api.discard_all().map_err(|e| text(&e)));
             note("store_sync.undo_last", sync_api.undo_last().map(drop).map_err(|e| text(&e)));

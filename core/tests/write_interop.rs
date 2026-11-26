@@ -16,7 +16,8 @@ use paw_core::files::content_id;
 use paw_core::entry::EntryDoc;
 use paw_core::ffi::write::StoreWriter;
 use paw_core::recipients::{Recipient, entry_recipients};
-use paw_core::write::cert::{evaluate, read_certificates};
+use paw_core::write::cert::{certificate_infos, evaluate, read_certificates};
+use paw_core::write::keyring::{CertificateSummary, certificate_summaries};
 use paw_core::write::{EntryDraft, Keyring, LineStatus, WriteError, WriteStore};
 use support::git;
 
@@ -131,7 +132,7 @@ impl Store {
         std::fs::write(repo.join(".gpg-id"), gpg_id).unwrap();
         git(&repo, &["add", ".gpg-id"]);
         git(&repo, &["commit", "--quiet", "-m", "Set the store's key."]);
-        Keyring::open(&state).unwrap().accept_all_recipients_at_setup(&repo).unwrap();
+        Keyring::open(&state).unwrap().accept_all_recipients_at_setup(&paw_core::lock::StoreLock::for_repo(&repo).exclusive().unwrap(), &repo).unwrap();
         Self { _root: root, state, repo }
     }
 
@@ -150,8 +151,13 @@ impl Store {
     fn import(&self, certificate: &[u8]) {
         let mut keyring = Keyring::open(&self.state).unwrap();
         for cert in read_certificates(certificate).unwrap() {
-            keyring.pin_certificate(&evaluate(&cert, now()).unwrap()).unwrap();
+            keyring.pin_certificate(&keyring.lock().exclusive().unwrap(), &evaluate(&cert, now()).unwrap()).unwrap();
         }
+    }
+
+    /// What the certificates in `certificate` would satisfy here.
+    fn inspect(&self, certificate: &[u8]) -> Vec<CertificateSummary> {
+        certificate_summaries(&self.repo, &certificate_infos(certificate, now()).unwrap())
     }
 }
 
@@ -171,7 +177,8 @@ fn an_entry_saved_by_paw_decrypts_with_gpg_and_reads_as_pass_would() {
     let gpg = Gpg::new();
     let primary = gpg.generate("Alice <alice@example.com>");
     let store = Store::new(&format!("{primary}\n"));
-    let summaries = store.writer().import_certificate(gpg.export(&primary, true)).unwrap();
+    store.import(&gpg.export(&primary, true));
+    let summaries = store.inspect(&gpg.export(&primary, true));
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].satisfies, std::slice::from_ref(&primary));
     assert_eq!(summaries[0].user_ids, ["Alice <alice@example.com>"]);
@@ -378,10 +385,11 @@ fn a_gpg_id_line_naming_a_valid_subkey_paw_does_not_encrypt_to_needs_a_binding()
         "{error:?}"
     );
     // The import preview does not claim the line either.
-    assert!(store.writer().inspect_certificate(gpg.export(&primary, true)).unwrap()[0].satisfies.is_empty());
+    assert!(store.inspect(&gpg.export(&primary, true))[0].satisfies.is_empty());
 
     // The person decides the line means this certificate's chosen key.
-    store.writer().bind_recipient(middle.clone(), newest.clone()).unwrap();
+    let mut keyring = Keyring::open(&store.state).unwrap();
+    keyring.bind(&keyring.lock().exclusive().unwrap(), &middle, &newest).unwrap();
     store.write().save(&new_entry("", "x", "pw")).unwrap();
     assert_eq!(entry_recipients(&store.file("x")).unwrap().keys, [key_id(&newest)]);
 }
@@ -417,7 +425,7 @@ fn certificate_import_reports_what_it_would_satisfy_before_pinning() {
     let primary = gpg.generate("Alice <alice@example.com>");
     let store = Store::new(&format!("{}\nsomeone@example.com\n", &primary[24..]));
 
-    let preview = store.writer().inspect_certificate(gpg.export(&primary, true)).unwrap();
+    let preview = store.inspect(&gpg.export(&primary, true));
     assert_eq!(preview[0].satisfies, [primary[24..].to_owned()]);
     assert_eq!(preview[0].encryption_fingerprint.as_deref(), Some(gpg.fingerprints(&primary)[1].as_str()));
     // Inspecting pins nothing.

@@ -225,6 +225,16 @@ impl SimulatedKey {
         self.lock().deciphers
     }
 
+    /// Pins this key's decryption key in the store set up in `state_dir`,
+    /// as setup pins the card's: a key paw then has the public half of.
+    /// Returns its fingerprint.
+    pub fn pin_as_card(self: Arc<Self>, state_dir: String) -> Result<String, crate::write::WriteError> {
+        let key = self.decryption_key()?;
+        let store = crate::write::WriteStore::open(std::path::Path::new(&state_dir));
+        let held = store.exclusive()?;
+        store.keyring()?.pin_card_key(&held, &key)
+    }
+
     /// Hex OpenPGP v4 fingerprint of the decryption key.
     pub fn fingerprint_hex(&self) -> String {
         self.fingerprint().iter().map(|b| format!("{b:02X}")).collect()

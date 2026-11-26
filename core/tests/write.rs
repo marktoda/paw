@@ -123,8 +123,8 @@ fn store_with(gpg_id: &str, files: &[(&str, &[u8])]) -> Store {
     let repo = state.join("repo");
     git(root.path(), &["clone", "--quiet", bare.to_str().unwrap(), repo.to_str().unwrap()]);
     let mut keyring = Keyring::open(&state).unwrap();
-    keyring.pin_card_key(&card_key()).unwrap();
-    keyring.accept_all_recipients_at_setup(&repo).unwrap();
+    keyring.pin_card_key(&keyring.lock().exclusive().unwrap(), &card_key()).unwrap();
+    keyring.accept_all_recipients_at_setup(&keyring.lock().exclusive().unwrap(), &repo).unwrap();
     Store { root, state, repo }
 }
 
@@ -261,7 +261,7 @@ fn a_gpg_id_naming_the_primary_key_needs_the_setup_binding_for_the_card() {
     ));
 
     // Setup, after the test decrypt of an entry for the card succeeded.
-    let bound = s.keyring().bind_card_for_opened_entry(&s.repo, &card().fingerprint_hex(), "x", &encrypted("pw\n"), 0).unwrap();
+    let bound = s.keyring().bind_card_for_opened_entry(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, &card().fingerprint_hex(), "x", &encrypted("pw\n"), 0).unwrap();
     assert_eq!(bound, std::slice::from_ref(&primary));
     assert_eq!(
         s.write().folder_recipients("").unwrap().lines[0].status,
@@ -277,14 +277,14 @@ fn a_gpg_id_naming_the_primary_key_needs_the_setup_binding_for_the_card() {
 #[test]
 fn a_binding_must_name_a_pinned_key_and_the_card_binding_needs_one_open_line() {
     let s = store_with("AAAA1111\nBBBB2222\n", &[]);
-    assert!(matches!(s.keyring().bind("AAAA1111", "00FF"), Err(WriteError::NotPinned { .. })));
+    assert!(matches!(s.keyring().bind(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), "AAAA1111", "00FF"), Err(WriteError::NotPinned { .. })));
     // Two lines no key satisfies: paw cannot tell which is the card's.
     assert!(matches!(
-        s.keyring().bind_card_for_opened_entry(&s.repo, &card().fingerprint_hex(), "x", &encrypted("pw\n"), 0),
+        s.keyring().bind_card_for_opened_entry(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, &card().fingerprint_hex(), "x", &encrypted("pw\n"), 0),
         Err(WriteError::MissingRecipients { missing, .. }) if missing.len() == 2
     ));
     // The person picks; then the other line is still missing.
-    s.keyring().bind("AAAA1111", &card().fingerprint_hex()).unwrap();
+    s.keyring().bind(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), "AAAA1111", &card().fingerprint_hex()).unwrap();
     assert!(matches!(
         s.write().save(&new_entry("", "x", "pw")).unwrap_err(),
         WriteError::MissingRecipients { missing, .. } if missing == ["BBBB2222"]
@@ -321,17 +321,17 @@ fn two_pinned_keys_matching_one_line_are_ambiguous_until_bound() {
     let s = store_with("card@example.com\n", &[]);
     let mut keyring = s.keyring();
     let (one, _) = card_certificate();
-    keyring.pin_certificate(&paw_core::write::cert::evaluate(&one, 2_000_000_000).unwrap()).unwrap();
+    keyring.pin_certificate(&keyring.lock().exclusive().unwrap(), &paw_core::write::cert::evaluate(&one, 2_000_000_000).unwrap()).unwrap();
     // A second key for the same address: any key the simulated fixture has.
     let other = paw_core::sim::fixture::other_key().unwrap();
     let other_fpr = hex(other.fingerprint().as_bytes());
     let mut info = paw_core::write::cert::evaluate(&one, 2_000_000_000).unwrap();
     info.encryption.as_mut().unwrap().fingerprint = other_fpr.clone();
     info.encryption.as_mut().unwrap().key = other;
-    keyring.pin_certificate(&info).unwrap();
+    keyring.pin_certificate(&keyring.lock().exclusive().unwrap(), &info).unwrap();
 
     assert!(matches!(keyring.line_status("card@example.com", 0), LineStatus::Ambiguous { fingerprints } if fingerprints.len() == 2));
-    keyring.bind("card@example.com", &other_fpr).unwrap();
+    keyring.bind(&keyring.lock().exclusive().unwrap(), "card@example.com", &other_fpr).unwrap();
     assert!(matches!(keyring.line_status("card@example.com", 0), LineStatus::Ready { fingerprint, bound: true, .. } if fingerprint == other_fpr));
 }
 
@@ -353,7 +353,7 @@ fn a_changed_gpg_id_stops_saving_until_it_is_accepted() {
     assert!(s.write().folder_recipients("Work").unwrap().changed);
     assert_eq!(s.head(), head);
 
-    s.keyring().accept_recipients(&s.repo, "Work").unwrap();
+    s.keyring().accept_recipients(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, "Work").unwrap();
     s.write().save(&new_entry("Work", "b", "pw")).unwrap();
 }
 
@@ -384,7 +384,7 @@ fn a_gpg_id_a_pull_adds_deeper_stops_saving_in_that_subtree_until_accepted() {
     s.write().save(&new_entry("Personal", "b", "pw")).unwrap();
     s.write().save(&new_entry("", "c", "pw")).unwrap();
 
-    s.keyring().accept_recipients(&s.repo, "Work").unwrap();
+    s.keyring().accept_recipients(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, "Work").unwrap();
     s.write().save(&new_entry("Work", "b", "pw")).unwrap();
     s.write().save(&new_entry("Work/Team", "b", "pw")).unwrap();
     assert_eq!(s.decrypt("Work/Team/b"), "pw\n");
@@ -405,7 +405,7 @@ fn a_gpg_id_a_pull_removes_stops_saving_in_that_subtree_until_accepted() {
     );
     s.write().save(&new_entry("Personal", "b", "pw")).unwrap();
 
-    s.keyring().accept_recipients(&s.repo, "Work").unwrap();
+    s.keyring().accept_recipients(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, "Work").unwrap();
     s.write().save(&new_entry("Work/Team", "b", "pw")).unwrap();
     s.write().save(&new_entry("Work", "c", "pw")).unwrap();
     // Putting the file back is a change again.
@@ -417,16 +417,16 @@ fn a_gpg_id_a_pull_removes_stops_saving_in_that_subtree_until_accepted() {
 fn nothing_is_saved_before_setup_accepts_who_can_open_the_store() {
     let s = store();
     std::fs::remove_file(s.state.join("recipients")).unwrap();
-    s.keyring().pin_card_key(&card_key()).unwrap();
+    s.keyring().pin_card_key(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &card_key()).unwrap();
     let head = s.head();
     assert!(matches!(s.write().save(&new_entry("Work", "a", "pw")).unwrap_err(), WriteError::RecipientsNotConfirmed));
     assert!(!s.write().folder_recipients("Work").unwrap().writable);
     // Saving does not accept anything by itself, and accepting one folder
     // is not setup.
-    assert!(matches!(s.keyring().accept_recipients(&s.repo, "Work").unwrap_err(), WriteError::RecipientsNotConfirmed));
+    assert!(matches!(s.keyring().accept_recipients(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, "Work").unwrap_err(), WriteError::RecipientsNotConfirmed));
     assert_eq!(s.head(), head);
 
-    s.keyring().accept_all_recipients_at_setup(&s.repo).unwrap();
+    s.keyring().accept_all_recipients_at_setup(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo).unwrap();
     s.write().save(&new_entry("Work", "a", "pw")).unwrap();
 }
 
@@ -472,8 +472,8 @@ fn a_subkey_the_primary_key_does_not_vouch_for_satisfies_no_line() {
     let s = store_with(&format!("{forged_fpr}\n{}\n", &unbound_fpr[24..]), &[]);
     std::fs::remove_file(s.state.join("recipients")).unwrap();
     let mut keyring = s.keyring();
-    keyring.pin_certificate(&info).unwrap();
-    keyring.accept_all_recipients_at_setup(&s.repo).unwrap();
+    keyring.pin_certificate(&keyring.lock().exclusive().unwrap(), &info).unwrap();
+    keyring.accept_all_recipients_at_setup(&keyring.lock().exclusive().unwrap(), &s.repo).unwrap();
 
     for line in [forged_fpr.as_str(), &unbound_fpr[24..]] {
         assert!(
@@ -496,7 +496,7 @@ fn a_key_that_has_expired_since_it_was_pinned_is_not_used() {
     let mut info = paw_core::write::cert::evaluate(&certificate, 2_000_000_000).unwrap();
     info.encryption.as_mut().unwrap().expires = Some(1_000);
     let mut keyring = s.keyring();
-    keyring.pin_certificate(&info).unwrap();
+    keyring.pin_certificate(&keyring.lock().exclusive().unwrap(), &info).unwrap();
 
     assert!(matches!(keyring.line_status("card@example.com", 999), LineStatus::Ready { .. }));
     assert!(matches!(keyring.line_status("card@example.com", 1_000), LineStatus::Expired { .. }));
@@ -722,9 +722,9 @@ fn store_with_shared_folder() -> (Store, String) {
     info.primary = other_fpr.clone();
     info.fingerprints = vec![other_fpr.clone()];
     info.emails.clear();
-    s.keyring().pin_certificate(&info).unwrap();
+    s.keyring().pin_certificate(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &info).unwrap();
     // The folder arrived after setup: the person has seen and accepted it.
-    s.keyring().accept_recipients(&s.repo, "Shared").unwrap();
+    s.keyring().accept_recipients(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, "Shared").unwrap();
     (s, other_fpr)
 }
 
@@ -767,7 +767,7 @@ fn a_move_to_a_folder_missing_a_key_is_refused_even_when_open() {
     // Not yet accepted: that comes first.
     let error = s.write().rename("Work/github.com", "Shared/github.com", Some(&doc)).unwrap_err();
     assert!(matches!(error, WriteError::RecipientsChanged { .. }), "{error:?}");
-    s.keyring().accept_recipients(&s.repo, "Shared").unwrap();
+    s.keyring().accept_recipients(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, "Shared").unwrap();
     let error = s.write().rename("Work/github.com", "Shared/github.com", Some(&doc)).unwrap_err();
 
     assert!(matches!(error, WriteError::MissingRecipients { missing, .. } if missing == ["backup@example.com"]));
@@ -1053,18 +1053,17 @@ fn a_move_of_an_open_entry_takes_its_copy_along() {
 }
 
 #[test]
-fn the_ffi_draft_reports_problems_and_the_writer_checks_the_name_is_free() {
+fn the_ffi_draft_reports_problems_and_a_name_already_used() {
     let s = store();
     let draft = writer(&s).new_draft("Work".into());
-    assert_eq!(draft.problems()[0].message, "Give it a name.");
+    assert_eq!(draft.problems(None)[0].message, "Give it a name.");
     draft.set_name("Jira".into());
-    assert!(draft.problems().is_empty());
-    assert_eq!(writer(&s).validate(draft.clone()).unwrap()[0].message, "There's already an entry called 'Jira' in Work.");
-    // The same answer from the names already read, without the lock.
+    assert!(draft.problems(None).is_empty());
+    // From the names already read, without the lock.
     let names = PassStore::open(s.repo.to_str().unwrap().into()).unwrap();
-    assert_eq!(draft.problems_in(names.clone())[0].message, "There's already an entry called 'Jira' in Work.");
+    assert_eq!(draft.problems(Some(names.clone()))[0].message, "There's already an entry called 'Jira' in Work.");
     draft.set_name("jira-2".into());
-    assert!(draft.problems_in(names).is_empty());
+    assert!(draft.problems(Some(names)).is_empty());
     draft.set_name("Jira".into());
     let FolderRecipients { lines, writable, .. } = writer(&s).folder_recipients("Work".into()).unwrap();
     assert!(writable);

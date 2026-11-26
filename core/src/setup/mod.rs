@@ -857,18 +857,18 @@ impl SetupFlow {
         // The keyring and the enrolment change as one critical section.
         let held = self.exclusive()?;
         let mut keyring = Keyring::open(&self.dir).map_err(write_failed)?;
-        let fingerprint = keyring.pin_card_key(card_key).map_err(write_failed)?;
+        let fingerprint = keyring.pin_card_key(&held, card_key).map_err(write_failed)?;
         // Only the `.gpg-id` that governs the entry just opened, and only if
         // that entry names the card's key, says which line is the card's.
         let store = PassStore::open(repo.to_string_lossy().into_owned()).map_err(SetupError::from)?;
         let ciphertext = store.read_entry(&entry).map_err(SetupError::from)?;
-        let bound = keyring.bind_card_for_opened_entry(&repo, &fingerprint, &entry, &ciphertext, crate::write::now_secs());
+        let bound = keyring.bind_card_for_opened_entry(&held, &repo, &fingerprint, &entry, &ciphertext, crate::write::now_secs());
         match bound {
             // Several unknown lines: the person picks the card's later.
             Ok(_) | Err(WriteError::MissingRecipients { .. }) => {}
             Err(e) => return Err(write_failed(e)),
         }
-        keyring.accept_all_recipients_at_setup(&repo).map_err(write_failed)?;
+        keyring.accept_all_recipients_at_setup(&held, &repo).map_err(write_failed)?;
         save_enrolment(&self.dir, identity).map_err(SetupError::from)?;
         drop(held);
         self.decryption.used_at(Instant::now());

@@ -220,7 +220,25 @@ impl WriteStore {
     /// How the recipients for `folder` are satisfied; `writable` says
     /// whether paw can save there now.
     pub fn folder_recipients(&self, folder: &str) -> Result<FolderRecipients, WriteError> {
+        let _reading = self.lock().shared()?;
         self.keyring()?.folder_recipients(&self.repo, folder, now_secs())
+    }
+
+    /// Every `.gpg-id` in the store, top first, with its keys and the
+    /// entries under it encrypted for a key it does not name. Reads headers
+    /// only; decrypts nothing.
+    pub fn recipient_scopes(&self) -> Result<Vec<super::RecipientScope>, WriteError> {
+        let _reading = self.lock().shared()?;
+        super::scopes::recipient_scopes(&self.keyring()?, &self.repo, now_secs())
+    }
+
+    /// After "Who can open … changed": accepts the folder's current
+    /// `.gpg-id`.
+    pub fn accept_recipients(&self, folder: &str) -> Result<(), WriteError> {
+        // Each keyring change reads, changes and writes the whole file: one
+        // critical section, or two changes at once would lose one.
+        let held = self.exclusive()?;
+        self.keyring()?.accept_recipients(&held, &self.repo, folder)
     }
 
     /// Saves `draft`: encrypts to every recipient of its folder and commits.

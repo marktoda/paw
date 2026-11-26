@@ -11,11 +11,7 @@ use std::time::Duration;
 use crate::copies::CopyCache;
 use crate::entry::opened::OpenedEntry;
 use crate::generate::{self, PasswordPolicy};
-use crate::key::KeySession;
 use crate::store::PassStore;
-use crate::store::tree::StoreTree;
-use crate::write::cert::certificate_infos;
-use crate::write::keyring::{CertificateSummary, certificate_summaries};
 use crate::write::{self as core, Deleted, DraftProblem, FolderRecipients, Saved, WriteError, WriteStore};
 
 /// The add or edit form's contents. Make one with
@@ -92,17 +88,13 @@ impl EntryDraft {
         self.draft().set_text(&text);
     }
 
-    /// Problems with the values typed, without looking at the store; the
-    /// store's `validate` also checks the name is free.
-    pub fn problems(&self) -> Vec<DraftProblem> {
-        self.draft().problems(None)
-    }
-
-    /// The writer's `validate`, against the names `store` read when it was
-    /// opened: no lock and no disk, so the form can ask on every keystroke.
-    /// `store` can be out of date; saving checks again with the store locked.
-    pub fn problems_in(&self, store: Arc<PassStore>) -> Vec<DraftProblem> {
-        self.draft().problems(Some(store.tree()))
+    /// What would stop the draft from saving: the values typed and, with
+    /// `store`, a name already used among the names it read when it was
+    /// opened. No lock and no disk, so the form can ask on every keystroke;
+    /// `store` can be out of date, and saving checks again with the store
+    /// locked.
+    pub fn problems(&self, store: Option<Arc<PassStore>>) -> Vec<DraftProblem> {
+        self.draft().problems(store.as_ref().map(|store| store.tree()))
     }
 }
 
@@ -118,12 +110,6 @@ pub fn field_problem(key: String, value: String) -> Option<DraftProblem> {
 #[derive(uniffi::Object)]
 pub struct StoreWriter {
     store: WriteStore,
-}
-
-impl StoreWriter {
-    fn tree(&self) -> Result<StoreTree, WriteError> {
-        Ok(StoreTree::scan(self.store.repo())?)
-    }
 }
 
 #[uniffi::export]
@@ -145,16 +131,6 @@ impl StoreWriter {
         let doc = opened.duplicate_doc().ok_or_else(|| WriteError::Failed { message: "the entry was closed".into() })?;
         let content_id = opened.content_id().map(<[u8]>::to_vec);
         Ok(EntryDraft::wrap(core::EntryDraft::edit(&entry, doc, content_id)))
-    }
-
-    /// Everything that would stop `draft` from saving, including a name
-    /// that is taken.
-    pub fn validate(&self, draft: Arc<EntryDraft>) -> Result<Vec<DraftProblem>, WriteError> {
-        let tree = {
-            let _reading = self.store.lock().shared()?;
-            self.tree()?
-        };
-        Ok(draft.draft().problems(Some(&tree)))
     }
 
     /// Saves `draft` as one commit (two if an edit also moved it). With
@@ -179,58 +155,18 @@ impl StoreWriter {
     /// Which keys can open entries in `folder`, and whether paw can save
     /// there (`writable`). For the folder picker and the recipients screen.
     pub fn folder_recipients(&self, folder: String) -> Result<FolderRecipients, WriteError> {
-        let _reading = self.store.lock().shared()?;
         self.store.folder_recipients(&folder)
     }
 
-    /// "Who can open these passwords": every `.gpg-id` in the store, top
-    /// first, with its keys and the entries under it encrypted for a key
-    /// it does not name. Reads headers only; decrypts nothing.
+    /// "Who can open these passwords"; see [`WriteStore::recipient_scopes`].
     pub fn recipient_scopes(&self) -> Result<Vec<crate::write::RecipientScope>, WriteError> {
-        let _reading = self.store.lock().shared()?;
-        let keyring = self.store.keyring()?;
-        crate::write::scopes::recipient_scopes(&keyring, self.store.repo(), core::now_secs())
+        self.store.recipient_scopes()
     }
 
     /// After "Who can open … changed": accepts the folder's current
     /// `.gpg-id`.
     pub fn accept_recipients(&self, folder: String) -> Result<(), WriteError> {
-        // Each keyring change reads, changes and writes the whole file: one
-        // critical section, or two changes at once would lose one.
-        let _held = self.store.exclusive()?;
-        self.store.keyring()?.accept_recipients(self.store.repo(), &folder)
-    }
-
-    /// Pins the decryption key of the key `session` is on, as read when it
-    /// was plugged in. Needs no PIN. Returns its fingerprint.
-    pub fn pin_card_key(&self, session: Arc<KeySession>) -> Result<String, WriteError> {
-        let key = session.decryption_key().map_err(|e| WriteError::Failed { message: e.to_string() })?;
-        let _held = self.store.exclusive()?;
-        self.store.keyring()?.pin_card_key(key)
-    }
-
-    /// Records that `line` of a `.gpg-id` means the pinned key `fingerprint`.
-    pub fn bind_recipient(&self, line: String, fingerprint: String) -> Result<(), WriteError> {
-        let _held = self.store.exclusive()?;
-        self.store.keyring()?.bind(&line, &fingerprint)
-    }
-
-    /// Reads a public certificate (armored or binary) without keeping it.
-    pub fn inspect_certificate(&self, bytes: Vec<u8>) -> Result<Vec<CertificateSummary>, WriteError> {
-        let infos = certificate_infos(&bytes, core::now_secs())?;
-        let _reading = self.store.lock().shared()?;
-        Ok(certificate_summaries(self.store.repo(), &infos))
-    }
-
-    /// Pins the encryption key of each certificate in `bytes`.
-    pub fn import_certificate(&self, bytes: Vec<u8>) -> Result<Vec<CertificateSummary>, WriteError> {
-        let infos = certificate_infos(&bytes, core::now_secs())?;
-        let _held = self.store.exclusive()?;
-        let mut keyring = self.store.keyring()?;
-        for info in &infos {
-            keyring.pin_certificate(info)?;
-        }
-        Ok(certificate_summaries(self.store.repo(), &infos))
+        self.store.accept_recipients(&folder)
     }
 }
 

@@ -80,8 +80,8 @@ fn store_with(files: &[(&str, &[u8])]) -> Store {
     let repo = state.join("repo");
     git(root.path(), &["clone", "--quiet", bare.to_str().unwrap(), repo.to_str().unwrap()]);
     let mut keyring = Keyring::open(&state).unwrap();
-    keyring.pin_card_key(&card().decryption_key().unwrap()).unwrap();
-    keyring.accept_all_recipients_at_setup(&repo).unwrap();
+    keyring.pin_card_key(&keyring.lock().exclusive().unwrap(), &card().decryption_key().unwrap()).unwrap();
+    keyring.accept_all_recipients_at_setup(&keyring.lock().exclusive().unwrap(), &repo).unwrap();
     std::fs::write(state.join("setup"), "step=done\n").unwrap();
     Store { _root: root, state }
 }

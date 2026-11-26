@@ -56,6 +56,7 @@ use crate::path::{folder_and_parents, folder_of, folder_of_gpg_id, gpg_id_in, go
 use crate::store::gpg_id::{governing_gpg_id, key_digits, parse_gpg_id};
 use crate::store::read::read_file;
 use crate::files::{MAX_FILE_BYTES, read_bounded, write_atomic};
+use crate::lock::{Exclusive, StoreLock};
 
 const FILE: &str = crate::files::layout::RECIPIENTS;
 const HEADER: &str = "# paw pinned recipients, version 1";
@@ -356,6 +357,16 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 impl Keyring {
+    /// The store's repository, whose lock covers the keyring.
+    fn repo(&self) -> PathBuf {
+        crate::files::layout::repo_dir(self.file.parent().unwrap_or(Path::new(".")))
+    }
+
+    /// The lock to hold while changing the keyring: its store's.
+    pub fn lock(&self) -> StoreLock {
+        StoreLock::for_repo(&self.repo())
+    }
+
     /// The keyring of the store whose state directory is `state_dir`.
     /// Empty if nothing has been pinned yet.
     pub fn open(state_dir: &Path) -> Result<Self, WriteError> {
@@ -414,7 +425,8 @@ impl Keyring {
         Ok(keyring)
     }
 
-    fn save(&self) -> Result<(), WriteError> {
+    fn save(&self, held: &Exclusive) -> Result<(), WriteError> {
+        debug_assert!(held.covers(&self.repo()), "the keyring changed without its store's lock");
         let mut text = format!("{HEADER}\n");
         for key in &self.keys {
             let source = match key.source {
@@ -453,19 +465,19 @@ impl Keyring {
         &self.keys
     }
 
-    fn pin(&mut self, key: PinnedKey) -> Result<String, WriteError> {
+    fn pin(&mut self, held: &Exclusive, key: PinnedKey) -> Result<String, WriteError> {
         let fingerprint = key.fingerprint.clone();
         self.keys.retain(|old| old.fingerprint != fingerprint);
         self.keys.push(key);
-        self.save()?;
+        self.save(held)?;
         Ok(fingerprint)
     }
 
     /// Pins the card's decryption key (from its key session).
     /// Returns its fingerprint. Pinning it again replaces it.
-    pub fn pin_card_key(&mut self, key: &PublicKey) -> Result<String, WriteError> {
+    pub fn pin_card_key(&mut self, held: &Exclusive, key: &PublicKey) -> Result<String, WriteError> {
         let fingerprint = fingerprint_of(key);
-        self.pin(PinnedKey {
+        self.pin(held, PinnedKey {
             fingerprint,
             source: KeySource::Card,
             primary: None,
@@ -478,15 +490,15 @@ impl Keyring {
     }
 
     /// Pins the encryption key chosen from an imported certificate.
-    pub fn pin_certificate(&mut self, info: &CertificateInfo) -> Result<String, WriteError> {
-        self.pin(PinnedKey::of_certificate(info)?)
+    pub fn pin_certificate(&mut self, held: &Exclusive, info: &CertificateInfo) -> Result<String, WriteError> {
+        self.pin(held, PinnedKey::of_certificate(info)?)
     }
 
     /// Records that the `.gpg-id` line `line` is satisfied by the pinned key
     /// `fingerprint`. For setup, once the test decrypt has shown that the
     /// card opens entries written for that line; or when the person picks a
     /// key for a line that names it by short ID or by name.
-    pub fn bind(&mut self, line: &str, fingerprint: &str) -> Result<(), WriteError> {
+    pub fn bind(&mut self, held: &Exclusive, line: &str, fingerprint: &str) -> Result<(), WriteError> {
         let fingerprint = fingerprint.trim().to_ascii_uppercase();
         if !self.keys.iter().any(|key| key.fingerprint == fingerprint) {
             return Err(WriteError::NotPinned { fingerprint });
@@ -494,7 +506,7 @@ impl Keyring {
         let line = line.trim().to_owned();
         self.bindings.retain(|(spec, _)| *spec != line);
         self.bindings.push((line, fingerprint));
-        self.save()
+        self.save(held)
     }
 
     /// How `line` is satisfied at `now` (seconds since 1970).
@@ -625,20 +637,20 @@ impl Keyring {
     /// Setup: records every `.gpg-id` in the store as accepted, replacing
     /// any earlier record. The only acceptance that is not about one folder
     /// the person reviewed; call it once the store is cloned and shown.
-    pub fn accept_all_recipients_at_setup(&mut self, root: &Path) -> Result<(), WriteError> {
+    pub fn accept_all_recipients_at_setup(&mut self, held: &Exclusive, root: &Path) -> Result<(), WriteError> {
         let all = all_gpg_ids(root)?
             .into_iter()
             .map(|(path, bytes)| Accepted { sha: sha256_hex(&bytes), text: String::from_utf8_lossy(&bytes).into_owned(), path })
             .collect();
         self.accepted = Some(all);
-        self.save()
+        self.save(held)
     }
 
     /// Accepts the recipients `folder` has now, after the person has seen
     /// what changed: the `.gpg-id` that governs it now is recorded, and any
     /// accepted one between it and the folder that no longer exists is
     /// dropped. Other folders' records are left as they are.
-    pub fn accept_recipients(&mut self, root: &Path, folder: &str) -> Result<(), WriteError> {
+    pub fn accept_recipients(&mut self, held: &Exclusive, root: &Path, folder: &str) -> Result<(), WriteError> {
         let (path, bytes) = governing_gpg_id(root, folder)?;
         let Some(accepted) = self.accepted.as_mut() else {
             return Err(WriteError::RecipientsNotConfirmed);
@@ -652,7 +664,7 @@ impl Keyring {
         }
         accepted.retain(|a| a.path != path);
         accepted.push(Accepted { sha: sha256_hex(&bytes), text: String::from_utf8_lossy(&bytes).into_owned(), path });
-        self.save()
+        self.save(held)
     }
 
     /// After setup's test decrypt opened `entry` (a path in the store,
@@ -668,6 +680,7 @@ impl Keyring {
     /// team key is not the card's because a folder below names the owner.
     pub fn bind_card_for_opened_entry(
         &mut self,
+        held: &Exclusive,
         root: &Path,
         card_fingerprint: &str,
         entry: &str,
@@ -685,13 +698,14 @@ impl Keyring {
         }
         let folder = folder_of(entry);
         let recipients = self.folder_recipients(root, folder, now)?;
-        self.bind_one_open_line(recipients, &card_fingerprint)
+        self.bind_one_open_line(held, recipients, &card_fingerprint)
     }
 
     /// Binds the card to the one open line of `recipients`, unless a line
     /// already means it; see [`Self::bind_card_for_opened_entry`].
     fn bind_one_open_line(
         &mut self,
+        held: &Exclusive,
         recipients: FolderRecipients,
         card_fingerprint: &str,
     ) -> Result<Vec<String>, WriteError> {
@@ -715,7 +729,7 @@ impl Keyring {
         match open.as_slice() {
             [] => Ok(Vec::new()),
             [line] => {
-                self.bind(line, card_fingerprint)?;
+                self.bind(held, line, card_fingerprint)?;
                 Ok(open)
             }
             _ => Err(WriteError::MissingRecipients { gpg_id: recipients.gpg_id, missing: open }),

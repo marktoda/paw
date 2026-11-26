@@ -81,7 +81,7 @@ impl World {
         self.desktop_push(&[(&format!("{folder}/.gpg-id"), text.into_bytes())], "New list.");
         self.pull();
         if accept {
-            Keyring::open(self.state.path()).unwrap().accept_recipients(&self.repo(), folder).unwrap();
+            Keyring::open(self.state.path()).unwrap().accept_recipients(&paw_core::lock::StoreLock::for_repo(&self.repo()).exclusive().unwrap(), &self.repo(), folder).unwrap();
         }
     }
 
@@ -129,9 +129,9 @@ fn world() -> World {
     let connection = Connection::open(&w.server.remote(), &w.signer()).unwrap();
     steps::clone(&connection, &w.server.remote(), &w.repo()).unwrap();
     let mut keyring = Keyring::open(w.state.path()).unwrap();
-    keyring.pin_card_key(&w.card.decryption_key().unwrap()).unwrap();
-    keyring.pin_card_key(&w.other.decryption_key().unwrap()).unwrap();
-    keyring.accept_all_recipients_at_setup(&w.repo()).unwrap();
+    keyring.pin_card_key(&keyring.lock().exclusive().unwrap(), &w.card.decryption_key().unwrap()).unwrap();
+    keyring.pin_card_key(&keyring.lock().exclusive().unwrap(), &w.other.decryption_key().unwrap()).unwrap();
+    keyring.accept_all_recipients_at_setup(&keyring.lock().exclusive().unwrap(), &w.repo()).unwrap();
     w
 }
 
