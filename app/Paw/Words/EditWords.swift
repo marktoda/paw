@@ -61,10 +61,6 @@ func editProblem(_ error: WriteError, folder: String) -> EditProblem {
         return EditProblem(
             problem: "paw hasn't confirmed who can open this store",
             nextStep: "Finish setting up the store, then save again.")
-    case .NeedsOpenEntry(let entry):
-        return EditProblem(
-            problem: "Open \(EntryRef(path: entry).name) before moving it",
-            nextStep: "That folder uses other keys. Open it with your key, then move it from Edit.")
     case .NoSuchEntry(let entry):
         return EditProblem(
             problem: "\(EntryRef(path: entry).name) isn't in the store any more",
