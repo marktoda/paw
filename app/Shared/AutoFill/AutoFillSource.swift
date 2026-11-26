@@ -8,12 +8,12 @@ struct AutoFillSource: @unchecked Sendable {
     let copies: CopyCache?
     let keyPort: KeyPort
     let connect: @Sendable () throws -> CardConnection
-    /// The sites each name-only entry has filled on. `nil` keeps none:
-    /// every name match then asks.
-    var pairings: SitePairings? = nil
-    /// Which entries are known to have a one-time code. `nil` knows none:
-    /// a code list is then empty until search.
-    var codes: OneTimeCodeEntries? = nil
+    /// What a one-time code is made at.
+    let clock: Clock
+    /// The sites each name-only entry has filled on.
+    let pairings: SitePairings
+    /// Which entries are known to have a one-time code.
+    let codes: OneTimeCodeEntries
 }
 
 /// The store as the extension finds it.
@@ -72,7 +72,7 @@ extension AutoFillSource {
         let store = try PassStore(dir: location.repoDir.path)
         let keys = StoreKeys(.fill, at: location, clock: clock, copies: copies)
         return AutoFillSource(
-            store: store, copies: try keys.openEnrolled(), keyPort: keys.keyPort, connect: connect,
+            store: store, copies: try keys.openEnrolled(), keyPort: keys.keyPort, connect: connect, clock: clock,
             pairings: SitePairings.open(stateDir: stateDir),
             codes: OneTimeCodeEntries.open(stateDir: stateDir))
     }

@@ -158,7 +158,7 @@ final class AutoFillModel {
             var withCode: [String] = []
             if case .ready(let source) = opening {
                 live = ((try? source.copies?.list()) ?? []).map(\.entry)
-                withCode = source.codes?.entries(store: source.store) ?? []
+                withCode = source.codes.entries(store: source.store)
                 switch request {
                 case .list(let services):
                     found = source.store.matchServices(services: services, pairings: source.pairings)
@@ -425,6 +425,10 @@ final class AutoFillModel {
     /// entry is wiped unread and the person is asked. Filling anyway opens
     /// it again (Face ID, from the copy the key just kept).
     private func fill(_ opened: OpenedEntry, entry: EntryRef) {
+        guard let source else {
+            opened.close()
+            return
+        }
         if let warning = urlWarning(opened, entry: entry) {
             opened.close()
             guard !finished else { return }
@@ -432,9 +436,9 @@ final class AutoFillModel {
             page = .confirm(entry, warning)
             return
         }
-        let taken = kind.take(from: opened, entry: entry)
+        let taken = kind.take(from: opened, entry: entry, nowMs: source.clock.wallMs())
         opened.close()
-        let codes = source?.codes
+        let codes = source.codes
         guard let credential = taken.credential else {
             noteCode(taken.hasCode, entry: entry, codes: codes)
             if !taken.hasCode {
@@ -461,8 +465,8 @@ final class AutoFillModel {
     /// when that is not what is kept already. A yes per entry, never the
     /// code or its secret; nothing while the list is off (the core's
     /// switch); a failure only leaves it as it was.
-    private func noteCode(_ hasCode: Bool, entry: EntryRef, codes: OneTimeCodeEntries?) {
-        guard let codes, hasCode != withCode.contains(entry.path) else { return }
+    private func noteCode(_ hasCode: Bool, entry: EntryRef, codes: OneTimeCodeEntries) {
+        guard hasCode != withCode.contains(entry.path) else { return }
         _ = try? codes.note(entry: entry.path, hasCode: hasCode)
     }
 
@@ -488,8 +492,8 @@ final class AutoFillModel {
     /// again.
     private func recordPairing(_ entry: EntryRef) {
         defer { pairing = nil }
-        guard let pairing, pairing.path == entry.path, let source, let pairings = source.pairings else { return }
-        _ = try? pairings.recordPairing(store: source.store, entry: entry.path, service: pairing.site)
+        guard let pairing, pairing.path == entry.path, let source else { return }
+        _ = try? source.pairings.recordPairing(store: source.store, entry: entry.path, service: pairing.site)
     }
 
     private func end(_ reason: AutoFillEnd) {

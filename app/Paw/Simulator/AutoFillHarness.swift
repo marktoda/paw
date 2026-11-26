@@ -82,12 +82,20 @@ private final class HarnessWorld: @unchecked Sendable {
     /// What `opening` reads: the key port, to read whether a PIN is held,
     /// and the site pairings and code list, to show what was recorded.
     private(set) var source: AutoFillSource?
+    /// The source's clock, which a one-time code is made at. Each run
+    /// starts it at the real time: the UI tests work the code out from
+    /// theirs.
+    private var clock: SimClock?
     private let lock = NSLock()
     private var busyOnce = LaunchArgument.hostProviderStore.string == "busy"
 
     /// What the model's open finds: busy once if asked, then `opening`.
     func open() -> AutoFillOpening {
         lock.withLock {
+            if let clock {
+                let behind = Int64(Date().timeIntervalSince1970 * 1000) - clock.wallMs()
+                clock.advanceMs(ms: UInt64(max(behind, 0)))
+            }
             if busyOnce {
                 busyOnce = false
                 return .busy
@@ -109,16 +117,18 @@ private final class HarnessWorld: @unchecked Sendable {
             try writeFixtureStore(dir: location.repoDir.path)
             // `finance/northwind` and `contoso/alice`: named without a domain.
             try writeNameMatchEntries(dir: location.repoDir.path)
-            let clock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000)).asClock()
+            let simClock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000))
+            let clock = simClock.asClock()
             // Copies, as the app keeps in the simulator; the extension keeps none there.
             let source = try AutoFillSource.open(
                 at: location, clock: clock, connect: { try KeyConnection.open() },
                 copies: { CopyCache(dir: $0.path, keystore: SimulatedKeystoreHolder.keystore.asKeystore(), clock: clock) })
             if LaunchArgument.simOneTimeCodes.bool {
-                try source.codes?.setEnabled(enabled: true)
+                try source.codes.setEnabled(enabled: true)
             }
             opening = .ready(source)
             self.source = source
+            self.clock = simClock
         } catch {
             opening = .unreadable(String(describing: error))
         }
@@ -189,9 +199,9 @@ private final class HarnessRun: AutoFillAnswers {
 
     private func readPairings() {
         let source = world.source
-        let all = (source?.pairings?.pairings() ?? []).flatMap { p in p.sites.map { "\(p.entry)=\($0)" } }
+        let all = (source?.pairings.pairings() ?? []).flatMap { p in p.sites.map { "\(p.entry)=\($0)" } }
         pairings = all.isEmpty ? "none" : all.joined(separator: " ")
-        let known = source.map { $0.codes?.entries(store: $0.store) ?? [] } ?? []
+        let known = source.map { $0.codes.entries(store: $0.store) } ?? []
         codes = known.isEmpty ? "none" : known.joined(separator: " ")
     }
 
