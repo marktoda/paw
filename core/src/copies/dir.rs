@@ -56,13 +56,10 @@ pub fn read(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
     }
 }
 
-/// Removes `path`; already gone is fine.
 pub fn remove(path: &Path) -> std::io::Result<()> {
     remove_if_there(path)
 }
 
-/// Writes `bytes` as `dir/<stem>.copy` in one step, creating `dir` if need
-/// be ([`crate::files::write_atomic`]).
 pub fn write_atomic(dir: &Path, stem: &str, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
     crate::files::write_atomic(&dir.join(format!("{stem}{SUFFIX}")), TEMP_PREFIX, bytes)

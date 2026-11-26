@@ -1,6 +1,4 @@
-//! The building blocks shared by integrate and the unpushed queue: reading
-//! paw's own commits, replaying them onto another commit, and moving the
-//! branch and the working copy in one step that is undone on any failure.
+//! The building blocks shared by integrate and the unpushed queue.
 //!
 //! Each paw commit changes one entry (add, edit, delete) or renames one.
 //! Replay re-applies that change to the new base tree. Entries are
@@ -42,7 +40,7 @@ pub(crate) enum Change {
 
 impl Change {
     /// The file this change leaves and its blob: the ciphertext it would
-    /// send. `None` for a delete.
+    /// send.
     pub(crate) fn ciphertext(&self) -> Option<(&str, Oid)> {
         match self {
             Self::Write { path, blob } | Self::Rename { to: path, blob, .. } => Some((path, blob.0)),
@@ -249,7 +247,6 @@ impl<'r> Replay<'r> {
         })
     }
 
-    /// Replays with `swaps`: each change's blob `old` at `path` is `new`.
     pub fn swapping(self, swaps: HashMap<(String, Oid), Oid>) -> Self {
         Self { swaps, ..self }
     }

@@ -1,6 +1,4 @@
-//! The card through the openpgp-card library: what a session reads when a
-//! key is plugged in (identity, slots, touch policies, public keys), and the
-//! library's card handle a card job works with. The app supplies only a way
+//! The card through the openpgp-card library. The app supplies only a way
 //! to exchange raw APDUs ([`CardConnection`]).
 
 use std::sync::Arc;
@@ -33,7 +31,6 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for ConnectionError {
 /// and by the simulated key.
 #[uniffi::export(with_foreign)]
 pub trait CardConnection: Send + Sync {
-    /// Sends one command APDU and returns the response with its status bytes.
     fn transmit(&self, apdu: Vec<u8>) -> Result<Vec<u8>, ConnectionError>;
 }
 
@@ -46,11 +43,8 @@ pub struct CardInfo {
     pub decryption_fingerprint: Option<String>,
     /// Hex fingerprint of the authentication key slot (used for SSH).
     pub authentication_fingerprint: Option<String>,
-    /// Remaining user PIN attempts before the PIN blocks.
     pub pin_tries_left: u8,
-    /// When the decryption key asks for a touch.
     pub decryption_touch: KeyTouch,
-    /// When the authentication key (SSH) asks for a touch.
     pub authentication_touch: KeyTouch,
 }
 
@@ -58,9 +52,7 @@ pub struct CardInfo {
 /// from this, so a cached policy must not be mistaken for "every time".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum KeyTouch {
-    /// Never.
     Off,
-    /// For every use.
     EachUse,
     /// For a use more than 15 seconds after the last touch.
     Cached,
@@ -68,8 +60,6 @@ pub enum KeyTouch {
     Unknown,
 }
 
-/// A reader that fails while the card is read fails the read; a card that
-/// answers without a policy has an unknown one.
 fn key_touch(tx: &mut Card<Transaction<'_>>, slot: KeyType) -> Result<KeyTouch, CardError> {
     use openpgp_card::ocard::data::TouchPolicy;
     Ok(match tx.user_interaction_flag(slot) {
@@ -137,7 +127,6 @@ impl CardTransaction for Tx {
     }
 }
 
-/// Why reading the card failed: the reader, or the card's answer.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum CardError {
     #[error("could not talk to the key: {0}")]
@@ -219,7 +208,6 @@ pub(crate) fn card_ssh_public_key(
     }
 }
 
-/// The name a person may know a curve by.
 fn curve_words(curve: &Curve) -> &'static str {
     match curve {
         Curve::NistP256r1 => "ECDSA P-256",

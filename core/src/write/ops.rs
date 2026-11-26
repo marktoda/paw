@@ -60,10 +60,8 @@ pub struct FollowUpFailure {
     pub message: String,
 }
 
-/// What a save, rename or move did.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Saved {
-    /// Where the entry is now.
     pub entry: String,
     /// Where it was, if the write moved it.
     pub previous: Option<String>,
@@ -78,7 +76,6 @@ pub struct Saved {
     pub follow_up_failures: Vec<FollowUpFailure>,
 }
 
-/// What a delete did.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct Deleted {
     pub commit: String,
@@ -96,8 +93,6 @@ pub struct WriteStore {
     new_copy_ttl: Duration,
 }
 
-/// What a save committed: where the entry is and was, the content id of its
-/// file, the commits and the text saved.
 struct Committed {
     entry: String,
     previous: Option<String>,
@@ -140,7 +135,6 @@ impl WriteStore {
         Self::new(state_dir, &crate::files::layout::repo_dir(state_dir))
     }
 
-    /// A store checked out at `repo` with its state in `state_dir`.
     pub fn new(state_dir: &Path, repo: &Path) -> Self {
         Self { state_dir: state_dir.to_path_buf(), repo: repo.to_path_buf(), copies: None, new_copy_ttl: Duration::ZERO }
     }
@@ -165,7 +159,6 @@ impl WriteStore {
         follow_ups.io(FollowUp::OneTimeCodeMark, CodeFile::new(&self.state_dir).moved(from, to));
     }
 
-    /// Forgets the Face ID copy of `entry`, if there are copies.
     fn forget_copy(&self, entry: &str, follow_ups: &mut FollowUps) {
         if let Some(copies) = &self.copies {
             follow_ups.copy(copies.forget_entry(entry.to_owned()).map(|()| None));
@@ -187,7 +180,6 @@ impl WriteStore {
         StoreLock::for_repo(&self.repo)
     }
 
-    /// Takes the store's lock for changing it.
     pub fn exclusive(&self) -> Result<Exclusive, WriteError> {
         Ok(self.lock().exclusive()?)
     }
@@ -272,7 +264,6 @@ impl WriteStore {
         })
     }
 
-    /// The commits of [`Self::save`].
     fn save_commits(&self, draft: &EntryDraft) -> Result<Committed, WriteError> {
         let held = self.exclusive()?;
         let held = &held;

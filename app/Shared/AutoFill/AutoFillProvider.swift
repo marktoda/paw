@@ -90,8 +90,6 @@ final class AutoFillProvider {
         answers?.cancel(reason)
     }
 
-    /// Ends `model`'s request if it is the one under way, and says whether
-    /// it was.
     private func finish(_ model: AutoFillModel) -> Bool {
         guard model === self.model else { return false }
         self.model = nil

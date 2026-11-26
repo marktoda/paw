@@ -9,7 +9,6 @@ use crate::key::{KeyError, KeyIdentity, KeyPort, KeySession, SessionSigner, Task
 use crate::store::PassStore;
 use crate::sync::{ConnectError, Connection, TransferProgress};
 
-/// How a keyed setup step failed: the key, or setup.
 #[derive(Debug)]
 pub(crate) enum StepFailure {
     Key(KeyError),
@@ -79,9 +78,7 @@ pub(crate) fn test_entry(flow: &Mutex<SetupFlow>) -> Result<(String, Arc<PassSto
     Ok((entry, store))
 }
 
-/// After the key opened `entry`: pins the card's key for saving, accepts
-/// the store's recipients, and records the key as the store's enrolled key,
-/// on disk and in `port`. Setup is then done.
+/// After the key check opened `entry`: finishes setup.
 pub(crate) fn after_check(
     flow: &Mutex<SetupFlow>,
     port: &KeyPort,

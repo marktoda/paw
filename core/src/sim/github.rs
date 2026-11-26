@@ -15,7 +15,6 @@
 //!
 //! Plain HTTP: paw allows it only for endpoints made with
 //! `Endpoints::simulated`, which exists only with the `sim` feature.
-//! Every request is recorded, so tests can check what was sent where.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -40,7 +39,6 @@ use crate::github::session::{TokenVault, VaultError};
 /// The client id the simulated GitHub expects unless told otherwise. Not
 /// paw's real one, so a test can tell which was sent.
 pub const SIM_CLIENT_ID: &str = "Iv1.simulated-paw";
-/// The user code the simulated GitHub shows.
 pub const SIM_USER_CODE: &str = "WDJB-MJHT";
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -58,9 +56,6 @@ fn random_hex(bytes: usize) -> String {
     raw.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-// --- a tiny HTTP/1.1 server -------------------------------------------------
-
-/// One request as the simulated server saw it.
 #[derive(Debug, Clone)]
 pub struct SimHttpRequest {
     pub method: String,
@@ -164,7 +159,6 @@ impl Stall {
     }
 }
 
-/// An answer.
 struct Reply {
     status: u16,
     content_type: String,
@@ -296,8 +290,6 @@ fn serve_one(stream: TcpStream, record: &Mutex<Vec<SimHttpRequest>>, handler: &H
     Ok(())
 }
 
-// --- the simulated GitHub -----------------------------------------------------
-
 /// What the device flow does once a code is issued.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum SimDeviceOutcome {
@@ -351,7 +343,6 @@ struct Shared {
     stall: Arc<Stall>,
 }
 
-/// A simulated GitHub. See the module comment. Stops when dropped.
 #[derive(uniffi::Object)]
 pub struct SimGitHub {
     shared: Arc<Shared>,
@@ -397,7 +388,6 @@ impl SimGitHub {
         Ok(Arc::new(Self { shared, record, server }))
     }
 
-    /// Every request so far, oldest first.
     pub fn requests(&self) -> Vec<SimHttpRequest> {
         lock(&self.record).clone()
     }
@@ -408,7 +398,6 @@ impl SimGitHub {
         state.access.keys().cloned().chain(state.refresh.iter().cloned()).collect()
     }
 
-    /// Every token ever issued (live or not).
     pub fn all_tokens(&self) -> Vec<String> {
         let state = lock(&self.shared.state);
         let mut all: Vec<String> = state.access.keys().cloned().collect();
@@ -425,7 +414,6 @@ impl SimGitHub {
         lock(&self.shared.state).revoked.clone()
     }
 
-    /// The endpoints paw uses for this simulation.
     pub fn endpoints(&self) -> crate::github::Endpoints {
         let url = self.server.url();
         let store = format!("{}/{}", self.shared.owner, self.shared.name);
@@ -476,7 +464,6 @@ impl SimGitHub {
         }
     }
 
-    /// Whether the app is installed on the repository.
     pub fn set_installed(&self, installed: bool) {
         lock(&self.shared.state).installed = installed;
     }
@@ -516,12 +503,10 @@ impl SimGitHub {
         }
     }
 
-    /// Whether a code is waiting for the person.
     pub fn has_pending_code(&self) -> bool {
         lock(&self.shared.state).pending.is_some()
     }
 
-    /// Whether tokens expire (with refresh tokens) or not.
     pub fn set_expiring_tokens(&self, expiring: bool) {
         lock(&self.shared.state).expiring = expiring;
     }
@@ -537,12 +522,10 @@ impl SimGitHub {
         lock(&self.shared.state).redirect_git = url;
     }
 
-    /// The next packs stop halfway.
     pub fn set_drop_mid_pack(&self, drop: bool) {
         lock(&self.shared.state).drop_mid_pack = drop;
     }
 
-    /// How many requests have been made.
     pub fn request_count(&self) -> u32 {
         lock(&self.record).len() as u32
     }
@@ -556,7 +539,6 @@ impl SimGitHub {
         lock(&self.shared.stall.state).armed = true;
     }
 
-    /// How many packs are waiting halfway now.
     pub fn stalled_packs(&self) -> u32 {
         lock(&self.shared.stall.state).waiting
     }
@@ -841,7 +823,6 @@ fn git(shared: &Shared, request: &SimHttpRequest, rest: &str) -> Reply {
     }
 }
 
-/// Whether `id` is in the history of `tip` in the bare repository.
 fn reachable(bare: &std::path::Path, tip: Oid, id: Oid) -> bool {
     git2::Repository::open_bare(bare).and_then(|repo| repo.graph_descendant_of(tip, id)).unwrap_or(false)
 }
@@ -898,8 +879,6 @@ fn upload_pack(shared: &Shared, body: &[u8]) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-// --- a host that should never be reached -------------------------------------
-
 /// Another host on another port that answers everything with 200 and
 /// records what it was sent: where a hostile redirect points.
 pub struct SimBystander {
@@ -929,8 +908,6 @@ impl SimBystander {
         lock(&self.record).len() as u32
     }
 }
-
-// --- the vault and the clock ---------------------------------------------------
 
 /// The keychain in memory. It can be told to fail the next store, as if
 /// the app were killed before the keychain write.

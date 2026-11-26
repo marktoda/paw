@@ -1,18 +1,6 @@
 //! Settings › Key diagnostics › Copy diagnostics: one block of plain text
 //! for a bug report, pasted on a desktop.
 //!
-//! What it holds, and nothing else:
-//! - the app's version and build, the iOS version, the device model
-//!   (`iPhone17,1`), given by the app;
-//! - the store: set up or not, how many passwords and folders, how many
-//!   changes are not sent, and the last sync as one fixed word with when;
-//! - Face ID copies: on, off or not on this iPhone, and how many are open;
-//! - GitHub: signed in or not, and when the sign-in's tokens end;
-//! - the plugged-in key: whether it is the store's key, PIN tries left,
-//!   each slot's touch policy, the PIN setting (KDF);
-//! - the key log, which holds instruction bytes, status words, timings,
-//!   stages and error names only ([`crate::key::keylog`]).
-//!
 //! Never in it: entry, folder, host, repository or user names, the store's
 //! address, any fingerprint or key ID, the key's serial number, a PIN, a
 //! token or anything decrypted. `diagnostics_say_what_they_should_and_name_nothing`
@@ -79,7 +67,6 @@ fn touch_words(touch: KeyTouch) -> &'static str {
     }
 }
 
-/// `2026-11-24 09:30 UTC`.
 fn utc(secs: i64) -> String {
     let days = secs.div_euclid(86_400);
     let in_day = secs.rem_euclid(86_400);

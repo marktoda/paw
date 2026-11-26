@@ -4,7 +4,6 @@ import UIKit
 /// Every colour paw draws with. See docs/design-language.md, section 2.
 /// Gold means the key and nothing else: `keyGold` is only ever used by `KeyDisc`.
 enum PawColor {
-    // System colours.
     static let bg = Color(uiColor: .systemGroupedBackground)
     static let surface = Color(uiColor: .secondarySystemGroupedBackground)
     static let surfaceRaised = Color(uiColor: .tertiarySystemGroupedBackground)

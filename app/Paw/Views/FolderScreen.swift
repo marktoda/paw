@@ -28,7 +28,6 @@ struct FolderScreen: View {
     }
 
     private func list(_ listing: FolderListing) -> some View {
-        // Subfolders take the tint of the top-level folder they are in.
         let tint = FolderTint(folder: topFolderOf(folder: path))
         return List {
             NoticeSection(model: model)

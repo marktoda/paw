@@ -57,34 +57,26 @@ use crate::remote::RemoteFailure;
 /// a secret, and paw has no client secret at all.
 pub const CLIENT_ID: &str = "Iv23liyBePbnvQPCcGRz";
 
-/// paw's GitHub App's name in URLs.
 pub const APP_SLUG: &str = "paw-password-store";
 
-/// Where paw talks to GitHub: the web host (sign-in, token refresh, git).
 pub const WEB: &str = "https://github.com";
 
-/// Where paw talks to GitHub: the REST API.
 pub const API: &str = "https://api.github.com";
 
 /// The REST API version paw was written against (GitHub's docs, 2026).
 pub(crate) const API_VERSION: &str = "2026-03-10";
 
-/// Where paw sends its requests, and as which app. Device builds can only
-/// use [`Endpoints::github`]; the `sim` feature adds
-/// [`Endpoints::simulated`] for tests.
+/// Where paw sends its requests, and as which app.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Endpoints {
     web: String,
     api: String,
     client_id: String,
     app_slug: String,
-    /// Set only by [`Endpoints::simulated`]. A device build has no field
-    /// for it.
     #[cfg(feature = "sim")]
     simulation: Option<Simulation>,
 }
 
-/// A test build's simulated GitHub.
 #[cfg(feature = "sim")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Simulation {
@@ -94,7 +86,6 @@ struct Simulation {
 }
 
 impl Endpoints {
-    /// The real GitHub, as paw's app.
     pub fn github() -> Self {
         Self {
             web: WEB.into(),
@@ -109,7 +100,7 @@ impl Endpoints {
     /// A simulated GitHub at `web` and `api` (plain `http://127.0.0.1:...`
     /// is allowed here and nowhere else), as the app `client_id`, whose
     /// repository `ssh_address.0` is cloned over SSH from `ssh_address.1`
-    /// (a simulated host). Test builds only.
+    /// (a simulated host).
     #[cfg(feature = "sim")]
     pub fn simulated(web: &str, api: &str, client_id: &str, ssh_address: Option<(String, String)>) -> Self {
         Self {
@@ -121,14 +112,11 @@ impl Endpoints {
         }
     }
 
-    /// Whether these are a test build's simulated endpoints.
     #[cfg(feature = "sim")]
     pub(crate) fn is_simulated(&self) -> bool {
         self.simulation.is_some()
     }
 
-    /// Whether these are a test build's simulated endpoints: never, in a
-    /// device build.
     #[cfg(not(feature = "sim"))]
     pub(crate) fn is_simulated(&self) -> bool {
         false
@@ -146,7 +134,6 @@ impl Endpoints {
         &self.client_id
     }
 
-    /// Where the person installs the app on a repository.
     pub fn install_url(&self) -> String {
         format!("{}/apps/{}/installations/new", self.web, self.app_slug)
     }
@@ -160,8 +147,7 @@ impl Endpoints {
         &self.app_slug
     }
 
-    /// The SSH address setup clones `owner/repo` from: GitHub's, except in
-    /// a simulation, whose repositories live on a simulated SSH host.
+    /// The SSH address setup clones `owner/repo` from.
     pub(crate) fn ssh_address(&self, full_name: &str) -> Option<String> {
         #[cfg(feature = "sim")]
         if let Some((name, address)) = self.simulation.as_ref().and_then(|s| s.store.as_ref())
@@ -180,10 +166,8 @@ pub enum GitHubError {
     /// The app's settings on GitHub do not allow device sign-in.
     #[error("GitHub sign-in is turned off for paw's app")]
     DeviceFlowDisabled,
-    /// `select_repository` was given a name the last list did not have.
     #[error("{full_name} is not in the list; list the repositories again")]
     NotListed { full_name: String },
-    /// The keychain could not keep or read the sign-in.
     #[error("the sign-in could not be kept: {message}")]
     Vault { message: String },
     /// Underneath: GitHub, the network, the sign-in, the chosen
@@ -194,7 +178,6 @@ pub enum GitHubError {
 
 crate::fault::workflow_error!(GitHubError);
 
-/// The host GitHub's failures name.
 const GITHUB: &str = "github.com";
 
 impl GitHubError {
@@ -210,9 +193,6 @@ impl GitHubError {
     }
 }
 
-/// The sign-in's failure as it reaches a fetch over HTTPS: its fault, or,
-/// for the keychain (the only one of GitHub's own cases a fetch can meet),
-/// a local one.
 impl From<GitHubError> for crate::sync::SyncError {
     fn from(error: GitHubError) -> Self {
         match error {

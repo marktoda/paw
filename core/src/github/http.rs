@@ -21,29 +21,21 @@ use zeroize::Zeroizing;
 
 use super::{API_VERSION, Endpoints, GitHubError, Secret};
 
-/// How long to wait for a connection (DNS, TCP and TLS).
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
-/// The longest one API or sign-in request may take, body included.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
-/// The longest one git request may take, body included.
 const GIT_TIMEOUT: Duration = Duration::from_secs(300);
 /// The most a sign-in or token answer may be: a few hundred bytes in fact.
 pub(crate) const FORM_LIMIT: u64 = 64 << 10;
 /// The most one API page may be: 100 repositories are about 600 KiB.
 pub(crate) const API_LIMIT: u64 = 8 << 20;
-/// How many same-origin redirects the git fetch follows.
 pub(crate) const MAX_REDIRECTS: u32 = 3;
 
-/// Which of GitHub's hosts a request is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Host {
-    /// `https://github.com`: sign-in, tokens and git.
     Web,
-    /// `https://api.github.com`: the REST API.
     Api,
 }
 
-/// A URL's scheme, host and port.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Origin {
     scheme: String,
@@ -84,7 +76,6 @@ pub(crate) fn network(error: ureq::Error) -> GitHubError {
     GitHubError::network(message)
 }
 
-/// The answer to a small request: status and the whole body.
 pub(crate) struct Answer {
     pub status: u16,
     /// Wiped when dropped: a token answer holds tokens.
@@ -121,8 +112,6 @@ impl Http {
         &self.endpoints
     }
 
-    /// The time left before the deadline, at most `cap`. An error once the
-    /// deadline has passed.
     pub(crate) fn time_left(&self, cap: Duration) -> Result<Duration, GitHubError> {
         match self.deadline {
             None => Ok(cap),
@@ -170,7 +159,6 @@ impl Http {
         GitHubError::refused("paw only sends its GitHub sign-in to github.com")
     }
 
-    /// POSTs `form` (url-encoded) to `path` on github.com, asking for JSON.
     /// The form may hold a token; it is wiped after sending.
     pub(crate) fn post_form(&self, path: &str, form: &[(&str, &str)]) -> Result<Answer, GitHubError> {
         let url = format!("{}{path}", self.endpoints.web());
@@ -199,7 +187,6 @@ impl Http {
         read_answer(response, FORM_LIMIT)
     }
 
-    /// GETs `path_and_query` from the REST API with the access token.
     pub(crate) fn api_get(&self, path_and_query: &str, token: &Secret) -> Result<Answer, GitHubError> {
         let url = format!("{}{path_and_query}", self.endpoints.api());
         if !self.may_carry_credentials(&url, Host::Api) || !token.well_formed() {
@@ -308,7 +295,6 @@ impl Http {
     }
 }
 
-/// Reads a whole small answer, refusing one over `limit` bytes.
 fn read_answer(response: Response<ureq::Body>, limit: u64) -> Result<Answer, GitHubError> {
     let status = response.status().as_u16();
     let mut reader = response.into_body().into_with_config().limit(limit).reader();

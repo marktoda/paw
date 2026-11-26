@@ -40,9 +40,7 @@ final class EntryFormModel {
         case .edit(_, let focusName): focusName
         }
     }
-    /// The opened entry has a one-time-code line.
     let hadOneTimeCode: Bool
-    /// Folders that exist, for the picker.
     let folders: [String]
     /// Whether paw has every key each folder is encrypted for, read off the
     /// main thread when the form opens and when the store changes. A folder
@@ -78,7 +76,6 @@ final class EntryFormModel {
     /// Fields typed in, so a message is not shown before anything was typed.
     private(set) var touched: Set<String> = []
     private(set) var recipients: Result<FolderRecipients, Error>?
-    /// Why the last save was refused.
     var saveProblem: EditProblem?
     var confirmingDiscard = false
 
@@ -102,7 +99,6 @@ final class EntryFormModel {
     /// The folder `recipients` is the answer for.
     @ObservationIgnored private var answeredFolder: String?
 
-    /// A blank form in `folder`.
     init(adding folder: String, writer: StoreWriter, folders: [String], live: LiveStore) {
         purpose = .add(folder: folder)
         isEditing = false

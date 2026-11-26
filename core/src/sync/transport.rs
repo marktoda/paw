@@ -43,11 +43,8 @@ const TRANSPORT_URL: &str = "paw-ssh://connection";
 /// store with years of history is a few MiB; a host sending more is broken
 /// or hostile, and is stopped as it goes, before the pack is on disk.
 pub const DOWNLOAD_LIMIT: u64 = 256 << 20;
-/// How much of the remote's stderr is kept for error messages.
 const STDERR_LIMIT: usize = 2048;
 
-/// [`RemoteFailure::NoConnection`] to `host:port`, offering the other way
-/// in if it has one.
 fn no_connection(host: &str, port: u16, why: &str) -> Fault {
     let fallback = super::hosts::port_fallback(host, port);
     RemoteFailure::NoConnection { host: host.to_owned(), detail: format!("could not connect: {why}"), fallback }.into()
@@ -65,8 +62,6 @@ enum Dial<E> {
     Ssh(E),
 }
 
-/// Opens a TCP connection to `host:port` and runs the SSH handshake on it,
-/// within [`CONNECT_TIMEOUT`].
 async fn dial<H: client::Handler + Send + 'static>(
     config: Arc<client::Config>,
     host: &str,
@@ -195,7 +190,6 @@ impl PresentedHostKey {
             .map_err(|e| PawError::Git(format!("cannot write the host key: {e}")))
     }
 
-    /// Pins this key alone.
     pub fn pin(&self) -> HostKeyPin {
         HostKeyPin(vec![self.0.clone()])
     }
@@ -234,7 +228,6 @@ struct Shared {
     /// What the remote printed on stderr and how the connection failed, kept
     /// because libgit2 reports either only as "early EOF".
     diagnostics: Mutex<Diagnostics>,
-    /// The most one service may send ([`DOWNLOAD_LIMIT`] unless lowered).
     download_limit: AtomicU64,
 }
 
@@ -314,7 +307,6 @@ impl russh::Signer for ProbeOnly {
 
 /// Why a login did not finish, in the signer's error type.
 enum LoginError {
-    /// The key failed to sign.
     Key(KeyError),
     /// The session closed during the login.
     Closed,
@@ -356,8 +348,6 @@ async fn handshake(remote: &Remote) -> Result<client::Handle<PinnedHost>, Fault>
         inactivity_timeout: Some(INACTIVITY_TIMEOUT),
         ..Default::default()
     };
-    // Ask only for the pinned keys' types. A host with several host keys
-    // would otherwise be free to present one that cannot match the pin.
     let algorithms = pin.algorithms();
     if algorithms.is_empty() {
         return Err(PawError::Git("none of the pinned host keys is of a type paw supports".into()).into());
@@ -490,7 +480,7 @@ impl Connection {
 
     /// Asks the host whether it would accept `key` for `remote.user`,
     /// without a signature: no PIN, no touch. Checks the host key first,
-    /// exactly as [`Self::open`] does. Returns whether the key is accepted.
+    /// exactly as [`Self::open`] does.
     pub fn probe(remote: &Remote, key: &SshPublicKey) -> Result<(), Fault> {
         let runtime = runtime(&remote.host)?;
         let accepted = runtime.block_on(async {
@@ -539,7 +529,6 @@ impl Connection {
     }
 }
 
-/// The key `key` as russh offers it for a login.
 fn login_key(key: &SshPublicKey) -> Result<PublicKey, Fault> {
     PublicKey::from_bytes(key.blob()).map_err(|e| RemoteFailure::LoginKeyUnusable { detail: e.to_string() }.into())
 }
@@ -589,9 +578,6 @@ impl Drop for Connection {
 }
 
 impl Shared {
-    /// Turns a libgit2 failure into the most specific error we know. A
-    /// fetch the host refused, saying the repository is not there, is
-    /// [`RemoteFailure::RepositoryMissing`].
     fn explain(&self, error: git2::Error) -> Fault {
         let mut diagnostics = self.diagnostics.lock().unwrap();
         if let Some(limit) = diagnostics.too_big.take() {
@@ -695,8 +681,7 @@ impl SmartSubtransport for Subtransport {
 }
 
 /// What the host printed on stderr, e.g. GitHub's "ERROR: Repository not
-/// found.": control characters made spaces, trimmed, at most 2 KiB. `None`
-/// if nothing. It is the host's text, not paw's: show it only as a quote.
+/// found.". It is the host's text, not paw's: show it only as a quote.
 fn said(stderr: &[u8]) -> Option<String> {
     let said: String = String::from_utf8_lossy(stderr)
         .chars()
@@ -717,7 +702,6 @@ struct ServiceStream {
     channel: Channel<client::Msg>,
     /// Received bytes libgit2 has not asked for yet.
     unread: Vec<u8>,
-    /// Bytes received so far, checked against the download limit.
     received: u64,
 }
 

@@ -68,7 +68,6 @@ enum LaunchArgument: String, CaseIterable, DebugLaunchArgument {
     /// Word: the simulated GitHub, and how it behaves (`SimGitHubMode`).
     case simGitHub = "pawSimGitHub"
 
-    /// `-pawAppearance dark|light`.
     static var colorScheme: ColorScheme? {
         switch appearance.string {
         case "dark": return .dark

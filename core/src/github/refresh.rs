@@ -2,7 +2,7 @@
 //! background refresh built on it.
 //!
 //! [`GitHubAccount::refresh_store`] is a refresh exactly like the SSH
-//! one (`StoreSync.refresh`) with a different transport: the same fetch
+//! one (`StoreSync.refresh_with_key`) with a different transport: the same fetch
 //! (every branch into `origin/*`), then the same integrate, so the same
 //! trees are refused, the same `.gpg-id` changes reported and a replaced
 //! history stops it the same way. It refuses to run unless the store's
@@ -11,12 +11,7 @@
 //! [`GitHubAccount::background_refresh_stoppable`] is what a background task calls,
 //! with nobody present. It does what a refresh does without a decision
 //! (fast-forward, replay local changes), and parks the rest for the
-//! person, changing nothing:
-//! - the fetched tree holds something paw will not check out;
-//! - a `.gpg-id` changed (it is not integrated at all in the background,
-//!   so the foreground refresh shows it as usual);
-//! - the remote's history was replaced;
-//! - waiting changes are held back (reported; it never pushes anyway).
+//! person, changing nothing ([`RefreshDecision`]).
 //!
 //! It is bounded by a deadline and stops between whole steps once past it
 //! or once its `stop` says so (the transfer is also cut at the next chunk);
@@ -82,9 +77,6 @@ impl GitHubLink {
         Some(Self { full_name, id: found.get("id")?.parse().ok()?, ssh_address: found.get("ssh")?.to_owned() })
     }
 
-    /// Whether `store` (the saved address) is this repository: the address
-    /// setup was given for it, or GitHub's SSH address of the same
-    /// `owner/name` (port 22, or GitHub's port 443 host).
     fn is_store(&self, store: &StoreAddress) -> bool {
         is_repository(store, &self.full_name, &self.ssh_address)
     }
@@ -111,11 +103,8 @@ pub fn is_github_repository(address: String, full_name: String, ssh_address: Str
 pub enum RefreshStep {
     /// Getting a usable access token (may refresh it: network).
     Token,
-    /// Fetching over HTTPS.
     Fetch,
-    /// Checking what was fetched.
     Check,
-    /// Integrating it into the store.
     Integrate,
 }
 
@@ -134,7 +123,6 @@ pub enum RefreshDecision {
     HeldBack { count: u32 },
 }
 
-/// How a background refresh ended.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum BackgroundOutcome {
     /// The store already had everything.
@@ -155,7 +143,6 @@ pub enum BackgroundOutcome {
     Failed { fault: Fault },
 }
 
-/// What a background refresh did, compactly.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct BackgroundRefreshReport {
     pub outcome: BackgroundOutcome,
@@ -248,7 +235,6 @@ impl GitHubAccount {
     pub fn background_refresh_with(&self, budget: Duration, stop: &dyn Fn(RefreshStep) -> bool) -> BackgroundRefreshReport {
         let deadline = Instant::now() + budget;
         let stopping = |step| stop(step) || Instant::now() >= deadline;
-        // How long to wait for a lock: briefly, and never past the deadline.
         let lock_wait = || BACKGROUND_LOCK_WAIT.min(deadline.saturating_duration_since(Instant::now()));
         let out_of_time = || BackgroundRefreshReport::ended(BackgroundOutcome::OutOfTime);
         let failed = |e: SyncError| {
@@ -395,7 +381,7 @@ impl BackgroundStop {
 #[uniffi::export]
 impl GitHubAccount {
     /// Fetches over HTTPS with the sign-in and integrates exactly as
-    /// `StoreSync.refresh` does, pushing nothing. No key, no card. Refused
+    /// `StoreSync.refresh_with_key` does, pushing nothing. No key, no card. Refused
     /// before anything is sent if there is no sign-in, no chosen
     /// repository, or the store's remote is another repository. A sign-in
     /// that ended comes as `RemoteFailure::NotSignedIn` or `SignedOut`.

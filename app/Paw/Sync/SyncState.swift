@@ -36,11 +36,9 @@ struct SyncFailure: Equatable {
     let nextStep: String
     /// Raw text from the host or the library, under "Details".
     var details: [String] = []
-    /// A few words for the pill.
     let pill: String
 }
 
-/// Screens about sync on the navigation stack (`Route.sync`).
 enum SyncRoute: Hashable {
     /// Waiting changes paw will not send as they are.
     case heldBack
@@ -66,8 +64,6 @@ struct SyncSheet: Identifiable {
     let mode: Mode
 }
 
-/// What the pill on Home says. Worked out from what the core reports:
-/// the queue, the held-back and refused lists, and the last task's result.
 enum SyncPillState: Equatable {
     case working(String)
     case upToDate(checked: Date)
@@ -142,8 +138,6 @@ struct SyncSummary: Identifiable, Equatable {
         added.count + changed.count + removed.count
     }
 
-    /// Something in it asks for a decision: two versions of one password,
-    /// a delete that didn't happen, a changed list of keys.
     var needsALook: Bool {
         !(keptBoth.isEmpty && keptLocal.isEmpty && droppedDeletes.isEmpty && recipientsChanged.isEmpty)
     }

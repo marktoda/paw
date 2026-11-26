@@ -108,7 +108,6 @@ def read_text(path):
 
 
 def spdx_ids(expression):
-    """The licence ids in an expression, `WITH` exceptions kept attached."""
     expression = expression.replace("/", " OR ")
     parts = re.split(r"\s+(?:OR|AND)\s+|[()]", expression)
     return [p.strip() for p in parts if p.strip()]
@@ -250,7 +249,6 @@ def main():
     if current != data:
         failed = True
         print(f"licences: {OUT.relative_to(ROOT)} is stale; run scripts/licences.py", file=sys.stderr)
-        # Say which crates differ, so a review can see it at a glance.
         try:
             have = {(c["name"], c["version"]) for c in json.loads(current)["components"]}
         except (ValueError, KeyError):

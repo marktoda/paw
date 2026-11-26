@@ -2,7 +2,6 @@ import Foundation
 import Observation
 import SwiftUI
 
-/// Where the navigation stack can go.
 enum Route: Hashable {
     case folder(String)
     /// An opened entry, by the id of its `OpenSession`.
@@ -28,8 +27,6 @@ struct OpenSession: Identifiable {
     var hadCopy = false
 }
 
-/// The key sheet while it is up, as `AppModel.keyRequest` says it from
-/// `AppModel.keyTask`; its stage is the driver's.
 struct KeyRequest: Identifiable {
     /// The sheet's run: the same across Try again.
     let id: UUID
@@ -81,7 +78,6 @@ final class AppModel {
     private(set) var recentPaths: [String] = []
     /// What the core says about each entry for the last key plugged in.
     private(set) var accessByPath: [String: Access] = [:]
-    /// The entry the key sheet opens, while it is up.
     private var keyEntry: EntryRef?
     private(set) var sessions: [UUID: OpenSession] = [:]
     /// Entries closed while on screen (2 minutes away, the iPhone locked,
@@ -230,7 +226,6 @@ final class AppModel {
     func open(_ entry: EntryRef) {
         notice = nil
         if usesSplitView {
-            // Already open on the right: nothing to do.
             if splitShownEntry?.ref.path == entry.path { return }
             closeSplitEntryForNextOpen()
         }
@@ -429,8 +424,6 @@ final class AppModel {
         setPath(routes)
     }
 
-    /// The key sheet, Settings, an entry's large type, or a feature's
-    /// sheet is up.
     var sheetIsUp: Bool {
         keyRequest != nil || showsSettings || largeType != nil || storeSession.sheetIsUp
     }

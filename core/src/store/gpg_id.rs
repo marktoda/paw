@@ -32,15 +32,12 @@ pub(crate) fn key_digits(line: &str) -> Option<String> {
     (!digits.is_empty() && digits.chars().all(|c| c.is_ascii_hexdigit())).then(|| digits.to_ascii_uppercase())
 }
 
-/// The text of the `.gpg-id` at `file` (its path in the store), from its
-/// bytes. One that is not UTF-8 is refused, the same way wherever paw reads
+/// A `.gpg-id` that is not UTF-8 is refused, the same way wherever paw reads
 /// one: saving, the recipients screen, the integrate report and accepting.
 pub(crate) fn gpg_id_text<'b>(file: &str, bytes: &'b [u8]) -> Result<&'b str, PawError> {
     std::str::from_utf8(bytes).map_err(|_| PawError::Store(format!("{file} is not a text file")))
 }
 
-/// The key names in the `.gpg-id` at `file`, from its bytes; see
-/// [`gpg_id_text`] and [`parse_gpg_id`].
 pub(crate) fn gpg_id_lines(file: &str, bytes: &[u8]) -> Result<Vec<String>, PawError> {
     Ok(parse_gpg_id(gpg_id_text(file, bytes)?))
 }

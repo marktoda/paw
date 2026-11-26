@@ -6,7 +6,6 @@ enum KeySheetStage: Equatable {
     /// `triesLeft` is shown before any input whenever fewer than 3 remain.
     /// `forgotten` adds the line about the PIN being dropped in the background.
     case pin(triesLeft: Int, forgotten: Bool)
-    /// The PIN just entered was wrong.
     case wrongPin(triesLeft: Int)
     /// The PIN is asked again for another reason: it was not 6 to 127
     /// characters (no try used), or the key no longer takes the PIN paw had.
@@ -24,7 +23,6 @@ enum KeySheetStage: Equatable {
     /// touched in time. `problem` says what happened, `nextStep` what to do.
     case failed(problem: String, nextStep: String)
 
-    /// The PIN field is up, with the keyboard.
     var asksForPin: Bool {
         switch self {
         case .pin, .wrongPin, .pinAgain: true
@@ -76,8 +74,6 @@ struct KeySheetContent: View {
             Self.haptic(for: new)
         }
     }
-
-    // MARK: Parts
 
     private var content: some View {
         VStack(spacing: PawMetrics.Spacing.l) {
@@ -213,8 +209,6 @@ struct KeySheetContent: View {
             .accessibilityIdentifier("key-sheet-cancel")
     }
 
-    // MARK: Words
-
     private var headline: String {
         stage.headline
     }
@@ -240,8 +234,6 @@ struct KeySheetContent: View {
         Device.words([headline, triesLine, explanation].compactMap { $0 }.joined(separator: ". ")
             .replacingOccurrences(of: ".. ", with: ". "))
     }
-
-    // MARK: State
 
     private var showsSteps: Bool {
         switch stage {
@@ -420,7 +412,7 @@ private struct KeyDrawing: View {
     }
 }
 
-/// Three swings of 8pt. Driven by a counter: each whole step is one shake.
+/// Driven by a counter: each whole step is one shake.
 private struct ShakeEffect: GeometryEffect {
     var travel: CGFloat = 8
     var swings: CGFloat = 3

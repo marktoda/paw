@@ -2,11 +2,6 @@
 //! workflow that talks to it: setup, sync and the GitHub sign-in each carry
 //! a [`RemoteFailure`] instead of listing these cases again. The app words
 //! them; the texts here are for logs and tests.
-//!
-//! Also the values a failure carries that other parts of paw share: what
-//! paw refuses to check out ([`RefusedPath`]), which the write path refuses
-//! to commit for the same reasons, and the other way in to a host
-//! ([`PortFallback`]), which setup also keeps as a notice.
 
 use crate::path::UnsafePart;
 

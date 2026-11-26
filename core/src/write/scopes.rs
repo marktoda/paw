@@ -39,7 +39,6 @@ pub struct ScopeKey {
     /// The line resolves to the key on the plugged-in card that this store
     /// was set up with.
     pub this_key: bool,
-    /// How paw would encrypt to it.
     pub status: LineStatus,
 }
 
@@ -51,7 +50,6 @@ pub struct RecipientScope {
     /// Its path in the store, e.g. `.gpg-id` or `work/.gpg-id`.
     pub gpg_id: String,
     pub keys: Vec<ScopeKey>,
-    /// Entries it governs.
     pub entry_count: u32,
     /// Entries it governs that are encrypted for a key it does not name.
     /// For the screen only; never log these.
@@ -84,7 +82,6 @@ impl Named {
 /// Every `.gpg-id` of the store at `root`, top first, with what it says.
 pub fn recipient_scopes(keyring: &Keyring, root: &Path, now: u32) -> Result<Vec<RecipientScope>, WriteError> {
     let tree = StoreTree::scan(root)?;
-    // The governing file of each folder that holds entries, and the entries.
     let mut governed: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut by_folder: BTreeMap<String, String> = BTreeMap::new();
     for entry in tree.entries() {
@@ -173,7 +170,6 @@ pub fn recipient_scopes(keyring: &Keyring, root: &Path, now: u32) -> Result<Vec<
             unsure_entries,
         });
     }
-    // Top of the store first, then by folder.
     scopes.sort_by(|a, b| (!a.folder.is_empty(), &a.folder).cmp(&(!b.folder.is_empty(), &b.folder)));
     Ok(scopes)
 }

@@ -42,7 +42,6 @@ pub(crate) struct Wire {
 }
 
 impl Wire {
-    /// A wire that writes every exchange to `log`.
     pub(crate) fn logged(inner: Arc<dyn CardConnection>, log: Arc<KeyLog>) -> Arc<Self> {
         Arc::new(Self { inner, record: Mutex::new(Record::default()), log })
     }

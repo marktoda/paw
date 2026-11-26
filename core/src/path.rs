@@ -23,17 +23,14 @@ pub(crate) fn split(path: &str) -> (&str, &str) {
     path.rsplit_once('/').unwrap_or(("", path))
 }
 
-/// The folder `path` is in; empty at the top.
 pub(crate) fn folder_of(path: &str) -> &str {
     split(path).0
 }
 
-/// `folder/name`, or `name` at the top.
 pub(crate) fn join(folder: &str, name: &str) -> String {
     if folder.is_empty() { name.to_owned() } else { format!("{folder}/{name}") }
 }
 
-/// The file an entry is kept in: `web/github.com.gpg` for `web/github.com`.
 pub(crate) fn entry_file(entry: &str) -> String {
     format!("{entry}{ENTRY_EXTENSION}")
 }
@@ -54,17 +51,14 @@ pub(crate) fn listed_entry(file: &str) -> Option<&str> {
     entry_of_file(file)
 }
 
-/// Whether `file` (a path) ends in `.gpg`.
 pub(crate) fn is_entry_file(file: &str) -> bool {
     file.ends_with(ENTRY_EXTENSION)
 }
 
-/// The `.gpg-id` of `folder`: `.gpg-id` at the top, else `folder/.gpg-id`.
 pub(crate) fn gpg_id_in(folder: &str) -> String {
     join(folder, GPG_ID)
 }
 
-/// The folder a `.gpg-id` path is in.
 pub(crate) fn folder_of_gpg_id(gpg_id: &str) -> &str {
     gpg_id.strip_suffix(GPG_ID).unwrap_or(gpg_id).trim_end_matches('/')
 }
@@ -146,7 +140,6 @@ pub(crate) fn is_hidden(component: &str) -> bool {
     component.starts_with('.')
 }
 
-/// Whether some part of `path` is hidden ([`is_hidden`]).
 pub(crate) fn has_hidden_part(path: &str) -> bool {
     path.split('/').any(is_hidden)
 }
@@ -161,7 +154,6 @@ pub(crate) enum NameRefusal {
     Control,
     Backslash,
     TooLong,
-    /// Refused by [`unsafe_path`], for this reason.
     Unsafe(&'static str),
 }
 

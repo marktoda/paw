@@ -23,9 +23,7 @@ extension View {
     }
 }
 
-/// The key sheet's stand-ins for the key, by its stage: a finger on the
-/// key, the key's touch timeout running out now, a key going in, and a key
-/// that answers again after its reads failed.
+/// The key sheet's stand-ins for the key, by its stage.
 struct SimulatedKeyControls: ViewModifier {
     let driver: KeyTaskDriver
 

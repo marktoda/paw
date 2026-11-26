@@ -62,7 +62,6 @@ enum AutoFillHarnessLaunch {
         }
     }
 
-    /// `code:…` asks for a one-time code; anything else for a password.
     private static func parse(_ value: String) -> (AutoFillKind, String) {
         value.hasPrefix("code:") ? (.oneTimeCode, String(value.dropFirst(5))) : (.password, value)
     }

@@ -2,13 +2,7 @@ import Foundation
 
 #if DEBUG && targetEnvironment(simulator)
 /// One simulated key per app launch, so PIN tries carry across operations
-/// the way they do on a real key. Launch arguments configure it:
-/// `-pawSimPin 123456 -pawSimTouch 1 -pawSimTouchTimeoutMs 15000`, and
-/// `-pawSimPinTries 1` for a key another computer has already used tries on,
-/// `-pawSimUnplugged 1` for a key that is not plugged in at launch,
-/// `-pawSimAttachFails 2` for a key whose first two reads fail (as a real
-/// key's can while it is still powering up), `-pawSimKdf unsupported` for a key
-/// whose PIN KDF paw cannot follow.
+/// the way they do on a real key. `KeyLaunchArgument` configures it.
 final class SimulatedKeyHolder: @unchecked Sendable {
     static let shared = SimulatedKeyHolder()
     /// Posted on the main queue when the key goes in.
@@ -37,8 +31,6 @@ final class SimulatedKeyHolder: @unchecked Sendable {
         }
     }
 
-    /// The key is in: from launch, unless `-pawSimUnplugged`, or since
-    /// `plugIn`.
     var isPluggedIn: Bool {
         lock.withLock { plugged }
     }

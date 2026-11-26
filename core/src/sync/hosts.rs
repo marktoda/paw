@@ -117,7 +117,6 @@ fn is(endpoint: (&str, u16), host: &str, port: u16) -> bool {
     host.eq_ignore_ascii_case(endpoint.0) && port == endpoint.1
 }
 
-/// Whether `host` on `port` is GitHub's SSH endpoint, on either port.
 pub(crate) fn is_github(host: &str, port: u16) -> bool {
     is(GITHUB_SSH, host, port) || is(GITHUB_SSH_443, host, port)
 }
@@ -146,7 +145,6 @@ pub(crate) fn port_fallback(host: &str, port: u16) -> Option<PortFallback> {
     })
 }
 
-/// The keys that ship with paw for `host` on `port`, if any.
 pub fn bundled(host: &str, port: u16) -> Option<HostKeyPin> {
     let (_, _, keys) = BUNDLED.iter().find(|(h, p, _)| is((h, *p), host, port))?;
     let lines: Vec<&str> = keys.iter().map(|(line, _)| *line).collect();
@@ -159,7 +157,6 @@ pub fn is_bundled(host: &str, port: u16) -> bool {
     BUNDLED.iter().any(|(h, p, _)| is((h, *p), host, port))
 }
 
-/// Why a bundled host's key is not forgotten or replaced.
 fn refuse_if_bundled(host: &str, port: u16) -> Result<(), Fault> {
     if is_bundled(host, port) {
         return Err(RemoteFailure::HostKeyBundled { host: host.to_owned() }.into());
@@ -178,7 +175,6 @@ fn io_err(e: std::io::Error) -> PawError {
 }
 
 impl KnownHosts {
-    /// The known hosts of the store kept in `state_dir`.
     pub fn of(state_dir: &Path) -> Self {
         Self { state_dir: state_dir.to_path_buf() }
     }
@@ -217,7 +213,6 @@ impl KnownHosts {
         crate::files::write_atomic(&self.path(), ".known_hosts.tmp-", text.as_bytes()).map_err(io_err)
     }
 
-    /// The confirmed key for `host`, if one was confirmed.
     pub fn lookup(&self, host: &str, port: u16) -> Result<Option<HostKeyPin>, Fault> {
         let lines: Vec<String> = self
             .read()?

@@ -7,9 +7,6 @@
 //! This module knows every workflow that runs as a key task: what each is
 //! for, what it produces and how the work after the key fails. The key
 //! ([`crate::key`]) knows none of them.
-//!
-//! - [`run`]: the state machine a task's thread and the sheet drive.
-//! - [`start`]: where each kind of task starts, and what it asks the key.
 
 mod run;
 mod start;
@@ -53,7 +50,6 @@ pub enum LoginPurpose {
     Push { count: u32 },
 }
 
-/// What a finished task produced.
 #[derive(Clone, uniffi::Enum)]
 pub enum KeyOutcome {
     /// The entry is open. `face_id_until_ms` is when its Face ID copy ends

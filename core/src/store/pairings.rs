@@ -7,12 +7,10 @@
 //! domain do not ask. The same entry on another domain of the same name is
 //! then a lookalike.
 //!
-//! The file is `site-pairings.json` in the store's state directory
-//! ([`crate::files::list`]). It holds names and domains only, nothing from
+//! It holds names and domains only, nothing from
 //! inside an entry. The app and the AutoFill extension both write it; two
 //! processes writing in the same instant can lose one pairing, which costs
-//! one more question, never a wrong fill. Size is bounded: [`MAX_ENTRIES`]
-//! entries of [`MAX_SITES`] sites, the least recently filled dropped first.
+//! one more question, never a wrong fill.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -25,9 +23,7 @@ use super::service::{MatchKind, NamePairing, host_of, match_site, names_site, re
 use crate::files::list::{ListFile, ListItem, ListKind, MAX_PATH_BYTES};
 use crate::PawError;
 
-/// The most entries kept.
 pub const MAX_ENTRIES: usize = 300;
-/// The most sites kept per entry.
 pub const MAX_SITES: usize = 4;
 
 static LIST: ListKind = ListKind {
@@ -68,12 +64,10 @@ pub struct PairedSite {
     pub site: String,
 }
 
-/// A site worth keeping: a lower-case registrable domain.
 fn valid_site(site: &str) -> bool {
     site.len() <= 253 && host_of(site).as_deref() == Some(site) && registrable(site) == Some(site)
 }
 
-/// The pairings file of one store.
 pub struct PairingFile {
     list: ListFile,
 }
@@ -93,14 +87,14 @@ impl PairingFile {
         self.list.load()
     }
 
-    /// Reads, changes and writes the file. `change` says whether it changed
-    /// anything; nothing is written if not. Refuses if the state directory
-    /// is gone (the store was removed): it is never made again here.
+    /// `change` says whether it changed anything; nothing is written if
+    /// not. Refuses if the state directory is gone (the store was removed):
+    /// it is never made again here.
     fn update(&self, change: impl FnOnce(&mut Vec<Pairing>) -> bool) -> std::io::Result<()> {
         self.list.update(change).map(|_| ())
     }
 
-/// Keeps that `entry` was filled on `site` (a registrable domain), as
+    /// Keeps that `entry` was filled on `site` (a registrable domain), as
     /// the most recent pairing. Entries not in `existing` are dropped
     /// while at it, if given.
     pub fn record(&self, entry: &str, site: &str, existing: Option<&HashSet<&str>>) -> std::io::Result<()> {
@@ -124,7 +118,6 @@ impl PairingFile {
         })
     }
 
-    /// The entry moved from `from` to `to`: its pairings go with it.
     pub fn moved(&self, from: &str, to: &str) -> std::io::Result<()> {
         if from == to {
             return Ok(());
@@ -181,7 +174,6 @@ pub struct SitePairings {
 
 #[uniffi::export]
 impl SitePairings {
-    /// The pairings of the store whose state directory is `state_dir`.
     /// Reads nothing until asked.
     #[uniffi::constructor]
     pub fn open(state_dir: String) -> Arc<Self> {

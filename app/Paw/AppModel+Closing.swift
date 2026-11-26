@@ -7,7 +7,6 @@ struct ClosedEntry: Equatable {
     enum Reason: Equatable {
         /// paw was in the background for 2 minutes or more.
         case away
-        /// The iPhone locked.
         case deviceLocked
         /// Its Face ID copy ended (time ran out, or "Lock this password").
         case copyEnded

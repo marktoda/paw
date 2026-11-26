@@ -74,8 +74,6 @@ struct EnclaveCheckView: View {
             .accessibilityIdentifier(row.id)
     }
 
-    // MARK: Device state
-
     private static func deviceStatus() -> [Row] {
         let biometry = LAContext()
         var error: NSError?
@@ -121,8 +119,6 @@ struct EnclaveCheckView: View {
         ]
         return "\(names[error.code] ?? error.domain) (\(error.code))"
     }
-
-    // MARK: Storage checks (no Face ID)
 
     private func runStorageChecks() {
         busy = true
@@ -202,8 +198,6 @@ struct EnclaveCheckView: View {
         add("done", "Storage checks: done")
         return rows
     }
-
-    // MARK: Face ID check
 
     private func runFaceIdCheck(again: Bool) {
         busy = true

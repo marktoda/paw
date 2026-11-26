@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Settings › About › Licences: one row that opens the list.
 struct LicencesRow: View {
     var body: some View {
         NavigationLink {
@@ -13,9 +12,7 @@ struct LicencesRow: View {
     }
 }
 
-/// What the app is built from and under which licences: paw's own, then
-/// every component, each opening its licence texts. Read from
-/// `licences.json`, which `scripts/licences.py` writes.
+/// Read from `licences.json`, which `scripts/licences.py` writes.
 struct LicencesView: View {
     private let notices = LicenceNotices.bundled
 
@@ -74,8 +71,6 @@ private struct LicenceRow: View {
     }
 }
 
-/// One component's licence: the expression, notes, where its source is,
-/// then each text, reflowed so it reads on a phone.
 struct LicenceTextView: View {
     let title: String
     let licence: String

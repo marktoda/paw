@@ -41,13 +41,10 @@ use zeroize::Zeroizing;
 use super::http::Http;
 use super::{GitHubError, Secret};
 
-/// The vault item that holds the sign-in.
 pub const SESSION_ITEM: &str = "github-session";
 
-/// An access token this close to its end is refreshed before use.
 const REFRESH_MARGIN_SECS: u64 = 300;
 
-/// Why the vault could not do what was asked.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
 pub enum VaultError {
     /// `message` must not contain the secret.
@@ -75,9 +72,7 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for VaultError {
 /// the new one, never neither.
 #[uniffi::export(with_foreign)]
 pub trait TokenVault: Send + Sync {
-    /// Keeps `secret` under `name`, replacing what was there.
     fn store(&self, name: String, secret: Vec<u8>) -> Result<(), VaultError>;
-    /// What is kept under `name`, or `None`.
     fn load(&self, name: String) -> Result<Option<Vec<u8>>, VaultError>;
     /// Forgets `name`. Not an error if there is nothing.
     fn remove(&self, name: String) -> Result<(), VaultError>;
@@ -142,7 +137,6 @@ impl Tokens {
         (tokens.access.well_formed() && refresh_ok).then_some(tokens)
     }
 
-    /// The tokens GitHub's answer holds, with lifetimes counted from `now`.
     pub(crate) fn from_answer(mut answer: TokenAnswer, now: u64) -> Option<Self> {
         let access = Secret::new(answer.access_token.take()?);
         let refresh = answer.refresh_token.take().map(Secret::new);
@@ -158,7 +152,6 @@ impl Tokens {
 }
 
 /// GitHub's answer at `/login/oauth/access_token`: tokens, or an error.
-/// Its `Debug` hides the tokens.
 #[derive(Deserialize, Default)]
 pub(crate) struct TokenAnswer {
     pub access_token: Option<String>,
@@ -192,7 +185,6 @@ impl std::fmt::Debug for TokenAnswer {
     }
 }
 
-/// Reads a token answer. Anything that is not JSON is refused.
 pub(crate) fn parse_token_answer(body: &[u8]) -> Result<TokenAnswer, GitHubError> {
     serde_json::from_slice(body).map_err(|_| GitHubError::refused("GitHub's sign-in answer was not readable"))
 }
@@ -204,7 +196,6 @@ pub fn system_wall_clock() -> WallClock {
     Arc::new(|| SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0))
 }
 
-/// One refresh at a time in this process.
 static REFRESHING: Mutex<()> = Mutex::new(());
 
 /// How long a refresh GitHub refused as spent waits for another process
@@ -225,8 +216,7 @@ impl TokenKeeper {
     }
 
     /// Forgets the sign-in, after any refresh in this process has kept its
-    /// pair (so a refresh finishing later cannot bring it back). Returns
-    /// what was kept.
+    /// pair (so a refresh finishing later cannot bring it back).
     pub(crate) fn take(&self) -> Result<Option<Tokens>, GitHubError> {
         let _one_at_a_time = REFRESHING.lock().unwrap_or_else(|p| p.into_inner());
         let tokens = self.load()?;
@@ -265,7 +255,6 @@ impl TokenKeeper {
         Ok(self.load()?.is_some())
     }
 
-    /// Keeps `tokens` in place of whatever was kept.
     pub(crate) fn save(&self, tokens: &Tokens) -> Result<(), GitHubError> {
         let bytes = tokens.encode();
         self.vault.store(SESSION_ITEM.into(), bytes.to_vec()).map_err(vault_err)
@@ -281,9 +270,7 @@ impl TokenKeeper {
     /// longer the refused one, another caller (thread or process) has
     /// refreshed meanwhile, and its new token is used: refreshing again
     /// would spend the refresh token a second time and end that caller's
-    /// fetch. With nothing kept, nothing is sent
-    /// ([`RemoteFailure::NotSignedIn`]). A refresh GitHub refuses ends the
-    /// sign-in: it is forgotten here ([`RemoteFailure::SignedOut`]).
+    /// fetch.
     pub(crate) fn access_token(&self, http: &Http, refused: Option<&Secret>) -> Result<Secret, GitHubError> {
         let _one_at_a_time = REFRESHING.lock().unwrap_or_else(|p| p.into_inner());
         let Some(tokens) = self.load()? else {
@@ -296,7 +283,6 @@ impl TokenKeeper {
             return Ok(tokens.access);
         }
         let Some(refresh) = tokens.refresh.clone() else {
-            // A token that cannot be refreshed and is refused or over.
             if force || !fresh {
                 self.forget()?;
                 return Err(GitHubError::from(RemoteFailure::SignedOut));

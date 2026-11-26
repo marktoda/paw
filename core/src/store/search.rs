@@ -31,9 +31,7 @@ pub struct HighlightRange {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SearchHit {
     pub entry: EntryRef,
-    /// Ranges in `entry.name`.
     pub name_ranges: Vec<HighlightRange>,
-    /// Ranges in `entry.folder`.
     pub folder_ranges: Vec<HighlightRange>,
 }
 
@@ -41,7 +39,6 @@ pub struct SearchHit {
 /// original each folded character stands for.
 struct Folded {
     chars: Vec<char>,
-    /// Index of the original character each folded one came from.
     origin: Vec<usize>,
     /// One past the last original character it covers: a letter takes the
     /// accents written after it along, so a highlight never splits them.
@@ -51,7 +48,6 @@ struct Folded {
 fn fold(text: &str) -> Folded {
     let mut folded = Folded { chars: Vec::new(), origin: Vec::new(), end: Vec::new() };
     for (index, c) in text.chars().enumerate() {
-        // "ü" becomes "u" plus a combining mark; the mark is dropped.
         decompose_canonical(c, |part| {
             if is_combining_mark(part) {
                 if let Some(end) = folded.end.last_mut() {
@@ -90,7 +86,6 @@ fn best_fit(path: &Folded, name_start: usize, term: &[char]) -> Option<(u32, usi
         .min()
 }
 
-/// Sorts and joins ranges of character indices that touch or overlap.
 fn merged(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
     ranges.sort_unstable();
     let mut out: Vec<(usize, usize)> = Vec::new();
@@ -103,7 +98,6 @@ fn merged(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
     out
 }
 
-/// Turns character ranges of `text` into UTF-16 ranges.
 fn utf16_ranges(text: &str, ranges: Vec<(usize, usize)>) -> Vec<HighlightRange> {
     let mut offsets = Vec::with_capacity(text.len() + 1);
     let mut units = 0u32;
@@ -139,7 +133,6 @@ pub fn search(entries: &[EntryRef], query: &str, limit: u32) -> Vec<SearchHit> {
     for entry in entries {
         let path = fold(&entry.path);
         let folder_chars = entry.folder.chars().count();
-        // In characters of the path: the name follows the folder and a `/`.
         let name_origin = if entry.folder.is_empty() { 0 } else { folder_chars + 1 };
         let name_start = path.origin.partition_point(|&origin| origin < name_origin);
 

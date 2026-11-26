@@ -77,7 +77,6 @@ struct FixtureSession {
             writing: writing, gitHub: nil, autoFill: autoFill, setUp: nil))
     }
 
-    /// Sets the store up in `stateDir` from a simulated git host.
     private static func setUp(stateDir: String) throws -> StoreSession.Writing {
         try FileManager.default.createDirectory(atPath: stateDir, withIntermediateDirectories: true)
         let key = SimulatedKey(pin: pin, touchRequired: false, touchTimeoutMs: 1_000)
@@ -148,8 +147,6 @@ extension FixtureSession {
         }
     }
 
-    /// Lets the main queue run until `condition` holds, or throws after
-    /// `timeout` seconds.
     static func waitUntil(_ what: String, timeout: TimeInterval = 30, _ condition: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while !condition() {

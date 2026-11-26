@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// One folder in a list: tinted folder chip, name, count, chevron.
 struct FolderRow: View {
     let name: String
     let count: Int

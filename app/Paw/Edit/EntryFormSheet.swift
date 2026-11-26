@@ -448,7 +448,6 @@ private struct EntryFormView: View {
     }
 }
 
-/// A folder in the picker's menu, with a check on the chosen one.
 private struct FolderChoiceLabel: View {
     let title: String
     let chosen: Bool
@@ -462,7 +461,6 @@ private struct FolderChoiceLabel: View {
     }
 }
 
-/// A label over a text field, with the core's message under it.
 private struct FormTextRow: View {
     let label: String
     let prompt: String
@@ -494,7 +492,6 @@ private struct FormTextRow: View {
     }
 }
 
-/// The password: dots or plain text, Show, and the core's message.
 private struct PasswordEditRow: View {
     @Bindable var form: EntryFormModel
     var focus: FocusState<FormFocus?>.Binding
@@ -539,7 +536,6 @@ private struct PasswordEditRow: View {
     }
 }
 
-/// Length, symbols, look-alikes, and how strong that makes a password.
 private struct GeneratorOptions: View {
     @Bindable var form: EntryFormModel
 

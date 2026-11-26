@@ -158,7 +158,6 @@ struct UnpushedScreen: View {
     }
 }
 
-/// One unpushed change: what it did, where, when, and Discard.
 private struct QueueRow: View {
     let item: QueueItem
     let onDiscard: () -> Void

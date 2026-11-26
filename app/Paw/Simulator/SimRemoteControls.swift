@@ -30,7 +30,6 @@ enum SimRemoteChange: String, CaseIterable, Identifiable {
         LaunchArgument.simRemoteChange.string.flatMap(SimRemoteChange.init(rawValue:))
     }
 
-    /// The debug button's words.
     var title: String {
         switch self {
         case .add: "Add web/forum.example"
@@ -150,7 +149,6 @@ final class SimRemoteHandle: @unchecked Sendable {
         lock.withLock { refusesPushes }
     }
 
-    /// The next connection is cut off half way through what it fetches.
     func dropNextConnection() {
         lock.withLock { dropsNext = true }
         host?.setDropMidClone(drop: true)

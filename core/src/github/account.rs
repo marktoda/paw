@@ -17,7 +17,6 @@ use super::session::{TokenKeeper, TokenVault, WallClock, system_wall_clock};
 use super::{Endpoints, GitHubError, Secret};
 use crate::remote::{AboutRemote, RemoteFailure};
 
-/// What signing out did.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SignOutReport {
     /// GitHub accepted the request to revoke both tokens. `false` if it
@@ -47,19 +46,15 @@ pub struct GitHubAccount {
     clock: Arc<dyn PollClock>,
     /// The last list shown, which `select_repository` picks from.
     listed: Mutex<Vec<GitHubRepository>>,
-    /// Lowers the download cap, for tests.
     #[cfg(feature = "sim")]
     download_limit: Mutex<Option<u64>>,
 }
 
 impl GitHubAccount {
-    /// The real GitHub, with the system clocks.
     pub fn new(state_dir: &Path, vault: Arc<dyn TokenVault>) -> Self {
         Self::with(Endpoints::github(), state_dir, vault, Arc::new(SystemPollClock::default()), system_wall_clock())
     }
 
-    /// Any endpoints and clocks. The endpoints can only be GitHub's
-    /// without the `sim` feature.
     pub fn with(
         endpoints: Endpoints,
         state_dir: &Path,
@@ -82,13 +77,11 @@ impl GitHubAccount {
         &self.endpoints
     }
 
-    /// Lowers the most a fetch may receive, in bytes (tests).
     #[cfg(feature = "sim")]
     pub fn set_download_limit(&self, bytes: u64) {
         *self.download_limit.lock().unwrap_or_else(|p| p.into_inner()) = Some(bytes);
     }
 
-    /// The most a fetch may receive, if lowered.
     pub(crate) fn download_limit(&self) -> Option<u64> {
         #[cfg(feature = "sim")]
         return *self.download_limit.lock().unwrap_or_else(|p| p.into_inner());
@@ -118,8 +111,6 @@ impl GitHubAccount {
 
 #[uniffi::export]
 impl GitHubAccount {
-    /// The sign-in for the store in `state_dir`, kept in `vault`, against
-    /// the real GitHub.
     #[uniffi::constructor]
     pub fn open(state_dir: String, vault: Arc<dyn TokenVault>) -> Arc<Self> {
         Arc::new(Self::new(Path::new(&state_dir), vault))
@@ -146,7 +137,7 @@ impl GitHubAccount {
     }
 
     /// The repositories the person granted paw, for the picker. Nothing is
-    /// sent without a sign-in ([`GitHubError::NotSignedIn`]).
+    /// sent without a sign-in ([`RemoteFailure::NotSignedIn`]).
     pub fn repositories(&self) -> Result<RepositoryList, GitHubError> {
         if !self.keeper.signed_in()? {
             return Err(RemoteFailure::NotSignedIn.into());
@@ -178,7 +169,6 @@ impl GitHubAccount {
         Ok(chosen.ssh_address.clone())
     }
 
-    /// The repository chosen for this store, if any.
     pub fn linked_repository(&self) -> Option<GitHubLink> {
         GitHubLink::load(&self.state_dir)
     }
@@ -208,7 +198,6 @@ impl GitHubAccount {
         Ok(SignOutReport { revoked, manage_url })
     }
 
-    /// Where the person installs paw's GitHub App on a repository.
     pub fn install_url(&self) -> String {
         self.endpoints.install_url()
     }

@@ -1,6 +1,4 @@
-//! The add and edit screens as Swift sees them: an [`EntryDraft`] to fill
-//! in, a [`StoreWriter`] that saves and deletes and manages the pinned
-//! recipient keys, and the password generator.
+//! The add and edit screens as Swift sees them.
 //!
 //! As with [`OpenedEntry`], the text being edited stays on the Rust side.
 
@@ -114,7 +112,6 @@ pub struct StoreWriter {
 
 #[uniffi::export]
 impl StoreWriter {
-    /// The store set up in `state_dir`.
     #[uniffi::constructor]
     pub fn open(state_dir: String) -> Arc<Self> {
         Arc::new(Self { store: WriteStore::open(&PathBuf::from(state_dir)) })
@@ -176,7 +173,6 @@ pub fn default_password_policy() -> PasswordPolicy {
     PasswordPolicy::default()
 }
 
-/// How strong a password from `policy` is, in bits.
 #[uniffi::export]
 pub fn password_entropy_bits(policy: PasswordPolicy) -> Result<f64, WriteError> {
     Ok(generate::entropy_bits(&policy)?)

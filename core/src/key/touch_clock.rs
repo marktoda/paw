@@ -56,7 +56,6 @@ impl TouchClock {
                 Some(since) if since < CACHE + (CACHE - SURELY_CACHED) => {
                     TouchExpectation::MayBeNeeded
                 }
-                // Not used since paw started, or long ago.
                 _ => TouchExpectation::Needed,
             },
         }

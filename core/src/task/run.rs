@@ -37,7 +37,6 @@ struct Inner {
     supplied: Option<Zeroizing<Vec<u8>>>,
     /// Past the point where cancel can still stop it.
     committing: bool,
-    /// The session the task runs on, once it has one.
     session: Option<Arc<KeySession>>,
 }
 
@@ -45,7 +44,6 @@ struct Inner {
 static NEXT_TASK: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) struct TaskCore {
-    /// The task's number in the key log.
     id: u64,
     /// Times the card was found to have lost the PIN's verification during
     /// this task's key operation (see `KeySession::refused`).
@@ -107,7 +105,6 @@ impl TaskCore {
         self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Writes a stage change to the key log of the session the task is on.
     fn log_stage(&self, session: Option<Arc<KeySession>>, state: &KeyTaskState) {
         if let (Some(session), Some(words)) = (session, stage_words(state)) {
             let log = session.log();
@@ -134,7 +131,6 @@ impl TaskCore {
         true
     }
 
-    /// Moves to `new` unless the task has finished. Returns whether it did.
     pub(super) fn set(&self, new: KeyTaskState) -> bool {
         self.set_again(new, false)
     }
@@ -296,7 +292,6 @@ impl TaskSide for TaskCore {
     }
 }
 
-/// What a task's thread runs.
 pub(super) type Body = Box<dyn FnOnce(&Arc<TaskCore>) -> Result<KeyOutcome, TaskFailure> + Send>;
 
 /// One operation that needs the key, running on its own thread, as the
@@ -308,8 +303,6 @@ pub struct KeyTask {
 }
 
 impl KeyTask {
-    /// Creates a task in `initial` and, unless that is final, starts its
-    /// thread on `body`.
     pub(super) fn start(
         purpose: KeyPurpose,
         listener: Arc<dyn KeyTaskListener>,
@@ -358,7 +351,6 @@ impl KeyTask {
         task
     }
 
-    /// A task that has already failed with `failure`.
     pub(crate) fn failed(purpose: KeyPurpose, listener: Arc<dyn KeyTaskListener>, failure: TaskFailure) -> Arc<Self> {
         Self::start(
             purpose,
@@ -368,7 +360,6 @@ impl KeyTask {
         )
     }
 
-    /// "#3": the task in the key log.
     pub(super) fn tag(&self) -> String {
         self.core.tag()
     }

@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// The row in Settings, just under AutoFill.
 struct SitesUsedSettingsSection: View {
     let model: AppModel
 
@@ -97,7 +96,6 @@ struct SitesUsedScreen: View {
         changed { try autoFill.forgetAllSites() }
     }
 
-    /// Makes the change and shows the list again.
     private func changed(_ change: () throws -> Void) {
         do {
             try change()

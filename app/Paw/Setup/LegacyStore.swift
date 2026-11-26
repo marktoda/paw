@@ -59,7 +59,6 @@ enum LegacyStore {
         }
     }
 
-    /// Whether the old folder is there now.
     static var folderLeft: Bool {
         folder().map { FileManager.default.fileExists(atPath: $0.path) } ?? false
     }

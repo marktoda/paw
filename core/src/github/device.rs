@@ -1,13 +1,6 @@
 //! Signing in to paw's GitHub App with the device flow, as a state machine
 //! the UI drives.
 //!
-//! ```text
-//! start ─► (show code) ─► poll ─► Waiting ─► poll ─► ... ─┬─► SignedIn
-//!                                                         ├─► Denied
-//!                                                         ├─► Expired
-//!                                                         └─► Cancelled (cancel, from any thread)
-//! ```
-//!
 //! [`DeviceSignIn::start`] asks GitHub for a code (`POST /login/device/code`
 //! with the client id and nothing else). The person types the code at the
 //! address shown. [`DeviceSignIn::poll`] waits until the next poll is
@@ -31,7 +24,6 @@ use super::{Endpoints, GitHubError, Secret};
 pub const SLOW_DOWN_STEP: Duration = Duration::from_secs(5);
 /// The interval if GitHub names none (its documented default).
 const DEFAULT_INTERVAL: u64 = 5;
-/// Never poll faster than this, whatever an answer says.
 const MIN_INTERVAL: u64 = 1;
 
 /// What to show the person.
@@ -47,7 +39,6 @@ pub struct DeviceCode {
     pub interval: u32,
 }
 
-/// Where a sign-in stands after a poll.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum SignInState {
     /// The person has not finished at GitHub yet: poll again.
@@ -89,8 +80,6 @@ impl Cancel {
     }
 }
 
-/// The real clock: `Instant`, waiting on a condition variable so `cancel`
-/// wakes it.
 pub struct SystemPollClock {
     start: Instant,
 }
@@ -147,7 +136,6 @@ struct Progress {
     polls: u32,
 }
 
-/// One device sign-in. See the module comment.
 #[derive(uniffi::Object)]
 pub struct DeviceSignIn {
     http: Http,
@@ -229,12 +217,10 @@ impl DeviceSignIn {
         })
     }
 
-    /// The seconds paw waits between polls now (after any `slow_down`).
     pub fn interval(&self) -> Duration {
         self.progress.lock().unwrap_or_else(|p| p.into_inner()).interval
     }
 
-    /// How many times GitHub has been asked for the token.
     pub fn polls(&self) -> u32 {
         self.progress.lock().unwrap_or_else(|p| p.into_inner()).polls
     }
@@ -244,7 +230,6 @@ impl DeviceSignIn {
 /// a background thread while it returns `Waiting`; `cancel` from any thread.
 #[uniffi::export]
 impl DeviceSignIn {
-    /// The code to show and where to type it.
     pub fn code(&self) -> DeviceCode {
         self.code.clone()
     }

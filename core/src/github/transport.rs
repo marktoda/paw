@@ -31,19 +31,14 @@ const TRANSPORT_URL: &str = "paw-https://github";
 /// The most one negotiation request may be: wants and haves are a few KiB.
 const REQUEST_LIMIT: usize = 1 << 20;
 
-/// Why a token fetch failed, before it is turned into an error.
 #[derive(Debug, Clone)]
 pub(crate) enum Failure {
-    /// More than the cap arrived.
     TooBig(u64),
-    /// A GitHub-level failure (refused token, refused redirect, not found,
-    /// network).
     GitHub(GitHubError),
 }
 
 struct Shared {
     http: Http,
-    /// `<web>/<owner>/<repo>.git`.
     repo_url: String,
     token: Secret,
     limit: u64,
@@ -89,8 +84,6 @@ impl HttpsRemote {
         }
     }
 
-    /// Runs `operation` against a libgit2 remote whose transport is this
-    /// connection.
     pub(crate) fn with_remote<T>(
         &self,
         repo: &git2::Repository,
@@ -106,8 +99,6 @@ impl HttpsRemote {
     }
 }
 
-/// A failed fetch as paw reports it: what went wrong in the transport, if
-/// it was the transport.
 fn explain(error: git2::Error, failure: Option<Failure>) -> SyncError {
     match failure {
         Some(Failure::TooBig(limit)) => PawError::Git(format!(
@@ -172,7 +163,6 @@ impl SmartSubtransport for Subtransport {
 
 type Body = Box<dyn Read + Send>;
 
-/// Sends one request and checks the answer is what git expects.
 fn request(shared: &Arc<Shared>, url: &str, post: Option<&[u8]>, expected_type: &str) -> Result<Body, git2::Error> {
     let post = post.map(|body| ("application/x-git-upload-pack-request", body));
     let response = shared.http.git(url, &shared.token, post).map_err(|e| shared.git_error(Failure::GitHub(e)))?;

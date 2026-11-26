@@ -34,7 +34,6 @@ pub struct EntryView {
     pub fields: Vec<FieldView>,
 }
 
-/// The current one-time code of an opened entry.
 #[derive(Clone, PartialEq, Eq, uniffi::Record)]
 pub struct OtpCode {
     /// The digits, e.g. `"123456"`.
@@ -67,8 +66,6 @@ impl std::fmt::Debug for OpenedEntry {
     }
 }
 
-/// The fields of `doc` that are neither the user name nor the web address,
-/// without values.
 fn field_views(doc: &EntryDoc) -> Vec<FieldView> {
     doc.other_fields()
         .iter()
@@ -77,12 +74,10 @@ fn field_views(doc: &EntryDoc) -> Vec<FieldView> {
 }
 
 impl OpenedEntry {
-    /// `doc`, decrypted from a file whose content id is `content_id`.
     pub fn new(doc: EntryDoc, content_id: Vec<u8>) -> Arc<Self> {
         Arc::new(Self { doc: Mutex::new(Some(doc)), content_id })
     }
 
-    /// Decrypted bytes of a file whose content id is `content_id`.
     pub fn decrypted(plaintext: Vec<u8>, content_id: Vec<u8>) -> Result<Arc<Self>, PawError> {
         Ok(Self::new(EntryDoc::parse(plaintext)?, content_id))
     }
@@ -103,7 +98,6 @@ impl OpenedEntry {
         self.read(EntryDoc::duplicate)
     }
 
-    /// The content id of the file the text was decrypted from.
     pub(crate) fn content_id(&self) -> &[u8] {
         &self.content_id
     }

@@ -38,9 +38,7 @@ use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
-/// Format and version, the first bytes of every copy file.
 pub const MAGIC: &[u8; 8] = b"PAWCOPY1";
-/// What every copy file's name ends with.
 pub const SUFFIX: &str = ".copy";
 /// No copy file is larger. Entries are at most 1 MiB (`store::read`).
 pub const MAX_FILE_BYTES: u64 = 2 << 20;
@@ -117,7 +115,6 @@ pub struct Meta {
     pub boot_id: String,
 }
 
-/// Appends `bytes` with a one- or two-byte big-endian length.
 fn put_field(out: &mut Vec<u8>, bytes: &[u8], two_byte_len: bool) {
     if two_byte_len {
         out.extend((bytes.len() as u16).to_be_bytes());
@@ -127,7 +124,6 @@ fn put_field(out: &mut Vec<u8>, bytes: &[u8], two_byte_len: bool) {
     out.extend_from_slice(bytes);
 }
 
-/// Reads bytes off the front of a slice, failing on any shortfall.
 struct Reader<'a>(&'a [u8]);
 
 impl<'a> Reader<'a> {
@@ -207,13 +203,11 @@ impl Meta {
         Ok(meta)
     }
 
-    /// How long the copy was sealed for, in milliseconds.
     pub fn ttl_ms(&self) -> i64 {
         self.deadline_wall_ms.saturating_sub(self.created_wall_ms)
     }
 }
 
-/// Grows `buf` with zeros to a multiple of `bucket`.
 fn pad(buf: &mut Vec<u8>, bucket: usize) {
     let padded = buf.len().div_ceil(bucket).max(1) * bucket;
     buf.resize(padded, 0);

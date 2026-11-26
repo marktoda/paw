@@ -88,7 +88,6 @@ struct Identity {
     decryption_key: Option<pgp::packet::PublicKey>,
     /// Or why its authentication slot can't log in.
     ssh_key: Result<SshPublicKey, KeyError>,
-    /// How VERIFY must carry the PIN.
     pin_kdf: PinKdf,
 }
 
@@ -264,7 +263,6 @@ impl KeySession {
         self.lock().card_busy
     }
 
-    /// Applies the background limit, then says what the PIN stage shows.
     pub(crate) fn pin_prompt(&self) -> PinPrompt {
         self.apply_background_limit();
         let state = self.lock();
@@ -376,7 +374,6 @@ impl KeySession {
         self.log().line(if held { "PIN held" } else { "PIN not held (dropped while it was checked)" });
     }
 
-    /// Drops the held PIN; `why` is for the key log.
     fn drop_pin(&self, why: &str) {
         self.lock().pin = None;
         self.log().line(format!("PIN dropped ({why})"));
@@ -583,8 +580,6 @@ enum Verified {
     Blocked,
 }
 
-/// The error for a library failure during `step`: the reader's, or the
-/// card's status word if it refused, or the library's own text.
 pub(crate) fn card_error(wire: &Wire, step: &str, error: impl std::fmt::Display) -> KeyError {
     if wire.failed() {
         return KeyError::KeyRemoved;
@@ -670,7 +665,6 @@ impl<'a> CardJob<'a> {
                 return Ok(Verified::Yes);
             }
             Verify::NotVerified { tries_left: Some(tries) } => tries,
-            // The card did not say: read the counter.
             Verify::NotVerified { tries_left: None } => self.read_tries()?,
             Verify::Blocked => 0,
             Verify::Other(sw) => return Err(apdu::unexpected("verifying the PIN", sw)),

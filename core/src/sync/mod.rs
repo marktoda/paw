@@ -1,12 +1,5 @@
 //! Keeping the local copy of the password store in step with the git host.
 //!
-//! This is the whole of paw's use of libgit2: [`clone_with_transfer`], the
-//! fetch, the integrate, [`commit`] and the push, plus the unpushed
-//! [`queue`]. The network ones take a [`Connection`], which the caller
-//! opens once and may use for several of them; see `transport` for why
-//! that matters. [`operation`] runs a whole sync on one connection, so one
-//! login.
-//!
 //! A push only ever fast-forwards. If the remote has moved, it fails with
 //! [`PushError::NotFastForward`] and changes nothing.
 
@@ -72,14 +65,11 @@ crate::fault::workflow_error!(SyncError);
 /// to stop.
 pub type TransferCallback<'a> = &'a mut dyn FnMut(TransferProgress) -> bool;
 
-/// How far a clone or fetch has got.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransferProgress {
-    /// Objects received so far.
     pub received_objects: u32,
-    /// Objects the host is sending in all; 0 until it has said.
+    /// 0 until the host has said.
     pub total_objects: u32,
-    /// Bytes of the pack received so far.
     pub received_bytes: u64,
 }
 
@@ -89,7 +79,6 @@ impl From<TransferProgress> for crate::key::TaskProgress {
     }
 }
 
-/// The shortest time between two progress reports: at most ten a second.
 pub const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Decides which of libgit2's progress updates (one per object, and more
@@ -110,7 +99,6 @@ impl ProgressThrottle {
         Self { interval, last: None, stopped: false }
     }
 
-    /// Whether to report `update`, arriving at `now`. Records it if so.
     pub fn should_report(&mut self, now: Instant, update: TransferProgress) -> bool {
         if self.stopped {
             return false;
@@ -129,7 +117,6 @@ impl ProgressThrottle {
         report
     }
 
-    /// Nothing more is reported.
     pub fn stop(&mut self) {
         self.stopped = true;
     }
@@ -195,8 +182,6 @@ pub(crate) fn begin_fetch(store: &StoreLock, repo: &Repository) -> Result<Fetchi
     begin_fetch_within(store, repo, FETCH_WAIT)
 }
 
-/// [`begin_fetch`], waiting at most `wait` for another fetch of the store
-/// to end (a background refresh waits only briefly: [`PawError::StoreBusy`]).
 pub(crate) fn begin_fetch_within(store: &StoreLock, repo: &Repository, wait: Duration) -> Result<Fetching, PawError> {
     let fetching = store.fetching(wait)?;
     crate::lock::remove_stale_fetch_locks(store.repo());
@@ -208,7 +193,6 @@ pub(crate) fn begin_fetch_within(store: &StoreLock, repo: &Repository, wait: Dur
     Ok(fetching)
 }
 
-/// The refs in the private fetch namespace, with their targets.
 fn fetched_refs(repo: &Repository) -> Result<Vec<(String, git2::Oid)>, PawError> {
     let mut found = Vec::new();
     for reference in repo.references().map_err(git_err)? {
@@ -222,10 +206,9 @@ fn fetched_refs(repo: &Repository) -> Result<Vec<(String, git2::Oid)>, PawError>
     Ok(found)
 }
 
-/// Publishes what a fetch received: each fetched branch becomes
-/// `refs/remotes/origin/<branch>`, and the private refs go. The ref
-/// updates are the critical section, so the store lock is held; the fetch
-/// lock is released at the end.
+/// Publishes what a fetch received. The ref updates are the critical
+/// section, so the store lock is held; the fetch lock is released at the
+/// end.
 pub(crate) fn publish_fetched(held: &Exclusive, repo: &Repository, fetching: Fetching) -> Result<(), PawError> {
     debug_assert!(repo.workdir().is_none_or(|dir| held.covers(dir)));
     let fetched = fetched_refs(repo)?;
@@ -240,8 +223,6 @@ pub(crate) fn publish_fetched(held: &Exclusive, repo: &Repository, fetching: Fet
         }
     }
     drop(fetching);
-    // A record of a push that is no longer on the network (its process
-    // died, or it could not be cleared in time) goes too.
     if let Some(dir) = repo.workdir()
         && !StoreLock::for_repo(dir).push_in_flight()
     {
@@ -254,9 +235,6 @@ pub(crate) fn publish_fetched(held: &Exclusive, repo: &Repository, fetching: Fet
     Ok(())
 }
 
-/// Fetches all branches over `connection` without the store lock, then
-/// takes it and publishes them. Returns the remote's default branch, if it
-/// has one, and the lock, held, for what comes next.
 pub(crate) fn fetch_branches(
     connection: &Connection,
     store: &StoreLock,
@@ -270,10 +248,6 @@ pub(crate) fn fetch_branches(
     Ok((default, held))
 }
 
-/// Every branch of the remote is mirrored under `origin/`: first into a
-/// private namespace, without the store lock, then moved to
-/// `refs/remotes/origin/*` with it held ([`publish_fetched`]).
-///
 /// Fetches all branches through `remote`, whose transport the caller has
 /// chosen (SSH here, GitHub's HTTPS in `crate::github`), and returns the
 /// remote's default branch, if it has one. Both transports fetch exactly
@@ -314,9 +288,7 @@ pub(crate) fn current_branch(repo: &Repository) -> Result<(String, String), PawE
 }
 
 /// Clones the remote's default branch into `dir`, which must be empty or
-/// not exist yet, reporting how far it has got to `progress` (throttled as
-/// [`ProgressThrottle`] says), which returns `false` to stop. An empty
-/// repository is not an error here.
+/// not exist yet. An empty repository is not an error here.
 pub fn clone_with_transfer(
     connection: &Connection,
     remote: &Remote,
@@ -374,7 +346,7 @@ pub fn refused_remote(dir: &Path) -> Result<Vec<RefusedPath>, Fault> {
 }
 
 /// Commits `contents` as the file `path` (relative to the store, `/`
-/// separated) on the current branch, and nothing else. Returns the commit id.
+/// separated) on the current branch, and nothing else.
 ///
 /// The commit is built from the branch's tree, not from the working copy,
 /// and the file reaches the working copy through libgit2's checkout. A
@@ -399,7 +371,6 @@ pub fn commit(
 
 /// One change to one file in a commit made by [`commit_edits`].
 pub(crate) enum TreeEdit<'a> {
-    /// Add or replace the file `path` with `contents`.
     Write { path: &'a str, contents: &'a [u8] },
     /// Remove the file `path`, which must be a regular file in the tree.
     Remove { path: &'a str },
@@ -439,7 +410,7 @@ fn check_disk_path(dir: &Path, path: &str) -> Result<(), PawError> {
 }
 
 /// Commits `edits` on the current branch as one commit, and changes
-/// nothing else; see [`commit`] for the protections. Returns the commit id.
+/// nothing else; see [`commit`] for the protections.
 /// `held` is the store's lock: the whole commit, from reading `HEAD` to the
 /// checkout, is one critical section.
 pub(crate) fn commit_edits(
@@ -462,8 +433,6 @@ pub(crate) fn commit_edits(
         .map_err(git_err)?;
     let base = parent.tree().map_err(git_err)?;
 
-    // Every folder on the way must be a real folder in the tree (or not
-    // exist yet), and the entry itself a regular file (or not exist yet).
     for path in edits.iter().flat_map(TreeEdit::paths) {
         history::check_tree_path(&base, path)?;
         check_disk_path(dir, path)?;

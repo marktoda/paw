@@ -26,7 +26,6 @@ pub struct HeldBack {
     /// The `.gpg-id` that governs the entry now, e.g. `work/.gpg-id`;
     /// `None` if it can't be read.
     pub gpg_id: Option<String>,
-    /// Who the waiting ciphertext is encrypted for.
     pub encrypted_for: Vec<crate::recipients::Recipient>,
     /// The key lines of that `.gpg-id` now.
     pub recipients: Vec<String>,
@@ -36,11 +35,9 @@ pub struct HeldBack {
 /// Where a held-back change's folder's list of keys stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum HeldBackList {
-    /// The person has accepted it on this device.
     Accepted,
     /// Not accepted yet. Until it is, paw cannot encrypt to it either.
     NotAccepted,
-    /// paw can't read it.
     Unreadable,
 }
 
@@ -126,7 +123,6 @@ pub enum LeftReason {
     Unreadable,
 }
 
-/// A held-back change [`reencrypt_each`] left, and why.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct LeftHeldBack {
     /// As in [`HeldBack::id`] when it was looked at.
@@ -141,17 +137,14 @@ pub struct ReencryptCheck {
     /// Held-back changes paw can encrypt for their folder's new list, once
     /// the key has opened them: one touch each.
     pub ready: u32,
-    /// The others, and why not.
     pub left: Vec<LeftHeldBack>,
 }
 
-/// What [`reencrypt_each`] did.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ReencryptReport {
     /// Held-back changes now encrypted for exactly their folder's list:
     /// ordinary waiting changes again.
     pub reencrypted: u32,
-    /// Still held back, and why.
     pub left: Vec<LeftHeldBack>,
 }
 
@@ -165,8 +158,6 @@ pub enum OpenFailure<S = SyncError> {
     Stop(S),
 }
 
-/// What the key's failure to open one change means: that change is left
-/// (not encrypted for this key, or damaged), or the whole run stops.
 impl<S: From<KeyError>> From<KeyError> for OpenFailure<S> {
     fn from(error: KeyError) -> Self {
         match error {
@@ -186,7 +177,6 @@ pub type OpenEach<'a, S = SyncError> =
 /// this many looks in a row.
 const MOST_LOOKS_AGAIN: u32 = 3;
 
-/// How [`reencrypt_each`] stopped early.
 enum Ended<S> {
     Failed(SyncError),
     Stopped(S),
@@ -198,7 +188,6 @@ impl<S, E: Into<SyncError>> From<E> for Ended<S> {
     }
 }
 
-/// A held-back change, looked at for re-encrypting.
 enum Look {
     Ready { path: String, blob: Oid },
     Left(LeftReason),
@@ -308,7 +297,6 @@ fn reencrypt_each_until<S>(
     let mut written: std::collections::HashSet<(String, Oid)> = std::collections::HashSet::new();
     let mut moved = 0;
     loop {
-        // 1. The next one to do, read under the shared lock.
         let next = {
             let held = held_back(dir, state_dir)?;
             let _reading = StoreLock::for_repo(dir).shared()?;
@@ -330,7 +318,7 @@ fn reencrypt_each_until<S>(
         total = total.max(done + 1);
         progress(done, total);
 
-        // 2. Opened with no lock held, unless the same ciphertext already was.
+        // Opened with no lock held, unless the same ciphertext already was.
         if let std::collections::hash_map::Entry::Vacant(slot) = texts.entry(blob) {
             match open(&item, &bytes) {
                 Ok(text) => {
@@ -344,8 +332,6 @@ fn reencrypt_each_until<S>(
             }
         }
 
-        // 3. Encrypted for the folder's list and written, if the queue is
-        // still what was read.
         let Some(text) = texts.get(&blob) else {
             return Err(Fault::local("internal: a held-back change's text went missing").into());
         };

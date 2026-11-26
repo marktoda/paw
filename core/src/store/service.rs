@@ -16,8 +16,7 @@
 //! in its `xn--` form by UTS-46 ([`ascii_host`]), on both sides. So the
 //! entries `bücher.example` and `xn--bcher-kva.example` both match
 //! `https://xn--bcher-kva.example`, and `pаypal.com` spelled with a
-//! Cyrillic `а` is `xn--pypal-4ve.com`, a stranger to `paypal.com`. How a
-//! host is shown is [`display_host`].
+//! Cyrillic `а` is `xn--pypal-4ve.com`, a stranger to `paypal.com`.
 //!
 //! **Name matches** ([`match_site`]). Many stores name entries without a
 //! top-level domain: `bankofamerica`, `bank/bankofamerica`,
@@ -28,13 +27,6 @@
 //! for `www.barclays.co.uk`, `alice` (not `github`) for `alice.github.io`.
 //! Whole parts only, at least three letters or digits, plain ASCII, never a
 //! `xn--` label, never an IP address or a dotless host.
-//!
-//! Eligible parts ([`names_site`]): the entry's own name, and its direct
-//! parent folder unless that is a category word (`bank`, `web`, `mail`,
-//! [`CATEGORY_FOLDERS`]); neither when a host comes earlier in the path
-//! (`github.com/bankofamerica` is a user on github.com). So
-//! `bankofamerica/alice` matches bankofamerica.com, `bank/chase` does not
-//! match bank.com, and `web/fastmail` does not match web.com.
 //!
 //! A name carries no domain, so `bankofamerica.co` has the same name as
 //! `bankofamerica.com`. Every name match is therefore classed by the
@@ -87,8 +79,6 @@ pub fn ascii_host(text: &str) -> Option<String> {
     is_host(&host).then_some(host)
 }
 
-/// Whether `text` is a URL scheme: a letter, then letters, digits, `+`, `-`
-/// or `.`.
 fn is_scheme(text: &str) -> bool {
     let mut chars = text.chars();
     chars.next().is_some_and(|c| c.is_ascii_alphabetic())
@@ -124,11 +114,8 @@ pub(crate) fn registrable(host: &str) -> Option<&str> {
     psl::domain_str(host)
 }
 
-/// The shortest name that may match a site.
 pub const MIN_NAME_LEN: usize = 3;
 
-/// `text` in lower case without spaces, `-` and `_`, if what is left is at
-/// least [`MIN_NAME_LEN`] ASCII letters and digits.
 fn squeeze(text: &str) -> Option<String> {
     let key: String = text
         .chars()
@@ -178,9 +165,6 @@ pub fn service_host(service: String) -> Option<String> {
     host_of(&service)
 }
 
-/// Whether `part` is a plain ASCII host name with a dot: letters, digits
-/// and inner `-` in each label, and a last label with a letter (so no IP
-/// address).
 fn is_plain_host(part: &str) -> bool {
     if part.len() > 253 || part.starts_with('.') || part.ends_with('.') {
         return false;

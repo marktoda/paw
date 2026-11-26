@@ -44,8 +44,6 @@ enum AutoFillKind: Equatable, Sendable, CaseIterable {
         }
     }
 
-    // MARK: Words
-
     /// How a fill starts: "Fill github.com", "Fill code for github.com".
     var fillVerb: String {
         switch self {
@@ -81,8 +79,6 @@ enum AutoFillKind: Equatable, Sendable, CaseIterable {
         }
     }
 
-    // MARK: The fill
-
     /// What this kind takes from `opened`, which is still open. A code is
     /// the one current at `nowMs`; with under 3 seconds left, the next one,
     /// which is still good once the page sends it.
@@ -116,7 +112,6 @@ enum AutoFillCredential: Equatable, Sendable {
     case oneTimeCode(String)
 }
 
-/// What a kind took from an opened entry.
 struct AutoFillTaken {
     /// `nil` when the entry has nothing of this kind to fill.
     let credential: AutoFillCredential?

@@ -97,16 +97,12 @@ impl SshSigner for Counting<'_> {
     }
 }
 
-/// How many changes are waiting ([`super::queue::waiting`]). Called with
-/// the store's lock held.
+/// Called with the store's lock held.
 fn waiting(dir: &Path) -> Result<u32, SyncError> {
     let repo = super::guard::open(dir)?;
     Ok(super::queue::waiting(&repo)?.commits.len() as u32)
 }
 
-/// Fetches on `connection` (no store lock during the transfer), then with
-/// the lock publishes and integrates into `report`. Returns what
-/// [`SyncReport::integrate`] does, and the lock, still held.
 fn fetch_and_integrate(
     connection: &Connection,
     store: &StoreLock,
@@ -120,7 +116,6 @@ fn fetch_and_integrate(
     Ok((waiting, held))
 }
 
-/// The current branch and its tip.
 fn branch_tip(dir: &Path) -> Result<(git2::Repository, String, git2::Oid), SyncError> {
     let repo = super::guard::open(dir)?;
     let (branch, _) = current_branch(&repo)?;
@@ -192,8 +187,6 @@ fn run_on(
     // counting and checking the waiting changes, and recording a push
     // run with it.
     let store = StoreLock::for_repo(dir);
-    // One send at a time per store, from before it reads what to push
-    // until the result is recorded; a refresh does not take it.
     let pushing = if send { Some(store.pushing(crate::lock::FETCH_WAIT)?) } else { None };
     let (waiting, held) = fetch_and_integrate(connection, &store, dir, &mut report, reborrow(&mut progress))?;
     let Some(mut waiting) = waiting else {

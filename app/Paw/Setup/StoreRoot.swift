@@ -76,7 +76,6 @@ final class StoreRootModel {
         }
     }
 
-    /// Setup if it is not done, else Home.
     func route() {
         guard let base = base ?? makeBase() else { return }
         gitHub?.reload()
@@ -141,7 +140,6 @@ final class StoreRootModel {
             startOver: { [weak self] in self?.startOver() })
     }
 
-    /// Home on the cloned store, with the key enrolled at setup.
     private func openHome() {
         guard let base else { return }
         let location = base.location, stateDir = location.stateDir.path
