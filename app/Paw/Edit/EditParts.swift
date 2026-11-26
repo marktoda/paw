@@ -267,11 +267,7 @@ struct RecipientsReviewScreen: View {
     static func grouped(_ line: String) -> String {
         let hex = line.filter { !$0.isWhitespace }
         guard hex.allSatisfy(\.isHexDigit) else { return line }
-        return stride(from: 0, to: hex.count, by: 4).map { offset in
-            let start = hex.index(hex.startIndex, offsetBy: offset)
-            let end = hex.index(start, offsetBy: 4, limitedBy: hex.endIndex) ?? hex.endIndex
-            return String(hex[start..<end])
-        }.joined(separator: " ")
+        return fingerprintGroups(text: hex).joined(separator: " ")
     }
 
     private func accept() {

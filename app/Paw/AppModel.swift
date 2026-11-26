@@ -659,11 +659,7 @@ extension Recipient {
         case .fingerprint(let fingerprint): hex = fingerprint
         case .hidden: return "Hidden"
         }
-        return stride(from: 0, to: hex.count, by: 4).map { offset -> String in
-            let start = hex.index(hex.startIndex, offsetBy: offset)
-            let end = hex.index(start, offsetBy: 4, limitedBy: hex.endIndex) ?? hex.endIndex
-            return String(hex[start..<end])
-        }.joined(separator: " ")
+        return fingerprintGroups(text: hex).joined(separator: " ")
     }
 }
 

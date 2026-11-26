@@ -222,11 +222,7 @@ struct FingerprintText: View {
             prefix = String(fingerprint[...colon]) + "\n"
             hash = fingerprint[fingerprint.index(after: colon)...]
         }
-        let groups = stride(from: 0, to: hash.count, by: 4).map { offset -> String in
-            let start = hash.index(hash.startIndex, offsetBy: offset)
-            let end = hash.index(start, offsetBy: 4, limitedBy: hash.endIndex) ?? hash.endIndex
-            return String(hash[start..<end])
-        }
+        let groups = fingerprintGroups(text: String(hash))
         let rows = stride(from: 0, to: groups.count, by: perLine).map { first in
             groups[first..<min(first + perLine, groups.count)].joined(separator: " ")
         }
