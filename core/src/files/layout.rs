@@ -31,13 +31,10 @@ pub const ONE_TIME_CODES_ON: &str = "one-time-codes-on";
 pub const KEY_LOG_PREFIX: &str = "key-log.";
 pub const STORE_LOCK: &str = "store.lock";
 
-/// Where the store of `state_dir` is checked out.
 pub fn repo_dir(state_dir: &Path) -> PathBuf {
     state_dir.join(REPO)
 }
 
-/// The state directory of a repository checked out at `<state>/repo`;
-/// `None` for a repository anywhere else.
 pub(crate) fn state_dir_of(repo: &Path) -> Option<&Path> {
     if repo.file_name()? != REPO {
         return None;
@@ -60,7 +57,6 @@ pub(crate) fn holds_store(repo: &Path) -> bool {
     std::fs::symlink_metadata(repo.join(crate::path::GPG_ID)).is_ok_and(|found| found.is_file())
 }
 
-/// Where the store kept in `state_dir` is checked out.
 #[uniffi::export]
 pub fn store_repo_dir(state_dir: String) -> String {
     repo_dir(Path::new(&state_dir)).to_string_lossy().into_owned()

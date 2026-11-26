@@ -1,12 +1,6 @@
 //! The repositories the person granted paw's GitHub App, for the setup
 //! picker.
 //!
-//! `GET /user/installations` lists where the app is installed that the
-//! person can see; `GET /user/installations/{id}/repositories` lists each
-//! installation's repositories the person can see. Both are paged (100 a
-//! page) to the end, within caps. Choosing one gives the SSH address setup
-//! already takes; the token is never used to push.
-//!
 //! The list is what the person granted, most recently pushed first. paw
 //! does not look inside a repository to guess whether it is a pass store:
 //! the person picks, and setup's own checks say if it is not one.
@@ -17,11 +11,8 @@ use serde::Deserialize;
 use super::http::Http;
 use super::{Endpoints, GitHubError, Secret};
 
-/// One page of a list.
 const PER_PAGE: u32 = 100;
-/// The most installation pages read.
 const MAX_INSTALLATION_PAGES: u32 = 10;
-/// The most repository pages read per installation (5,000 repositories).
 const MAX_REPOSITORY_PAGES: u32 = 50;
 
 /// A repository the person granted paw, as the picker shows it.
@@ -41,19 +32,17 @@ pub struct GitHubRepository {
     /// When something was last pushed, as GitHub writes it
     /// (`2026-11-20T09:12:00Z`), if ever.
     pub pushed_at: Option<String>,
-    /// The installation it was granted through.
     pub installation_id: u64,
 }
 
-/// What the picker shows.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum RepositoryList {
     /// The app is not installed anywhere the person can see, or no
     /// repository is granted: "Install paw on the repository" with
     /// `install_url`, then list again.
     NotInstalled { install_url: String },
-    /// The granted repositories, likely stores first, then most recently
-    /// pushed. `install_url` adds more.
+    /// The granted repositories, most recently pushed first.
+    /// `install_url` adds more.
     Repositories { repositories: Vec<GitHubRepository>, install_url: String },
 }
 
@@ -95,7 +84,6 @@ fn unreadable() -> GitHubError {
     GitHubError::refused("GitHub's list was not readable")
 }
 
-/// What a REST answer's status means, if not 200.
 pub(crate) fn api_status(status: u16) -> Result<(), GitHubError> {
     match status {
         200 => Ok(()),
@@ -105,19 +93,16 @@ pub(crate) fn api_status(status: u16) -> Result<(), GitHubError> {
     }
 }
 
-/// Reads one page with `get`, which returns the status and the body.
 fn page<T: for<'de> Deserialize<'de>>(http: &Http, token: &Secret, path: &str) -> Result<T, GitHubError> {
     let answer = http.api_get(path, token)?;
     api_status(answer.status)?;
     serde_json::from_slice(&answer.body).map_err(|_| unreadable())
 }
 
-/// A date GitHub wrote, kept only if it looks like one.
 fn plausible_date(text: Option<String>) -> Option<String> {
     text.filter(|t| t.len() <= 40 && t.chars().all(|c| c.is_ascii_alphanumeric() || "-:+.".contains(c)))
 }
 
-/// A branch name, kept only if it is plain enough to show.
 fn plausible_branch(text: Option<String>) -> String {
     text.filter(|t| !t.is_empty() && t.len() <= 255 && !t.chars().any(char::is_control))
         .unwrap_or_else(|| "main".into())

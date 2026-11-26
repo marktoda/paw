@@ -1,7 +1,4 @@
-//! paw's own files, below everything that uses them: where each lives
-//! ([`layout`]), how one is written and read, the `name=value` state files
-//! ([`values`]) and the bounded lists of entries ([`list`]), and the
-//! content id of an entry's file.
+//! paw's own files, below everything that uses them.
 //!
 //! The app and the AutoFill extension both write some of these files.
 //! There is no file lock (iOS kills a suspended process that holds one in a
@@ -33,7 +30,6 @@ pub(crate) const MAX_FILE_BYTES: u64 = 1 << 20;
 /// A temporary file this old belongs to a writer that died mid-write.
 const STALE_TEMP: Duration = Duration::from_secs(60);
 
-/// Why [`read_bounded`] refused a file.
 #[derive(Debug)]
 struct TooLarge;
 
@@ -45,13 +41,10 @@ impl std::fmt::Display for TooLarge {
 
 impl std::error::Error for TooLarge {}
 
-/// Whether `error` is [`read_bounded`] refusing a file over its limit.
 pub(crate) fn too_large(error: &std::io::Error) -> bool {
     error.get_ref().is_some_and(|inner| inner.is::<TooLarge>())
 }
 
-/// The bytes of `path`: `None` if there is no such file, an error (see
-/// [`too_large`]) if it holds more than `max` bytes.
 pub(crate) fn read_bounded(path: &Path, max: u64) -> std::io::Result<Option<Vec<u8>>> {
     let file = match std::fs::File::open(path) {
         Ok(file) => file,
@@ -66,10 +59,6 @@ pub(crate) fn read_bounded(path: &Path, max: u64) -> std::io::Result<Option<Vec<
     Ok(Some(bytes))
 }
 
-/// Writes `bytes` to `path`, readable by this app only, through a
-/// temporary file named `temp_prefix…` beside it that is flushed to disk
-/// and renamed over it. Temporary files a dead writer left behind are
-/// removed first.
 pub(crate) fn write_atomic(path: &Path, temp_prefix: &str, bytes: &[u8]) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
     sweep(dir, temp_prefix);
@@ -91,9 +80,6 @@ pub(crate) fn write_atomic(path: &Path, temp_prefix: &str, bytes: &[u8]) -> std:
     written
 }
 
-/// Removes dead writers' temporary files before a write. Best effort: one
-/// that can't be removed now is tried again on the next write, and never
-/// stops this one.
 fn sweep(dir: &Path, temp_prefix: &str) {
     let _ = remove_temps(dir, temp_prefix, false);
 }
@@ -127,7 +113,6 @@ pub(crate) fn remove_temps(dir: &Path, temp_prefix: &str, all: bool) -> std::io:
     Ok(())
 }
 
-/// Removes `path`; already gone is fine.
 pub(crate) fn remove_if_there(path: &Path) -> std::io::Result<()> {
     match std::fs::remove_file(path) {
         Err(e) if e.kind() != ErrorKind::NotFound => Err(e),

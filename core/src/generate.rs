@@ -17,9 +17,7 @@ use rand::rngs::OsRng;
 use rand::{CryptoRng, RngCore};
 use zeroize::Zeroizing;
 
-/// The fewest characters a policy may ask for.
 pub const MIN_LENGTH: u32 = 4;
-/// The most characters a policy may ask for.
 pub const MAX_LENGTH: u32 = 128;
 
 const LOWERCASE: &str = "abcdefghijklmnopqrstuvwxyz";
@@ -32,7 +30,6 @@ pub const SYMBOLS: &str = "!#%+-.=?@_";
 /// Characters that are easy to misread for one another in many fonts.
 pub const LOOK_ALIKES: &str = "0O1lIo";
 
-/// What to generate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
 pub struct PasswordPolicy {
     /// Characters, from [`MIN_LENGTH`] to [`MAX_LENGTH`].
@@ -75,7 +72,6 @@ impl Default for PasswordPolicy {
     }
 }
 
-/// Why a policy cannot be used.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PolicyError {
     #[error("a password must be {MIN_LENGTH} to {MAX_LENGTH} characters long")]
@@ -84,7 +80,6 @@ pub enum PolicyError {
     NoClasses,
 }
 
-/// The characters of each class that is on, look-alikes removed if asked.
 fn classes(policy: &PasswordPolicy) -> Vec<Vec<char>> {
     [
         (policy.lowercase, LOWERCASE),
@@ -135,7 +130,6 @@ pub fn uniform_below<R: RngCore + ?Sized>(rng: &mut R, n: u32) -> u32 {
     }
 }
 
-/// A password for `policy`, from the OS random number generator.
 pub fn generate(policy: &PasswordPolicy) -> Result<Zeroizing<String>, PolicyError> {
     generate_with(&mut OsRng, policy)
 }

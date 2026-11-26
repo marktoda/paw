@@ -51,7 +51,6 @@ impl Setup {
 
 #[uniffi::export]
 impl Setup {
-    /// Opens the setup kept in `state_dir` and resumes where it stopped.
     #[uniffi::constructor]
     pub fn open(state_dir: String) -> Result<Arc<Self>, SetupError> {
         let flow = SetupFlow::open(&PathBuf::from(state_dir))?;
@@ -177,7 +176,6 @@ impl StoreSync {
         clock
     }
 
-    /// A sync as a sign-in task on the key session; see the module comment.
     fn with_key(
         self: Arc<Self>,
         port: Arc<KeyPort>,
@@ -229,7 +227,6 @@ pub struct ServerKeys {
 
 #[uniffi::export]
 impl StoreSync {
-    /// Opens the store set up in `state_dir`.
     #[uniffi::constructor]
     pub fn open(state_dir: String) -> Result<Arc<Self>, SyncError> {
         let state_dir = PathBuf::from(state_dir);
@@ -237,7 +234,6 @@ impl StoreSync {
         Ok(Arc::new(Self { state_dir, address, last_login: Mutex::new(None) }))
     }
 
-    /// The store's address, as shown in Settings.
     pub fn address(&self) -> String {
         self.address.display()
     }

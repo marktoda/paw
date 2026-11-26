@@ -57,7 +57,6 @@ pub enum PawError {
     /// exactly as it is.
     #[error("this entry is not text, so paw cannot show or edit it")]
     NotText,
-    /// A value that cannot be stored in an entry as given.
     #[error("{0}")]
     InvalidField(String),
     /// The entry has no live Face ID copy (none was kept, it ended, or the

@@ -13,7 +13,6 @@ const SCHEME: &str = "otpauth://";
 /// Longest period accepted, in seconds. Real ones are 30 or 60.
 const MAX_PERIOD: u32 = 300;
 
-/// The hash a code is made with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Algorithm {
     Sha1,
@@ -21,10 +20,8 @@ pub enum Algorithm {
     Sha512,
 }
 
-/// Why a one-time-code line cannot make a code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OtpProblem {
-    /// Not an `otpauth://` address at all.
     NotAnAddress,
     /// `otpauth://hotp`: codes counted by use, not by time.
     CounterBased,
@@ -53,7 +50,6 @@ impl OtpProblem {
     }
 }
 
-/// A time-based code generator: the secret and its settings.
 pub struct Totp {
     secret: Zeroizing<Vec<u8>>,
     algorithm: Algorithm,
@@ -73,7 +69,6 @@ impl std::fmt::Debug for Totp {
     }
 }
 
-/// Whether `text` starts with `otpauth://`, in any letter case.
 pub(crate) fn is_address(text: &str) -> bool {
     text.get(..SCHEME.len()).is_some_and(|start| start.eq_ignore_ascii_case(SCHEME))
 }
@@ -160,7 +155,6 @@ impl Totp {
             _ => return Err(OtpProblem::NotAnAddress),
         }
         let query = rest.split_once('?').map_or("", |(_, query)| query);
-        // The first of each parameter counts.
         let mut secret = None;
         let mut algorithm = None;
         let mut digits = None;
@@ -249,13 +243,11 @@ impl Totp {
 }
 
 fn mac<M: Mac + KeyInit>(key: &[u8], message: &[u8]) -> Zeroizing<Vec<u8>> {
-    // HMAC takes a key of any length.
     let mut mac = <M as KeyInit>::new_from_slice(key).expect("HMAC accepts any key length");
     mac.update(message);
     Zeroizing::new(mac.finalize().into_bytes().to_vec())
 }
 
-/// Characters left as they are in a label; everything else is `%XX`.
 fn label_safe(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'@')
 }

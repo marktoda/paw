@@ -1,22 +1,11 @@
 //! First-run setup (design 2.4) as a state machine, with no UI in it.
 //!
-//! ```text
-//! ReadKey ─► Address ─► CheckHost ─┬─────────────────► NeedPin ─► (Cloning) ─► TestDecrypt ─► Done
-//!                                  └─► ConfirmHost ─┘
-//! ```
-//!
 //! Each step is one call. A failure is a [`SetupError`] and leaves the flow
 //! at the step that failed, so the same call can be tried again. The step
 //! reached is saved in a small file in the state directory after every
 //! change, with nothing secret in it. If the app is killed,
 //! [`SetupFlow::open`] picks up where it stopped; a download that was
 //! interrupted is removed and starts again.
-//!
-//! What it keeps where in the state directory is in [`crate::files::layout`].
-//!
-//! The steps that need the key run as key tasks on the key session, which
-//! share the PIN typed once (see `ffi::sync`); they go through the
-//! `begin_*` and `finish_*` steps here.
 
 pub(crate) mod keyed;
 
@@ -94,7 +83,6 @@ pub enum SetupError {
 
 crate::fault::workflow_error!(SetupError);
 
-/// Why a key cannot set up a store.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Enum)]
 pub enum UnusableKeyReason {
     /// Its PIN KDF is one paw cannot follow. No PIN was sent to it.
@@ -109,13 +97,10 @@ pub enum UnusableKeyReason {
     AuthenticationKeyNotEd25519 { algorithm: String },
     #[error("it has no decryption key")]
     NoDecryptionKey,
-    /// Another key than the one read at "Your key".
     #[error("this is not the key read at the start of setup; plug that one in")]
     NotTheKeyRead,
-    /// The key read from the card is not the one its fingerprint names.
     #[error("the key read from the card does not match its fingerprint")]
     CardKeyMismatch,
-    /// The SSH key kept at "Your key" can't be read back as ed25519.
     #[error("{detail}")]
     SshKeyUnreadable { detail: String },
 }
@@ -129,7 +114,6 @@ fn failed(error: impl std::fmt::Display) -> SetupError {
 /// recipient `.gpg-id` names.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SetupWriteReadiness {
-    /// Entries can be saved at the top of the store with no further step.
     pub can_save: bool,
     /// Lines of the top-level `.gpg-id` paw has no key for (or cannot tell
     /// which pinned key they mean). Add those keys, or bind the lines, to
@@ -140,7 +124,6 @@ pub struct SetupWriteReadiness {
     pub folders_needing_keys: Vec<String>,
 }
 
-/// The pinned keys could not be read or written, said as setup's step.
 fn write_failed(fault: Fault) -> SetupError {
     match fault {
         Fault::Local { detail } => failed(format!("could not record the store's keys: {detail}")),
@@ -212,7 +195,6 @@ impl Saved {
         Self { step: Step::ReadKey, key: None, address: None, notice: None, opened: None }
     }
 
-    /// What the file holds, a line break in a value read as a space.
     fn pairs(&self) -> Vec<(&'static str, String)> {
         let mut pairs = vec![("step", self.step.name().to_owned())];
         if let Some(key) = &self.key {
@@ -254,7 +236,6 @@ impl Saved {
             notice: value("notice").as_deref().and_then(notice_from),
             opened: value("opened"),
         };
-        // Every step past the first needs the key, and past Address the address.
         let complete = match step {
             Step::ReadKey => true,
             Step::Address => saved.key.is_some(),
@@ -301,7 +282,6 @@ fn notice_from(line: &str) -> Option<AddressNotice> {
     })
 }
 
-/// The setup state machine for one store, kept in `state_dir`.
 pub struct SetupFlow {
     dir: PathBuf,
     saved: Saved,
@@ -321,8 +301,6 @@ fn remove_dir(path: &Path, _held: &crate::lock::Exclusive) -> Result<(), SetupEr
 }
 
 impl SetupFlow {
-    /// Opens the setup kept in `state_dir`, creating the directory if need
-    /// be, and resumes where it stopped.
     pub fn open(state_dir: &Path) -> Result<Self, SetupError> {
         std::fs::create_dir_all(state_dir).map_err(failed)?;
         let saved = match values::read(&state_dir.join(layout::SETUP)).map_err(failed)? {
@@ -350,7 +328,6 @@ impl SetupFlow {
         Ok(flow)
     }
 
-    /// Where the store is cloned to.
     pub fn repo_dir(&self) -> PathBuf {
         crate::files::layout::repo_dir(&self.dir)
     }
@@ -389,7 +366,6 @@ impl SetupFlow {
             .unwrap_or(0)
     }
 
-    /// Where setup is now.
     pub fn state(&self) -> SetupState {
         let address = self.saved.address.clone().unwrap_or_default();
         if let Some(key) = &self.unconfirmed {
@@ -417,8 +393,6 @@ impl SetupFlow {
         }
     }
 
-    /// Refuses `doing` unless setup is at one of `steps` with no host key
-    /// waiting to be confirmed.
     fn expect(&self, steps: &[Step], doing: &str) -> Result<(), SetupError> {
         if self.unconfirmed.is_some() {
             return Err(self.wrong_step(doing));
@@ -426,7 +400,6 @@ impl SetupFlow {
         self.at(steps, doing)
     }
 
-    /// Refuses `doing` unless setup is at one of `steps`.
     fn at(&self, steps: &[Step], doing: &str) -> Result<(), SetupError> {
         if steps.contains(&self.saved.step) { Ok(()) } else { Err(self.wrong_step(doing)) }
     }
@@ -511,7 +484,6 @@ impl SetupFlow {
         self.go(Step::Address)
     }
 
-    /// Sets the store's address from what the person typed.
     pub fn set_address(&mut self, text: &str) -> Result<SetupState, SetupError> {
         self.expect(&[Step::Address, Step::CheckHost], "set the address")?;
         let parsed = StoreAddress::parse(text).map_err(|problem| SetupError::BadAddress { problem })?;
@@ -570,10 +542,6 @@ impl SetupFlow {
         remote.ok_or_else(|| SetupError::WrongStep { message: "the host has not been checked".into() })
     }
 
-    /// Switches the store's address to the other way in to its host
-    /// ([`RemoteFailure::NoConnection`]'s `fallback`), keeping the
-    /// repository, and goes back to the host check. Refused for a host that
-    /// has none.
     pub fn use_port_fallback(&mut self) -> Result<SetupState, SetupError> {
         self.expect(&[Step::CheckHost, Step::NeedPin], "use another port")?;
         let address = self.address()?;
@@ -593,8 +561,7 @@ impl SetupFlow {
         self.go(Step::NeedPin)
     }
 
-    /// The start of a download: the remote to clone and where to, with any
-    /// earlier attempt removed. Setup is at "cloning" until
+    /// Setup is at "cloning" until
     /// [`Self::finish_download`] or [`Self::abandon_download`].
     pub(crate) fn begin_download(&mut self) -> Result<(sync::Remote, PathBuf), SetupError> {
         self.expect(&[Step::NeedPin], "download")?;
@@ -621,9 +588,6 @@ impl SetupFlow {
         self.authentication.used_at(Instant::now());
     }
 
-    /// The end of a download: checks what arrived is a pass store and moves
-    /// on to the test decrypt, or starts the download over.
-    ///
     /// A repository with no commits, or with no `.gpg-id` at the top, is
     /// the wrong address rather than a failed download: setup goes back to
     /// the address, with the address kept.
@@ -650,7 +614,6 @@ impl SetupFlow {
         self.go(Step::TestDecrypt)
     }
 
-    /// The repository is not a store paw can use: back to the address.
     fn wrong_repository(&mut self, why: SetupError) -> Result<SetupState, SetupError> {
         remove_dir(&self.repo_dir(), &self.exclusive()?)?;
         self.saved.opened = None;

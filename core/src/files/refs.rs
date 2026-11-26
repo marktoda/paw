@@ -8,13 +8,10 @@ const HEADS: &str = "refs/heads/";
 const FETCHED: &str = "refs/paw/fetch";
 const PUSHING: &str = "refs/paw/pushing/";
 
-/// The branch `short`'s name without `refs/heads/`; `None` for a ref that
-/// is not a branch.
 pub(crate) fn short(branch: &str) -> Option<&str> {
     branch.strip_prefix(HEADS)
 }
 
-/// The remote's branch `short` as last fetched: `refs/remotes/origin/<short>`.
 pub(crate) fn remote_tracking(short: &str) -> String {
     format!("refs/remotes/origin/{short}")
 }
@@ -34,7 +31,6 @@ pub(crate) fn is_pushing(name: &str) -> bool {
     name.starts_with(PUSHING)
 }
 
-/// Every branch of the remote, mirrored into the private fetch namespace.
 pub(crate) fn fetch_refspec() -> String {
     format!("+{HEADS}*:{FETCHED}/*")
 }

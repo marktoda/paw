@@ -36,9 +36,6 @@ impl ListItem for String {
     }
 }
 
-/// What one list file is: its name, the JSON key of its list, how many
-/// items it keeps, the marker that switches it on if it has one, and the
-/// turn its writers take in this process.
 pub(crate) struct ListKind {
     pub file: &'static str,
     pub key: &'static str,
@@ -68,7 +65,6 @@ impl ListFile {
         self.state_dir.join(self.kind.file)
     }
 
-    /// The turn of this process's writers.
     fn turn(&self) -> MutexGuard<'static, ()> {
         self.kind.writing.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -77,7 +73,6 @@ impl ListFile {
         self.kind.on_marker.map(|name| self.state_dir.join(name))
     }
 
-    /// Whether the list is kept: always, unless it has a switch that is off.
     pub fn enabled(&self) -> bool {
         self.marker().is_none_or(|marker| marker.exists())
     }
@@ -162,7 +157,6 @@ impl ListFile {
         Ok(true)
     }
 
-    /// Removes the file.
     pub fn clear(&self) -> std::io::Result<()> {
         let _turn = self.turn();
         remove_if_there(&self.path())

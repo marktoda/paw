@@ -73,7 +73,6 @@ const TAG_SEIPD: u8 = 18;
 /// GnuPG's own AEAD packet, written when both sides advertise OCB.
 const TAG_GNUPG_AEAD: u8 = 20;
 
-/// How long a packet's body is, as its header declares it.
 enum Length {
     Exactly(usize),
     /// Partial body lengths or "until the end of the file": the body is
@@ -85,8 +84,6 @@ fn truncated() -> PawError {
     PawError::NotAnEntry("the file ends in the middle of a packet header".into())
 }
 
-/// Reads one packet header at `at`. Returns the tag, the declared body
-/// length and where the body starts.
 fn header(bytes: &[u8], at: usize) -> Result<(u8, Length, usize), PawError> {
     let byte = |i: usize| bytes.get(i).copied().ok_or_else(truncated);
     let number = |from: usize, len: usize| -> Result<usize, PawError> {
@@ -130,7 +127,6 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02X}")).collect()
 }
 
-/// The recipient named by the body of one recipient packet.
 fn recipient(body: &[u8]) -> Result<Recipient, PawError> {
     let damaged = || PawError::NotAnEntry("a recipient packet is too short".into());
     match body.first() {
@@ -220,8 +216,6 @@ pub(crate) fn key_id(fingerprint: &str) -> Option<&str> {
     }
 }
 
-/// Whether one of `recipients` names the key with `fingerprint` (upper-case
-/// hex, no spaces): by that fingerprint, or by its key ID.
 pub(crate) fn names_key(recipients: &[Recipient], fingerprint: &str) -> bool {
     recipients.iter().any(|recipient| recipient.names(fingerprint))
 }
@@ -277,8 +271,6 @@ pub fn access_for(recipients: &EntryRecipients, card_fingerprint: &str) -> Acces
     }
 }
 
-/// [`entry_recipients`] and [`access_for`] in one step, for the bytes of an
-/// entry file.
 pub fn access(bytes: &[u8], card_fingerprint: &str) -> Access {
     match entry_recipients(bytes) {
         Ok(recipients) => access_for(&recipients, card_fingerprint),
