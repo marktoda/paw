@@ -97,6 +97,15 @@ impl From<SyncError> for Failure<WorkFailure> {
     }
 }
 
+impl From<Failure<SetupError>> for Failure<WorkFailure> {
+    fn from(failure: Failure<SetupError>) -> Self {
+        match failure {
+            Failure::Key(error) => Self::Key(error),
+            Failure::Work(error) => error.into(),
+        }
+    }
+}
+
 impl From<SetupError> for Failure<WorkFailure> {
     fn from(error: SetupError) -> Self {
         Self::Work(WorkFailure::Setup(error))

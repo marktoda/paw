@@ -19,6 +19,7 @@
 //! `begin_*` and `finish_*` steps here.
 
 pub mod address;
+pub(crate) mod keyed;
 pub mod outcome;
 
 use std::path::{Path, PathBuf};

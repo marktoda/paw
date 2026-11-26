@@ -15,15 +15,12 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
 use crate::key::{
-    After, DecryptWork, Halt, KeyError, KeyIdentity, KeyPort, KeyPurpose, KeySession, KeyTouch, LoginPurpose,
-    SessionSigner, TaskSide, Work,
+    After, DecryptWork, Halt, KeyError, KeyPort, KeyPurpose, KeySession, KeyTouch, LoginPurpose, Work,
 };
 use crate::task::{App, KeyOutcome, KeyTask, KeyTaskListener, TaskFailure, relay};
 use crate::key::touch_clock::{TouchClock, TouchExpectation};
-use crate::setup::{SetupError, SetupFlow, SetupState, SetupWriteReadiness};
-use crate::store::PassStore;
-use crate::sync::{Cloned, ConnectError, Connection, Route};
-use crate::PawError;
+use crate::setup::{SetupError, SetupFlow, SetupState, SetupWriteReadiness, keyed};
+use crate::sync::Route;
 use crate::sync::address::{StoreAddress, saved_address};
 use crate::sync::hosts::{KnownHosts, is_bundled};
 use crate::sync::operation;
@@ -66,50 +63,6 @@ impl Setup {
         // A panic in a step cannot leave the saved state half written: it is
         // written whole, by rename.
         lock(&self.flow)
-    }
-
-    /// The download, in a sign-in task's thread, once the PIN is verified.
-    /// The setup state is locked only between network steps, so `state`
-    /// answers while it runs.
-    fn run_download(&self, task: &dyn TaskSide, signer: &SessionSigner) -> Result<KeyOutcome, TaskFailure> {
-        let cancelled = || TaskFailure::Key(KeyError::Cancelled);
-        let (remote, repo) = self.flow().begin_download()?;
-        if task.cancelled() {
-            let _ = self.flow().abandon_download();
-            return Err(cancelled());
-        }
-        let connection = match Connection::open(&remote, signer) {
-            Ok(connection) => connection,
-            Err(error) => {
-                let mut flow = self.flow();
-                let _ = flow.abandon_download();
-                if task.cancelled() {
-                    return Err(cancelled());
-                }
-                return Err(match error {
-                    ConnectError::Key(error) => error.into(),
-                    ConnectError::Remote(error) => flow.connection_error(&remote, error, None).into(),
-                });
-            }
-        };
-        self.flow().note_login();
-        let mut progress = |update: TransferProgress| {
-            if task.cancelled() {
-                return false;
-            }
-            *lock(&self.transfer) = Some(update);
-            task.report_progress(update.received_objects, update.total_objects)
-        };
-        let cloned = crate::sync::clone_with_transfer(&connection, &remote, &repo, Some(&mut progress));
-        let said = connection.remote_said();
-        drop(connection);
-        if !task.begin_commit() {
-            let _ = self.flow().abandon_download();
-            return Err(cancelled());
-        }
-        let cloned: Result<Cloned, PawError> = cloned;
-        self.flow().finish_download(&remote, cloned, said)?;
-        Ok(KeyOutcome::SignedIn)
     }
 }
 
@@ -162,7 +115,10 @@ impl Setup {
         *lock(&self.transfer) = None;
         let expected = self.flow().expected_key();
         let setup = self.clone();
-        let work: Work<App> = Box::new(move |task, signer| setup.run_download(task, &signer));
+        let work: Work<App> = Box::new(move |task, signer| {
+            keyed::download(&setup.flow, &setup.transfer, task, &signer)?;
+            Ok(KeyOutcome::SignedIn)
+        });
         KeyTask::of(port.sign_in_then(LoginPurpose::Clone, relay(listener), expected, work))
     }
 
@@ -171,28 +127,16 @@ impl Setup {
     /// for saving, accepts the store's recipients, records the key as the
     /// store's enrolled key (and gives it to `port`), and setup is done.
     pub fn test_decrypt_with_key(self: Arc<Self>, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
-        let (picked, repo, expected) = {
-            let flow = self.flow();
-            (flow.pick_test_entry(), flow.repo_dir(), flow.expected_key())
-        };
-        let opened = picked.and_then(|entry| {
-            let store = PassStore::open(repo.to_string_lossy().into_owned()).map_err(SetupError::from)?;
-            Ok((entry, store))
-        });
-        let (entry, store) = match opened {
+        let expected = self.flow().expected_key();
+        let (entry, store) = match keyed::test_entry(&self.flow) {
             Ok(found) => found,
             Err(error) => return KeyTask::failed(KeyPurpose::CheckKey { entry: None }, listener, error.into()),
         };
         let setup = self.clone();
         let enrol = port.clone();
         let opened_entry = entry.clone();
-        let after: After<App> = Box::new(move |session| {
-            let key = session.decryption_key()?;
-            let identity = KeyIdentity::of(session.card_info());
-            setup.flow().finish_test_decrypt(opened_entry, key, &identity)?;
-            enrol.set_enrolled_key(Some(identity));
-            Ok(())
-        });
+        let after: After<App> =
+            Box::new(move |session| Ok(keyed::after_check(&setup.flow, &enrol, session, opened_entry)?));
         KeyTask::of(port.check_key_then(store, entry, relay(listener), expected, after))
     }
 
