@@ -32,13 +32,10 @@ const URL_KEYS: [&str; 5] = ["url", "link", "website", "web", "site"];
 /// shows these as ordinary fields.
 const MORE_ADDRESS_KEYS: [&str; 4] = ["uri", "loginurl", "siteurl", "websiteurl"];
 
-/// `key` in lower case without spaces, `-` and `_`: `Login URL` is `loginurl`.
 fn folded_key(key: &str) -> String {
     key.chars().filter(|c| !matches!(c, ' ' | '-' | '_')).flat_map(char::to_lowercase).collect()
 }
 
-/// Whether `key` names a web address, in any of the ways
-/// [`EntryDoc::addresses`] reads.
 fn is_address_key(key: &str) -> bool {
     let key = folded_key(key);
     URL_KEYS.iter().chain(&MORE_ADDRESS_KEYS).any(|known| *known == key)
@@ -60,7 +57,6 @@ pub(crate) enum FieldRefusal {
     ValueReadsAsOther,
 }
 
-/// Why `key` cannot be a field's key, checked in this order.
 pub(crate) fn key_refusal(key: &str) -> Option<FieldRefusal> {
     if key.trim().is_empty() {
         Some(FieldRefusal::KeyBlank)
@@ -73,7 +69,6 @@ pub(crate) fn key_refusal(key: &str) -> Option<FieldRefusal> {
     }
 }
 
-/// Why `value` cannot be a field's value.
 pub(crate) fn value_refusal(value: &str) -> Option<FieldRefusal> {
     if has_line_break(value) {
         Some(FieldRefusal::ValueLineBreak)
@@ -115,7 +110,6 @@ impl Ending {
 }
 
 struct Line {
-    /// The line without its ending.
     text: Zeroizing<String>,
     ending: Ending,
 }
@@ -144,7 +138,6 @@ fn split_field(text: &str) -> Option<(&str, &str)> {
 }
 
 fn kind(text: &str) -> Kind<'_> {
-    // Where `part`, a piece of `text`, starts in it.
     let offset = |part: &str| part.as_ptr() as usize - text.as_ptr() as usize;
     if is_otp(text) {
         return Kind::Otp { start: offset(text.trim_start()) };
@@ -185,7 +178,6 @@ pub struct EntryDoc {
 }
 
 impl std::fmt::Debug for EntryDoc {
-    /// Says how many lines there are and nothing about what is in them.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "EntryDoc {{ {} lines, contents withheld }}", self.lines.len())
     }
@@ -244,7 +236,6 @@ impl EntryDoc {
         self.lines.first().map_or("", |line| line.text.as_str())
     }
 
-    /// Every `key: value` line after the password, in order.
     fn all_fields(&self) -> impl Iterator<Item = Field<'_>> {
         self.lines.iter().enumerate().skip(1).filter_map(|(line, l)| match kind(&l.text) {
             Kind::Field { key, value } => Some(Field { line, key, value }),
@@ -252,7 +243,6 @@ impl EntryDoc {
         })
     }
 
-    /// The field with the first of `keys` that the entry has.
     fn first_of(&self, keys: &[&str]) -> Option<Field<'_>> {
         keys.iter()
             .find_map(|wanted| self.all_fields().find(|field| same_key(field.key, wanted)))
@@ -291,8 +281,6 @@ impl EntryDoc {
         self.lines.iter().skip(1).any(|line| matches!(kind(&line.text), Kind::Otp { .. }))
     }
 
-    /// The first one-time-code line's address, from `otpauth://` on: a
-    /// line may also be written `otpauth: otpauth://...`.
     fn otp_address(&self) -> Option<(usize, usize)> {
         self.lines.iter().enumerate().skip(1).find_map(|(index, line)| {
             match kind(&line.text) {
@@ -309,7 +297,6 @@ impl EntryDoc {
         Some(Totp::from_address(&self.lines[index].text[start..]))
     }
 
-    /// Whether the first one-time-code line makes codes.
     pub fn makes_codes(&self) -> bool {
         matches!(self.one_time_code(), Some(Ok(_)))
     }
@@ -343,7 +330,6 @@ impl EntryDoc {
         Zeroizing::new(notes[start..end].join("\n"))
     }
 
-    /// The line ending a new line gets: whatever the first line uses.
     fn usual_ending(&self) -> Ending {
         match self.lines.first().map(|line| line.ending) {
             Some(Ending::CrLf) => Ending::CrLf,
@@ -415,7 +401,6 @@ impl EntryDoc {
 /// Editing helpers for the add and edit screens. Each changes only the
 /// lines it is about; every other line keeps its bytes and its place.
 impl EntryDoc {
-    /// An empty document, for a new entry.
     pub fn empty() -> Self {
         Self { lines: Vec::new() }
     }
@@ -436,9 +421,8 @@ impl EntryDoc {
         }
     }
 
-    /// Sets the field found by `find` (the first of a group of keys) to
-    /// `value`; adds `key: value` if there is none, and removes the line if
-    /// `value` is empty.
+    /// Sets the first of `keys` the entry has to `value`; adds `key: value`
+    /// if there is none, and removes the line if `value` is empty.
     fn set_preferred(&mut self, keys: &[&str], key: &str, value: &str) -> Result<(), PawError> {
         no_line_break("a field", value)?;
         let existing = self.first_of(keys).map(|field| (field.line, field.key.to_owned()));

@@ -20,7 +20,6 @@ use super::CardInfo;
 use crate::PawError;
 use crate::files::values::{self, Values};
 
-/// The file in the state directory. Public data only.
 const TEMP_PREFIX: &str = ".enrolled-key.tmp-";
 
 /// The serial printed on a key, from its `ident` ("0006:12345678" is
@@ -35,9 +34,7 @@ pub fn key_serial(ident: String) -> String {
 pub struct KeyIdentity {
     /// Manufacturer and serial, e.g. "0006:12345678".
     pub ident: String,
-    /// Hex fingerprint of the decryption key.
     pub decryption_fingerprint: Option<String>,
-    /// Hex fingerprint of the authentication (SSH) key.
     pub authentication_fingerprint: Option<String>,
 }
 
@@ -45,7 +42,6 @@ pub struct KeyIdentity {
 /// different key from the one this store was set up with".
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct KeyMismatch {
-    /// The key the store was set up with.
     pub enrolled: KeyIdentity,
     /// The key plugged in now.
     pub presented: KeyIdentity,
@@ -68,20 +64,16 @@ impl KeyIdentity {
         }
     }
 
-    /// The serial, as printed on the key; see [`key_serial`].
     pub fn serial(&self) -> String {
         key_serial(self.ident.clone())
     }
 
-    /// Whether `presented` is this key: the same decryption key, and the
-    /// same authentication key where this record knows it.
     pub(crate) fn accepts(&self, presented: &KeyIdentity) -> bool {
         same(&self.decryption_fingerprint, &presented.decryption_fingerprint)
             && (self.authentication_fingerprint.is_none()
                 || same(&self.authentication_fingerprint, &presented.authentication_fingerprint))
     }
 
-    /// The mismatch if `presented` is another key.
     pub(crate) fn check(&self, presented: &KeyIdentity) -> Option<KeyMismatch> {
         (!self.accepts(presented)).then(|| KeyMismatch { enrolled: self.clone(), presented: presented.clone() })
     }
@@ -130,7 +122,6 @@ fn io(what: &str, e: std::io::Error) -> PawError {
     PawError::Store(format!("could not {what} the enrolled key: {e}"))
 }
 
-/// Records `identity` as the store's key, replacing any earlier one.
 pub fn save_enrolment(state_dir: &Path, identity: &KeyIdentity) -> Result<(), PawError> {
     if identity.ident.contains(['\n', '\r'])
         || [&identity.decryption_fingerprint, &identity.authentication_fingerprint]

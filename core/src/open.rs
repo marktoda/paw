@@ -19,8 +19,6 @@ use crate::entry::opened::OpenedEntry;
 use crate::files::content_id;
 use crate::store::PassStore;
 
-/// `plaintext`, decrypted from the file whose content id is `content_id`,
-/// as an open entry.
 pub(crate) fn opened(mut plaintext: Zeroizing<Vec<u8>>, content_id: Vec<u8>) -> Result<Arc<OpenedEntry>, PawError> {
     OpenedEntry::decrypted(std::mem::take(&mut *plaintext), content_id)
 }

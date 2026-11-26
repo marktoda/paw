@@ -2,9 +2,8 @@
 //!
 //! A card with KDF turned on expects VERIFY to carry a hash of the PIN,
 //! not the PIN: an iterated and salted S2K (RFC 4880 3.7.1.3) with SHA-256
-//! or SHA-512. Sent the raw PIN, it counts a wrong try. The session reads
-//! the object when the key is plugged in and derives what it sends from it;
-//! a setting paw does not know is refused before any VERIFY.
+//! or SHA-512. Sent the raw PIN, it counts a wrong try. A setting paw does
+//! not know is refused before any VERIFY.
 
 use sha2::{Digest, Sha256, Sha512};
 use zeroize::Zeroizing;

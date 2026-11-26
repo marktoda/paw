@@ -1,21 +1,6 @@
 //! The plugged-in key: one [`KeySession`] per connected card, and what the
 //! card is asked to do for a task (the tasks themselves are
 //! [`crate::task`]'s).
-//!
-//! The session holds what lasts while the key stays plugged in: what the
-//! card said about itself, and the PIN once it has been verified.
-//!
-//! - [`port`]: where keys are plugged in and out.
-//! - [`session`]: one connected card; the PIN; one card job at a time.
-//! - [`task`]: what the key needs of the task it works for.
-//! - [`apdu`]: the card's commands and status words, defined once.
-//! - [`card`]: the card as the openpgp-card library reads it.
-//! - [`wire`]: the transport wrapper that sees every command go out.
-//! - [`touch`]: when to show `Touch`.
-//! - [`decrypt`]: an entry, split into what needs the card and what not.
-//! - [`signer`]: an SSH signer that signs through the session.
-//! - [`enrolment`]: the key the store was set up with; no PIN to another.
-//! - [`keylog`]: what paw and the card said to each other, for diagnosis.
 
 pub(crate) mod apdu;
 pub(crate) mod card;
@@ -69,7 +54,6 @@ pub const MAX_PIN_LEN: usize = 127;
 /// screen; none carries a PIN, plaintext or APDU data.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
 pub enum KeyError {
-    /// The PIN typed was wrong.
     #[error("wrong PIN, {tries_left} tries left")]
     WrongPin { tries_left: u8 },
     /// The PIN paw was holding no longer works (it was changed on another
@@ -88,7 +72,7 @@ pub enum KeyError {
     /// paw has then dropped the PIN, and no try was used.
     #[error("paw forgot the PIN before the key was used")]
     PinForgotten,
-    /// Nobody touched the key in time. The PIN is still held.
+    /// The PIN is still held.
     #[error("the key wasn't touched in time")]
     TouchTimeout,
     /// The key was unplugged, or stopped answering, mid-operation. The PIN
@@ -119,7 +103,6 @@ pub enum KeyError {
     /// (an entry with hidden recipients that is for another key).
     #[error("this key couldn't open the entry: {detail}")]
     DecryptFailed { detail: String },
-    /// The reader or the card answered something unexpected.
     #[error("the key answered unexpectedly: {detail}")]
     Reader { detail: String },
     /// paw itself failed while the key was in use (a panic, a thread that

@@ -47,8 +47,6 @@ pub(crate) fn verify_pin(data: &[u8]) -> Zeroizing<Vec<u8>> {
     apdu
 }
 
-/// Whether a command header (CLA, INS, P1, P2) with or without data is a
-/// VERIFY that carries a PIN.
 pub(crate) fn carries_pin(header: [u8; 4], has_data: bool) -> bool {
     header[1] == VERIFY && header[2] == VERIFY_P1 && has_data
 }
@@ -175,7 +173,6 @@ pub(crate) fn sw_code(sw: u16) -> String {
     }
 }
 
-/// A status word in a few words.
 pub(crate) fn sw_words(sw: u16) -> String {
     match sw {
         SW_OK => "ok".into(),

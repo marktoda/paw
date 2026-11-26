@@ -1,11 +1,4 @@
 //! Opening an entry, split by what needs the card.
-//!
-//! [`Plan::new`] reads the entry and decides which recipient packets the
-//! plugged-in key can unwrap, with no card exchange: an entry for another
-//! key is refused here, before the PIN or a touch. [`Plan::decipher`] is the
-//! card's part, one PSO:DECIPHER per candidate (one for an entry that names
-//! this key, however many recipients it has). [`Plan::finish`] is the
-//! symmetric decryption, after the card is free again.
 
 use std::io::Read;
 use std::sync::Arc;
@@ -38,8 +31,6 @@ pub const MAX_DECIPHERS: usize = 1;
 
 use crate::entry::MAX_PLAINTEXT_BYTES;
 
-/// Reads decrypted (and possibly decompressed) text into `out`, refusing
-/// anything longer than [`MAX_PLAINTEXT_BYTES`].
 fn read_capped(from: &mut impl Read, out: &mut Vec<u8>) -> Result<(), String> {
     Read::take(from, MAX_PLAINTEXT_BYTES + 1)
         .read_to_end(out)
@@ -65,9 +56,6 @@ fn is_hidden(pkesk: &PublicKeyEncryptedSessionKey) -> bool {
 }
 
 pub(crate) struct Plan<'a> {
-    /// The one packet the card is asked to unwrap: the first addressed to
-    /// this key, or if none is, the first hidden one (see
-    /// [`MAX_DECIPHERS`]).
     candidates: Vec<PublicKeyEncryptedSessionKey>,
     edata: Edata<'a>,
 }
@@ -149,7 +137,7 @@ impl<'a> Plan<'a> {
                     return Err(Halt::Fail(apdu::unexpected("decrypting", sw)));
                 }
                 // The card answered; what it gave did not unwrap this
-                // packet. Try the next hidden one.
+                // packet.
                 _ => failure = KeyError::DecryptFailed { detail: error.to_string() },
             }
         }

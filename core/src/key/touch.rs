@@ -54,7 +54,6 @@ impl Drop for TouchWatch {
     }
 }
 
-/// Whether a policy can make the card wait for a touch.
 pub(crate) fn possible(policy: KeyTouch) -> bool {
     policy != KeyTouch::Off
 }

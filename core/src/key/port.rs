@@ -23,11 +23,9 @@ struct State {
     /// The key the store was set up with. While set, no task sends the PIN
     /// to another card.
     enrolled: Option<KeyIdentity>,
-    /// Where this process writes its key log, once set.
     log: Option<Arc<Sink>>,
 }
 
-/// The refusal for `session` if it is not `expected`.
 fn enrolment_check(expected: Option<&KeyIdentity>, session: &KeySession) -> Option<KeyMismatch> {
     expected.and_then(|expected| expected.check(&KeyIdentity::of(session.card_info())))
 }
@@ -60,8 +58,6 @@ impl KeyPort {
         }
     }
 
-    /// The refusal for `session` if tasks must not use it: it is not
-    /// `expected`.
     pub(crate) fn refusal(expected: Option<&KeyIdentity>, session: &KeySession) -> Option<KeyError> {
         enrolment_check(expected, session).map(|mismatch| KeyError::DifferentKey { mismatch: Box::new(mismatch) })
     }
@@ -73,7 +69,6 @@ impl KeyPort {
         enrolment_check(self.expected().as_ref(), &session)
     }
 
-    /// The state directory this process's key log is written to, if set.
     pub(crate) fn key_log_dir(&self) -> Option<String> {
         self.lock().log.as_ref().map(|sink| sink.dir().to_string_lossy().into_owned())
     }
@@ -169,7 +164,6 @@ impl KeyPort {
         self.key_log_dir().map(|dir| super::keylog::key_log_text(dir, utc_offset_secs)).unwrap_or_default()
     }
 
-    /// Deletes every process's key log in the folder this one writes to.
     pub fn clear_key_log(&self) -> Result<(), PawError> {
         self.key_log_dir().map_or(Ok(()), super::keylog::clear_key_log)
     }

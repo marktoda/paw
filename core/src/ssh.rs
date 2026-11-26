@@ -35,7 +35,6 @@ impl SshPublicKey {
         ED25519
     }
 
-    /// The key as the SSH protocol carries it.
     pub fn blob(&self) -> &[u8] {
         &self.blob
     }

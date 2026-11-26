@@ -4,8 +4,7 @@
 //! Each key session keeps a ring of its last lines in memory, and each
 //! process appends the same lines to its own small file in the store's
 //! state directory (`key-log.app`, `key-log.fill`), so the app can show
-//! what happened in the AutoFill extension too. [`key_log`] merges the
-//! files by time.
+//! what happened in the AutoFill extension too.
 //!
 //! What a line can hold, and nothing else:
 //!
@@ -58,8 +57,6 @@ pub(crate) struct Sink {
     file: Mutex<()>,
 }
 
-/// A process name as it may appear in a file name: lower-case letters and
-/// digits, at most 12, or "app".
 fn clean_process(process: &str) -> String {
     let cleaned: String =
         process.chars().filter(|c| c.is_ascii_alphanumeric()).map(|c| c.to_ascii_lowercase()).take(12).collect();
@@ -102,9 +99,8 @@ impl Sink {
         }
     }
 
-    /// Keeps the last [`KEEP_LINES`] lines, by writing them to a new file
-    /// and renaming it over the old one. The new file takes the protection
-    /// class of the folder, as every state file does.
+    /// The new file takes the protection class of the folder, as every
+    /// state file does.
     fn trim(&self, path: &Path) -> std::io::Result<()> {
         let text = read_text(path)?;
         let lines: Vec<&str> = text.lines().collect();
@@ -115,14 +111,12 @@ impl Sink {
     }
 }
 
-/// A log file's lines; an error if it is gone or not text.
 fn read_text(path: &Path) -> std::io::Result<String> {
     let bytes = crate::files::read_bounded(path, crate::files::MAX_FILE_BYTES)?
         .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))?;
     String::from_utf8(bytes).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
-/// One key session's log.
 pub(crate) struct KeyLog {
     started: Instant,
     sink: Option<Arc<Sink>>,
@@ -172,7 +166,6 @@ impl KeyLog {
     }
 
     /// One card command, after its answer (or the reader's failure).
-    /// `header` is CLA, INS, P1, P2; `has_data` whether it carried data.
     pub(crate) fn command(&self, header: [u8; 4], has_data: bool, sw: Option<u16>, round_trip: Duration, sent: Instant) {
         let since = sent.saturating_duration_since(self.started);
         let since = if self.coarse.load(Ordering::SeqCst) {
@@ -185,13 +178,11 @@ impl KeyLog {
             None => "reader failed".into(),
         };
         self.line(format!("→ {}: {answer} · {} ms · {since}", apdu::command_words(header, has_data), round_trip.as_millis()));
-        // The PIN has gone out: times are exact again.
         if apdu::carries_pin(header, has_data) {
             self.coarse.store(false, Ordering::SeqCst);
         }
     }
 
-    /// This session's lines, oldest first.
     pub(crate) fn text(&self, utc_offset_secs: i32) -> String {
         lock(&self.ring)
             .iter()
@@ -241,7 +232,6 @@ pub(crate) fn error_name(error: &KeyError) -> String {
     }
 }
 
-/// One line of the merged log.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct KeyLogLine {
     /// Milliseconds since 1970.
@@ -315,7 +305,6 @@ pub fn key_log_text(state_dir: String, utc_offset_secs: i32) -> String {
     key_log(state_dir, utc_offset_secs).iter().map(|line| line.render() + "\n").collect()
 }
 
-/// Deletes every process's key log in `state_dir`.
 pub fn clear_key_log(state_dir: String) -> Result<(), PawError> {
     let dir = Path::new(&state_dir);
     let Ok(entries) = std::fs::read_dir(dir) else { return Ok(()) };
