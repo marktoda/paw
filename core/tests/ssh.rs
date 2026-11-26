@@ -16,7 +16,8 @@ use paw_core::task::LoginPurpose;
 use paw_core::task::KeyTaskState;
 use paw_core::setup::SetupState;
 use paw_core::sim::{SimOptions, SimulatedKey};
-use paw_core::ssh::{SshPublicKey, SshSigner};
+use paw_core::key::SshSigner;
+use paw_core::ssh::SshPublicKey;
 use ring::signature::{ED25519, UnparsedPublicKey};
 
 fn key(decrypt_touch: bool, auth_touch: bool, extended_length: bool) -> Arc<SimulatedKey> {

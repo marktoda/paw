@@ -23,9 +23,9 @@ use std::thread::JoinHandle;
 
 use zeroize::Zeroizing;
 
-use super::{KeyOutcome, KeyPurpose, KeyTaskListener, KeyTaskState, LoginPurpose, TaskFailure};
+use super::{KeyOutcome, KeyPurpose, KeyTaskListener, KeyTaskState, LoginPurpose, TaskFailure, TaskProgress};
 use crate::key::keylog::error_name;
-use crate::key::{Halt, KeyError, KeySession, PinPrompt, TaskProgress, TaskSide};
+use crate::key::{Halt, KeyError, KeySession, PinPrompt, TaskSide};
 
 struct Inner {
     state: KeyTaskState,
@@ -239,23 +239,6 @@ impl TaskSide for TaskCore {
         self.set(KeyTaskState::Working { progress: None });
     }
 
-    fn report_progress(&self, progress: TaskProgress) -> bool {
-        if self.cancelled() || self.lock().state.is_final() {
-            return false;
-        }
-        self.set(KeyTaskState::Working { progress: Some(progress) });
-        !self.cancelled()
-    }
-
-    fn begin_commit(&self) -> bool {
-        let mut inner = self.lock();
-        if self.cancelled() || inner.state.is_final() {
-            return false;
-        }
-        inner.committing = true;
-        true
-    }
-
     fn wait_until(&self, done: &mut dyn FnMut() -> bool) -> Result<(), Halt> {
         let mut inner = self.lock();
         loop {
@@ -295,6 +278,46 @@ impl TaskSide for TaskCore {
             }
             inner = self.changed.wait(inner).unwrap_or_else(|poisoned| poisoned.into_inner());
         }
+    }
+}
+
+/// What the work after the key sees of the task it runs in. A cancel
+/// ends the task at once, whatever the work returns after it; the work
+/// asks only to stop early (between network steps, before the next
+/// change) and, before a change that must not happen once cancelled, to
+/// [`Self::commit`].
+pub(crate) struct Job<'a>(&'a TaskCore);
+
+impl Job<'_> {
+    pub(super) fn of(core: &TaskCore) -> Job<'_> {
+        Job(core)
+    }
+
+    pub(crate) fn cancelled(&self) -> bool {
+        self.0.cancelled()
+    }
+
+    /// Shows `Working` with `progress`. `false` once the task is cancelled
+    /// or has ended: the work should stop.
+    pub(crate) fn progress(&self, progress: TaskProgress) -> bool {
+        let core = self.0;
+        if core.cancelled() || core.lock().state.is_final() {
+            return false;
+        }
+        core.set(KeyTaskState::Working { progress: Some(progress) });
+        !core.cancelled()
+    }
+
+    /// From here on, cancel is too late and the task ends as the work
+    /// says. Fails with `Cancelled` if the cancel came first.
+    pub(crate) fn commit(&self) -> Result<(), TaskFailure> {
+        let core = self.0;
+        let mut inner = core.lock();
+        if core.cancelled() || inner.state.is_final() {
+            return Err(KeyError::Cancelled.into());
+        }
+        inner.committing = true;
+        Ok(())
     }
 }
 

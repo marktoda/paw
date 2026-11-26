@@ -21,7 +21,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use base64::Engine;
@@ -31,6 +31,7 @@ use serde_json::json;
 use super::remote::{
     AGENT, FLUSH, Pkt, SimRemote, advertisement, branches, build_pack, known_commits, parse_oid, pkt_line, split_pkt,
 };
+use crate::locked;
 use crate::PawError;
 use crate::github::GitHubAccount;
 use crate::github::device::{Cancel, PollClock};
@@ -41,9 +42,6 @@ use crate::github::session::{TokenVault, VaultError};
 pub const SIM_CLIENT_ID: &str = "Iv1.simulated-paw";
 pub const SIM_USER_CODE: &str = "WDJB-MJHT";
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|p| p.into_inner())
-}
 
 fn failed(what: &str, error: impl std::fmt::Display) -> PawError {
     PawError::Git(format!("simulated GitHub: could not {what}: {error}"))
@@ -144,7 +142,7 @@ impl Stall {
     /// Waits while armed, at most 30 seconds.
     fn wait(&self) {
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        let mut state = lock(&self.state);
+        let mut state = locked(&self.state);
         state.waiting += 1;
         self.changed.notify_all();
         while state.armed {
@@ -259,7 +257,7 @@ fn serve_one(stream: TcpStream, record: &Mutex<Vec<SimHttpRequest>>, handler: &H
     reader.read_exact(&mut body)?;
     let (path, query) = target.split_once('?').unwrap_or((&target, ""));
     let request = SimHttpRequest { method, path: path.to_owned(), query: query.to_owned(), headers, body };
-    lock(record).push(request.clone());
+    locked(record).push(request.clone());
     let reply = handler(&request);
 
     let mut out = stream;
@@ -384,26 +382,26 @@ impl SimGitHub {
         let record = Arc::new(Mutex::new(Vec::new()));
         let handling = shared.clone();
         let server = Server::start(record.clone(), Arc::new(move |request| handle(&handling, request)))?;
-        *lock(&shared.web) = server.url();
+        *locked(&shared.web) = server.url();
         Ok(Arc::new(Self { shared, record, server }))
     }
 
     pub fn requests(&self) -> Vec<SimHttpRequest> {
-        lock(&self.record).clone()
+        locked(&self.record).clone()
     }
 
     /// Every token issued that still works, access and refresh.
     pub fn live_tokens(&self) -> Vec<String> {
-        let state = lock(&self.shared.state);
+        let state = locked(&self.shared.state);
         state.access.keys().cloned().chain(state.refresh.iter().cloned()).collect()
     }
 
     pub fn all_tokens(&self) -> Vec<String> {
-        let state = lock(&self.shared.state);
+        let state = locked(&self.shared.state);
         let mut all: Vec<String> = state.access.keys().cloned().collect();
         all.extend(state.refresh.iter().cloned());
         all.extend(state.revoked.iter().cloned());
-        all.extend(lock(&ISSUED).iter().filter(|(port, _)| *port == self.server.port).map(|(_, t)| t.clone()));
+        all.extend(locked(&ISSUED).iter().filter(|(port, _)| *port == self.server.port).map(|(_, t)| t.clone()));
         all.sort();
         all.dedup();
         all
@@ -411,18 +409,18 @@ impl SimGitHub {
 
     /// Tokens revoked through `/credentials/revoke`.
     pub fn revoked_tokens(&self) -> Vec<String> {
-        lock(&self.shared.state).revoked.clone()
+        locked(&self.shared.state).revoked.clone()
     }
 
     pub fn endpoints(&self) -> crate::github::Endpoints {
         let url = self.server.url();
         let store = format!("{}/{}", self.shared.owner, self.shared.name);
-        crate::github::Endpoints::simulated(&url, &url, &lock(&self.shared.client_id), Some((store, self.shared.ssh_address.clone())))
+        crate::github::Endpoints::simulated(&url, &url, &locked(&self.shared.client_id), Some((store, self.shared.ssh_address.clone())))
     }
 
     /// Sets the poll interval and code lifetime the next code gets.
     pub fn set_timing(&self, interval: u64, expires_in: u64) {
-        let mut state = lock(&self.shared.state);
+        let mut state = locked(&self.shared.state);
         state.interval = interval;
         state.expires_in = expires_in;
     }
@@ -454,28 +452,28 @@ impl SimGitHub {
     }
 
     pub fn set_device_outcome(&self, outcome: SimDeviceOutcome) {
-        lock(&self.shared.state).outcome = outcome;
+        locked(&self.shared.state).outcome = outcome;
     }
 
     /// The person typed the code and pressed Authorise.
     pub fn authorise_pending(&self) {
-        if let Some(pending) = &mut lock(&self.shared.state).pending {
+        if let Some(pending) = &mut locked(&self.shared.state).pending {
             pending.decided = Some(true);
         }
     }
 
     pub fn set_installed(&self, installed: bool) {
-        lock(&self.shared.state).installed = installed;
+        locked(&self.shared.state).installed = installed;
     }
 
     /// Adds this many other repositories (not stores) to the installation.
     pub fn set_extra_repositories(&self, count: u32) {
-        lock(&self.shared.state).extra_repositories = count;
+        locked(&self.shared.state).extra_repositories = count;
     }
 
     /// The person revoked paw at GitHub: nothing issued works any more.
     pub fn revoke_authorisation(&self) {
-        let mut state = lock(&self.shared.state);
+        let mut state = locked(&self.shared.state);
         state.access.clear();
         state.refresh.clear();
     }
@@ -488,46 +486,46 @@ impl SimGitHub {
     }
 
     pub fn client_id(&self) -> String {
-        lock(&self.shared.client_id).clone()
+        locked(&self.shared.client_id).clone()
     }
 
     /// Expect another client id (to test that paw sends its own).
     pub fn set_client_id(&self, client_id: String) {
-        *lock(&self.shared.client_id) = client_id;
+        *locked(&self.shared.client_id) = client_id;
     }
 
     /// The person pressed Cancel.
     pub fn deny_pending(&self) {
-        if let Some(pending) = &mut lock(&self.shared.state).pending {
+        if let Some(pending) = &mut locked(&self.shared.state).pending {
             pending.decided = Some(false);
         }
     }
 
     pub fn has_pending_code(&self) -> bool {
-        lock(&self.shared.state).pending.is_some()
+        locked(&self.shared.state).pending.is_some()
     }
 
     pub fn set_expiring_tokens(&self, expiring: bool) {
-        lock(&self.shared.state).expiring = expiring;
+        locked(&self.shared.state).expiring = expiring;
     }
 
     /// Every access token stops working; refresh tokens still work.
     pub fn expire_access_tokens(&self) {
-        let mut state = lock(&self.shared.state);
+        let mut state = locked(&self.shared.state);
         state.access.clear();
     }
 
     /// Git requests are redirected to `url` (another host), or not.
     pub fn set_redirect_git(&self, url: Option<String>) {
-        lock(&self.shared.state).redirect_git = url;
+        locked(&self.shared.state).redirect_git = url;
     }
 
     pub fn set_drop_mid_pack(&self, drop: bool) {
-        lock(&self.shared.state).drop_mid_pack = drop;
+        locked(&self.shared.state).drop_mid_pack = drop;
     }
 
     pub fn request_count(&self) -> u32 {
-        lock(&self.record).len() as u32
+        locked(&self.record).len() as u32
     }
 }
 
@@ -536,16 +534,16 @@ impl SimGitHub {
     /// From now on, every pack stops halfway until [`Self::release_packs`]
     /// (or 30 seconds): a fetch stalled mid-transfer.
     pub fn stall_packs(&self) {
-        lock(&self.shared.stall.state).armed = true;
+        locked(&self.shared.stall.state).armed = true;
     }
 
     pub fn stalled_packs(&self) -> u32 {
-        lock(&self.shared.stall.state).waiting
+        locked(&self.shared.stall.state).waiting
     }
 
     /// Lets every stalled pack finish, and stalls no more.
     pub fn release_packs(&self) {
-        lock(&self.shared.stall.state).armed = false;
+        locked(&self.shared.stall.state).armed = false;
         self.shared.stall.changed.notify_all();
     }
 }
@@ -591,12 +589,12 @@ fn basic_token(request: &SimHttpRequest) -> Option<String> {
 fn issue(shared: &Shared, state: &mut State) -> serde_json::Value {
     state.issued += 1;
     let access = format!("ghu_sim{}{}", state.issued, random_hex(16));
-    let web = lock(&shared.web).clone();
+    let web = locked(&shared.web).clone();
     let port = web.rsplit(':').next().and_then(|p| p.parse().ok()).unwrap_or(0);
-    lock(&ISSUED).push((port, access.clone()));
+    locked(&ISSUED).push((port, access.clone()));
     if state.expiring {
         let refresh = format!("ghr_sim{}{}", state.issued, random_hex(16));
-        lock(&ISSUED).push((port, refresh.clone()));
+        locked(&ISSUED).push((port, refresh.clone()));
         state.access.insert(access.clone(), Some(refresh.clone()));
         state.refresh.push(refresh.clone());
         json!({
@@ -633,16 +631,16 @@ fn handle(shared: &Shared, request: &SimHttpRequest) -> Reply {
 
 fn device_code(shared: &Shared, request: &SimHttpRequest) -> Reply {
     let form = request.form();
-    if form.get("client_id") != Some(&*lock(&shared.client_id)) {
+    if form.get("client_id") != Some(&*locked(&shared.client_id)) {
         return Reply::status(404);
     }
-    let mut state = lock(&shared.state);
+    let mut state = locked(&shared.state);
     if state.outcome == SimDeviceOutcome::Disabled {
         return oauth_error("device_flow_disabled");
     }
     let device_code = random_hex(20);
     state.pending = Some(Pending { device_code: device_code.clone(), polls: 0, decided: None });
-    let web = lock(&shared.web).clone();
+    let web = locked(&shared.web).clone();
     Reply::json(
         200,
         json!({
@@ -657,10 +655,10 @@ fn device_code(shared: &Shared, request: &SimHttpRequest) -> Reply {
 
 fn access_token(shared: &Shared, request: &SimHttpRequest) -> Reply {
     let form = request.form();
-    if form.get("client_id") != Some(&*lock(&shared.client_id)) {
+    if form.get("client_id") != Some(&*locked(&shared.client_id)) {
         return oauth_error("incorrect_client_credentials");
     }
-    let mut state = lock(&shared.state);
+    let mut state = locked(&shared.state);
     match form.get("grant_type").map(String::as_str) {
         Some("urn:ietf:params:oauth:grant-type:device_code") => {
             let outcome = state.outcome;
@@ -724,7 +722,7 @@ fn revoke(shared: &Shared, request: &SimHttpRequest) -> Reply {
     let Ok(body) = serde_json::from_slice::<serde_json::Value>(&request.body) else {
         return Reply::status(422);
     };
-    let mut state = lock(&shared.state);
+    let mut state = locked(&shared.state);
     for credential in body["credentials"].as_array().into_iter().flatten().filter_map(|c| c.as_str()) {
         state.access.remove(credential);
         state.refresh.retain(|r| r != credential);
@@ -734,14 +732,14 @@ fn revoke(shared: &Shared, request: &SimHttpRequest) -> Reply {
 }
 
 fn authorised(shared: &Shared, token: Option<String>) -> bool {
-    token.is_some_and(|t| lock(&shared.state).access.contains_key(&t))
+    token.is_some_and(|t| locked(&shared.state).access.contains_key(&t))
 }
 
 fn installations(shared: &Shared, request: &SimHttpRequest) -> Reply {
     if !authorised(shared, bearer(request)) {
         return Reply::status(401);
     }
-    if !lock(&shared.state).installed {
+    if !locked(&shared.state).installed {
         return Reply::json(200, json!({ "total_count": 0, "installations": [] }));
     }
     Reply::json(
@@ -764,11 +762,11 @@ fn repositories(shared: &Shared, request: &SimHttpRequest) -> Reply {
     if request.path != format!("/user/installations/{INSTALLATION_ID}/repositories") {
         return Reply::status(404);
     }
-    let state = lock(&shared.state);
+    let state = locked(&shared.state);
     if !state.installed {
         return Reply::status(404);
     }
-    let web = lock(&shared.web).clone();
+    let web = locked(&shared.web).clone();
     let mut all = vec![store_json(shared, &web)];
     all.extend((0..state.extra_repositories).map(|i| other_json(shared, i)));
     let per_page: usize = request.query_value("per_page").and_then(|v| v.parse().ok()).unwrap_or(30).clamp(1, 100);
@@ -779,7 +777,7 @@ fn repositories(shared: &Shared, request: &SimHttpRequest) -> Reply {
 
 fn git(shared: &Shared, request: &SimHttpRequest, rest: &str) -> Reply {
     let (redirect, drop_mid_pack) = {
-        let state = lock(&shared.state);
+        let state = locked(&shared.state);
         (state.redirect_git.clone(), state.drop_mid_pack)
     };
     if let Some(to) = redirect {
@@ -811,7 +809,7 @@ fn git(shared: &Shared, request: &SimHttpRequest, rest: &str) -> Reply {
                 if drop_mid_pack {
                     reply.cut_at = Some(reply.body.len() / 2);
                 }
-                if lock(&shared.stall.state).armed {
+                if locked(&shared.stall.state).armed {
                     reply.stall = Some(shared.stall.clone());
                 }
                 reply
@@ -888,7 +886,7 @@ pub struct SimBystander {
 
 impl SimBystander {
     pub fn requests(&self) -> Vec<SimHttpRequest> {
-        lock(&self.record).clone()
+        locked(&self.record).clone()
     }
 
     pub fn start() -> Result<Arc<Self>, PawError> {
@@ -905,7 +903,7 @@ impl SimBystander {
     }
 
     pub fn request_count(&self) -> u32 {
-        lock(&self.record).len() as u32
+        locked(&self.record).len() as u32
     }
 }
 
@@ -921,7 +919,7 @@ pub struct SimTokenVault {
 impl SimTokenVault {
     /// A copy of every item (for scanning in tests).
     pub fn items(&self) -> HashMap<String, Vec<u8>> {
-        lock(&self.items).clone()
+        locked(&self.items).clone()
     }
 }
 
@@ -948,7 +946,7 @@ impl SimTokenVault {
     }
 
     pub fn is_empty(&self) -> bool {
-        lock(&self.items).is_empty()
+        locked(&self.items).is_empty()
     }
 }
 
@@ -958,16 +956,16 @@ impl TokenVault for SimTokenVault {
             return Err(VaultError::Failed { message: "simulated: the app was killed".into() });
         }
         self.stores.fetch_add(1, Ordering::SeqCst);
-        lock(&self.items).insert(name, secret);
+        locked(&self.items).insert(name, secret);
         Ok(())
     }
 
     fn load(&self, name: String) -> Result<Option<Vec<u8>>, VaultError> {
-        Ok(lock(&self.items).get(&name).cloned())
+        Ok(locked(&self.items).get(&name).cloned())
     }
 
     fn remove(&self, name: String) -> Result<(), VaultError> {
-        lock(&self.items).remove(&name);
+        locked(&self.items).remove(&name);
         Ok(())
     }
 }
@@ -987,25 +985,25 @@ impl SimPollClock {
 
     /// The times polls were waited for, in order.
     pub fn waits(&self) -> Vec<Duration> {
-        lock(&self.waits).clone()
+        locked(&self.waits).clone()
     }
 
     pub fn advance(&self, by: Duration) {
-        *lock(&self.now) += by;
+        *locked(&self.now) += by;
     }
 }
 
 impl PollClock for SimPollClock {
     fn now(&self) -> Duration {
-        *lock(&self.now)
+        *locked(&self.now)
     }
 
     fn wait_until(&self, at: Duration, cancel: &Cancel) -> bool {
-        lock(&self.waits).push(at);
+        locked(&self.waits).push(at);
         if cancel.is_set() {
             return false;
         }
-        let mut now = lock(&self.now);
+        let mut now = locked(&self.now);
         if *now < at {
             *now = at;
         }

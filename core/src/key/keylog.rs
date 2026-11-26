@@ -26,10 +26,11 @@ use std::collections::VecDeque;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::{KeyError, KeyTouch, apdu};
+use crate::locked;
 use crate::PawError;
 
 /// Lines a session keeps in memory: about 40 card commands with the task
@@ -44,10 +45,6 @@ fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    // Plain values only.
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-}
 
 /// One process's file in the state directory.
 pub(crate) struct Sink {
@@ -81,7 +78,7 @@ impl Sink {
     /// does not exist (before setup, or after the store was removed), so
     /// the log never makes one.
     fn append(&self, at_ms: i64, text: &str) {
-        let _held = lock(&self.file);
+        let _held = locked(&self.file);
         if !self.dir.is_dir() {
             return;
         }
@@ -154,7 +151,7 @@ impl KeyLog {
             at_ms -= at_ms.rem_euclid(1000);
         }
         {
-            let mut ring = lock(&self.ring);
+            let mut ring = locked(&self.ring);
             if ring.len() == RING {
                 ring.pop_front();
             }
@@ -184,7 +181,7 @@ impl KeyLog {
     }
 
     pub(crate) fn text(&self, utc_offset_secs: i32) -> String {
-        lock(&self.ring)
+        locked(&self.ring)
             .iter()
             .map(|(at_ms, text)| format!("{} {text}\n", clock_time(*at_ms, utc_offset_secs)))
             .collect()

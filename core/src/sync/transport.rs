@@ -29,7 +29,8 @@ use crate::fault::Fault;
 use crate::PawError;
 use crate::key::KeyError;
 use crate::remote::RemoteFailure;
-use crate::ssh::{SshPublicKey, SshSigner};
+use crate::key::SshSigner;
+use crate::ssh::SshPublicKey;
 
 /// How long to wait for the TCP connection and SSH handshake.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);

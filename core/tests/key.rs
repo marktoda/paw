@@ -16,7 +16,7 @@ use paw_core::task::LoginPurpose;
 use paw_core::task::{KeyOutcome, KeyTaskState};
 use paw_core::key::CardConnection;
 use paw_core::sim::SimTouch;
-use paw_core::ssh::SshSigner;
+use paw_core::key::SshSigner;
 use ring::signature::{ED25519, UnparsedPublicKey};
 
 fn opened(state: &KeyTaskState) -> (String, Option<i64>) {

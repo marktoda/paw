@@ -15,7 +15,8 @@ use crate::key::KeyError;
 use crate::fault::Fault;
 use crate::remote::RemoteFailure;
 use crate::lock::{Exclusive, StoreLock};
-use crate::ssh::{SshPublicKey, SshSigner};
+use crate::key::SshSigner;
+use crate::ssh::SshPublicKey;
 
 /// Where a sync ended.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -90,7 +91,7 @@ impl SshSigner for Counting<'_> {
         self.inner.public_key()
     }
 
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, crate::key::KeyError> {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, KeyError> {
         let signature = self.inner.sign(data)?;
         self.count.fetch_add(1, Ordering::SeqCst);
         Ok(signature)

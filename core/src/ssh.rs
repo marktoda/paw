@@ -2,7 +2,7 @@
 //!
 //! An SSH client proves who it is by signing one block of data per
 //! connection. Here the card makes that signature, so the SSH private key
-//! never exists outside it (`key::SessionSigner`). The public half is read
+//! never exists outside it (`key::SshSigner`, `key::SessionSigner`). The public half is read
 //! without a PIN, which lets the app show the `authorized_keys` line during
 //! setup before asking for anything.
 //!
@@ -10,7 +10,6 @@
 //! which is exactly what `ssh-ed25519` wants, so no hashing happens here.
 
 use base64::Engine;
-
 
 const ED25519: &str = "ssh-ed25519";
 
@@ -44,13 +43,4 @@ impl SshPublicKey {
         let encoded = base64::engine::general_purpose::STANDARD.encode(&self.blob);
         format!("{} {encoded}", self.algorithm())
     }
-}
-
-/// Something that can sign an SSH login: the card today, a device key later.
-pub trait SshSigner: Send + Sync {
-    fn public_key(&self) -> &SshPublicKey;
-
-    /// Signs `data` and returns the bare signature (64 bytes for ed25519).
-    /// May block for as long as the key waits for a touch.
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, crate::key::KeyError>;
 }

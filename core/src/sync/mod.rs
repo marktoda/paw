@@ -73,12 +73,6 @@ pub struct TransferProgress {
     pub received_bytes: u64,
 }
 
-impl From<TransferProgress> for crate::key::TaskProgress {
-    fn from(update: TransferProgress) -> Self {
-        Self { done: update.received_objects, total: update.total_objects, bytes: Some(update.received_bytes) }
-    }
-}
-
 pub const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Decides which of libgit2's progress updates (one per object, and more

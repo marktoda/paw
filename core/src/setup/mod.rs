@@ -7,7 +7,6 @@
 //! [`SetupFlow::open`] picks up where it stopped; a download that was
 //! interrupted is removed and starts again.
 
-pub(crate) mod keyed;
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;

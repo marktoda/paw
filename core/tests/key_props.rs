@@ -90,7 +90,7 @@ proptest! {
             watchdog.cancel();
         });
         if let Ok(signer) = login.signer() {
-            let _ = paw_core::ssh::SshSigner::sign(&signer, b"login");
+            let _ = paw_core::key::SshSigner::sign(&signer, b"login");
             login.finish();
         }
         login.task().cancel();

@@ -20,7 +20,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use git2::{Oid, Repository};
@@ -31,6 +31,7 @@ use russh::{Channel, ChannelId, ChannelMsg, ChannelReadHalf, Disconnect};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use super::SimulatedKey;
+use crate::locked;
 use crate::PawError;
 use crate::ssh::SshPublicKey;
 use crate::sync::{HostKeyPin, Remote};
@@ -113,10 +114,6 @@ struct Shared {
     before_push: Mutex<Option<BeforePush>>,
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    // Plain values only; nothing is half written when a holder panics.
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-}
 
 #[derive(uniffi::Object)]
 pub struct SimRemote {
@@ -345,13 +342,13 @@ impl SimRemote {
 
     /// The git services each logged-in connection ran, in login order.
     pub fn services(&self) -> Vec<Vec<String>> {
-        lock(&self.shared.services).clone()
+        locked(&self.shared.services).clone()
     }
 
     /// Runs `change` just before the next `git-receive-pack` lists its
     /// branches: another machine pushing while paw's push is under way.
     pub fn before_next_push(&self, change: impl FnOnce() + Send + 'static) {
-        *lock(&self.shared.before_push) = Some(Box::new(change));
+        *locked(&self.shared.before_push) = Some(Box::new(change));
     }
 }
 
@@ -452,7 +449,7 @@ impl SimRemote {
 
     pub fn authorise(&self, line: String) -> Result<(), PawError> {
         let key = PublicKey::from_openssh(line.trim()).map_err(|e| failed("read the key", e))?;
-        lock(&self.shared.authorised).push(key);
+        locked(&self.shared.authorised).push(key);
         Ok(())
     }
 }
@@ -477,7 +474,7 @@ struct Connection {
 
 impl Connection {
     fn decide(&self, key: &PublicKey) -> Auth {
-        let known = lock(&self.shared.authorised).iter().any(|k| k.key_data() == key.key_data());
+        let known = locked(&self.shared.authorised).iter().any(|k| k.key_data() == key.key_data());
         if known && !self.shared.refuse_key.load(Ordering::SeqCst) { Auth::Accept } else { Auth::reject() }
     }
 }
@@ -522,7 +519,7 @@ impl server::Handler for Connection {
         let decision = self.decide(key.public_key);
         if matches!(decision, Auth::Accept) {
             self.shared.logins.fetch_add(1, Ordering::SeqCst);
-            let mut services = lock(&self.shared.services);
+            let mut services = locked(&self.shared.services);
             self.login = Some(services.len());
             services.push(Vec::new());
         }
@@ -547,11 +544,11 @@ impl server::Handler for Connection {
             session.channel_failure(id)?;
             return Ok(());
         };
-        if let Some(services) = lock(&self.shared.services).get_mut(login) {
+        if let Some(services) = locked(&self.shared.services).get_mut(login) {
             services.push(service.name().to_owned());
         }
         if service == Service::ReceivePack {
-            let before = lock(&self.shared.before_push).take();
+            let before = locked(&self.shared.before_push).take();
             if let Some(before) = before {
                 before();
             }
@@ -1032,7 +1029,7 @@ pub mod steps {
     use std::path::Path;
 
     use crate::lock::{FETCH_WAIT, StoreLock};
-    use crate::ssh::SshSigner;
+    use crate::key::SshSigner;
     use crate::sync::operation::{self, SyncReport};
     use crate::files::refs;
     use crate::sync::{self, Cloned, Connection, Remote, SyncError, git_err};
