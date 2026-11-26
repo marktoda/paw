@@ -76,7 +76,7 @@ struct TouchTimeoutSection: View {
                     .accessibilityIdentifier("touch-timeout-cancel")
             } else {
                 Button("Check the touch timeout") {
-                    check.start(on: model.keyPort, finished: finished)
+                    check.start(on: model.storeSession.keyPort, finished: finished)
                 }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("touch-timeout-check")

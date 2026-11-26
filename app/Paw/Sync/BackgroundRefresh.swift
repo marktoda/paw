@@ -117,7 +117,7 @@ enum BackgroundRefresh {
 
     // MARK: One run
 
-    /// Runs the refresh off the main thread, records it, republishes the
+    /// Runs the refresh off the main thread, records it, publishes the
     /// AutoFill suggestions if the store changed, then calls `done`.
     @MainActor
     private static func start(stop: BackgroundStop, done: @escaping @MainActor (BackgroundRun) -> Void) {
@@ -130,7 +130,7 @@ enum BackgroundRefresh {
         ) { _ in stop.stop() }
         queue.async {
             let run = readable ? runNow(stop: stop) : skipped(.locked)
-            let store = run.changed && !stop.isStopped() ? openStore() : nil
+            let opened = run.changed && !stop.isStopped() ? openStore() : nil
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     NotificationCenter.default.removeObserver(locking)
@@ -138,8 +138,8 @@ enum BackgroundRefresh {
                     Task { @MainActor in
                         // Stopped (time is up, or the phone locked): end the
                         // task now. The next open publishes the suggestions.
-                        if let store, !stop.isStopped() {
-                            await CredentialIdentities.publishAndWait(store)
+                        if let opened, !stop.isStopped() {
+                            await AutoFillSuggestions(stateDir: opened.stateDir).publish(opened.store).value
                         }
                         NotificationCenter.default.post(name: finished, object: nil)
                         done(run)
@@ -154,15 +154,24 @@ enum BackgroundRefresh {
         guard let location = try? StoreLocation.standard(), location.isSetUp else {
             return skipped(.noStore)
         }
-        guard let core = GitHubRefresh.account(stateDir: location.stateDir.path) else {
+        guard let core = GitHubSignInSource.account(stateDir: location.stateDir.path) else {
             return skipped(.notSignedIn)
         }
-        return SignInCheck(core: core).runInBackground(seconds: budgetSeconds, stop: stop, repoDir: location.repoDir.path)
+        let report = core.backgroundRefreshStoppable(seconds: budgetSeconds, stop: stop)
+        let run = summary(of: report, at: Date())
+        if run.success, report.integration != nil {
+            // The store matches the server as of now, as after a check.
+            LastChecked.record(run.at, repoDir: location.repoDir.path)
+        }
+        return run
     }
 
-    private static func openStore() -> PassStore? {
-        guard let location = try? StoreLocation.standard() else { return nil }
-        return try? PassStore(dir: location.repoDir.path)
+    /// The store the run changed, with its state folder, for AutoFill's
+    /// suggestions.
+    private static func openStore() -> (store: PassStore, stateDir: String)? {
+        guard let location = try? StoreLocation.standard(),
+              let store = try? PassStore(dir: location.repoDir.path) else { return nil }
+        return (store, location.stateDir.path)
     }
 
     private static func skipped(_ outcome: BackgroundRun.Outcome) -> BackgroundRun {

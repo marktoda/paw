@@ -4,7 +4,8 @@ import XCTest
 /// that the components are there and behave, and leaves pictures of them.
 final class GalleryTests: PawUITestCase {
     private static let appearances = ["light", "dark"]
-    private static let samplePassword = "Xk7#mO0l1-pT9&wq"
+    /// bank/first-example-bank's, in the fixture store the entry page opens.
+    private static let samplePassword = "Harbor_73_willow"
 
     // MARK: Helpers
 
@@ -203,7 +204,7 @@ final class GalleryTests: PawUITestCase {
     func testEntryPagePasswordField() {
         for appearance in Self.appearances {
             launch(page: "entry", appearance: appearance)
-            expect("entry-title")
+            expectLabel("entry-title", "first-example-bank")
             expect("face-id-window-text")
             let value = expect("password-value")
             XCTAssertEqual(value.value as? String, "hidden", "The password should start hidden")
@@ -214,9 +215,9 @@ final class GalleryTests: PawUITestCase {
             snapshot("\(appearance)-revealed")
 
             tapWhenHittable(app.buttons["password-large-type"], "Large type")
-            expectLabel("large-type-cell-1", "Capital X, 1 of 16")
-            expectLabel("large-type-cell-4", "Hash, 4 of 16")
-            expectLabel("large-type-cell-7", "0, 7 of 16")
+            expectLabel("large-type-cell-1", "Capital H, 1 of 16")
+            expectLabel("large-type-cell-4", "Lowercase b, 4 of 16")
+            expectLabel("large-type-cell-7", "Underscore, 7 of 16")
             snapshot("\(appearance)-large-type")
             // Once, and only when it can take the tap: a tap that lands
             // while the sheet is still coming up is not a press of Done.
@@ -272,8 +273,9 @@ final class GalleryTests: PawUITestCase {
             expectLabel("home-title", "Passwords")
             expect("sync-pill")
             expect("unpushed-banner")
-            expectLabel("entry-GitHub", "GitHub, dev, opens with Face ID")
-            expectLabel("entry-Fastmail", "Fastmail, email, needs your key")
+            expectLabel("face-id-github.com", contains: "github.com, web")
+            expectLabel("face-id-github.com", contains: "opens with Face ID")
+            expectLabel("recent-fastmail", "fastmail, email, needs your key")
             expectLabel("add-button", "Add a password")
             expect("settings-button")
             snapshot(appearance)
@@ -282,10 +284,10 @@ final class GalleryTests: PawUITestCase {
             XCTAssertTrue(waitToExist(search, timeout: Self.patience), "Home should have a search field")
             focus(search)
             snapshot("\(appearance)-search-empty")
-            search.typeText("fast")
-            expectLabel("search-count", "4 matches")
-            expect("entry-Breakfast delivery club")
-            expectGone(app.buttons["entry-GitHub"], "GitHub does not match \"fast\"")
+            search.typeText("ycombinator")
+            expectLabel("search-count", "1 match")
+            expectLabel("entry-news.ycombinator.com", "news.ycombinator.com, web, needs your key")
+            expectGone(app.buttons["face-id-github.com"], "github.com does not match \"ycombinator\"")
             snapshot("\(appearance)-search")
         }
     }
@@ -295,8 +297,8 @@ final class GalleryTests: PawUITestCase {
             launch(page: "home", appearance: appearance)
             expect("home-title")
             app.swipeUp()
-            expectLabel("folder-bank", "bank, folder, 9 passwords")
-            expect("folder-shopping")
+            expectLabel("folder-bank", "bank, folder, 3 passwords")
+            expect("folder-web")
             snapshot(appearance)
         }
     }
@@ -310,8 +312,8 @@ final class GalleryTests: PawUITestCase {
 
         // A row keeps its name: it is still a wide, tall button whose label
         // starts with the name, not a chip with an ellipsis beside it.
-        let row = expect("entry-GitHub")
-        XCTAssertTrue(row.label.hasPrefix("GitHub"), row.label)
+        let row = scrollTo("face-id-github.com")
+        XCTAssertTrue(row.label.hasPrefix("github.com"), row.label)
         XCTAssertGreaterThan(row.frame.width, 250, "The row should span the list")
         XCTAssertGreaterThan(row.frame.height, 100, "The row should grow with the text")
         app.swipeUp()

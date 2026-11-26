@@ -7,7 +7,7 @@ struct FolderScreen: View {
 
     var body: some View {
         Group {
-            switch model.listing(path) {
+            switch model.storeSession.live.listing(path) {
             case .success(let listing):
                 list(listing)
             case .failure(let error):
@@ -50,7 +50,7 @@ struct FolderScreen: View {
                         EntryRowFor(model: model, entry: entry, subtitle: "")
                     }
                 } header: {
-                    PawSectionHeader(listing.entries.count == 1 ? "1 password" : "\(listing.entries.count) passwords")
+                    PawSectionHeader(passwordCount(listing.entries.count))
                 }
             }
             if listing.folders.isEmpty, listing.entries.isEmpty {

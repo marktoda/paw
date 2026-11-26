@@ -84,7 +84,7 @@ enum LaunchArgument: String, CaseIterable {
     case simOneTimeCodes = "pawSimOneTimeCodes"
     /// Flag: the background check runs on every trip to the background.
     case simBackgroundRefresh = "pawSimBackgroundRefresh"
-    /// Word, `changed|missing`: the fixture's `work/` names other keys (`WritableFixture`).
+    /// Word, `changed|missing`: the fixture's `work/` names other keys (`FixtureSession`).
     case simRecipients = "pawSimRecipients"
     /// Word: how the simulated git host misbehaves at setup (`SetupLaunch`).
     case simRemote = "pawSimRemote"

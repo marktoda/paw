@@ -4,6 +4,8 @@ import SwiftUI
 /// Settings › AutoFill: whether paw is turned on as a password provider,
 /// and the way to turn it on. App target only.
 struct AutoFillSettingsSection: View {
+    /// The set-up store's suggestions; `nil` for a fixture.
+    let suggestions: AutoFillSuggestions?
     @Environment(\.scenePhase) private var scenePhase
     @State private var enabled: Bool?
     /// iOS's own prompt was refused (or not shown): the button then opens
@@ -55,8 +57,8 @@ struct AutoFillSettingsSection: View {
         let now = await ASCredentialIdentityStore.shared.state().isEnabled
         enabled = now
         // Turned on in Settings since: write the suggestions now.
-        if now, was == false, let store = CredentialIdentities.current {
-            CredentialIdentities.publish(store)
+        if now, was == false {
+            suggestions?.republish()
         }
     }
 

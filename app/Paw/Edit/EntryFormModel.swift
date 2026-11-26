@@ -84,9 +84,8 @@ final class EntryFormModel {
 
     @ObservationIgnored private let writer: StoreWriter
     /// The names Home and search hold, for "already used", followed as the
-    /// store changes. Without it (some tests) a name already used is left
-    /// for Save to refuse.
-    @ObservationIgnored private var store: PassStore?
+    /// store changes.
+    @ObservationIgnored private var store: PassStore
     /// Saved: the store changes no longer concern it.
     @ObservationIgnored private var done = false
     @ObservationIgnored private var recipientsTask: Task<Void, Never>?
@@ -104,13 +103,13 @@ final class EntryFormModel {
     @ObservationIgnored private var answeredFolder: String?
 
     /// A blank form in `folder`.
-    init(adding folder: String, writer: StoreWriter, folders: [String], live: LiveStore? = nil) {
+    init(adding folder: String, writer: StoreWriter, folders: [String], live: LiveStore) {
         purpose = .add(folder: folder)
         isEditing = false
         hadOneTimeCode = false
         self.writer = writer
         self.folders = folders
-        store = live?.store
+        store = live.store
         self.folder = folder
         original.folder = folder
         draft = writer.newDraft(folder: folder)
@@ -121,15 +120,14 @@ final class EntryFormModel {
 
     /// The open entry `session`, filled in. Throws if it was closed.
     init(
-        editing session: OpenSession, focusName: Bool, writer: StoreWriter, folders: [String],
-        live: LiveStore? = nil
+        editing session: OpenSession, focusName: Bool, writer: StoreWriter, folders: [String], live: LiveStore
     ) throws {
         purpose = .edit(sessionID: session.id, focusName: focusName)
         isEditing = true
         hadOneTimeCode = session.view.hasOtp
         self.writer = writer
         self.folders = folders
-        store = live?.store
+        store = live.store
         let opened = session.entry
         draft = try writer.editDraft(opened: opened, entry: session.ref.path)
         original = Original(
@@ -154,8 +152,8 @@ final class EntryFormModel {
         follow(live)
     }
 
-    private func follow(_ live: LiveStore?) {
-        live?.changed.subscribe(self) { form, changed in
+    private func follow(_ live: LiveStore) {
+        live.changed.subscribe(self) { form, changed in
             form.storeChanged(changed.store)
         }
     }
@@ -367,10 +365,11 @@ final class EntryFormModel {
         }
     }
 
-    /// The store was read again (a sync, a change undone): check the name
-    /// against the new names and read the folders' keys again.
+    /// The store changed (a sync, a change undone, a folder's new list of
+    /// keys accepted): check the name against the names now and read the
+    /// folders' keys again.
     private func storeChanged(_ store: PassStore) {
-        guard self.store !== store, draft != nil, !done else { return }
+        guard draft != nil, !done else { return }
         self.store = store
         recipientsFolder = nil
         changed()
@@ -478,13 +477,6 @@ final class EntryFormModel {
             saveProblem = EditProblem(problem: "Couldn't save this", nextStep: "Nothing was changed. \(describe(error))")
             return nil
         }
-    }
-
-    /// After "Accept" on the review screen.
-    func recipientsAccepted() {
-        recipientsFolder = nil
-        saveProblem = nil
-        changed()
     }
 
     static func touchKey(_ field: DraftField) -> String {

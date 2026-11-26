@@ -8,45 +8,25 @@ import SwiftUI
 /// simulated clock that the settings sheet can move on, and that moves on
 /// by `-pawSimAwayMs` each time paw goes to the background. Simulator only.
 /// `-pawAppearance dark|light` picks the theme. The store can be written
-/// (`WritableFixture`, `-pawSimRecipients changed|missing`).
+/// (`FixtureSession`, `-pawSimRecipients changed|missing`).
 enum FixtureLaunch {
     static var isRequested: Bool {
         LaunchArgument.fixture.bool
     }
 
-    /// Writes the fixture store into a fresh temporary folder and opens it.
+    /// Opens the fixture store, set up so it can be written; the plain
+    /// files, read-only, if that fails (Home then says why).
     @MainActor
     static func makeModel() throws -> AppModel {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("paw-fixture-\(UUID().uuidString)", isDirectory: true)
-        let storeDir = root.appendingPathComponent("store", isDirectory: true)
-        let copiesDir = root.appendingPathComponent("window", isDirectory: true)
-        try FileManager.default.createDirectory(at: copiesDir, withIntermediateDirectories: true)
-        // Set up through the simulated git host so it can be written; the
-        // plain files, read-only, if that fails (Home then says why).
-        let writable = Result { try WritableFixture.prepare(root: root) }
-        let storePath: String
-        if case .success(let prepared) = writable {
-            storePath = prepared.repoDir
-        } else {
-            try writeFixtureStore(dir: storeDir.path)
-            storePath = storeDir.path
+        do {
+            let fixture = try FixtureSession(key: .launched, writable: true, keyLog: true)
+            return AppModel(session: fixture.session)
+        } catch {
+            let fixture = try FixtureSession(key: .launched, writable: false, keyLog: true)
+            let notice = Notice(
+                problem: "Adding passwords isn't available in this test store.", nextStep: describe(error))
+            return AppModel(session: fixture.session, notice: notice)
         }
-
-        let clock = SimulatedClockHolder.shared.clock
-        // One clock for the copies and the key port, so moving it on ends
-        // copies and, in the background, the held PIN.
-        let sharedClock = clock.asClock()
-        let copies = CopyCache(dir: copiesDir.path, keystore: SimulatedKeystoreHolder.keystore.asKeystore(), clock: sharedClock)
-        // The key log goes into the fixture's own folder, so Settings ›
-        // Key diagnostics shows it; set before the key is first read.
-        let keyPort = KeyPort(clock: sharedClock)
-        keyPort.setKeyLog(stateDir: root.path, process: "app")
-        let session = try StoreSession(StoreSession.Parts(
-            repoDir: storePath, copies: copies, clock: sharedClock, keyPort: keyPort,
-            connect: { try KeyConnection.open() },
-            writing: try? writable.get().writing, gitHub: nil, setUp: nil))
-        return AppModel(session: session, notice: WritableFixture.notice(writable))
     }
 }
 

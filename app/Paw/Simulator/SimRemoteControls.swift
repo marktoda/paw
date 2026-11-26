@@ -301,7 +301,7 @@ struct SimRemoteWatch: ViewModifier {
     let model: AppModel
 
     @ViewBuilder func body(content: Content) -> some View {
-        if let syncing = model.syncing {
+        if let syncing = model.storeSession.syncing {
             content
                 .background(alignment: .topLeading) {
                     SimRemoteSummary()

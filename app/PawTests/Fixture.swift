@@ -2,18 +2,17 @@ import Foundation
 import XCTest
 @testable import Paw
 
-/// The app's model on the core's fixture store, in-process: a simulated key
-/// of its own (PIN 123456), a simulated keystore that answers as Face ID
-/// and a simulated clock, as `FixtureLaunch` builds them for the UI tests,
-/// but with no screens, built through the same `StoreSession` as the app.
-/// `writable` sets the store up through the simulated git host
-/// (`WritableFixture`), so it can be written and synced.
+/// The app's model on the core's fixture store, in-process, as
+/// `FixtureSession` opens it for the UI tests, but with no screens and a
+/// simulated key of the test's own (no touch unless `touch`), whose first
+/// `failingReads` reads fail. `writable` sets the store up through the
+/// simulated git host, so it can be written and synced.
 ///
 /// One class per file in this target, named as the file: scripts/ci-test.sh
 /// finds a unit test class named in `PAW_ONLY` by its file.
 @MainActor
 final class Fixture {
-    static let pin = "123456"
+    static let pin = FixtureSession.pin
     static let githubPassword = "tidal-Quartz-88-ferns"
 
     let key: SimulatedKey
@@ -25,42 +24,21 @@ final class Fixture {
     let touchRequired: Bool
 
     init(touch: Bool = false, failingReads: Int = 0, writable: Bool = false) throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("paw-unit-\(UUID().uuidString)", isDirectory: true)
-        let copiesDir = root.appendingPathComponent("window", isDirectory: true)
-        try FileManager.default.createDirectory(at: copiesDir, withIntermediateDirectories: true)
-        var prepared: WritableFixture.Prepared?
-        let storePath: String
-        if writable {
-            let found = try WritableFixture.prepare(root: root)
-            prepared = found
-            storePath = found.repoDir
-        } else {
-            storePath = root.appendingPathComponent("store", isDirectory: true).path
-            try writeFixtureStore(dir: storePath)
-        }
-
-        let key = SimulatedKey(pin: "123456", touchRequired: touch, touchTimeoutMs: 15_000)
-        let clock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000))
-        let keystore = SimKeystore()
+        let key = SimulatedKey(pin: Self.pin, touchRequired: touch, touchTimeoutMs: 15_000)
         let reads = FailingReads(failingReads)
-        let shared = clock.asClock()
-        let copies = CopyCache(dir: copiesDir.path, keystore: keystore.asKeystore(), clock: shared)
-        let session = try StoreSession(StoreSession.Parts(
-            repoDir: storePath, copies: copies, clock: shared, keyPort: KeyPort(clock: shared),
-            connect: {
+        let fixture = try FixtureSession(
+            key: .own(key, connect: {
                 if reads.take() {
                     throw ConnectionError.Failed(message: "The key didn't answer while it was being read.")
                 }
                 return key.asConnection()
-            },
-            writing: prepared?.writing, gitHub: nil, setUp: nil))
-        let model = AppModel(session: session)
+            }),
+            writable: writable)
         self.key = key
-        self.clock = clock
-        self.keystore = keystore
+        clock = fixture.clock
+        keystore = fixture.keystore
         self.reads = reads
-        self.model = model
+        model = AppModel(session: fixture.session)
         touchRequired = touch
     }
 
@@ -94,7 +72,7 @@ final class Fixture {
         return !askedForPin
     }
 
-    func enterPin(_ pin: String = "123456") {
+    func enterPin(_ pin: String = Fixture.pin) {
         model.keyTask.pin = pin
         model.keyTask.continueWithPin()
     }
@@ -139,15 +117,14 @@ final class Fixture {
     /// A new entry with a typed password, saved as the form's Save does once
     /// it knows who can open the folder. Needs a `writable` fixture.
     func add(_ name: String, folder: String, file: StaticString = #filePath, line: UInt = #line) async throws {
-        let edits = try XCTUnwrap(model.edits, "The fixture store should be writable", file: file, line: line)
-        let form = EntryFormModel(
-            adding: folder, writer: edits.writer, folders: model.allFolders, live: model.storeSession.live)
+        let edits = try XCTUnwrap(model.storeSession.edits, "The fixture store should be writable", file: file, line: line)
+        let form = edits.addForm(folder: folder)
         form.name = name
         form.password = "Typed-pass-42"
         form.changed()
         await waitFor("who can open \(folder)", file: file, line: line) { form.folderWritable != nil }
         XCTAssertTrue(form.canSave, "\(form.problems)", file: file, line: line)
-        XCTAssertTrue(model.save(form), "\(String(describing: form.saveProblem))", file: file, line: line)
+        XCTAssertTrue(edits.save(form), "\(String(describing: form.saveProblem))", file: file, line: line)
     }
 }
 

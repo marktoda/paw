@@ -6,6 +6,9 @@ import UniformTypeIdentifiers
 /// the first, the shared key sheet for the steps that need the key.
 struct SetupFlowView: View {
     @Bindable var model: SetupModel
+    /// The GitHub sign-in, if this build has one: the address can then be
+    /// chosen from GitHub.
+    let gitHub: GitHubAccess?
     @Environment(\.scenePhase) private var scenePhase
 
     /// Swiping the key sheet down is Cancel: the core task stops too.
@@ -72,7 +75,7 @@ struct SetupFlowView: View {
         case .yourKey(let key):
             YourKeyScreen(model: model, key: key)
         case .address(let notice):
-            AddressScreen(model: model, notice: notice)
+            AddressScreen(model: model, notice: notice, gitHub: gitHub)
         case .confirmHost(let host, let algorithm, let fingerprint):
             ConfirmHostScreen(model: model, host: host, algorithm: algorithm, fingerprint: fingerprint)
         case .keyNotAccepted(let host, let publicKey):
@@ -271,8 +274,8 @@ private struct YourKeyScreen: View {
 private struct AddressScreen: View {
     @Bindable var model: SetupModel
     let notice: AddressNotice?
+    let gitHub: GitHubAccess?
     @FocusState private var focused: Bool
-    @Environment(\.gitHubAccess) private var gitHub
 
     var body: some View {
         SetupPage(
@@ -282,8 +285,8 @@ private struct AddressScreen: View {
             message: gitHub == nil ? "Its SSH address, under Code \u{203A} SSH on your git host." : nil,
             identifier: "setup-address"
         ) {
-            if gitHub != nil {
-                GitHubChooseButton(model: model)
+            if let gitHub {
+                GitHubChooseButton(model: model, gitHub: gitHub)
             }
             VStack(alignment: .leading, spacing: PawMetrics.Spacing.s) {
                 if gitHub != nil {
@@ -583,7 +586,7 @@ private struct CheckScreen: View {
             identifier: "setup-check"
         ) {
             Label {
-                Text(entries == 1 ? "Downloaded 1 password." : "Downloaded \(entries) passwords.")
+                Text("Downloaded \(passwordCount(entries)).")
                     .font(PawFont.body)
                     .foregroundStyle(PawColor.label)
             } icon: {
@@ -656,7 +659,7 @@ private struct DoneScreen: View {
     }
 
     private var summary: String {
-        let passwords = entries == 1 ? "1 password" : "\(entries) passwords"
+        let passwords = passwordCount(entries)
         guard let folders = model.storeFacts?.folders, folders > 0 else { return passwords }
         return "\(passwords) in \(folders == 1 ? "1 folder" : "\(folders) folders")"
     }

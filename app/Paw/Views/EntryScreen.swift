@@ -29,9 +29,6 @@ struct EntryScreen: View {
     @State private var passwordRevealed = false
     /// Bumped to hide every revealed secret at once.
     @State private var hideToken = 0
-    @State private var largeType: LargeTypeItem?
-    @State private var toast: String?
-    @State private var lastToast: String?
 
     private var view: EntryView { session.view }
     private var entry: EntryRef { session.ref }
@@ -119,20 +116,17 @@ struct EntryScreen: View {
         .contentMargins(.top, 0, for: .scrollContent)
         .environment(\.defaultMinListRowHeight, PawMetrics.tapMin)
         .navigationBarTitleDisplayMode(.inline)
-        .copyToast($toast)
-        .sheetOrPadCover(item: $largeType) { item in
-            LargeTypeSheet(item: item) { largeType = nil }
+        .sheetOrPadCover(item: largeType) { item in
+            LargeTypeSheet(item: item) { closeLargeType() }
         }
         .onAppear { load() }
         .onDisappear {
             // The entry closed (another was opened, or its folder left):
             // its large type goes with it.
-            largeType = nil
-            model.largeTypeUp = false
+            closeLargeType()
         }
-        .onChange(of: largeType == nil) { model.largeTypeUp = largeType != nil }
         .onChange(of: model.session(opened.id) == nil) {
-            if model.session(opened.id) == nil { largeType = nil }
+            if model.session(opened.id) == nil { closeLargeType() }
         }
         .onChange(of: ObjectIdentifier(session.entry)) { load() }
         .entryEditing(model, session: session)
@@ -143,21 +137,21 @@ struct EntryScreen: View {
                 hideAll()
             }
         }
-        .onChange(of: toast) {
-            if let toast { lastToast = toast }
+    }
+
+    /// This entry's large type: another entry's stays with that entry.
+    private var largeType: Binding<LargeTypeItem?> {
+        Binding(
+            get: { model.largeType?.entry == opened.id ? model.largeType : nil },
+            set: { item in
+                if item == nil { closeLargeType() }
+            })
+    }
+
+    private func closeLargeType() {
+        if model.largeType?.entry == opened.id {
+            model.largeType = nil
         }
-        #if DEBUG && targetEnvironment(simulator)
-        .background(alignment: .topLeading) {
-            // The toast is not focusable, by design; UI tests read it here.
-            if let lastToast {
-                Text(lastToast)
-                    .font(.caption2)
-                    .frame(width: 1, height: 1)
-                    .opacity(0.02)
-                    .accessibilityIdentifier("sim-last-toast")
-            }
-        }
-        #endif
     }
 
     // MARK: Parts
@@ -195,7 +189,7 @@ struct EntryScreen: View {
                     isRevealed: $passwordRevealed,
                     fetch: { session.entry.password() },
                     onCopy: { copy(session.entry.password(), what: "Password") },
-                    onLargeType: { largeType = LargeTypeItem(title: "Password", text: $0) })
+                    onLargeType: { model.largeType = LargeTypeItem(entry: opened.id, title: "Password", text: $0) })
             }
             if let website {
                 FieldRow(label: "Website", value: website) {
@@ -210,7 +204,7 @@ struct EntryScreen: View {
                         label: label, identifier: "field-\(field.id)", hideToken: hideToken,
                         fetch: { session.entry.fieldValue(id: field.id) },
                         onCopy: { copy(session.entry.fieldValue(id: field.id), what: label) },
-                        onLargeType: { largeType = LargeTypeItem(title: label, text: $0) })
+                        onLargeType: { model.largeType = LargeTypeItem(entry: opened.id, title: label, text: $0) })
                 } else {
                     FieldRow(label: label, value: plainValues[field.id] ?? "") {
                         copy(session.entry.fieldValue(id: field.id), what: label)
@@ -235,7 +229,7 @@ struct EntryScreen: View {
                     .pawListRow()
                 } else if model.session(opened.id) != nil {
                     // Not once the entry has closed: its text is gone.
-                    OneTimeCodeRow(entry: session.entry, clock: model.clock, ticking: scenePhase == .active) {
+                    OneTimeCodeRow(entry: session.entry, clock: model.storeSession.clock, ticking: scenePhase == .active) {
                         copy($0, what: "One-time code")
                     }
                     .pawListRow()
@@ -266,13 +260,13 @@ struct EntryScreen: View {
     private func hideAll() {
         passwordRevealed = false
         hideToken += 1
-        largeType = nil
+        closeLargeType()
     }
 
     private func copy(_ value: String?, what: String) {
         guard let value else { return }
-        Clipboard.copy(value)
-        toast = "\(what) copied. Clears in 45 seconds."
+        model.storeSession.clipboard.copy(value)
+        model.toast = Toast(text: "\(what) copied. \(clearsIn)", kind: .copied)
     }
 
     /// "security answer" reads as "Security answer".
@@ -425,6 +419,8 @@ private struct HiddenFieldRow: View {
 
 struct LargeTypeItem: Identifiable {
     let id = UUID()
+    /// The open entry it is from (`OpenSession.id`).
+    let entry: UUID
     let title: String
     let text: String
 }

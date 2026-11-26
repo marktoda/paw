@@ -66,9 +66,40 @@ pub fn store_is_set_up(state_dir: String) -> bool {
     is_set_up(Path::new(&state_dir))
 }
 
+/// Whether the system refuses to open the store's files in `state_dir`, as
+/// iOS does for protected files while the iPhone is locked. A file that
+/// isn't there is not a refusal.
+pub fn files_refused(state_dir: &Path) -> bool {
+    [state_dir.join(SETUP), state_dir.join(ENROLLED_KEY), repo_dir(state_dir).join(crate::path::GPG_ID)]
+        .iter()
+        .any(|path| std::fs::File::open(path).is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied))
+}
+
+/// Whether the system refuses to open the store's files in `state_dir`:
+/// then a failure to open the store may only mean the iPhone is locked.
+#[uniffi::export]
+pub fn store_files_refused(state_dir: String) -> bool {
+    files_refused(Path::new(&state_dir))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_the_system_wont_open_is_refused_and_a_missing_one_is_not() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!files_refused(dir.path()));
+        let setup = dir.path().join(SETUP);
+        std::fs::write(&setup, SETUP_DONE).unwrap();
+        assert!(!files_refused(dir.path()));
+        std::fs::set_permissions(&setup, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // Root ignores the mode, and then there is nothing to check.
+        if std::fs::File::open(&setup).is_err() {
+            assert!(files_refused(dir.path()));
+        }
+    }
 
     #[test]
     fn only_a_repository_named_repo_has_a_state_directory() {

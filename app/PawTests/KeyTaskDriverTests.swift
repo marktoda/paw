@@ -36,7 +36,7 @@ final class KeyTaskDriverTests: XCTestCase {
 
     private func open(_ path: String, with driver: KeyTaskDriver, _ recorder: Recorder, _ fixture: Fixture) {
         let store = fixture.model.store
-        let port = fixture.model.keyPort
+        let port = fixture.model.storeSession.keyPort
         driver.start(recorder.job { listener in
             port.openEntry(store: store, entry: path, copies: nil, ttlSecs: 0, listener: listener)
         })
@@ -194,7 +194,7 @@ final class KeyTaskDriverTests: XCTestCase {
         let fixture = try Fixture(touch: true)
         let owner = Recorder()
         let driver = KeyTaskDriver()
-        let port = fixture.model.keyPort
+        let port = fixture.model.storeSession.keyPort
         driver.start(owner.job { listener in port.checkTouchTimeout(listener: listener) })
         await waitForStage(driver, .pin(triesLeft: 3, forgotten: false))
         driver.pin = Fixture.pin

@@ -9,12 +9,15 @@ struct SimulatorSettingsSection: View {
     let model: AppModel
     @State private var pasteboard: String?
     @State private var shown = false
+    @Environment(\.showsSimulatorControls) private var showsControls
 
     var body: some View {
-        Section {
-            SimulatorDisclosureRow(shown: $shown)
-            if shown {
-                controlRows
+        if showsControls {
+            Section {
+                SimulatorDisclosureRow(shown: $shown)
+                if shown {
+                    controlRows
+                }
             }
         }
     }

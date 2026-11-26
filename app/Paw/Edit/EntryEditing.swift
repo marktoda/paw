@@ -7,21 +7,21 @@ private struct EntryEditingModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content.toolbar {
-            if model.edits != nil {
+            if let edits = model.storeSession.edits {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Edit") { model.startEdit(session) }
+                    Button("Edit") { edits.startEdit(session) }
                         .accessibilityIdentifier("entry-edit")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button {
-                            model.startEdit(session, focusName: true)
+                            edits.startEdit(session, focusName: true)
                         } label: {
                             Label("Rename or move", systemImage: "folder")
                         }
                         .accessibilityIdentifier("entry-rename")
                         Button(role: .destructive) {
-                            model.edits?.confirmingDelete = session.id
+                            edits.confirmDelete(session)
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
@@ -43,14 +43,14 @@ struct EntryDeleteConfirm: View {
     let session: OpenSession
 
     var body: some View {
-        if model.edits?.confirmingDelete == session.id {
+        if let edits = model.storeSession.edits, edits.confirmingDelete == session.id {
             Section {
                 InlineConfirmRow(
                     question: "Delete \(session.ref.name)?",
                     detail: "It stays in the store's history.",
                     confirmTitle: "Delete", cancelTitle: "Keep it", identifier: "entry-delete",
-                    onConfirm: { model.delete(session) },
-                    onCancel: { model.edits?.confirmingDelete = nil })
+                    onConfirm: { edits.delete(session) },
+                    onCancel: { edits.keepEntry() })
                     .pawListRow()
             }
         }

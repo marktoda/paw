@@ -7,9 +7,8 @@ import XCTest
 final class EditModelTests: XCTestCase {
     func testTheCoreSaysWhatIsWrongWithANameAndSaveWaits() async throws {
         let fixture = try Fixture(writable: true)
-        let edits = try XCTUnwrap(fixture.model.edits)
-        let form = EntryFormModel(
-            adding: "", writer: edits.writer, folders: fixture.model.allFolders, live: fixture.model.storeSession.live)
+        let edits = try XCTUnwrap(fixture.model.storeSession.edits)
+        let form = edits.addForm(folder: "")
 
         form.changed()
         XCTAssertEqual(form.problem(for: .name), "Give it a name.")
@@ -35,8 +34,8 @@ final class EditModelTests: XCTestCase {
 
     func testTheStrengthFollowsTheLength() throws {
         let fixture = try Fixture(writable: true)
-        let edits = try XCTUnwrap(fixture.model.edits)
-        let form = EntryFormModel(adding: "", writer: edits.writer, folders: [])
+        let edits = try XCTUnwrap(fixture.model.storeSession.edits)
+        let form = EntryFormModel(adding: "", writer: edits.writer, folders: [], live: fixture.model.storeSession.live)
         XCTAssertEqual(form.strengthWords, "Very strong")
         form.policy.length = 8
         form.policyChanged()
@@ -53,12 +52,12 @@ final class EditModelTests: XCTestCase {
         let fixture = try Fixture(writable: true)
         let model = fixture.model
         try await fixture.add("shop.example", folder: "web")
-        XCTAssertEqual(model.toast, "Saved. Not sent yet.")
-        XCTAssertEqual(model.edits?.unpushed.count, 1)
-        XCTAssertEqual(model.edits?.bannerTitle, "1 change not sent")
+        XCTAssertEqual(model.toast?.text, "Saved. Not sent yet.")
+        XCTAssertEqual(model.storeSession.syncing?.queue.unpushed.count, 1)
+        XCTAssertEqual(model.storeSession.syncing?.queue.bannerTitle, "1 change not sent")
         XCTAssertEqual(model.rowAccess("web/shop.example"), .faceID, "What was just typed opens with Face ID")
         XCTAssertNil(model.keyRequest, "Saving never asks for the key")
-        XCTAssertTrue(model.search("shop").contains { $0.entry.path == "web/shop.example" })
+        XCTAssertTrue(model.storeSession.live.search("shop").contains { $0.entry.path == "web/shop.example" })
     }
 
     func testDiscardingOneChangeTakesBackOnlyThatChange() async throws {
@@ -66,17 +65,18 @@ final class EditModelTests: XCTestCase {
         let model = fixture.model
         try await fixture.add("keep.example", folder: "web")
         try await fixture.add("drop.example", folder: "web")
-        let edits = try XCTUnwrap(model.edits)
-        XCTAssertEqual(edits.bannerTitle, "2 changes not sent")
-        let change = try XCTUnwrap(edits.unpushed.first { $0.entry == "web/keep.example" })
+        let edits = try XCTUnwrap(model.storeSession.edits)
+        let queue = try XCTUnwrap(edits.queue)
+        XCTAssertEqual(queue.bannerTitle, "2 changes not sent")
+        let change = try XCTUnwrap(queue.unpushed.first { $0.entry == "web/keep.example" })
 
-        model.discardChange(change.id)
-        XCTAssertEqual(edits.unpushed.map(\.entry), ["web/drop.example"])
-        let web = try model.listing("web").get().entries.map(\.path)
+        edits.discardChange(change.id)
+        XCTAssertEqual(queue.unpushed.map(\.entry), ["web/drop.example"])
+        let web = try model.storeSession.live.listing("web").get().entries.map(\.path)
         XCTAssertTrue(web.contains("web/drop.example"))
         XCTAssertFalse(web.contains("web/keep.example"), "A discarded add takes the entry away")
 
-        model.discardAllChanges()
-        XCTAssertEqual(edits.unpushed.count, 0)
+        edits.discardAllChanges()
+        XCTAssertEqual(queue.unpushed.count, 0)
     }
 }

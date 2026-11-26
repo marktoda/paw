@@ -5,6 +5,10 @@ import SwiftUI
 /// app-switcher cover.
 struct RootView: View {
     @Bindable var model: AppModel
+    #if DEBUG && targetEnvironment(simulator)
+    /// The last toast of each kind, for the UI tests.
+    @State private var lastToasts: [Toast.Kind: String] = [:]
+    #endif
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -22,9 +26,17 @@ struct RootView: View {
             })
     }
 
+    private var toast: Binding<String?> {
+        Binding(
+            get: { model.toast?.text },
+            set: { text in
+                if text == nil { model.toast = nil }
+            })
+    }
+
     var body: some View {
         navigation
-            .copyToast($model.toast)
+            .copyToast(toast)
             .pawEditing(model)
             .pawSync(model)
             .sheet(item: keySheet, onDismiss: { model.keySheetDismissed() }) { _ in
@@ -44,12 +56,32 @@ struct RootView: View {
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(30))
                     model.refreshCopies()
-                    Clipboard.clearIfExpired()
+                    model.storeSession.clipboard.clearIfExpired()
                 }
             }
             .privacyCover()
             #if DEBUG && targetEnvironment(simulator)
+            .onChange(of: model.toast) {
+                if let toast = model.toast { lastToasts[toast.kind] = toast.text }
+            }
             .background(alignment: .topLeading) {
+                // The toast is not focusable, by design; UI tests read it
+                // here: copies under one name, what features said under
+                // another.
+                if let text = lastToasts[.copied] {
+                    Text(text)
+                        .font(.caption2)
+                        .frame(width: 1, height: 1)
+                        .opacity(0.02)
+                        .accessibilityIdentifier("sim-last-toast")
+                }
+                if let text = lastToasts[.said] {
+                    Text(text)
+                        .font(.caption2)
+                        .frame(width: 1, height: 1)
+                        .opacity(0.02)
+                        .accessibilityIdentifier("sim-last-app-toast")
+                }
                 // For the UI tests: how many key tasks have not ended, so a
                 // test can wait for "0" instead of sleeping before it checks
                 // that a cancelled open left nothing.
@@ -152,17 +184,6 @@ private struct ClosedEntryScreen: View {
             EmptyState(
                 symbol: PawSymbol.entry, title: "Closed",
                 message: "Open it again from the list.")
-        }
-    }
-}
-
-extension ClosedEntry.Reason {
-    /// What the closed entry's screen says.
-    var title: String {
-        switch self {
-        case .away: "Closed after 2 minutes away"
-        case .deviceLocked: "Closed when your iPhone locked"
-        case .copyEnded: "Its Face ID time ended"
         }
     }
 }

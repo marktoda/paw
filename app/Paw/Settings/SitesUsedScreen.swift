@@ -5,7 +5,7 @@ struct SitesUsedSettingsSection: View {
     let model: AppModel
 
     var body: some View {
-        if let stateDir = model.settingsStateDir {
+        if let stateDir = model.storeSession.edits?.stateDir {
             Section {
                 NavigationLink {
                     SitesUsedScreen(model: model, pairings: SitePairings.open(stateDir: stateDir))

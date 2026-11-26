@@ -12,6 +12,8 @@ extension EnvironmentValues {
     /// The stand-ins a screen's simulator strip shows (the key sheet's, a
     /// setup page's), set from outside the screen by `simulatorActions(_:)`.
     @Entry var simulatorActions: [SimulatorAction] = []
+    /// `false` keeps every stand-in off the screens (the gallery).
+    @Entry var showsSimulatorControls = true
 }
 
 extension View {
@@ -61,9 +63,10 @@ struct SimulatedKeyControls: ViewModifier {
 /// the design and a screenshot never shows them as part of it.
 struct SimulatorStrip: View {
     let actions: [SimulatorAction]
+    @Environment(\.showsSimulatorControls) private var shown
 
     var body: some View {
-        if !actions.isEmpty {
+        if shown, !actions.isEmpty {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: PawMetrics.Spacing.xs) { controls }
                 VStack(spacing: 0) { controls }

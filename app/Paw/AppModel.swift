@@ -47,11 +47,23 @@ struct Notice: Equatable {
     var keyEntry: EntryRef? = nil
 }
 
-/// The one model of the screens: navigation, the key sheet, open entries
-/// and what Home shows, over a finished `StoreSession`. Gives views plain
-/// values. The PIN lives in the core's key session, never here. Card and
-/// Face ID calls block for seconds, so they run off the main thread and
-/// their results are published here.
+/// A short line at the bottom of the screen: a copy, or what a feature
+/// said ("Saved. Not sent yet.").
+struct Toast: Equatable {
+    enum Kind {
+        case copied, said
+    }
+
+    let text: String
+    var kind: Kind = .said
+}
+
+/// The model of the screens over a finished `StoreSession`: navigation,
+/// the key sheet and open entries. Features live on the session and ask
+/// the screens for what they need through its `requests`. The PIN lives in
+/// the core's key session, never here. Card and Face ID calls block for
+/// seconds, so they run off the main thread and their results are
+/// published here.
 @MainActor @Observable
 final class AppModel {
     /// An open entry survives this long with paw in the background.
@@ -67,8 +79,6 @@ final class AppModel {
     private(set) var path: [Route] = []
     /// iPad in regular width: `path` is shown as columns (`SplitPath`).
     var usesSplitView = false
-    private(set) var home: FolderListing
-    private(set) var entryCount: Int
     private(set) var liveCopies: [LiveCopy] = []
     /// Entry paths opened in this run, most recent first.
     private(set) var recentPaths: [String] = []
@@ -85,11 +95,10 @@ final class AppModel {
     var notice: Notice?
     /// A problem with the Face ID copies themselves, shown on Home.
     private(set) var copiesProblem: String?
-    var toast: String?
+    var toast: Toast?
     var showsSettings = false
-    /// An entry's large type is up (a full-screen cover on iPad), so the
-    /// keyboard shortcuts stay off.
-    var largeTypeUp = false
+    /// The open entry's value in large type (a full-screen cover on iPad).
+    var largeType: LargeTypeItem?
 
     @ObservationIgnored private var pendingRoute: Route?
     /// Bumped by each key read: which access answer is the latest.
@@ -103,9 +112,6 @@ final class AppModel {
         storeSession = session
         keyTask = KeyTaskDriver(reader: session.reader)
         faceId = FaceIdOpener()
-        let store = session.live.store
-        home = store.home()
-        entryCount = Int(store.entryCount())
         self.notice = notice
         session.reader.onRead = { [weak self] read in
             if case .success(let keySession) = read {
@@ -127,46 +133,23 @@ final class AppModel {
         storeSession.live.store
     }
 
-    /// `nil` where Face ID copies cannot be kept: on a device until the
-    /// Secure Enclave keystore exists. Every open then uses the key.
-    var copies: CopyCache? {
+    private var copies: CopyCache? {
         storeSession.copies
     }
 
-    /// Held for the app's life: plug-ins and removals, and every key task.
-    var keyPort: KeyPort {
+    private var keyPort: KeyPort {
         storeSession.keyPort
     }
 
-    var reader: KeyReader {
+    private var reader: KeyReader {
         storeSession.reader
     }
 
-    /// The copies' clock: Face ID deadlines, the PIN's 15 minutes and an
-    /// open entry's 2 minutes in the background are all measured on it.
-    var clock: Clock {
+    private var clock: Clock {
         storeSession.clock
     }
 
-    /// Adding, editing and deleting, and the unpushed changes; `nil` where
-    /// the store cannot be written (see `AppModel+Edit.swift`).
-    var edits: StoreEdits? {
-        storeSession.edits
-    }
-
-    var syncing: SyncModel? {
-        storeSession.syncing
-    }
-
-    // MARK: Lists
-
-    func listing(_ folder: String) -> Result<FolderListing, Error> {
-        Result { try store.folder(path: folder) }
-    }
-
-    func search(_ query: String) -> [SearchHit] {
-        store.search(query: query, limit: 100)
-    }
+    // MARK: Face ID copies
 
     func liveCopy(_ path: String) -> LiveCopy? {
         liveCopies.first { $0.entry == path }
@@ -386,9 +369,6 @@ final class AppModel {
             notice = Notice(problem: "Couldn't read the list again", nextStep: describe(problem))
             return
         }
-        let store = changed.store
-        home = store.home()
-        entryCount = Int(store.entryCount())
         let exists = Set(allEntryPaths())
         recentPaths = recentPaths
             .map { $0 == renamed?.from ? (renamed?.to ?? $0) : $0 }
@@ -425,15 +405,38 @@ final class AppModel {
         switch request {
         case .show(let route): show(route)
         case .leave(let route): leave(route)
-        case .toast(let words): toast = words
+        case .toast(let words): toast = Toast(text: words)
+        case .notice(let notice): self.notice = notice
         case .settings: showsSettings = true
+        case .saved(let id, let saved):
+            if let opened = saved.opened {
+                replaceSession(id, ref: EntryRef(path: saved.entry), entry: opened)
+            } else {
+                // Saved, but the screen can't show the new text: close it.
+                leave(.entry(id))
+            }
+        case .deleted(let id):
+            leaveDeleted(id)
         }
+    }
+
+    /// Back from a deleted entry to the list it was in; a folder whose
+    /// last entry went is gone too.
+    private func leaveDeleted(_ id: UUID) {
+        var routes = path
+        if routes.last == .entry(id) {
+            routes.removeLast()
+        }
+        while case .folder(let folder)? = routes.last, (try? store.folder(path: folder)) == nil {
+            routes.removeLast()
+        }
+        setPath(routes)
     }
 
     /// The key sheet, Settings, an entry's large type, or a feature's
     /// sheet is up.
     var sheetIsUp: Bool {
-        keyRequest != nil || showsSettings || largeTypeUp || storeSession.sheetIsUp
+        keyRequest != nil || showsSettings || largeType != nil || storeSession.sheetIsUp
     }
 
     /// Closes every opened entry that is no longer on the navigation stack.
@@ -480,9 +483,9 @@ final class AppModel {
         faceId.forget()
         pendingRoute = nil
         setPath([])
-        Clipboard.clearIfOurs()
+        storeSession.clipboard.clearIfOurs()
         refreshCopies()
-        toast = ended == 1 ? "Locked. 1 password needs your key again." : "Locked. \(ended) passwords need your key again."
+        toast = Toast(text: lockedToast(ended: ended))
     }
 
     /// The core forgets the PIN after 15 minutes in the background, on the
@@ -503,7 +506,7 @@ final class AppModel {
             }
             keyPort.session()?.noteForegrounded()
             storeSession.cameForward()
-            Clipboard.clearIfExpired()
+            storeSession.clipboard.clearIfExpired()
             sweepCopies()
             reader.readIfNeeded()
         default:
@@ -514,7 +517,7 @@ final class AppModel {
     /// Time moved on: copies may have ended, and with them open entries,
     /// and a password on the clipboard may be due to go.
     func timePassed() {
-        Clipboard.clearIfExpired()
+        storeSession.clipboard.clearIfExpired()
         refreshCopies()
     }
 }
@@ -603,31 +606,4 @@ extension EntryRef {
     var topFolder: String? {
         topFolderOf(folder: folder)
     }
-}
-
-extension Recipient {
-    /// "key ID 1234 5678 9ABC DEF0", for a sentence.
-    var spoken: String {
-        switch self {
-        case .keyId: return "key ID \(grouped)"
-        case .fingerprint: return "key \(grouped)"
-        case .hidden: return "a hidden recipient"
-        }
-    }
-
-    /// The hex alone, in groups of four so it can be read aloud.
-    var grouped: String {
-        let hex: String
-        switch self {
-        case .keyId(let id): hex = id
-        case .fingerprint(let fingerprint): hex = fingerprint
-        case .hidden: return "Hidden"
-        }
-        return fingerprintGroups(text: hex).joined(separator: " ")
-    }
-}
-
-/// Times as the screens say them: "6:40 PM".
-func clockTime(ms: Int64) -> String {
-    Date(timeIntervalSince1970: TimeInterval(ms) / 1000).formatted(date: .omitted, time: .shortened)
 }

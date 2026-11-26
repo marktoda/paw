@@ -16,12 +16,14 @@ final class HeldBackModelTests: XCTestCase {
         sync.keyTask.continueWithPin()
     }
 
-    func testAHeldBackChangeIsReencryptedOnlyWhenAskedAndCanThenBeSent() async throws {
+    /// A change saved in `work/`, then held back: another computer gave
+    /// `work/` a second key paw has the public half of, and a check with
+    /// the key brought that in.
+    private func heldBackChange() async throws -> (Fixture, StoreEdits, SyncModel) {
         let fixture = try Fixture(writable: true)
         let model = fixture.model
-        let edits = try XCTUnwrap(model.edits)
-        let sync = try XCTUnwrap(model.syncing, "The fixture store should sync")
-        // A second key paw has the public half of, then work/ is given to both.
+        let edits = try XCTUnwrap(model.storeSession.edits)
+        let sync = try XCTUnwrap(model.storeSession.syncing, "The fixture store should sync")
         let other = SimulatedKey.newOther(pin: Fixture.pin, touchRequired: false, touchTimeoutMs: 15_000)
         _ = try other.pinAsCard(stateDir: edits.stateDir)
         try await fixture.add("held.example", folder: "work")
@@ -34,10 +36,16 @@ final class HeldBackModelTests: XCTestCase {
         await waitFor("the held-back change", timeout: 30) {
             sync.running == nil && sync.sheet == nil && sync.reencryptLeft["work/held.example"] != nil
         }
+        return (fixture, edits, sync)
+    }
+
+    func testAHeldBackChangeIsReencryptedOnlyWhenAskedAndCanThenBeSent() async throws {
+        let (fixture, edits, sync) = try await heldBackChange()
+        let model = fixture.model
         XCTAssertEqual(sync.heldBack.map(\.entry), ["work/held.example"])
         XCTAssertEqual(sync.reencryptLeft["work/held.example"], .notAccepted)
         XCTAssertEqual(sync.reencryptReady, 0, "Not before the new list is accepted")
-        XCTAssertFalse(sync.canSend(unpushed: 1))
+        XCTAssertFalse(sync.canSend)
 
         try edits.acceptRecipients(folder: "work")
         XCTAssertEqual(sync.reencryptReady, 1)
@@ -53,12 +61,38 @@ final class HeldBackModelTests: XCTestCase {
         }
         XCTAssertNil(sync.failure)
         XCTAssertTrue(sync.heldBack.isEmpty)
-        XCTAssertEqual(model.toast, "Re-encrypted. Not sent yet.")
-        XCTAssertEqual(edits.unpushed.count, 1, "Still one change, not sent")
-        XCTAssertTrue(sync.canSend(unpushed: 1))
+        XCTAssertEqual(model.toast?.text, "Re-encrypted. Not sent yet.")
+        XCTAssertEqual(sync.queue.unpushed.count, 1, "Still one change, not sent")
+        XCTAssertTrue(sync.canSend)
 
         sync.start(.send)
-        await waitFor("the send", timeout: 30) { sync.running == nil && model.toast == "Sent" }
-        await waitFor("the queue to empty") { edits.unpushed.isEmpty }
+        await waitFor("the send", timeout: 30) { sync.running == nil && model.toast?.text == "Sent" }
+        await waitFor("the queue to empty") { sync.queue.unpushed.isEmpty }
+    }
+
+    /// A change made while a check is running is heard: once the check
+    /// ends, what sync offers follows the store as it is now, with nothing
+    /// read again by hand.
+    func testAChangeMadeWhileACheckRunsCountsOnceItEnds() async throws {
+        let (_, edits, sync) = try await heldBackChange()
+        XCTAssertEqual(sync.reencryptReady, 0)
+        sync.check()
+        await waitFor("the check to start") { sync.running == .refresh }
+        try edits.acceptRecipients(folder: "work")
+        sync.cancelSheet()
+        XCTAssertNil(sync.running)
+        XCTAssertEqual(sync.reencryptReady, 1, "The new list was heard during the check")
+        XCTAssertEqual(sync.pillState, .paused("1 change held back \u{00B7} Review"))
+    }
+
+    /// Accepting a folder's new list reaches an open form, which asks again
+    /// who can open the folder: Save follows with no call from the sheet.
+    func testAnOpenFormHearsANewListAccepted() async throws {
+        let (_, edits, _) = try await heldBackChange()
+        let form = edits.addForm(folder: "work")
+        await waitFor("who can open work") { form.folderWritable != nil }
+        XCTAssertEqual(form.folderWritable, false, "Not before the new list is accepted")
+        try edits.acceptRecipients(folder: "work")
+        await waitFor("who can open work, read again") { form.folderWritable == true }
     }
 }

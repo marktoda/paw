@@ -53,7 +53,7 @@ extension AppModel {
     /// closes it and goes back to the list. Lock now in Settings ends all.
     func lockEntry(_ session: OpenSession) {
         do {
-            try copies?.forgetEntry(entry: session.ref.path)
+            try storeSession.copies?.forgetEntry(entry: session.ref.path)
         } catch {
             notice = Notice(
                 problem: "Couldn't lock \(session.ref.name)",
@@ -64,7 +64,7 @@ extension AppModel {
             setPath(Array(path.dropLast()))
         }
         refreshCopies()
-        toast = "Locked. \(session.ref.name) needs your key again."
+        toast = Toast(text: "Locked. \(session.ref.name) needs your key again.")
     }
 
     /// "Open again" on a closed entry: back to the list, then open it as a

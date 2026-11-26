@@ -6,7 +6,7 @@ struct SyncRouteScreen: View {
     let route: SyncRoute
 
     var body: some View {
-        if let edits = model.edits, let syncing = model.syncing {
+        if let edits = model.storeSession.edits, let syncing = model.storeSession.syncing {
             switch route {
             case .heldBack:
                 HeldBackScreen(model: model, syncing: syncing)
@@ -104,7 +104,6 @@ struct HeldBackScreen: View {
         .environment(\.defaultMinListRowHeight, PawMetrics.tapMin)
         .navigationTitle("Held back")
         .navigationBarTitleDisplayMode(.large)
-        .onAppear { syncing.recomputeLocal() }
     }
 
     private func section(_ item: HeldBack) -> some View {
@@ -140,7 +139,7 @@ struct HeldBackScreen: View {
                     identifier: "held-back-discard-\(entry.name)",
                     onConfirm: {
                         confirming = nil
-                        model.discardChange(item.id)
+                        model.storeSession.edits?.discardChange(item.id)
                     },
                     onCancel: { confirming = nil })
                     .pawListRow()
@@ -205,7 +204,7 @@ struct RefusedRemoteScreen: View {
     let syncing: SyncModel
 
     private var unpushed: Int {
-        model.edits?.unpushed.count ?? 0
+        syncing.queue.unpushed.count
     }
 
     var body: some View {
@@ -275,7 +274,7 @@ struct ReplacedScreen: View {
     @State private var confirmingDiscard = false
 
     private var unpushed: Int {
-        model.edits?.unpushed.count ?? 0
+        syncing.queue.unpushed.count
     }
 
     private var changes: String {
@@ -293,7 +292,7 @@ struct ReplacedScreen: View {
             }
             if unpushed > 0 {
                 Section {
-                    ForEach(model.edits?.unpushed.prefix(5) ?? [], id: \.id) { item in
+                    ForEach(syncing.queue.unpushed.prefix(5), id: \.id) { item in
                         Text(UnpushedScreen.title(item))
                             .font(PawFont.body)
                             .foregroundStyle(PawColor.label)

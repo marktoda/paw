@@ -23,6 +23,8 @@ final class GitHubAccess {
     func reload() {
         let core = core
         queue.async { [weak self] in
+            // A vault that can't be read holds no sign-in paw can use:
+            // checks go on with the key, and Settings offers to sign in.
             let signedIn = (try? core.isSignedIn()) ?? false
             let link = Handoff(value: core.linkedRepository())
             DispatchQueue.main.async {
@@ -58,12 +60,8 @@ final class GitHubAccess {
     }
 }
 
-extension EnvironmentValues {
-    @Entry var gitHubAccess: GitHubAccess? = nil
-}
-
 /// Where the store's GitHub sign-in comes from.
-enum GitHubRefresh {
+enum GitHubSignInSource {
     /// The core's sign-in for the store in `stateDir`: the real GitHub on
     /// a device, the simulated one (if `-pawSimGitHub` asked for it) in the
     /// simulator. The one place it is opened, from any thread.
@@ -79,33 +77,5 @@ enum GitHubRefresh {
     @MainActor
     static func access(stateDir: URL) -> GitHubAccess? {
         account(stateDir: stateDir.path).map { GitHubAccess(core: $0) }
-    }
-}
-
-/// A check for changes with the GitHub sign-in: no key, no PIN, no Face
-/// ID. One path for both of its triggers: "Check for changes" (`SyncModel`),
-/// which integrates everything and shows what needs a decision, and iOS's
-/// background refresh (`BackgroundRefresh`), which integrates only what
-/// needs none, within its time. Blocks: run it off the main thread. A check
-/// that brought the store up to date is recorded (`LastChecked`).
-struct SignInCheck: Sendable {
-    let core: GitHubAccount
-
-    /// From a tap. `SyncModel` records it, as it does a check with the key.
-    /// A sign-in that has ended fails with `RemoteFailure.notSignedIn` or
-    /// `.signedOut`: the check then goes on with the key.
-    func run() -> Result<SyncReport, Error> {
-        Result { try core.refreshStore() }
-    }
-
-    /// In the background, for at most `seconds`, until `stop`.
-    func runInBackground(seconds: UInt32, stop: BackgroundStop, repoDir: String) -> BackgroundRun {
-        let report = core.backgroundRefreshStoppable(seconds: seconds, stop: stop)
-        let run = BackgroundRefresh.summary(of: report, at: Date())
-        if run.success, report.integration != nil {
-            // The store matches the server as of now, as after a check.
-            LastChecked.record(run.at, repoDir: repoDir)
-        }
-        return run
     }
 }

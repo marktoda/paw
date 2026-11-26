@@ -15,7 +15,7 @@ import Foundation
 /// (`OneTimeCodeEntries`, a yes per entry) also gets a one-time-code
 /// identity for each of its sites, so iOS offers it in a code field. Off,
 /// the core lists none. The list is replaced whole after setup, on each
-/// launch, after a save, rename, delete or refresh (`AutoFillUpkeep`);
+/// launch, after a save, rename, delete or refresh (`AutoFillSuggestions`);
 /// removing the store clears it. App target only (not compiled into the
 /// extension).
 enum CredentialIdentities {
@@ -47,23 +47,11 @@ enum CredentialIdentities {
         return Array(identities.sorted { ($0.path, $0.domain) < ($1.path, $1.domain) }.prefix(limit))
     }
 
-    /// The pairings of the store paw set up, if there is one.
-    static func standardPairings() -> SitePairings? {
-        (try? StoreLocation.standard()).map { SitePairings.open(stateDir: $0.stateDir.path) }
-    }
-
-    /// Which entries of the store paw set up have a one-time code.
-    static func standardCodes() -> OneTimeCodeEntries? {
-        (try? StoreLocation.standard()).map { OneTimeCodeEntries.open(stateDir: $0.stateDir.path) }
-    }
-
-    /// The store the last publish used, for Settings to publish again once
-    /// AutoFill is turned on.
-    @MainActor private(set) static var current: PassStore?
-
-    /// What iOS should end up with: this store's identities, or none.
-    private enum Request: @unchecked Sendable {
-        case replace(PassStore)
+    /// What iOS should end up with: a store's identities, or none.
+    enum Request: @unchecked Sendable {
+        /// The store's identities, with the pairings and the entries with a
+        /// one-time code kept for it.
+        case replace(PassStore, pairings: SitePairings, codes: OneTimeCodeEntries)
         case clear
     }
 
@@ -72,12 +60,13 @@ enum CredentialIdentities {
     @MainActor private static var pending: Request?
     /// The one writer, while it runs. Writes never overlap, so an older
     /// list can never land after a newer one (two quick removes in Sites
-    /// used must leave the second's list, not the first's).
+    /// used must leave the second's list, not the first's). iOS keeps one
+    /// list for the whole app, so there is one writer for it.
     @MainActor private static var writer: Task<Void, Never>?
 
     /// Queues `request` and returns the writer that will carry it out.
     @MainActor
-    private static func submit(_ request: Request) -> Task<Void, Never> {
+    static func submit(_ request: Request) -> Task<Void, Never> {
         pending = request
         if let writer { return writer }
         let task = Task.detached(priority: .utility) { await drain() }
@@ -98,31 +87,17 @@ enum CredentialIdentities {
             }
             guard let next else { return }
             switch next {
-            case .replace(let store): await replace(with: store)
+            case .replace(let store, let pairings, let codes): await replace(with: store, pairings: pairings, codes: codes)
             case .clear: await removeAll()
             }
         }
     }
 
-    /// Replaces every identity with this store's, off the main thread.
-    /// Does nothing while AutoFill is off for paw (iOS refuses the write).
-    @MainActor
-    static func publish(_ store: PassStore) {
-        current = store
-        _ = submit(.replace(store))
-    }
-
-    /// `publish`, returning once iOS has the new identities (or newer
-    /// ones): a background task must not end before.
-    @MainActor
-    static func publishAndWait(_ store: PassStore) async {
-        current = store
-        await submit(.replace(store)).value
-    }
-
-    private static func replace(with store: PassStore) async {
-        let made = make(from: store, pairings: standardPairings())
-        let withCode = Set(standardCodes()?.entries(store: store) ?? [])
+    /// Replaces every identity with this store's. Does nothing while
+    /// AutoFill is off for paw (iOS refuses the write).
+    private static func replace(with store: PassStore, pairings: SitePairings, codes: OneTimeCodeEntries) async {
+        let made = make(from: store, pairings: pairings)
+        let withCode = Set(codes.entries(store: store))
         let identities = AutoFillKind.allCases.flatMap { kind in
             made.filter { kind.lists($0.path, knownCodes: withCode) }
                 .map { kind.identity(domain: $0.domain, user: $0.user, path: $0.path) }
@@ -139,7 +114,6 @@ enum CredentialIdentities {
     /// The store was removed: no suggestion may name its entries.
     @MainActor
     static func clear() {
-        current = nil
         _ = submit(.clear)
     }
 
@@ -150,36 +124,55 @@ enum CredentialIdentities {
     }
 }
 
-/// Keeps AutoFill's suggestions in step with the store paw set up: writes
-/// them when the store opens, when paw comes forward and whenever the store
-/// changes, and keeps which opened entries have a one-time code. Built for
-/// the set-up store only, never for a fixture, whose entries must not reach
-/// the system's suggestions.
+/// AutoFill's suggestions for the store paw set up, from its entries and
+/// what its state folder keeps (pairings, entries with a one-time code).
+/// The one way they are published: when the store opens, when paw comes
+/// forward and whenever the store changes (`follow`), and after a
+/// background check brought changes in (`BackgroundRefresh`). Built for
+/// the set-up store only, never for a fixture, whose entries must not
+/// reach the system's suggestions.
 @MainActor
-final class AutoFillUpkeep {
-    private let live: LiveStore
+final class AutoFillSuggestions {
+    private let pairings: SitePairings
     private let codes: OneTimeCodeEntries
-    private let publish: @MainActor (PassStore) -> Void
+    private let submit: @MainActor (CredentialIdentities.Request) -> Task<Void, Never>
+    /// The store last published, to publish again.
+    private var store: PassStore?
 
-    init(live: LiveStore, codes: OneTimeCodeEntries,
-         publish: @escaping @MainActor (PassStore) -> Void = { CredentialIdentities.publish($0) }) {
-        self.live = live
-        self.codes = codes
-        self.publish = publish
-        live.changed.subscribe(self) { upkeep, changed in
-            if changed.change.rewritesEntries {
-                upkeep.publish(changed.store)
-            }
-        }
-        live.opened.subscribe(self) { upkeep, opened in
-            upkeep.noteOpened(opened)
-        }
-        publish(live.store)
+    init(stateDir: String,
+         submit: @escaping @MainActor (CredentialIdentities.Request) -> Task<Void, Never> = CredentialIdentities.submit) {
+        pairings = SitePairings.open(stateDir: stateDir)
+        codes = OneTimeCodeEntries.open(stateDir: stateDir)
+        self.submit = submit
+    }
+
+    /// Replaces the suggestions with `store`'s. The task ends once iOS has
+    /// them (or newer ones): a background task must not end before.
+    @discardableResult
+    func publish(_ store: PassStore) -> Task<Void, Never> {
+        self.store = store
+        return submit(.replace(store, pairings: pairings, codes: codes))
     }
 
     /// Writes the suggestions again: on coming forward, and after a
     /// setting that changes them.
     func republish() {
+        if let store {
+            publish(store)
+        }
+    }
+
+    /// Publishes `live`'s store now and whenever its entries change, and
+    /// keeps which opened entries have a one-time code.
+    func follow(_ live: LiveStore) {
+        live.changed.subscribe(self) { suggestions, changed in
+            if changed.change.rewritesEntries {
+                suggestions.publish(changed.store)
+            }
+        }
+        live.opened.subscribe(self) { suggestions, opened in
+            suggestions.noteOpened(opened)
+        }
         publish(live.store)
     }
 
