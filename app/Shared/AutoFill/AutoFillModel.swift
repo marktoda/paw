@@ -1,3 +1,4 @@
+import AuthenticationServices
 import Foundation
 import Observation
 
@@ -9,13 +10,6 @@ enum AutoFillRequest: Equatable, Sendable {
     /// A suggestion above the keyboard was tapped: one entry, by path,
     /// and the site the suggestion was made for, when iOS says.
     case entry(path: String, service: String? = nil)
-}
-
-/// Where a request ends (`AutoFillProvider`). Called once per request.
-@MainActor
-protocol AutoFillCompletion: AnyObject {
-    func fill(_ credential: AutoFillCredential)
-    func end(_ reason: AutoFillEnd)
 }
 
 /// Why a picked entry asks before it fills.
@@ -43,13 +37,39 @@ struct AutoFillNotice: Equatable {
 
 /// The AutoFill screens' one model: the list for a site, search, and a
 /// fill by Face ID copy or by the key. The same code runs in the extension
-/// and, in debug builds, in the app's harness (`-pawHostProvider`), with
-/// the completion injected.
+/// and, in debug builds, in the app's harness (`-pawHostProvider`), both
+/// through `AutoFillProvider`.
 ///
 /// The password never reaches a view: it goes from the opened entry
-/// straight to the completion, and the entry is wiped at once. So does a
+/// straight to the provider, and the entry is wiped at once. So does a
 /// one-time code, made from the entry at that moment: neither the code nor
 /// its secret is kept. File and card work runs off the main thread.
+///
+/// Which entries a list offers for a site comes from names alone: nothing
+/// is decrypted to build a list or a suggestion (design.md 5.6 rule 6).
+/// The core does the matching (`PassStore.matchServices`,
+/// core/src/store/service.rs): an entry is offered when one part of its
+/// path is the site's host exactly, or a host with the same registrable
+/// domain by the Public Suffix List. Never a piece of a name, so
+/// `evil-example.com`, `example.com.evil.net` and `bob.github.io` are not
+/// `example.com`, `example.com` and `alice.github.io`.
+///
+/// An entry named without a domain (`bankofamerica`, `alaskaair/alice`)
+/// matches by name: a whole part of its path is the first label of the
+/// site's registrable domain. A name fits lookalikes too
+/// (`bankofamerica.co`), so the first fill on each domain asks, and the
+/// domains it has filled on are kept (`SitePairings`). One paired only
+/// with other domains of the same name is not offered at all.
+///
+/// Internationalised names: iOS reports a site in its `xn--` form, and the
+/// core compares hosts in that form on both sides (UTS-46), so the entries
+/// `bücher.example` and `xn--bcher-kva.example` both match it, and a site
+/// spelled with lookalike letters (`pаypal.com`, Cyrillic `а`) never
+/// matches an entry spelled with plain ones. Names are shown by the core's
+/// `displayHost`: always the `xn--` form. Name matches stay plain ASCII.
+/// paw offers nothing automatically for a site address that is not
+/// printable ASCII, or whose host has no dot. Search still finds every
+/// entry.
 @MainActor @Observable
 final class AutoFillModel {
     enum Screen: Equatable {
@@ -119,20 +139,18 @@ final class AutoFillModel {
 
     @ObservationIgnored private let open: @Sendable () -> AutoFillOpening
     @ObservationIgnored private var source: AutoFillSource?
-    @ObservationIgnored private weak var completion: AutoFillCompletion?
+    /// Where the request ends, and whether it has.
+    @ObservationIgnored private weak var provider: AutoFillProvider?
     /// Reads the key, once a fill needs it: a list alone never touches the card.
     @ObservationIgnored private var reader: KeyReader?
     @ObservationIgnored private var started = false
-    /// The request has ended: filled, or handed back to iOS.
-    @ObservationIgnored private var finished = false
-    @ObservationIgnored private var shutdown = false
     @ObservationIgnored private let work = DispatchQueue(label: "paw-autofill", qos: .userInitiated)
 
-    init(request: AutoFillRequest, kind: AutoFillKind = .password, completion: AutoFillCompletion,
+    init(request: AutoFillRequest, kind: AutoFillKind = .password, provider: AutoFillProvider,
          open: @escaping @Sendable () -> AutoFillOpening) {
         self.request = request
         self.kind = kind
-        self.completion = completion
+        self.provider = provider
         self.open = open
         keyTask = KeyTaskDriver()
         faceId = FaceIdOpener()
@@ -158,14 +176,14 @@ final class AutoFillModel {
             var withCode: [String] = []
             if case .ready(let source) = opening {
                 live = ((try? source.copies?.list()) ?? []).map(\.entry)
-                withCode = source.codes?.entries(store: source.store) ?? []
+                withCode = source.codes.entries(store: source.store)
                 switch request {
                 case .list(let services):
                     found = source.store.matchServices(services: services, pairings: source.pairings)
                     matches = found.filter { isTrustedMatch(kind: $0.kind) }.map(\.entry)
                     maybe = found.filter { $0.kind == .name(pairing: .unpaired) }.map(\.entry)
                 case .entry(let path, _):
-                    matches = SiteMatch.entry(path, in: source.store).map { [$0] } ?? []
+                    matches = source.store.entry(path: path).map { [$0] } ?? []
                 }
             }
             let carried = Handoff(value: (opening, live, matches, found, maybe, withCode))
@@ -425,16 +443,20 @@ final class AutoFillModel {
     /// entry is wiped unread and the person is asked. Filling anyway opens
     /// it again (Face ID, from the copy the key just kept).
     private func fill(_ opened: OpenedEntry, entry: EntryRef) {
+        guard let source else {
+            opened.close()
+            return
+        }
         if let warning = urlWarning(opened, entry: entry) {
             opened.close()
-            guard !finished else { return }
+            guard isUnderWay else { return }
             pairing = nil
             page = .confirm(entry, warning)
             return
         }
-        let taken = kind.take(from: opened, entry: entry)
+        let taken = kind.take(from: opened, entry: entry, nowMs: source.clock.wallMs())
         opened.close()
-        let codes = source?.codes
+        let codes = source.codes
         guard let credential = taken.credential else {
             noteCode(taken.hasCode, entry: entry, codes: codes)
             if !taken.hasCode {
@@ -448,11 +470,10 @@ final class AutoFillModel {
             }
             return
         }
-        guard !finished else { return }
+        guard isUnderWay else { return }
         page = .filled
         recordPairing(entry)
-        shutDown()
-        completion?.fill(credential)
+        provider?.fill(credential, for: self)
         noteCode(taken.hasCode, entry: entry, codes: codes)
     }
 
@@ -461,8 +482,8 @@ final class AutoFillModel {
     /// when that is not what is kept already. A yes per entry, never the
     /// code or its secret; nothing while the list is off (the core's
     /// switch); a failure only leaves it as it was.
-    private func noteCode(_ hasCode: Bool, entry: EntryRef, codes: OneTimeCodeEntries?) {
-        guard let codes, hasCode != withCode.contains(entry.path) else { return }
+    private func noteCode(_ hasCode: Bool, entry: EntryRef, codes: OneTimeCodeEntries) {
+        guard hasCode != withCode.contains(entry.path) else { return }
         _ = try? codes.note(entry: entry.path, hasCode: hasCode)
     }
 
@@ -488,14 +509,16 @@ final class AutoFillModel {
     /// again.
     private func recordPairing(_ entry: EntryRef) {
         defer { pairing = nil }
-        guard let pairing, pairing.path == entry.path, let source, let pairings = source.pairings else { return }
-        _ = try? pairings.recordPairing(store: source.store, entry: entry.path, service: pairing.site)
+        guard let pairing, pairing.path == entry.path, let source else { return }
+        _ = try? source.pairings.recordPairing(store: source.store, entry: entry.path, service: pairing.site)
     }
 
-    private func end(_ reason: AutoFillEnd) {
-        guard !finished else { return }
-        shutDown()
-        completion?.end(reason)
+    private var isUnderWay: Bool {
+        provider?.model === self
+    }
+
+    private func end(_ reason: ASExtensionError.Code) {
+        provider?.end(reason, for: self)
     }
 
     /// The provider's view went away without a fill or a cancel from
@@ -513,14 +536,11 @@ final class AutoFillModel {
     }
 
     /// The request's one end, however it ends (a fill, `end`, the view or
-    /// the controller going away): every key task is let go of (the key
-    /// sheet closing forgets the PIN), a Face ID answer still to come is
-    /// wiped unread, and the readers are no longer followed. Runs once;
-    /// later calls do nothing.
+    /// the controller going away), run by the provider once: every key
+    /// task is let go of (the key sheet closing forgets the PIN), a Face ID
+    /// answer still to come is wiped unread, and the readers are no longer
+    /// followed.
     func shutDown() {
-        guard !shutdown else { return }
-        shutdown = true
-        finished = true
         keyTask.cancelAll()
         faceId.forget()
         reader?.stopWatching()

@@ -31,9 +31,7 @@ final class StoreRootModel {
     let gitHub: GitHubAccess?
     private let clock: Clock
     private let connect: KeyReader.Connect = { try KeyConnection.open() }
-    #if DEBUG && targetEnvironment(simulator)
-    let keystore = SimKeystore()
-    #endif
+    private let keys: StoreKeys
 
     init() throws {
         let location = try StoreLocation.standard()
@@ -48,10 +46,8 @@ final class StoreRootModel {
         try location.prepare()
         self.location = location
         self.clock = clock
-        keyPort = KeyPort(clock: clock)
-        // The app's half of the key log; the AutoFill extension starts its
-        // own in the same state directory.
-        keyPort.setKeyLog(stateDir: location.stateDir.path, process: "app")
+        keys = StoreKeys(.app, at: location, clock: clock)
+        keyPort = keys.keyPort
         gitHub = GitHubRefresh.access(stateDir: location.stateDir)
         route()
         // The model lives as long as the app, so the observer is never removed.
@@ -121,18 +117,10 @@ final class StoreRootModel {
     /// Home on the cloned store, with the key enrolled at setup.
     private func openHome() {
         do {
-            _ = try keyPort.loadEnrolledKey(stateDir: location.stateDir.path)
+            let copies = try keys.openEnrolled()
             // Setup wrote the pinned keys, the enrolment and the known hosts.
             location.protect()
             let sync = try? StoreSync.open(stateDir: location.stateDir.path)
-            #if DEBUG && targetEnvironment(simulator)
-            let copies: CopyCache? = CopyCache(
-                dir: location.copiesDir.path, keystore: keystore.asKeystore(), clock: clock)
-            #else
-            // Face ID copies in the Secure Enclave; `nil` where it can't be
-            // used, and then every open uses the key (Settings says so).
-            let copies = PlatformCopies.make(dir: location.copiesDir.path)
-            #endif
             // Setup pinned the key and accepted the recipients: saving
             // works from here with no further step.
             let session = try StoreSession(StoreSession.Parts(
@@ -179,7 +167,7 @@ final class StoreRootModel {
             location, keyPort: keyPort,
             resetKeychain: {
                 #if DEBUG && targetEnvironment(simulator)
-                try keystore.reset()
+                try SimulatedKeystoreHolder.keystore.reset()
                 #else
                 try EnclaveKeystore().resetDetailed()
                 #endif

@@ -51,7 +51,7 @@ enum AutoFillHarnessLaunch {
     /// A tap on the suggestion for `path`, as iOS hands it over. iOS gives
     /// no site with it here.
     private static func suggestion(_ kind: AutoFillKind, path: String) -> ASCredentialRequest {
-        let identity = kind.identity(domain: "", user: EntrySite.suggestionUser(forPath: path), path: path)
+        let identity = kind.identity(domain: "", user: entryRef(path: path).name, path: path)
         switch identity {
         case let password as ASPasswordCredentialIdentity:
             return ASPasswordCredentialRequest(credentialIdentity: password)
@@ -82,12 +82,20 @@ private final class HarnessWorld: @unchecked Sendable {
     /// What `opening` reads: the key port, to read whether a PIN is held,
     /// and the site pairings and code list, to show what was recorded.
     private(set) var source: AutoFillSource?
+    /// The source's clock, which a one-time code is made at. Each run
+    /// starts it at the real time: the UI tests work the code out from
+    /// theirs.
+    private var clock: SimClock?
     private let lock = NSLock()
     private var busyOnce = LaunchArgument.hostProviderStore.string == "busy"
 
     /// What the model's open finds: busy once if asked, then `opening`.
     func open() -> AutoFillOpening {
         lock.withLock {
+            if let clock {
+                let behind = Int64(Date().timeIntervalSince1970 * 1000) - clock.wallMs()
+                clock.advanceMs(ms: UInt64(max(behind, 0)))
+            }
             if busyOnce {
                 busyOnce = false
                 return .busy
@@ -109,21 +117,20 @@ private final class HarnessWorld: @unchecked Sendable {
             try writeFixtureStore(dir: location.repoDir.path)
             // `finance/northwind` and `contoso/alice`: named without a domain.
             try writeNameMatchEntries(dir: location.repoDir.path)
-            let keystore = SimKeystore()
-            switch LaunchArgument.simFaceId.string {
-            case "cancel": keystore.setFaceId(answer: .cancel)
-            case "nomatch": keystore.setFaceId(answer: .noMatch)
-            default: keystore.setFaceId(answer: .match)
-            }
-            let clock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000)).asClock()
+            let simClock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000))
+            let clock = simClock.asClock()
+            // Copies, as the app keeps in the simulator; the extension keeps none there.
             let source = try AutoFillSource.open(
                 at: location, clock: clock, connect: { try KeyConnection.open() },
-                copies: { CopyCache(dir: $0.path, keystore: keystore.asKeystore(), clock: clock) })
+                copies: { dir in
+                    CopyCache(dir: dir.path, keystore: SimulatedKeystoreHolder.keystore.asKeystore(), clock: clock)
+                })
             if LaunchArgument.simOneTimeCodes.bool {
-                try source.codes?.setEnabled(enabled: true)
+                try source.codes.setEnabled(enabled: true)
             }
             opening = .ready(source)
             self.source = source
+            self.clock = simClock
         } catch {
             opening = .unreadable(String(describing: error))
         }
@@ -158,7 +165,7 @@ private final class HarnessRun: AutoFillAnswers {
         case .list(let services, let kind):
             model = provider.list(services, kind: kind)
         case .entry(let request):
-            quickType = AutoFillProvider.answerWithoutScreen(request).rawValue
+            quickType = Self.name(AutoFillProvider.answerWithoutScreen(request))
             model = provider.entry(request)
         }
     }
@@ -174,10 +181,20 @@ private final class HarnessRun: AutoFillAnswers {
         readPairingsSoon()
     }
 
-    func cancel(_ reason: AutoFillEnd) {
-        result = "ended \(reason.rawValue)"
+    func cancel(_ reason: ASExtensionError.Code) {
+        result = "ended \(Self.name(reason))"
         model = nil
         readPairings()
+    }
+
+    /// The code's name, as the UI tests read it.
+    private static func name(_ code: ASExtensionError.Code) -> String {
+        switch code {
+        case .userCanceled: "userCanceled"
+        case .userInteractionRequired: "userInteractionRequired"
+        case .credentialIdentityNotFound: "credentialIdentityNotFound"
+        default: "code \(code.rawValue)"
+        }
     }
 
     private static func digest(_ text: String) -> String {
@@ -194,9 +211,9 @@ private final class HarnessRun: AutoFillAnswers {
 
     private func readPairings() {
         let source = world.source
-        let all = (source?.pairings?.pairings() ?? []).flatMap { p in p.sites.map { "\(p.entry)=\($0)" } }
+        let all = (source?.pairings.pairings() ?? []).flatMap { p in p.sites.map { "\(p.entry)=\($0)" } }
         pairings = all.isEmpty ? "none" : all.joined(separator: " ")
-        let known = source.map { $0.codes?.entries(store: $0.store) ?? [] } ?? []
+        let known = source.map { $0.codes.entries(store: $0.store) } ?? []
         codes = known.isEmpty ? "none" : known.joined(separator: " ")
     }
 

@@ -42,7 +42,7 @@ enum CredentialIdentities {
         for paired in pairings?.pairedSites(store: store) ?? [] where identities.count < limit {
             guard seen.insert("\(paired.site) \(paired.entry)").inserted else { continue }
             identities.append(Identity(
-                domain: paired.site, user: EntrySite.suggestionUser(forPath: paired.entry), path: paired.entry))
+                domain: paired.site, user: entryRef(path: paired.entry).name, path: paired.entry))
         }
         return Array(identities.sorted { ($0.path, $0.domain) < ($1.path, $1.domain) }.prefix(limit))
     }

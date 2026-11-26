@@ -664,21 +664,25 @@ func wipe(_ data: inout Data) {
 
 // MARK: - Factory
 
-/// The real Face ID copies for this process, for the app model to hold.
+/// The Face ID copies for a process. On a device: a `CopyCache` backed by
+/// the Secure Enclave, always made once paw's keychain group can be
+/// reached (Face ID problems surface as the core's errors when a copy is
+/// sealed or opened); without the group, none, and then every open uses
+/// the key (Settings says so). The simulator has no Secure Enclave the two
+/// processes share: the debug app keeps its copies on the simulated
+/// keystore, and the extension keeps none.
 enum PlatformCopies {
-    /// A `CopyCache` on `dir` backed by the Secure Enclave and the system
-    /// clocks. On a device it is always made: Face ID problems surface as
-    /// the core's errors when a copy is sealed or opened. In the simulator
-    /// it is made only if a seal key can actually be created there (it
-    /// needs a Secure Enclave and an enrolled face); otherwise nil, and the
-    /// caller keeps the simulated `SimKeystore`.
-    static func make(dir: String) -> CopyCache? {
-        let keystore = EnclaveKeystore()
+    static func make(dir: String, clock: Clock, process: StoreProcess) -> CopyCache? {
         #if targetEnvironment(simulator)
-        guard (try? keystore.prepare()) != nil else { return nil }
+        #if DEBUG
+        guard process == .app else { return nil }
+        return CopyCache(dir: dir, keystore: SimulatedKeystoreHolder.keystore.asKeystore(), clock: clock)
+        #else
+        return nil
+        #endif
         #else
         guard (try? KeychainGroup.shared()) != nil else { return nil }
+        return CopyCache(dir: dir, keystore: EnclaveKeystore(), clock: clock)
         #endif
-        return CopyCache(dir: dir, keystore: keystore, clock: SystemClock())
     }
 }

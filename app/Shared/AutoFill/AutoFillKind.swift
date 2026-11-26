@@ -84,9 +84,9 @@ enum AutoFillKind: Equatable, Sendable, CaseIterable {
     // MARK: The fill
 
     /// What this kind takes from `opened`, which is still open. A code is
-    /// the current one, made now; with under 3 seconds left, the next one,
+    /// the one current at `nowMs`; with under 3 seconds left, the next one,
     /// which is still good once the page sends it.
-    func take(from opened: OpenedEntry, entry: EntryRef) -> AutoFillTaken {
+    func take(from opened: OpenedEntry, entry: EntryRef, nowMs: Int64) -> AutoFillTaken {
         switch self {
         case .password:
             let password = opened.password() ?? ""
@@ -95,7 +95,6 @@ enum AutoFillKind: Equatable, Sendable, CaseIterable {
                 credential: password.isEmpty ? nil : .password(user: user, password: password),
                 hasCode: opened.makesOneTimeCodes())
         case .oneTimeCode:
-            let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
             var otp = opened.otpCode(nowMs: nowMs)
             if let current = otp, current.secondsLeft < 3 {
                 otp = opened.otpCode(nowMs: nowMs + Int64(current.secondsLeft) * 1000 + 1)

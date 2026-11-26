@@ -14,16 +14,6 @@ enum FixtureLaunch {
         LaunchArgument.fixture.bool
     }
 
-    private static var faceId: SimFaceId {
-        switch LaunchArgument.simFaceId.string {
-        case "cancel": return .cancel
-        case "nomatch": return .noMatch
-        case "lockout": return .lockedOut
-        case "notenrolled": return .notEnrolled
-        default: return .match
-        }
-    }
-
     /// Writes the fixture store into a fresh temporary folder and opens it.
     @MainActor
     static func makeModel() throws -> AppModel {
@@ -43,13 +33,11 @@ enum FixtureLaunch {
             storePath = storeDir.path
         }
 
-        let keystore = SimKeystore()
-        keystore.setFaceId(answer: faceId)
         let clock = SimulatedClockHolder.shared.clock
         // One clock for the copies and the key port, so moving it on ends
         // copies and, in the background, the held PIN.
         let sharedClock = clock.asClock()
-        let copies = CopyCache(dir: copiesDir.path, keystore: keystore.asKeystore(), clock: sharedClock)
+        let copies = CopyCache(dir: copiesDir.path, keystore: SimulatedKeystoreHolder.keystore.asKeystore(), clock: sharedClock)
         // The key log goes into the fixture's own folder, so Settings ›
         // Key diagnostics shows it; set before the key is first read.
         let keyPort = KeyPort(clock: sharedClock)
