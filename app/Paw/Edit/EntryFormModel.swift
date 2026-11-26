@@ -44,7 +44,8 @@ final class EntryFormModel {
     let folders: [String]
     /// Whether paw has every key each folder is encrypted for, read off the
     /// main thread when the form opens and when the store changes. A folder
-    /// not in it yet is offered: Save waits for that folder's own answer.
+    /// not in it (not read yet, or its list unreadable) is offered: Save
+    /// waits for that folder's own answer, which says why it can't.
     private(set) var folderOpenable: [String: Bool] = [:]
 
     var name = ""
@@ -450,9 +451,7 @@ final class EntryFormModel {
             // phone, usually to fill it straight in. An edit keeps the
             // copy's deadline, which the core handles.
             let ttl = isEditing ? 0 : FaceIdOpener.windowSecs
-            let saved = try BackgroundTime.run("Save") {
-                try writer.save(draft: draft, copies: copies, newCopyTtlSecs: ttl)
-            }
+            let saved = try writer.save(draft: draft, copies: copies, newCopyTtlSecs: ttl)
             // Its own save must not show as a name already used while
             // the sheet closes.
             done = true

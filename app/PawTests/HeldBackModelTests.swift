@@ -70,6 +70,36 @@ final class HeldBackModelTests: XCTestCase {
         await waitFor("the queue to empty") { sync.queue.unpushed.isEmpty }
     }
 
+    /// A re-encrypt cancelled at its PIN is said as one, and Try again
+    /// starts a re-encrypt again, not a send or a check.
+    func testACancelledReencryptIsRetriedAsAReencrypt() async throws {
+        let (fixture, edits, sync) = try await heldBackChange()
+        try edits.acceptRecipients(folder: "work")
+        // The check kept the PIN: forgotten, so the re-encrypt waits for it.
+        fixture.model.storeSession.keyPort.session()?.forgetPin()
+        sync.startReencrypt()
+        await waitFor("the PIN") {
+            if case .key(.reencrypt)? = sync.sheet?.mode, case .pin = sync.keyTask.stage { return true }
+            return false
+        }
+        sync.cancelSheet()
+        XCTAssertNil(sync.running)
+        XCTAssertEqual(sync.failure?.during, .reencrypt)
+        XCTAssertEqual(sync.failure?.problem, "Re-encrypting was cancelled.")
+        await waitFor("the cancelled task to end") { sync.keyTask.pendingTasks == 0 }
+        XCTAssertEqual(sync.heldBack.map(\.entry), ["work/held.example"], "Still held back")
+
+        sync.retryFailed()
+        guard case .key(.reencrypt)? = sync.sheet?.mode else {
+            return XCTFail("Try again should re-encrypt, it is \(String(describing: sync.sheet?.mode))")
+        }
+        await passPin(sync)
+        await waitFor("the re-encrypt to end", timeout: 30) {
+            sync.running == nil && sync.sheet?.mode == .status
+        }
+        XCTAssertTrue(sync.heldBack.isEmpty)
+    }
+
     /// A change made while a check is running is heard: once the check
     /// ends, what sync offers follows the store as it is now, with nothing
     /// read again by hand.

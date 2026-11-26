@@ -42,7 +42,7 @@ struct RootView: View {
             .sheet(item: keySheet, onDismiss: { model.keySheetDismissed() }) { _ in
                 KeySheetHost(model: model)
             }
-            .sheet(isPresented: $model.showsSettings) {
+            .pawSheet(isPresented: $model.showsSettings) {
                 SettingsSheet(model: model)
             }
             .onChange(of: splitView, initial: true) {
@@ -55,11 +55,11 @@ struct RootView: View {
                 // Copies end with time, not only with taps: look again now and then.
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(30))
-                    model.refreshCopies()
-                    model.storeSession.clipboard.clearIfExpired()
+                    model.timePassed()
                 }
             }
             .privacyCover()
+            .environment(\.sheetsUp, model.sheets)
             #if DEBUG && targetEnvironment(simulator)
             .onChange(of: model.toast) {
                 if let toast = model.toast { lastToasts[toast.kind] = toast.text }

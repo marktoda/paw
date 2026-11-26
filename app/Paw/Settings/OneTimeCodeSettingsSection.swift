@@ -22,7 +22,7 @@ struct OneTimeCodeSettingsSection: View {
                         .foregroundStyle(PawColor.label)
                 }
                 .accessibilityIdentifier("settings-one-time-codes")
-                if let problem {
+                if let problem = problem ?? autoFill.codesProblem {
                     ErrorRow(kind: .error, problem: "Code suggestions weren't changed", nextStep: problem)
                 }
             } footer: {

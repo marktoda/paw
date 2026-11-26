@@ -34,7 +34,7 @@ final class AutoFillProvider {
     /// request ended, when the suggestion is not one of paw's.
     func entry(_ request: ASCredentialRequest) -> AutoFillModel? {
         guard let asked = Self.entry(of: request) else {
-            model = nil
+            shutDown()
             answers?.cancel(.credentialIdentityNotFound)
             return nil
         }
@@ -60,7 +60,9 @@ final class AutoFillProvider {
         return (.entry(path: path, service: service.isEmpty ? nil : service), kind)
     }
 
+    /// The request before, if iOS reuses the controller, ends first.
     private func start(_ request: AutoFillRequest, kind: AutoFillKind) -> AutoFillModel {
+        shutDown()
         let model = AutoFillModel(request: request, kind: kind, provider: self, open: open)
         self.model = model
         return model

@@ -46,7 +46,7 @@ struct GitHubSettingsSection: View {
                     .foregroundStyle(PawColor.labelSecondary)
                     // Here, not on the button: signing in swaps the button
                     // for the status row while the sheet is still choosing.
-                    .sheet(item: $picker) { picker in
+                    .pawSheet(item: $picker) { picker in
                         GitHubPickerSheet(picker: picker)
                     }
             }

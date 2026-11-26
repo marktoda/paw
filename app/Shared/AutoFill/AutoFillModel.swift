@@ -519,11 +519,12 @@ final class AutoFillModel {
 
     /// The request's one end, however it ends (a fill, `end`, the view or
     /// the controller going away), run by the provider once: every key
-    /// task is let go of (the key sheet closing forgets the PIN), a Face ID
-    /// answer still to come is wiped unread, and the readers are no longer
-    /// followed.
+    /// task is let go of, the PIN is forgotten (the key sheet closing
+    /// forgets it too), a Face ID answer still to come is wiped unread,
+    /// and the readers are no longer followed.
     func shutDown() {
         keyTask.cancelAll()
+        source?.keyPort.session()?.forgetPin()
         faceId.forget()
         reader?.stopWatching()
     }

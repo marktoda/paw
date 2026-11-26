@@ -395,8 +395,10 @@ final class SetupModel {
         }
     }
 
-    /// "Open my passwords" on the last screen.
+    /// "Open my passwords" on the last screen. Home follows the key with
+    /// its own reader.
     func openStore() {
+        reader.stopWatching()
         finished()
     }
 
@@ -498,7 +500,9 @@ final class SetupModel {
         return "your store"
     }
 
-    private func succeeded() {
+    /// Setup's step after a key task: the core may have moved on, or put
+    /// back a download stopped part way.
+    private func readState() {
         state = setup.state()
         if case .done = state {
             learnAboutStore()
@@ -513,7 +517,8 @@ final class SetupModel {
         } catch {
             unread = true
         }
-        if let store = try? PassStore(dir: repoPath) {
+        do {
+            let store = try PassStore(dir: repoPath)
             let recipients: [String]
             do {
                 recipients = try store.recipients(folder: "")
@@ -522,15 +527,10 @@ final class SetupModel {
                 unread = true
             }
             storeFacts = StoreFacts(folders: store.home().folders.count, recipients: recipients.count)
+        } catch {
+            unread = true
         }
         whoCanOpenUnread = unread
-    }
-
-    /// The task ended without its step done: `error` says why, if it was
-    /// the setup's.
-    private func stopped(_ purpose: SetupSheet.Purpose, because error: SetupError) {
-        state = setup.state()
-        show(error, downloading: purpose == .download)
     }
 
     private func show(_ error: Error, downloading: Bool = false) {
@@ -586,9 +586,8 @@ extension SetupModel {
             ended: { [weak self] end in
                 self?.ended(end, purpose: purpose) ?? .close
             },
-            letGo: { [weak self] _ in
-                guard let self else { return }
-                state = setup.state()
+            afterEnd: { [weak self] in
+                self?.readState()
             },
             hold: { BackgroundTime.begin("Setup") },
             // A download stopped while the key waited for a touch is still
@@ -603,22 +602,14 @@ extension SetupModel {
 
     private func ended(_ end: KeyTaskEnd<SetupError>, purpose: SetupSheet.Purpose) -> KeySheetAfterEnd {
         switch end {
-        case .done:
-            succeeded()
+        case .done, .failed:
             return .standard
         case .stepFailed(let error):
             // Not the key's problem: the host, the repository or the store.
-            stopped(purpose, because: error)
+            show(error, downloading: purpose == .download)
             return .close
         case .cancelled:
-            state = setup.state()
             return .close
-        case .failed:
-            if end.failedNotByKey {
-                // The reader or paw itself: setup is where it was.
-                state = setup.state()
-            }
-            return .standard
         }
     }
 }

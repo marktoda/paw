@@ -44,7 +44,7 @@ struct StoreSettingsSections: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("settings-key-diagnostics")
-            .sheet(isPresented: $showsDiagnostics) {
+            .pawSheet(isPresented: $showsDiagnostics) {
                 KeyDiagnosticsView(model: model)
                     .privacyCover()
             }
@@ -74,7 +74,7 @@ struct StoreSettingsSections: View {
                     ErrorRow(kind: .warning, problem: SyncWords.off, nextStep: describe(problem))
                 }
                 if let syncing {
-                    ServerIdentityRows(sync: syncing.sync)
+                    ServerIdentityRows(serverKeys: syncing.serverKeys)
                 }
                 if let writer {
                     NavigationLink {
@@ -140,14 +140,6 @@ struct RemoveStoreSection: View {
     }
 }
 
-/// Server keys forgotten in Settings since paw started, by host: so the
-/// next check can say whether the key the server presents now is the one
-/// the person trusted before. Memory only; gone when paw quits.
-@MainActor
-enum ForgottenServerKeys {
-    static var byHost: [String: Set<String>] = [:]
-}
-
 /// The store's server: its name and why paw trusts it, one row. Tapping it
 /// shows each server key, by type and SHA256 fingerprint, to compare with
 /// the one the server publishes. A server key the person trusted (not one
@@ -155,19 +147,14 @@ enum ForgottenServerKeys {
 /// check shows the key the server presents now, says whether it is the one
 /// forgotten, and asks before trusting a different one.
 private struct ServerIdentityRows: View {
-    let sync: StoreSync
-    @State private var keys: ServerKeys?
+    let serverKeys: ServerKeysModel
     @State private var expanded = false
     @State private var confirmingForget = false
-    /// The key the server presented, waiting for Trust.
-    @State private var presented: ServerKey?
     /// A different key than the one forgotten: Trust asks again first.
     @State private var confirmingDifferent = false
-    @State private var checking = false
-    @State private var problem: (title: String, detail: String)?
 
     var body: some View {
-        let shown = self.keys ?? (try? sync.serverKeys())
+        let shown = serverKeys.keys
         let bundled = shown?.bundled ?? false
         let pinned = shown?.keys ?? []
         Button {
@@ -196,7 +183,7 @@ private struct ServerIdentityRows: View {
         .accessibilityHint(expanded ? "" : "Shows the server key")
         .accessibilityIdentifier("settings-host-fingerprint")
         // Said in the row's problem if the pinned keys can't be read.
-        .task { reload() }
+        .task { serverKeys.read() }
         if expanded {
             if !pinned.isEmpty {
                 VStack(alignment: .leading, spacing: PawMetrics.Spacing.s) {
@@ -212,15 +199,15 @@ private struct ServerIdentityRows: View {
                 .accessibilityIdentifier("settings-host-fingerprints")
             }
             if !bundled {
-                trustRows(host: shown?.host ?? "", pinned: pinned)
+                trustRows(pinned: pinned)
             }
-            if let problem {
+            if let problem = serverKeys.problem {
                 ErrorRow(kind: .error, problem: problem.title, nextStep: problem.detail)
             }
         }
     }
 
-    @ViewBuilder private func trustRows(host: String, pinned: [ServerKey]) -> some View {
+    @ViewBuilder private func trustRows(pinned: [ServerKey]) -> some View {
         if !pinned.isEmpty {
             if confirmingForget {
                 InlineConfirmRow(
@@ -228,16 +215,18 @@ private struct ServerIdentityRows: View {
                     detail: "Sync stops until you trust it again.",
                     confirmTitle: "Forget", cancelTitle: "Keep it",
                     identifier: "settings-forget-host",
-                    onConfirm: { forget(host: host, pinned: pinned) },
+                    onConfirm: {
+                        confirmingForget = false
+                        serverKeys.forget()
+                    },
                     onCancel: { confirmingForget = false })
             } else {
                 Button("Forget server key\u{2026}") { confirmingForget = true }
                     .foregroundStyle(PawColor.danger)
                     .accessibilityIdentifier("settings-forget-host-key")
             }
-        } else if let presented {
-            let before = ForgottenServerKeys.byHost[host] ?? []
-            let differs = !before.isEmpty && !before.contains(presented.fingerprint)
+        } else if let presented = serverKeys.presented {
+            let differs = serverKeys.presentedDiffers
             VStack(alignment: .leading, spacing: PawMetrics.Spacing.s) {
                 if differs {
                     Label("Different from the key you trusted before", systemImage: "exclamationmark.triangle.fill")
@@ -247,7 +236,7 @@ private struct ServerIdentityRows: View {
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel("Different from the key you trusted before")
                         .accessibilityIdentifier("settings-presented-key-differs")
-                } else if !before.isEmpty {
+                } else if serverKeys.forgottenBefore {
                     Text("Same key as before")
                         .font(PawFont.subheadline)
                         .foregroundStyle(PawColor.labelSecondary)
@@ -267,85 +256,30 @@ private struct ServerIdentityRows: View {
                     detail: "Only if your server's key was changed on purpose.",
                     confirmTitle: "Trust", cancelTitle: "Cancel",
                     identifier: "settings-trust-different",
-                    onConfirm: { trust(presented, host: host) },
+                    onConfirm: { serverKeys.trust(presented) },
                     onCancel: { confirmingDifferent = false })
             } else {
                 Button(differs ? "Trust the new key\u{2026}" : "Trust this key") {
                     if differs {
                         confirmingDifferent = true
                     } else {
-                        trust(presented, host: host)
+                        serverKeys.trust(presented)
                     }
                 }
                 .foregroundStyle(differs ? PawColor.danger : PawColor.label)
                 .accessibilityIdentifier("settings-trust-host")
-                Button("Cancel") { self.presented = nil }
+                Button("Cancel") { serverKeys.dropPresented() }
                     .foregroundStyle(PawColor.label)
                     .accessibilityIdentifier("settings-trust-host-cancel")
             }
         } else {
-            Button(checking ? "Checking\u{2026}" : "Check the server key") { check() }
-                .foregroundStyle(PawColor.label)
-                .disabled(checking)
-                .accessibilityIdentifier("settings-check-host")
-        }
-    }
-
-    private func reload() {
-        do {
-            keys = try sync.serverKeys()
-        } catch {
-            problem = ("Couldn't read the server key", describe(error))
-        }
-    }
-
-    private func forget(host: String, pinned: [ServerKey]) {
-        confirmingForget = false
-        do {
-            try sync.forgetHostKey()
-            ForgottenServerKeys.byHost[host, default: []].formUnion(pinned.map(\.fingerprint))
-            problem = nil
-        } catch {
-            problem = ("The server key wasn't forgotten", describe(error))
-        }
-        reload()
-    }
-
-    /// Connects without the key and without logging in: network only.
-    private func check() {
-        checking = true
-        problem = nil
-        confirmingDifferent = false
-        let sync = sync
-        Task {
-            let result = await Task.detached(priority: .userInitiated) {
-                Result { try sync.checkServerKey() }
-            }.value
-            checking = false
-            switch result {
-            case .success(let key):
-                presented = key
-            case .failure(let error):
-                problem = ("Couldn't reach the server", describe(error))
+            Button(serverKeys.checking ? "Checking\u{2026}" : "Check the server key") {
+                confirmingDifferent = false
+                serverKeys.check()
             }
-        }
-    }
-
-    private func trust(_ key: ServerKey, host: String) {
-        let sync = sync
-        Task {
-            let result = await Task.detached(priority: .userInitiated) {
-                Result { try sync.trustServerKey(fingerprint: key.fingerprint) }
-            }.value
-            presented = nil
-            confirmingDifferent = false
-            if case .failure(let error) = result {
-                problem = ("The server key wasn't trusted", describe(error))
-            } else {
-                ForgottenServerKeys.byHost[host] = nil
-                problem = nil
-            }
-            reload()
+            .foregroundStyle(PawColor.label)
+            .disabled(serverKeys.checking)
+            .accessibilityIdentifier("settings-check-host")
         }
     }
 }

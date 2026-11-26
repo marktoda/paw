@@ -90,6 +90,8 @@ final class AppModel {
     var showsSettings = false
     /// The open entry's value in large type (a full-screen cover on iPad).
     var largeType: LargeTypeItem?
+    /// The sheets up other than key sheets.
+    let sheets = SheetsUp()
 
     @ObservationIgnored private var pendingRoute: Route?
     /// Lock now's so far, so an open can tell it came since the open began.
@@ -160,14 +162,16 @@ final class AppModel {
         return .needsKey
     }
 
-    func refreshCopies() {
+    /// Reads the copies again. `problem` is what the change to them just
+    /// before ran into, said on Home unless the list itself can't be read.
+    func refreshCopies(after problem: Error? = nil) {
         guard let copies else {
             liveCopies = []
             return
         }
         do {
             liveCopies = try copies.list()
-            copiesProblem = nil
+            copiesProblem = problem.map { describe($0) }
         } catch {
             liveCopies = []
             copiesProblem = describe(error)
@@ -176,12 +180,13 @@ final class AppModel {
     }
 
     private func sweepCopies() {
+        var problem: Error?
         do {
             try copies?.sweep()
         } catch {
-            copiesProblem = describe(error)
+            problem = error
         }
-        refreshCopies()
+        refreshCopies(after: problem)
     }
 
     // MARK: Plugging the key in and out
@@ -366,12 +371,17 @@ final class AppModel {
             .filter { exists.contains($0) }
         // A copy of an entry that is gone (a discarded add, a rename, a
         // delete) would otherwise sit on Home until its time ran out.
+        var problem: Error?
         if let copies {
             for copy in liveCopies where !exists.contains(copy.entry) {
-                try? copies.forgetEntry(entry: copy.entry)
+                do {
+                    try copies.forgetEntry(entry: copy.entry)
+                } catch {
+                    problem = error
+                }
             }
         }
-        refreshCopies()
+        refreshCopies(after: problem)
     }
 
     // MARK: Navigation
@@ -424,8 +434,10 @@ final class AppModel {
         setPath(routes)
     }
 
+    /// A sheet is up, key sheet or other: the iPad's keyboard shortcuts
+    /// do nothing under it.
     var sheetIsUp: Bool {
-        keyRequest != nil || showsSettings || largeType != nil || storeSession.sheetIsUp
+        storeSession.keyTasks.sheetShown || sheets.any
     }
 
     /// Closes every opened entry that is no longer on the navigation stack.
@@ -463,10 +475,11 @@ final class AppModel {
         locks += 1
         keyTask.cancelAll()
         keyPort.session()?.forgetPin()
+        var problem: Error?
         do {
             try copies?.lockNow()
         } catch {
-            copiesProblem = describe(error)
+            problem = error
         }
         // A Face ID open that started before this finishes into a locked
         // app: it leaves nothing behind.
@@ -474,7 +487,7 @@ final class AppModel {
         pendingRoute = nil
         setPath([])
         storeSession.clipboard.clearIfOurs()
-        refreshCopies()
+        refreshCopies(after: problem)
         toast = Toast(text: lockedToast(ended: ended))
     }
 
@@ -541,6 +554,7 @@ extension AppModel {
     /// the late copy may have made.
     private func removeLateCopy(of entry: EntryRef, lockedSince: Bool) {
         guard let copies else { return }
+        var problem: Error?
         do {
             if lockedSince {
                 try copies.lockNow()
@@ -548,9 +562,9 @@ extension AppModel {
                 try copies.forgetEntry(entry: entry.path)
             }
         } catch {
-            copiesProblem = describe(error)
+            problem = error
         }
-        refreshCopies()
+        refreshCopies(after: problem)
     }
 
     /// The entry is open: it is pushed once the sheet has gone. A copy that

@@ -281,7 +281,7 @@ private struct SyncModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .sheet(item: sheet, onDismiss: { syncing?.sheetDismissed() }) { _ in
+            .pawSheet(item: sheet, onDismiss: { syncing?.sheetDismissed() }) { _ in
                 if let syncing {
                     SyncSheetHost(model: model, syncing: syncing)
                 }

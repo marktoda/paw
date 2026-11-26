@@ -24,7 +24,7 @@ struct GitHubChooseButton: View {
         .buttonStyle(.pawSecondary)
         .disabled(model.working != nil)
         .accessibilityIdentifier("address-github")
-        .sheet(item: $picker) { picker in
+        .pawSheet(item: $picker) { picker in
             GitHubPickerSheet(picker: picker)
         }
     }
@@ -275,11 +275,11 @@ private struct GitHubRepositoryList: View {
     /// Past this many the list can be searched.
     static let searchFrom = 8
 
+    /// In the core's order: most recently pushed first.
     private var shown: [GitHubRepository] {
-        let all = GitHubPicker.ordered(repositories)
         let text = query.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return all }
-        return all.filter { $0.fullName.localizedCaseInsensitiveContains(text) }
+        guard !text.isEmpty else { return repositories }
+        return repositories.filter { $0.fullName.localizedCaseInsensitiveContains(text) }
     }
 
     var body: some View {

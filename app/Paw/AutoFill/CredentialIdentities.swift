@@ -1,5 +1,6 @@
 import AuthenticationServices
 import Foundation
+import Observation
 
 /// The suggestions above the keyboard: what paw tells
 /// `ASCredentialIdentityStore`, from the app only (design.md 2.10).
@@ -130,13 +131,16 @@ enum CredentialIdentities {
 /// changes what it keeps here, and it publishes again after each change.
 /// A fixture's submits nothing: its entries must not reach the system's
 /// suggestions.
-@MainActor
+@MainActor @Observable
 final class AutoFillSuggestions {
+    /// Why an opened entry's one-time code couldn't be noted, said in
+    /// Settings with the code suggestions.
+    private(set) var codesProblem: String?
     private let pairings: SitePairings
     private let codes: OneTimeCodeEntries
     private let submit: @MainActor (CredentialIdentities.Request) -> Task<Void, Never>
     /// The store last published, to publish again.
-    private var store: PassStore?
+    @ObservationIgnored private var store: PassStore?
 
     init(stateDir: String,
          submit: @escaping @MainActor (CredentialIdentities.Request) -> Task<Void, Never> = CredentialIdentities.submit) {
@@ -212,10 +216,22 @@ final class AutoFillSuggestions {
         let codes = codes
         let path = opened.path
         Task.detached(priority: .utility) { [weak self] in
-            guard (try? codes.note(entry: path, hasCode: hasCode)) == true else { return }
+            let noted = Handoff(value: Result { try codes.note(entry: path, hasCode: hasCode) })
             await MainActor.run {
-                self?.republish()
+                self?.noted(noted.value)
             }
+        }
+    }
+
+    private func noted(_ result: Result<Bool, Error>) {
+        switch result {
+        case .success(let changed):
+            codesProblem = nil
+            if changed {
+                republish()
+            }
+        case .failure(let error):
+            codesProblem = describe(error)
         }
     }
 }
