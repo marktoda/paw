@@ -16,9 +16,13 @@ enum FaceIdWords {
     }
 
     /// The notice after tapping `entry` failed with `error`, in this
-    /// device's words.
+    /// device's words. A busy store asks for another tap, never the key:
+    /// the key would wait for the same store.
     static func notice(_ error: Swift.Error, entry: String, table: WordTable = .app) -> FaceIdNotice {
-        table.faceIdNotice(error, entry)
+        if isStoreBusy(error) {
+            return FaceIdNotice(problem: StoreBusyWords.problem, nextStep: StoreBusyWords.nextStep, offersKey: false)
+        }
+        return table.faceIdNotice(error, entry)
     }
 
     /// How long a Face ID copy lasts: "8 hours".

@@ -133,8 +133,8 @@ extension RecipientLine {
     var spokenName: String {
         switch status {
         case .ready(_, .card, _): return "your key"
-        case .ready(let fingerprint, .certificate, _): return "key \(Self.tail(fingerprint))"
-        default: return "key \(Self.tail(line))"
+        case .ready(let fingerprint, .certificate, _): return "key \(RecipientLineWords.ending(fingerprint))"
+        default: return "key \(RecipientLineWords.ending(line))"
         }
     }
 
@@ -148,11 +148,6 @@ extension RecipientLine {
         case .expired: return "This key has expired"
         case .refused(_, _, let reason): return "Can't be used: \(reason)"
         }
-    }
-
-    /// A line too short to be a fingerprint is said as it is.
-    static func tail(_ hex: String) -> String {
-        hex.filter(\.isHexDigit).count >= 8 ? fingerprintEnding(hex) : hex
     }
 }
 
@@ -185,7 +180,7 @@ struct RecipientsReviewScreen: View {
                         lineRow("No list", detail: "This folder had no list of its own.")
                     }
                     ForEach(found.acceptedLines, id: \.self) { line in
-                        lineRow(Self.name(line, in: found), detail: Self.grouped(line))
+                        lineRow(Self.name(line, in: found), detail: RecipientLineWords.grouped(line))
                     }
                 } header: {
                     PawSectionHeader("Before")
@@ -195,8 +190,8 @@ struct RecipientsReviewScreen: View {
                     ForEach(found.lines, id: \.line) { line in
                         lineRow(
                             Self.name(line.line, in: found),
-                            detail: Self.isYourKey(line) ? Self.grouped(line.line)
-                                : "\(line.statusWords) \u{00B7} \(Self.grouped(line.line))")
+                            detail: Self.isYourKey(line) ? RecipientLineWords.grouped(line.line)
+                                : "\(line.statusWords) \u{00B7} \(RecipientLineWords.grouped(line.line))")
                     }
                 } header: {
                     PawSectionHeader("Now")
@@ -255,19 +250,12 @@ struct RecipientsReviewScreen: View {
     /// key's line wherever it appears, otherwise "Key 9A1C 03F2".
     private static func name(_ line: String, in found: FolderRecipients) -> String {
         let yours = found.lines.contains { $0.line == line && isYourKey($0) }
-        return yours ? "Your key" : "Key \(RecipientLine.tail(line))"
+        return yours ? "Your key" : "Key \(RecipientLineWords.ending(line))"
     }
 
     private static func isYourKey(_ line: RecipientLine) -> Bool {
         if case .ready(_, .card, _) = line.status { return true }
         return false
-    }
-
-    /// A fingerprint in groups of four, as people read them out.
-    static func grouped(_ line: String) -> String {
-        let hex = line.filter { !$0.isWhitespace }
-        guard hex.allSatisfy(\.isHexDigit) else { return line }
-        return fingerprintGroups(text: hex).joined(separator: " ")
     }
 
     private func accept() {

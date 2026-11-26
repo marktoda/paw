@@ -12,10 +12,19 @@ final class GitHubAccess {
     private(set) var signedIn = false
     private(set) var link: GitHubLink?
     let queue = DispatchQueue(label: "paw-github", qos: .userInitiated)
+    /// Whether this GitHub hosts the store at an address.
+    private let hosts: (_ address: String) -> Bool
 
-    init(core: GitHubAccount) {
+    init(core: GitHubAccount, hosts: @escaping (_ address: String) -> Bool) {
         self.core = core
+        self.hosts = hosts
         reload()
+    }
+
+    /// Whether Settings offers the sign-in for the store at `address`: one
+    /// is kept, a repository is chosen, or this GitHub hosts the store.
+    func offered(for address: String) -> Bool {
+        signedIn || link != nil || hosts(address)
     }
 
     /// Reads whether a sign-in is kept and which repository is chosen.
@@ -73,9 +82,15 @@ enum GitHubSignInSource {
         #endif
     }
 
-    /// The sign-in for the screens.
+    /// The sign-in for the screens. The simulated GitHub serves the
+    /// simulated git host's store, whatever its address.
     @MainActor
     static func access(stateDir: URL) -> GitHubAccess? {
-        account(stateDir: stateDir.path).map { GitHubAccess(core: $0) }
+        #if DEBUG && targetEnvironment(simulator)
+        let hosts: (String) -> Bool = { _ in true }
+        #else
+        let hosts: (String) -> Bool = { isGithubAddress(address: $0) }
+        #endif
+        return account(stateDir: stateDir.path).map { GitHubAccess(core: $0, hosts: hosts) }
     }
 }

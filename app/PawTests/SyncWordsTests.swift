@@ -86,8 +86,9 @@ final class SyncWordsTests: XCTestCase {
 
         let busy = SyncFailure(.StoreBusy, during: .refresh, unpushed: 0, host: "h")
         XCTAssertEqual(busy.kind, .other)
-        XCTAssertEqual(busy.problem, "Couldn't check for changes")
-        XCTAssertEqual(busy.details, [storeBusyText])
+        XCTAssertEqual(busy.problem, "The store is busy")
+        XCTAssertEqual(busy.nextStep, "Try again in a moment.")
+        XCTAssertEqual(busy.details, [])
     }
 
     func testACancelIsQuietAndOffersNothing() {

@@ -152,7 +152,7 @@ final class AutoFillModel {
         self.kind = kind
         self.provider = provider
         self.open = open
-        keyTask = KeyTaskDriver()
+        keyTask = KeyTaskDriver(reader: nil)
         faceId = FaceIdOpener()
     }
 
@@ -175,6 +175,8 @@ final class AutoFillModel {
             var found: [MatchedEntry] = []
             var withCode: [String] = []
             if case .ready(let source) = opening {
+                // A list that can't be read marks no entry as opening with
+                // Face ID: each still fills, with the key.
                 live = ((try? source.copies?.list()) ?? []).map(\.entry)
                 withCode = source.codes.entries(store: source.store)
                 switch request {
@@ -209,7 +211,7 @@ final class AutoFillModel {
             page = .problem(words.problem, words.nextStep, backToList: false)
         case .ready(let source):
             self.source = source
-            let reader = KeyReader(port: source.keyPort, connect: source.connect)
+            let reader = KeyReader(port: source.keyPort, source: source.keys)
             self.reader = reader
             keyTask.reader = reader
             keepsCopies = source.copies?.copiesEnabled() == true
@@ -552,48 +554,30 @@ extension AutoFillModel {
     /// key opens the entry, as in the app: the copy cache is safe for two
     /// processes (core/src/copies/dir.rs).
     private func keyJob(_ entry: EntryRef, source: AutoFillSource) -> KeyJob<Never> {
-        let store = source.store
         let copies = source.copies
         let port = source.keyPort
-        let words = KeyErrorWords.Context(entry: entry.name, table: .autoFill)
-        return KeyJob(
-            begin: { listener in
-                port.openEntry(
-                    store: store, entry: entry.path, copies: copies, ttlSecs: FaceIdOpener.windowSecs,
-                    listener: listener)
-            },
-            words: { words },
-            working: { _ in (KeySheetWords.opening(entry.name), nil) },
-            ended: { [weak self] end in
-                guard let self else { return nil }
-                guard case .done(let outcome) = end else { return end.standardStage(words) }
-                if case .opened(let opened, let until, _) = outcome {
-                    if until != nil, copies != nil {
-                        live.insert(entry.path)
-                    }
-                    fill(opened, entry: entry)
+        let open = KeyOpen(entry: entry, store: source.store, port: port, copies: copies, table: .autoFill)
+        var job = open.job(
+            opened: { [weak self] opened in
+                // A copy that wasn't kept goes unsaid: the request ends
+                // with the fill, and the next fill uses the key again.
+                if opened.faceIdUntilMs != nil, copies != nil {
+                    self?.live.insert(entry.path)
                 }
+                self?.fill(opened.entry, entry: entry)
                 // A fill shows no Done: the request ends there.
-                return nil
+                return .close
             },
-            letGo: { [weak self] end, _ in
-                self?.disposeOfLateOpen(end, entry: entry, copies: copies)
-            },
-            closed: {
-                // paw is done with the key for this pick, however it went.
-                port.session()?.forgetPin()
+            lateCopyKept: { [weak self] in
+                // Nothing was asked for: the copy goes.
+                guard let copies else { return }
+                let carried = Handoff(value: copies)
+                self?.work.async { try? carried.value.forgetEntry(entry: entry.path) }
             })
-    }
-
-    /// An open the sheet let go of that finished anyway (in the last
-    /// moment after the card answered) is wiped, and the copy it kept is
-    /// removed: nothing was asked for.
-    private func disposeOfLateOpen(_ end: KeyTaskEnd<Never>, entry: EntryRef, copies: CopyCache?) {
-        guard case .done(.opened(let opened, let until, _)) = end else { return }
-        opened.close()
-        if until != nil, let copies {
-            let carried = Handoff(value: copies)
-            work.async { try? carried.value.forgetEntry(entry: entry.path) }
+        job.closed = {
+            // paw is done with the key for this pick, however it went.
+            port.session()?.forgetPin()
         }
+        return job
     }
 }

@@ -34,9 +34,6 @@ struct KeyRequest: Identifiable {
     /// The sheet's run: the same across Try again.
     let id: UUID
     let entry: EntryRef
-    /// The key plugged in is not the store's: the sheet shows "Replace key"
-    /// as a way on that is not built yet.
-    var differentKey = false
 }
 
 /// A problem shown inline at the top of the list it happened in.
@@ -86,8 +83,6 @@ final class AppModel {
     private(set) var accessByPath: [String: Access] = [:]
     /// The entry the key sheet opens, while it is up.
     private var keyEntry: EntryRef?
-    /// The key plugged in is not the store's.
-    private var keyIsDifferent = false
     private(set) var sessions: [UUID: OpenSession] = [:]
     /// Entries closed while on screen (2 minutes away, the iPhone locked,
     /// the Face ID time ended), by the id their route still carries.
@@ -101,6 +96,8 @@ final class AppModel {
     var largeType: LargeTypeItem?
 
     @ObservationIgnored private var pendingRoute: Route?
+    /// Lock now's so far, so an open can tell it came since the open began.
+    @ObservationIgnored private var locks = 0
     /// Bumped by each key read: which access answer is the latest.
     @ObservationIgnored private var accessAttempt = 0
     /// Monotonic milliseconds on `clock` when paw went to the background.
@@ -110,9 +107,9 @@ final class AppModel {
     /// `notice` is said on Home from the start.
     init(session: StoreSession, notice: Notice? = nil) {
         storeSession = session
-        keyTask = KeyTaskDriver(reader: session.reader)
+        keyTask = session.keyTasks.make()
         faceId = FaceIdOpener()
-        self.notice = notice
+        self.notice = notice ?? session.syncProblem.map { Notice(problem: SyncWords.off, nextStep: describe($0)) }
         session.reader.onRead = { [weak self] read in
             if case .success(let keySession) = read {
                 self?.learnAccess(keySession)
@@ -247,7 +244,7 @@ final class AppModel {
     /// The key sheet while it is up.
     var keyRequest: KeyRequest? {
         guard let run = keyTask.shown, let keyEntry else { return nil }
-        return KeyRequest(id: run, entry: keyEntry, differentKey: keyIsDifferent)
+        return KeyRequest(id: run, entry: keyEntry)
     }
 
     /// Opens with the key: says so first if the plugged-in key cannot open
@@ -262,7 +259,6 @@ final class AppModel {
         }
         pendingRoute = nil
         keyEntry = entry
-        keyIsDifferent = false
         keyTask.start(openJob(entry))
     }
 
@@ -313,7 +309,7 @@ final class AppModel {
             openWithKey(entry)
         case .failure(let error):
             let words = FaceIdWords.notice(error, entry: entry.name)
-            notice = Notice(problem: words.problem, nextStep: words.nextStep, keyEntry: entry)
+            notice = Notice(problem: words.problem, nextStep: words.nextStep, keyEntry: words.offersKey ? entry : nil)
         }
     }
 
@@ -471,7 +467,8 @@ final class AppModel {
     /// works ends the copies again when it finishes (`openJob`'s `letGo`).
     func lockNow() {
         let ended = liveCopies.count
-        keyTask.lockNow()
+        locks += 1
+        keyTask.cancelAll()
         keyPort.session()?.forgetPin()
         do {
             try copies?.lockNow()
@@ -524,55 +521,33 @@ final class AppModel {
 
 extension AppModel {
     /// Opening `entry` with the key: the entry is pushed once the sheet has
-    /// gone. A key that is not the store's leaves "Replace key" on the
-    /// sheet; one that cannot open the entry says which keys can instead.
+    /// gone. One that the key cannot open says which keys can instead.
     private func openJob(_ entry: EntryRef) -> KeyJob<Never> {
-        let store = store
-        let copies = copies
-        let port = keyPort
-        let words = KeyErrorWords.Context(entry: entry.name)
-        return KeyJob(
-            begin: { listener in
-                port.openEntry(
-                    store: store, entry: entry.path, copies: copies, ttlSecs: FaceIdOpener.windowSecs,
-                    listener: listener)
+        let open = KeyOpen(entry: entry, store: store, port: keyPort, copies: copies, table: .app)
+        let locksAtStart = locks
+        return open.job(
+            opened: { [weak self] opened in
+                self?.opened(opened, entry: entry)
+                return .standard
             },
-            words: { words },
-            working: { progress in
-                (KeySheetWords.opening(entry.name), progress.map(\.counted))
+            failed: { [weak self] error in
+                guard case .NotForThisKey = error else { return .standard }
+                self?.showAnotherKey(entry)
+                return .close
             },
-            ended: { [weak self] end in
-                guard let self else { return nil }
-                switch end {
-                case .done(let outcome):
-                    opened(outcome, entry: entry)
-                    return .done
-                case .failed(.DifferentKey):
-                    // Not this entry's problem: the key is not the store's.
-                    keyIsDifferent = true
-                    return end.standardStage(words)
-                case .failed(.NotForThisKey):
-                    showAnotherKey(entry)
-                    return nil
-                case .failed, .cancelled:
-                    return end.standardStage(words)
-                }
-            },
-            letGo: { [weak self] end, lockedSince in
-                self?.disposeOfLateOpen(end, entry: entry, lockedSince: lockedSince)
+            lateCopyKept: { [weak self] in
+                guard let self else { return }
+                self.removeLateCopy(of: entry, lockedSince: self.locks != locksAtStart)
             })
     }
 
-    /// An open the sheet let go of. Cancel stops it before any copy is
-    /// kept, except in the last milliseconds after the card has answered.
-    /// Such an open still finishes with the entry open and its copy kept:
-    /// close the entry and remove that one copy. If Lock now came since it
-    /// started, end every copy again instead, which also deletes the seal
-    /// key the late copy may have made.
-    private func disposeOfLateOpen(_ end: KeyTaskEnd<Never>, entry: EntryRef, lockedSince: Bool) {
-        guard case .done(.opened(let opened, let faceIdUntilMs, _)) = end else { return }
-        opened.close()
-        guard faceIdUntilMs != nil, let copies else { return }
+    /// An open the sheet let go of kept a copy. Cancel stops an open before
+    /// any copy is kept, except in the last milliseconds after the card has
+    /// answered: remove that one copy. If Lock now came since the open
+    /// began, end every copy again instead, which also deletes the seal key
+    /// the late copy may have made.
+    private func removeLateCopy(of entry: EntryRef, lockedSince: Bool) {
+        guard let copies else { return }
         do {
             if lockedSince {
                 try copies.lockNow()
@@ -585,14 +560,18 @@ extension AppModel {
         refreshCopies()
     }
 
-    /// The entry is open: it is pushed once the sheet has gone.
-    private func opened(_ outcome: KeyOutcome, entry: EntryRef) {
-        guard case .opened(let opened, let faceIdUntilMs, _) = outcome else { return }
-        noteOpened(opened, path: entry.path)
+    /// The entry is open: it is pushed once the sheet has gone. A copy that
+    /// was asked for and not kept is said on Home.
+    private func opened(_ opened: KeyOpen.Opened, entry: EntryRef) {
+        noteOpened(opened.entry, path: entry.path)
         refreshCopies()
-        let session = OpenSession(ref: entry, entry: opened, view: opened.view(), hadCopy: faceIdUntilMs != nil)
+        let session = OpenSession(
+            ref: entry, entry: opened.entry, view: opened.entry.view(), hadCopy: opened.faceIdUntilMs != nil)
         sessions[session.id] = session
         pendingRoute = .entry(session.id)
+        if let error = opened.copyFailed {
+            notice = Notice(problem: "Face ID couldn't keep a copy", nextStep: describe(error))
+        }
     }
 }
 

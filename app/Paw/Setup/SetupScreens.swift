@@ -53,7 +53,7 @@ struct SetupFlowView: View {
         #if DEBUG && targetEnvironment(simulator)
         .modifier(SimSetupHostWatch(model: model))
         .background(alignment: .topLeading) {
-            KeyTasksSignal(tasks: model.keyTask.pendingTasks)
+            KeyTasksSignal { model.keyTask.pendingTasks }
         }
         #endif
         .privacyCover()
@@ -343,7 +343,7 @@ private struct AddressScreen: View {
                         .accessibilityIdentifier("address-problem")
                 } else {
                     if let reading {
-                        Text(SetupModel.readingLine(reading))
+                        Text(SetupWords.readingLine(reading))
                             .font(PawFont.footnote)
                             .foregroundStyle(PawColor.label)
                             .fixedSize(horizontal: false, vertical: true)
@@ -644,12 +644,16 @@ private struct DoneScreen: View {
             if let readiness = model.readiness, !readiness.canSave {
                 ErrorRow(
                     kind: .warning,
-                    problem: readiness.missingRecipients.count == 1
-                        ? "This store is also encrypted for 1 other key"
-                        : "This store is also encrypted for \(readiness.missingRecipients.count) other keys",
+                    problem: "This store is also encrypted for "
+                        + counted(readiness.missingRecipients.count, "other key", "other keys"),
                     nextStep: "You can open everything. Adding or changing passwords needs the public key of "
                         + readiness.missingRecipients.map(Self.spokenRecipient).joined(separator: ", ") + ".",
                     isBanner: true)
+            }
+            if model.whoCanOpenUnread {
+                ErrorRow(
+                    kind: .warning, problem: "Couldn't read who can open this store",
+                    nextStep: "Adding or changing passwords may not work.", isBanner: true)
             }
         } buttons: {
             Button("Open my passwords") { model.openStore() }
@@ -661,25 +665,19 @@ private struct DoneScreen: View {
     private var summary: String {
         let passwords = passwordCount(Int(entries))
         guard let folders = model.storeFacts?.folders, folders > 0 else { return passwords }
-        return "\(passwords) in \(folders == 1 ? "1 folder" : "\(folders) folders")"
+        return "\(passwords) in \(counted(folders, "folder", "folders"))"
     }
 
     /// Who can open the store's passwords, from its top-level `.gpg-id`.
     private var whoCanOpen: String? {
         guard let recipients = model.storeFacts?.recipients, recipients > 0 else { return nil }
         let others = recipients - 1
-        switch others {
-        case 0: return "Encrypted for your key only"
-        case 1: return "Encrypted for your key and 1 other"
-        default: return "Encrypted for your key and \(others) others"
-        }
+        return others == 0 ? "Encrypted for your key only" : "Encrypted for your key and \(counted(others, "other", "others"))"
     }
 
-    /// "key ending 2C11 41DE", or the line as written if it is not hex.
+    /// "the key ending 2C11 41DE", or the line as written if it is not hex.
     private static func spokenRecipient(_ line: String) -> String {
-        let hex = line.hasPrefix("0x") ? String(line.dropFirst(2)) : line
-        guard hex.count >= 8, hex.allSatisfy(\.isHexDigit) else { return line }
-        return "the key ending \(fingerprintEnding(hex))"
+        RecipientLineWords.hex(line) == nil ? line : "the key ending \(RecipientLineWords.ending(line))"
     }
 }
 
@@ -696,7 +694,7 @@ private struct SetupKeySheet: View {
             onCancel: { model.cancelSheet() })
             #if DEBUG && targetEnvironment(simulator)
             .background(alignment: .topLeading) {
-                KeyTasksSignal(tasks: model.keyTask.pendingTasks)
+                KeyTasksSignal { model.keyTask.pendingTasks }
             }
             #endif
             .keySheetPresentation(model.keyTask.stage)

@@ -332,7 +332,7 @@ private struct OneTimeCodeRow: View {
 
     /// "1 second", "12 seconds".
     static func secondsLeft(_ seconds: UInt32) -> String {
-        seconds == 1 ? "1 second" : "\(seconds) seconds"
+        counted(Int(seconds), "second", "seconds")
     }
 
     /// "123456" reads as "123 456", "12345678" as "1234 5678".

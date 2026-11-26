@@ -241,7 +241,7 @@ struct SearchResults: View {
                             subtitleHighlights: hit.folderRanges.map(\.nsRange))
                     }
                 } header: {
-                    PawSectionHeader(hits.count == 1 ? "1 match" : "\(hits.count) matches")
+                    PawSectionHeader(counted(hits.count, "match", "matches"))
                         .accessibilityIdentifier("search-count")
                 }
             }

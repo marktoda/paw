@@ -106,6 +106,14 @@ struct HeldBackScreen: View {
         .navigationBarTitleDisplayMode(.large)
     }
 
+    private func heldBackNote(_ item: HeldBack) -> String? {
+        switch item.list {
+        case .accepted: syncing.reencryptLeft[item.entry].flatMap(reencryptWords)
+        case .notAccepted: Device.words("Not accepted on this iPhone yet.")
+        case .unreadable: nil
+        }
+    }
+
     private func section(_ item: HeldBack) -> some View {
         let entry = EntryRef(path: item.entry)
         let folder = item.gpgId.map { gpgIdFolder(path: $0) } ?? ""
@@ -116,17 +124,17 @@ struct HeldBackScreen: View {
                 item.encryptedFor.isEmpty ? "Keys paw can't name" : item.encryptedFor.joined(separator: "\n"),
                 prose: item.encryptedFor.isEmpty,
                 identifier: "held-back-encrypted-for-\(entry.name)")
+            let listUnread = item.list == .unreadable || item.recipients.isEmpty
             detailRow(
                 "Should be for",
-                item.recipients.isEmpty
+                listUnread
                     ? "Can't read this folder's list of keys."
-                    : item.recipients.map(RecipientsReviewScreen.grouped).joined(separator: "\n"),
-                prose: item.recipients.isEmpty,
-                note: item.list == .accepted
-                    ? syncing.reencryptLeft[item.entry].flatMap(reencryptWords)
-                    : Device.words("Not accepted on this iPhone yet."),
+                    : item.recipients.map(RecipientLineWords.grouped).joined(separator: "\n"),
+                prose: listUnread,
+                note: heldBackNote(item),
                 identifier: "held-back-should-be-for-\(entry.name)")
-            if item.list != .accepted {
+            // A list that can't be read has nothing to review.
+            if item.list == .notAccepted, item.gpgId != nil {
                 actionButton("Review who can open \(place)", identifier: "held-back-review-\(entry.name)") {
                     model.show(.sync(.review(folder: folder)))
                 }
@@ -242,7 +250,7 @@ struct RefusedRemoteScreen: View {
                         .pawListRow()
                     }
                 } header: {
-                    PawSectionHeader(syncing.refused.count == 1 ? "1 name" : "\(syncing.refused.count) names")
+                    PawSectionHeader(counted(syncing.refused.count, "name", "names"))
                 }
             }
             Section {

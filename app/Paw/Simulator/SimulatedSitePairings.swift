@@ -2,14 +2,11 @@ import Foundation
 
 #if DEBUG && targetEnvironment(simulator)
 /// `-pawSimPairings 1`: the fixture's name-only passwords have filled on a
-/// site each, so Sites used has rows for the UI tests. Once per launch.
-@MainActor
+/// site each, so Sites used has rows for the UI tests.
 enum SimulatedSitePairings {
-    private static var seeded = false
-
-    static func seedOnce(_ pairings: SitePairings, store: PassStore) {
-        guard LaunchArgument.simPairings.bool, !seeded else { return }
-        seeded = true
+    static func seed(stateDir: String) {
+        let pairings = SitePairings.open(stateDir: stateDir)
+        guard let store = try? PassStore(dir: storeRepoDir(stateDir: stateDir)) else { return }
         _ = try? pairings.recordPairing(store: store, entry: "email/fastmail", service: "https://www.fastmail.com")
         _ = try? pairings.recordPairing(store: store, entry: "work/Jira", service: "https://jira.com")
     }

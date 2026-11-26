@@ -8,31 +8,24 @@ enum StoreProcess: String, Sendable {
     case fill
 }
 
-/// The key's side of the store set up at a location, for one process: a
-/// key port writing this process's key log, then, once setup has enrolled
-/// a key, that key (any other is refused before a PIN is sent) and the
-/// Face ID copies.
+/// The key's side of the store set up at a location, for one process on
+/// its platform: a key port writing this process's key log, then, once
+/// setup has enrolled a key, that key (any other is refused before a PIN
+/// is sent) and the Face ID copies.
 struct StoreKeys {
     let keyPort: KeyPort
     private let location: StoreLocation
-    private let makeCopies: (URL) -> CopyCache?
+    private let platform: Platform
 
-    /// `copies` makes the Face ID copies in the copies folder: the
-    /// platform's for `process` (`PlatformCopies`) unless given.
-    init(_ process: StoreProcess, at location: StoreLocation, clock: Clock, copies: ((URL) -> CopyCache?)? = nil) {
-        keyPort = KeyPort(clock: clock)
-        keyPort.setKeyLog(stateDir: location.stateDir.path, process: process.rawValue)
+    init(_ platform: Platform, at location: StoreLocation) {
+        keyPort = platform.keyPort(keyLog: location.stateDir.path)
         self.location = location
-        if let copies {
-            makeCopies = copies
-        } else {
-            makeCopies = { dir in PlatformCopies.make(dir: dir.path, clock: clock, process: process) }
-        }
+        self.platform = platform
     }
 
     /// Loads the enrolled key into the key port, then makes the copies.
     func openEnrolled() throws -> CopyCache? {
         _ = try keyPort.loadEnrolledKey(stateDir: location.stateDir.path)
-        return makeCopies(location.copiesDir)
+        return platform.copies(in: location.copiesDir)
     }
 }

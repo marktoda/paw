@@ -9,9 +9,10 @@ struct StoreSettingsSections: View {
     let model: AppModel
     @State private var showsDiagnostics = false
 
-    /// The set-up store's address; `nil` for a fixture.
+    /// The set-up store's address; `nil` for a fixture, and while sync is
+    /// off.
     private var setUpAddress: String? {
-        model.storeSession.setUp == nil ? nil : (model.storeSession.syncing?.address ?? "")
+        model.storeSession.setUp == nil ? nil : model.storeSession.syncing?.address
     }
 
     var body: some View {
@@ -64,7 +65,7 @@ struct StoreSettingsSections: View {
         let writer = model.storeSession.edits?.writer
         if model.storeSession.setUp != nil || syncing != nil || writer != nil {
             Section {
-                if let address = setUpAddress ?? syncing?.address {
+                if let address = syncing?.address {
                     LabeledContent {
                         Text(address)
                             .font(PawFont.footnote.monospaced())
@@ -76,6 +77,8 @@ struct StoreSettingsSections: View {
                             .foregroundStyle(PawColor.label)
                     }
                     .accessibilityIdentifier("settings-address")
+                } else if let problem = model.storeSession.syncProblem {
+                    ErrorRow(kind: .warning, problem: SyncWords.off, nextStep: describe(problem))
                 }
                 if let syncing {
                     ServerIdentityRows(sync: syncing.sync)

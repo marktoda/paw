@@ -70,9 +70,9 @@ extension SyncFailure {
             pill = cancelled.pill
         case .StoreBusy:
             self.kind = .other
-            problem = Self.couldNot(kind)
-            nextStep = sentences("Try again.", waiting)
-            details = [storeBusyText]
+            problem = StoreBusyWords.problem
+            nextStep = sentences(StoreBusyWords.nextStep, waiting)
+            details = []
             pill = notDone
         case .BeingSent, .NotWaiting, .QueueKeptChanging:
             self.kind = .other
@@ -283,7 +283,7 @@ extension SyncError: WordedError {
         case .Remote(let failure):
             capitalised(remoteDetail(failure)) + "."
         case .StoreBusy:
-            capitalised(storeBusyText) + "."
+            StoreBusyWords.line
         case .BeingSent, .NotWaiting, .QueueKeptChanging:
             capitalised(SyncFailure.queueDetail(self) ?? "") + "."
         case .Cancelled:
@@ -342,4 +342,10 @@ extension ChangeQueue {
     var sendTitle: String {
         "Send \(changeCount(unpushed.count))"
     }
+}
+
+enum SyncWords {
+    /// The queue of unsent changes couldn't be opened: nothing sends or
+    /// checks for changes until paw opens the store again.
+    static let off = "Sync is off"
 }

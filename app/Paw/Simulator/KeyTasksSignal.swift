@@ -8,11 +8,12 @@ import SwiftUI
 /// Nearly invisible, 1 by 1 point; polled, because the key's state is not
 /// observable.
 struct KeyTasksSignal: View {
-    let tasks: Int
+    /// Key tasks not yet ended, read on every tick.
+    let tasks: @MainActor () -> Int
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.25)) { _ in
-            let count = tasks + (SimulatedKeyHolder.shared.key.waitingForTouch() ? 1 : 0)
+            let count = tasks() + (SimulatedKeyHolder.shared.key.waitingForTouch() ? 1 : 0)
             Text(verbatim: "\(count)")
                 .font(.caption2)
                 .frame(width: 1, height: 1)

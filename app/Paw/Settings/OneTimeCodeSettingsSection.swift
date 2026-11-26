@@ -7,18 +7,17 @@ import SwiftUI
 /// text kept outside a sealed copy, so it is off until turned on (design
 /// 5.6 rule 6). Off deletes the list and its suggestions; a code still
 /// fills through search. The core keeps the switch beside the list, so the
-/// AutoFill extension honours it too. Shown for a store paw can write, as
-/// Sites used is.
+/// AutoFill extension honours it too. Shown where paw keeps AutoFill's
+/// suggestions, as Sites used is.
 struct OneTimeCodeSettingsSection: View {
     let model: AppModel
     @State private var enabled: Bool?
     @State private var problem: String?
 
     var body: some View {
-        if let stateDir = model.storeSession.edits?.stateDir {
-            let codes = OneTimeCodeEntries.open(stateDir: stateDir)
+        if let autoFill = model.storeSession.autoFill {
             Section {
-                Toggle(isOn: binding(codes)) {
+                Toggle(isOn: binding(autoFill)) {
                     Text("Suggest one-time codes")
                         .foregroundStyle(PawColor.label)
                 }
@@ -34,21 +33,19 @@ struct OneTimeCodeSettingsSection: View {
         }
     }
 
-    private func binding(_ codes: OneTimeCodeEntries) -> Binding<Bool> {
+    private func binding(_ autoFill: AutoFillSuggestions) -> Binding<Bool> {
         Binding(
-            get: { enabled ?? codes.enabled() },
-            set: { set($0, codes) })
+            get: { enabled ?? autoFill.codesEnabled },
+            set: { set($0, autoFill) })
     }
 
-    private func set(_ on: Bool, _ codes: OneTimeCodeEntries) {
+    private func set(_ on: Bool, _ autoFill: AutoFillSuggestions) {
         do {
-            try codes.setEnabled(enabled: on)
+            try autoFill.setCodesEnabled(on)
             problem = nil
         } catch {
             problem = describe(error)
         }
-        enabled = codes.enabled()
-        // Off takes the code suggestions away.
-        model.storeSession.autoFill?.republish()
+        enabled = autoFill.codesEnabled
     }
 }

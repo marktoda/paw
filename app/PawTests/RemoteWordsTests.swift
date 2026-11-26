@@ -140,7 +140,7 @@ final class RemoteWordsTests: XCTestCase {
     func testSetupSaysNoStoreAtThatAddressWithWhatTheHostSaid() {
         let missing = RemoteFailure.repositoryMissing(
             host: "github.com", repository: "you/store.git", said: "ERROR: Repository not found.", detail: "git error")
-        let words = SetupWords.words(.Remote(failure: missing), during: .downloading)
+        let words = SetupWords.words(.Remote(failure: missing), downloading: true)
         XCTAssertEqual(words.problem, "No store at that address")
         XCTAssertEqual(
             words.nextStep,
@@ -151,7 +151,7 @@ final class RemoteWordsTests: XCTestCase {
         let fallback = PortFallback(fromHost: "github.com", fromPort: 22, host: "ssh.github.com", port: 443)
         let blocked = SetupWords.words(
             .Remote(failure: .noConnection(host: "github.com", detail: "could not connect: timed out", fallback: fallback)),
-            during: .checkingHost)
+            downloading: false)
         XCTAssertEqual(blocked.problem, "Can't reach github.com")
         XCTAssertEqual(blocked.details, ["could not connect: timed out"])
         XCTAssertEqual(blocked.offer?.title, "Try port 443")

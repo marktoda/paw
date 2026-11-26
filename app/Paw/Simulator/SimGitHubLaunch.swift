@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 #if DEBUG && targetEnvironment(simulator)
 /// The core's simulated GitHub, for the GitHub screens and their UI tests.
@@ -53,7 +54,7 @@ final class SimGitHubLaunch: @unchecked Sendable {
     }
 
     /// A sign-in ended: from now on codes wait for the debug control.
-    func signInEnded() {
+    fileprivate func signInEnded() {
         let first: Bool = lock.withLock {
             defer { firstSignInEnded = true }
             return !firstSignInEnded
@@ -74,6 +75,24 @@ final class SimGitHubLaunch: @unchecked Sendable {
     /// The person removed paw on GitHub: no token works any more.
     func revoke() {
         github?.revokeAuthorisation()
+    }
+}
+
+extension View {
+    /// The simulated GitHub declines or lets expire only the first code
+    /// (`denied`, `expired`): once `picker`'s first sign-in ends, codes
+    /// wait for the debug control.
+    func simEndsFirstSignIn(_ picker: GitHubPicker) -> some View {
+        onChange(of: SimGitHubLaunch.waitsForCode(picker.stage)) { _, waits in
+            if !waits { SimGitHubLaunch.shared.signInEnded() }
+        }
+    }
+}
+
+extension SimGitHubLaunch {
+    fileprivate static func waitsForCode(_ stage: GitHubPicker.Stage) -> Bool {
+        if case .code = stage { return true }
+        return false
     }
 }
 #endif

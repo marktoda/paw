@@ -9,7 +9,6 @@ struct KeySheetHost: View {
             driver: model.keyTask,
             purpose: "Open \(model.keyRequest?.entry.name ?? "")",
             note: model.storeSession.copies?.copiesEnabled() == true ? FaceIdWords.afterKey("opens") : nil,
-            comingSoon: model.keyRequest?.differentKey == true ? "Replace key (coming)" : nil,
             onCancel: { model.cancelKeyTask() })
             .keySheetPresentation(model.keyTask.stage)
     }

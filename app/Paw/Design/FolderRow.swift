@@ -28,7 +28,7 @@ struct FolderRow: View {
             .frame(minHeight: PawMetrics.rowOneLine)
             .contentShape(Rectangle())
         }
-        .accessibilityLabel("\(name), folder, \(count) \(count == 1 ? "password" : "passwords")")
+        .accessibilityLabel("\(name), folder, \(passwordCount(count))")
         .accessibilityIdentifier("folder-\(name)")
     }
 }

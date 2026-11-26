@@ -145,3 +145,9 @@ func signInEnded(_ failure: RemoteFailure) -> Bool {
     default: false
     }
 }
+
+/// Why a host's key can't be forgotten or replaced: paw ships with it.
+func hostKeyBundled(_ host: String) -> String {
+    "\(host)'s keys come with paw and can't be forgotten. A different key means this connection isn't reaching "
+        + "the real \(host): try another network"
+}

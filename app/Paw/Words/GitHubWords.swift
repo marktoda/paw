@@ -17,7 +17,7 @@ enum GitHubWords {
         case .NotListed(let fullName):
             return "GitHub didn't allow it: \(fullName) is not in the list; list the repositories again. Try again."
         case .StoreBusy:
-            return "GitHub didn't allow it: \(storeBusyText). Try again."
+            return StoreBusyWords.line
         }
     }
 

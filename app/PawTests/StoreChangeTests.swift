@@ -51,10 +51,9 @@ final class StoreChangeTests: XCTestCase {
         XCTAssertTrue(section.warning.hasSuffix(" 2 changes not sent yet will be lost."), section.warning)
     }
 
-    func testAutoFillSuggestionsFollowOpensAndChangesAndAFixtureHasNone() async throws {
+    func testAutoFillSuggestionsFollowOpensAndChanges() async throws {
         let fixture = try Fixture(writable: true)
         let model = fixture.model
-        XCTAssertNil(model.storeSession.autoFill, "A fixture's entries never reach the system's suggestions")
 
         let stateDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("paw-codes-\(UUID().uuidString)", isDirectory: true)
@@ -88,12 +87,12 @@ final class StoreChangeTests: XCTestCase {
     func testAPublishUsesTheStoresOwnStateFolder() async throws {
         let fixture = try Fixture(writable: true)
         let model = fixture.model
-        let edits = try XCTUnwrap(model.storeSession.edits)
-        let codes = OneTimeCodeEntries.open(stateDir: edits.stateDir)
+        let stateDir = try XCTUnwrap(model.storeSession.stateDir)
+        let codes = OneTimeCodeEntries.open(stateDir: stateDir)
         try codes.setEnabled(enabled: true)
         _ = try codes.note(entry: "web/github.com", hasCode: true)
         var requests: [CredentialIdentities.Request] = []
-        let suggestions = AutoFillSuggestions(stateDir: edits.stateDir) { request in
+        let suggestions = AutoFillSuggestions(stateDir: stateDir) { request in
             requests.append(request)
             return Task {}
         }
@@ -103,5 +102,26 @@ final class StoreChangeTests: XCTestCase {
         }
         XCTAssertTrue(store === model.store)
         XCTAssertEqual(used.entries(store: store), ["web/github.com"], "The codes are this store's own")
+    }
+
+    /// Undo on the delete toast takes back the change the delete made, as
+    /// the core returned it.
+    func testUndoTakesBackTheDeletesOwnChange() async throws {
+        let fixture = try Fixture(writable: true)
+        let model = fixture.model
+        let edits = try XCTUnwrap(model.storeSession.edits)
+        let queue = try XCTUnwrap(edits.queue)
+        let id = try XCTUnwrap(await fixture.open("web/github.com"))
+        let session = try XCTUnwrap(model.session(id))
+
+        edits.delete(session)
+        let offer = try XCTUnwrap(edits.undoOffer)
+        XCTAssertEqual(offer.change, queue.unpushed.first?.id, "The delete's own commit")
+        XCTAssertNil(model.store.entry(path: "web/github.com"))
+
+        edits.undo(offer)
+        XCTAssertNotNil(model.store.entry(path: "web/github.com"), "Back")
+        XCTAssertTrue(queue.unpushed.isEmpty)
+        XCTAssertEqual(model.toast?.text, "github.com is back.")
     }
 }
