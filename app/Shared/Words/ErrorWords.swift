@@ -36,17 +36,8 @@ private func oneLine(_ error: Swift.Error) -> String {
         return error.localizedDescription
     }
     switch error {
-    case .Transport(let message):
-        return "Could not talk to the key: \(message)"
     case .NotAnEntry(let message):
         return "This is not an encrypted password: \(message)"
-    case .Card(let message):
-        return "The key reported a problem: \(message)"
-    // Cannot reach Swift: only reading the key's SSH key returns it, and
-    // that is taken as "no authentication key". Listed so the switch stays
-    // exhaustive.
-    case .NoSshKey(let message):
-        return "This key cannot log in to a git host: \(message)"
     case .UnsafePath(let message):
         return "Not a safe name for an entry: \(message)"
     case .Git(let message):
