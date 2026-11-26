@@ -53,7 +53,7 @@ jobs:
           path: |
             app/build/core
             app/Generated
-          key: core-ios-${{ hashFiles('core/**', 'scripts/build-core.sh', 'scripts/check-no-sim.sh', 'scripts/make-xcframework.sh') }}
+          key: core-ios-${{ hashFiles('core/**', 'app/project.yml', 'scripts/build-core.sh', 'scripts/check-no-sim.sh', 'scripts/make-xcframework.sh') }}
       - uses: Swatinem/rust-cache@v2
         if: steps.built.outputs.cache-hit != 'true'
         with:
