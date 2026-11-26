@@ -85,12 +85,9 @@ targets:
     platform: iOS
     sources:
       - PawAutoFill
-      # Settings, the identity store writer and the debug harness are the
-      # app's: the extension never publishes suggestions or hosts tests.
-      - path: Shared
-        excludes:
-          - "AutoFill/App/**"
-          - "Store/App/**"
+      # Everything in Shared, as the app has it: Shared holds only what
+      # both compile, and app-only code lives under Paw.
+      - Shared
       - Generated
     dependencies:
       - framework: build/PawCore.xcframework
