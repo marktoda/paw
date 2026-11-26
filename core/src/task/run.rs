@@ -108,6 +108,8 @@ impl TaskCore {
     }
 
     /// Writes a stage change to the key log of the session the task is on.
+    /// Called with the task's lock held; the log's own locks are taken
+    /// under it and never the other way round.
     fn log_stage(&self, session: Option<Arc<KeySession>>, state: &KeyTaskState) {
         if let (Some(session), Some(words)) = (session, stage_words(state)) {
             let log = session.log();
@@ -140,13 +142,16 @@ impl TaskCore {
     }
 
     fn set_again(&self, new: KeyTaskState, again: bool) -> bool {
-        let (applied, session) = {
+        let applied = {
             let mut inner = self.lock();
             let applied = Self::apply(&mut inner, new.clone(), again);
-            (applied, if applied { inner.session.clone() } else { None })
+            if applied {
+                // Under the lock: whoever sees the stage finds it logged.
+                self.log_stage(inner.session.clone(), &new);
+            }
+            applied
         };
         if applied {
-            self.log_stage(session, &new);
             self.changed.notify_all();
             self.drain();
         }
@@ -186,9 +191,9 @@ impl TaskCore {
             }
             self.cancelled.store(true, Ordering::SeqCst);
             Self::apply(&mut inner, KeyTaskState::Cancelled, false);
+            self.log_stage(inner.session.clone(), &KeyTaskState::Cancelled);
             inner.session.clone()
         };
-        self.log_stage(session.clone(), &KeyTaskState::Cancelled);
         self.changed.notify_all();
         self.drain();
         if let Some(session) = session {
