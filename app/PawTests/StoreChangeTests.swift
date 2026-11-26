@@ -111,7 +111,8 @@ final class StoreChangeTests: XCTestCase {
         let model = fixture.model
         let edits = try XCTUnwrap(model.storeSession.edits)
         let queue = try XCTUnwrap(edits.queue)
-        let id = try XCTUnwrap(await fixture.open("web/github.com"))
+        let opened = await fixture.open("web/github.com")
+        let id = try XCTUnwrap(opened)
         let session = try XCTUnwrap(model.session(id))
 
         edits.delete(session)
