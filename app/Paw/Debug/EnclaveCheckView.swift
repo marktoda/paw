@@ -137,7 +137,7 @@ struct EnclaveCheckView: View {
         func add(_ id: String, _ text: String) { rows.append(Row(id: "enclave-\(id)", text: text)) }
         let keystore = EnclaveKeystore(namespace: namespace)
 
-        add("probe", "Secure Enclave round trip (no Face ID): \(EnclaveKeystore.probeSecureEnclave())")
+        add("probe", "Secure Enclave round trip (no Face ID): \(EnclaveProbe.roundTrip())")
         add("create", "Seal key: " + outcome { "pass (\(try keystore.prepare()))" })
 
         var secret = randomBytes()

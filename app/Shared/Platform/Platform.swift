@@ -31,7 +31,7 @@ struct Platform {
     static func device(_ process: StoreProcess) -> Platform {
         let clock = SystemClock()
         return Platform(
-            process: process, keys: UsbKeySource(), clock: clock,
+            process: process, keys: UsbKeyConnector(), clock: clock,
             copies: { dir in
                 // Without paw's keychain group there are no copies, and
                 // every open uses the key (Settings says so). Face ID
@@ -45,7 +45,7 @@ struct Platform {
 
     #if DEBUG && targetEnvironment(simulator)
     static func simulated(
-        _ process: StoreProcess, keys: SimulatedKeySource, clock: Clock, keystore: DeviceKeystore?
+        _ process: StoreProcess, keys: SimulatedKeyConnector, clock: Clock, keystore: DeviceKeystore?
     ) -> Platform {
         Platform(
             process: process, keys: keys, clock: clock,
@@ -107,7 +107,7 @@ extension KeyConnector {
 }
 
 /// The YubiKey on the USB-C port, through the system's smart card support.
-struct UsbKeySource: KeyConnector {
+struct UsbKeyConnector: KeyConnector {
     var readerNames: [String] {
         UsbCardConnection.slotNames()
     }

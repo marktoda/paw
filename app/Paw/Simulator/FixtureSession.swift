@@ -33,13 +33,13 @@ struct FixtureSession {
     /// `faceId`.
     struct OwnHardware {
         let platform: Platform
-        let keys: SimulatedKeySource
+        let keys: SimulatedKeyConnector
         let clock: SimClock
         let keystore: SimKeystore
 
         @MainActor
         init(connect: @escaping @Sendable () throws -> CardConnection, faceId: SimFaceId = .match) {
-            keys = SimulatedKeySource(connect: connect)
+            keys = SimulatedKeyConnector(connect: connect)
             clock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000))
             keystore = SimKeystore()
             keystore.setFaceId(answer: faceId)

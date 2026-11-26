@@ -2,11 +2,11 @@
 import Foundation
 import Security
 
-extension EnclaveKeystore {
+enum EnclaveProbe {
     /// Round-trips 32 random bytes through a throwaway Secure Enclave key
     /// with no Face ID constraint: shows whether this device (or simulator)
     /// has a Secure Enclave and ECIES works, independent of Face ID.
-    static func probeSecureEnclave() -> String {
+    static func roundTrip() -> String {
         var error: Unmanaged<CFError>?
         guard let access = SecAccessControlCreateWithFlags(
             kCFAllocatorDefault, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, [.privateKeyUsage], &error
@@ -32,8 +32,8 @@ extension EnclaveKeystore {
             return "fail: no random bytes"
         }
         do {
-            let sealed = try encrypt(Data(bytes), to: publicKey)
-            guard let opened = SecKeyCreateDecryptedData(key, algorithm, sealed as CFData, &error) as Data? else {
+            let sealed = try EnclaveKeystore.encrypt(Data(bytes), to: publicKey)
+            guard let opened = SecKeyCreateDecryptedData(key, EnclaveKeystore.algorithm, sealed as CFData, &error) as Data? else {
                 return "fail: \(EnclaveFailure.from(error, while: "decrypting").detail)"
             }
             return opened == Data(bytes) ? "pass (\(sealed.count)-byte ciphertext)" : "fail: decrypted to other bytes"

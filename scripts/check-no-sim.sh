@@ -17,9 +17,7 @@
 # - with --app, the Swift debug surfaces: the launch arguments that switch
 #   harnesses on, the types of the simulator and debug folders and the
 #   gallery, anywhere in the bytes (type names are in Swift's metadata even
-#   when symbols are gone), and the members those folders add to other
-#   types in extensions (e.g. `EnclaveKeystore.probeSecureEnclave`), found
-#   by their symbols.
+#   when symbols are gone).
 #
 # --expect keeps the patterns honest: run on a build that has the simulation
 # (the simulator library; with --app, the Debug simulator app and
@@ -76,27 +74,17 @@ needles=(
 # targetEnvironment(simulator)` for everything simulated): every declared
 # launch argument (scripts/launch-arguments.sh, which also checks the
 # declaration against the UI tests), any `-pawSim…` one, every type
-# declared in the simulator and debug folders, every member those folders
-# declare in an extension of a type declared elsewhere (members of their
-# own types go with the type), and the gallery's root. Only with --app.
+# declared in the simulator and debug folders, and the gallery's root. Those
+# folders add nothing to types declared elsewhere: a member's name is not
+# in a stripped build, so it could not be scanned for. Only with --app.
 app_needles=()
 if [[ "$app" == yes ]]; then
   here="$(cd "$(dirname "$0")" && pwd)"
   arguments="$("$here/launch-arguments.sh")"
   folders=("$here"/../app/Paw/Simulator/*.swift "$here"/../app/Shared/Simulator/*.swift "$here"/../app/Paw/Debug/*.swift)
   types="$(sed -nE 's/^(final class|class|struct|enum|actor) ([A-Za-z]+).*/\2/p' "${folders[@]}" | sort -u)"
-  members="$(awk -v own="$(tr '\n' ' ' <<<"$types")" '
-    BEGIN { n = split(own, list, " "); for (i = 1; i <= n; i++) mine[list[i]] = 1 }
-    /^(private |fileprivate )?extension [A-Za-z]+/ {
-      name = $0; sub(/^(private |fileprivate )?extension /, "", name); sub(/[^A-Za-z].*/, "", name)
-      inside = !(name in mine); next
-    }
-    /^}/ { inside = 0 }
-    inside && /^    (@[A-Za-z]+ )*(static )?(func|var) [A-Za-z]+/ {
-      line = $0; sub(/^    (@[A-Za-z]+ )*(static )?(func|var) /, "", line); sub(/[^A-Za-z].*/, "", line); print line
-    }' "${folders[@]}" | sort -u)"
   [[ -n "$arguments" && -n "$types" ]] || { echo "check-no-sim: no debug surfaces found in app/" >&2; exit 2; }
-  app_needles=('pawSim' 'GalleryRoot' $arguments $types $members)
+  app_needles=('pawSim' 'GalleryRoot' $arguments $types)
 fi
 
 if [[ "$app" == yes && "$expect" == yes ]]; then

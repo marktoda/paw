@@ -18,7 +18,7 @@ final class Fixture {
     let key: SimulatedKey
     /// The key as the platform has it, for "finish the next open after
     /// Cancel".
-    let keys: SimulatedKeySource
+    let keys: SimulatedKeyConnector
     let clock: SimClock
     let keystore: SimKeystore
     /// Reads of the key that fail before one answers.

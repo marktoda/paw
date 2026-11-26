@@ -36,7 +36,7 @@ struct SimulatorSettingsSection: View {
             Button("Let the key answer when read") { SimulatedKeyHolder.shared.stopAttachFailures() }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-key-answers")
-            Button("Let the next open finish after Cancel") { SimulatedKeySource.launched.finishesNextAfterCancel = true }
+            Button("Let the next open finish after Cancel") { SimulatedKeyConnector.launched.finishesNextAfterCancel = true }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-late-cancel-next")
             // Ends a touch wait the sheet let go of, as the key's timeout would.

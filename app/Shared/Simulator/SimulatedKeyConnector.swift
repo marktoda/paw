@@ -5,8 +5,8 @@ import Foundation
 /// (`SimulatedKeyHolder`), which is in unless `-pawSimUnplugged` and goes
 /// in by the debug control, or a key of a test's or the gallery's own,
 /// always in.
-final class SimulatedKeySource: KeyConnector, @unchecked Sendable {
-    static let launched = SimulatedKeySource(
+final class SimulatedKeyConnector: KeyConnector, @unchecked Sendable {
+    static let launched = SimulatedKeyConnector(
         connect: { try SimulatedKeyHolder.shared.open() }, isIn: { SimulatedKeyHolder.shared.isPluggedIn })
 
     /// "Let the next open finish after Cancel": the next task that
