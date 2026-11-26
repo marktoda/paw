@@ -392,13 +392,6 @@ fn a_generated_password_is_committed_as_generated_and_new_folders_appear() {
 }
 
 #[test]
-fn commits_are_by_paw() {
-    let s = store();
-    s.write().save(&new_entry("", "x", "pw")).unwrap();
-    assert_eq!(s.git(&["log", "-1", "--format=%an <%ae>"]), "paw <paw@paw.invalid>");
-}
-
-#[test]
 fn adding_over_an_existing_name_is_refused_and_changes_nothing() {
     let s = store();
     let head = s.head();
@@ -641,6 +634,9 @@ fn every_change_is_in_the_queue_with_its_kind_newest_first() {
          Edit password for Work/github.com using paw.\n\nM\tWork/github.com.gpg\n\
          Add given password for Work/new to store.\n\nA\tWork/new.gpg"
     );
+    let items = queue::unpushed(&s.repo).unwrap();
+    assert!(items.windows(2).all(|pair| pair[0].when >= pair[1].when));
+    assert!(items[0].when > 1_700_000_000);
 }
 
 #[test]

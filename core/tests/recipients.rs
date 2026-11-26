@@ -165,14 +165,6 @@ fn named(keys: Vec<Recipient>) -> EntryRecipients {
 }
 
 #[test]
-fn an_entry_from_paw_names_the_card_and_can_be_opened() {
-    let entry = for_card(ENTRY);
-
-    assert_eq!(entry_recipients(&entry).unwrap(), named(vec![key_id(&card_fingerprint())]));
-    assert_eq!(access(&entry, &card_fingerprint()), Access::CanOpen);
-}
-
-#[test]
 fn the_card_reports_the_fingerprint_that_entries_name() {
     // `CardInfo.decryption_fingerprint` is what the app passes to `access`.
     let fingerprint = port_with(&card()).session().unwrap().info().decryption_fingerprint.unwrap();

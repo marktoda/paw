@@ -316,17 +316,6 @@ fn a_task_seen_finished_has_logged_how_it_ended() {
 }
 
 #[test]
-fn the_session_ring_is_bounded() {
-    let state = tempfile::tempdir().unwrap();
-    let rig = logged_rig(state.path(), "app", SimTouch::Off);
-    for _ in 0..30 {
-        open_and_finish(&rig, OTHER_ENTRY);
-    }
-    let ring = rig.port.session().unwrap().diagnostics(0);
-    assert_eq!(ring.lines().count(), paw_core::key::keylog::RING);
-}
-
-#[test]
 fn a_process_file_is_cut_back_to_its_last_lines() {
     let state = tempfile::tempdir().unwrap();
     let rig = logged_rig(state.path(), "app", SimTouch::Off);

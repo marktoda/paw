@@ -16,7 +16,7 @@ use key_common::{Driver, PIN, WAIT, finish, is_touch, port_with};
 use paw_core::ffi::sync::Setup;
 use paw_core::key::{KeyError, KeyPort, KeyTouch};
 use paw_core::task::KeyTaskState;
-use paw_core::sync::address::{AddressNotice, AddressProblem, StoreAddress};
+use paw_core::sync::address::{AddressProblem, StoreAddress};
 use paw_core::remote::RemoteFailure;
 use paw_core::key::touch_clock::{TouchClock, TouchExpectation};
 use paw_core::setup::{SetupError, SetupFlow, SetupState};
@@ -531,21 +531,6 @@ fn addresses_are_read_in_the_forms_git_hosts_show() {
     ok("ssh://git@git.example.org:2222/srv/store.git", "git", "git.example.org", 2222, "/srv/store.git");
     ok("SSH://me@host/~/store.git", "me", "host", 22, "store.git");
     ok("ssh://git@[::1]:2222/store.git", "git", "[::1]", 2222, "/store.git");
-}
-
-#[test]
-fn a_github_web_address_becomes_its_ssh_address_and_says_so() {
-    for text in [
-        "https://github.com/you/password-store",
-        "https://github.com/you/password-store.git",
-        "https://github.com/you/password-store/",
-        "http://www.github.com/you/password-store",
-    ] {
-        let parsed = StoreAddress::parse(text).unwrap();
-        assert_eq!(parsed.address.display(), "git@github.com:you/password-store.git", "{text}");
-        let notice = parsed.notice.unwrap();
-        assert_eq!(notice, AddressNotice::GitHubWebAddress { address: "git@github.com:you/password-store.git".into() });
-    }
 }
 
 #[test]

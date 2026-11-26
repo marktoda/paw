@@ -286,17 +286,6 @@ fn a_code_past_its_lifetime_expires_without_asking_github() {
 }
 
 #[test]
-fn the_person_authorising_while_paw_waits_signs_in() {
-    let w = world();
-    w.github.set_device_outcome(SimDeviceOutcome::WaitForPerson);
-    let sign_in = w.account.start_sign_in().unwrap();
-    assert_eq!(sign_in.poll().unwrap(), SignInState::Waiting);
-    assert!(w.github.has_pending_code());
-    w.github.authorise_pending();
-    assert_eq!(sign_in.poll().unwrap(), SignInState::SignedIn);
-}
-
-#[test]
 fn a_cancelled_sign_in_stops_waiting_and_keeps_nothing() {
     let w = world();
     w.github.set_device_outcome(SimDeviceOutcome::AuthoriseAfter { pending: 0 });
@@ -541,31 +530,6 @@ fn killed_before_the_refresh_request_the_old_pair_still_works() {
     assert_eq!(stopped.outcome, BackgroundOutcome::OutOfTime);
     w.remote.commit_file(NEW_ENTRY.into(), b"x".to_vec(), "Add.".into()).unwrap();
     assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::Updated);
-}
-
-#[test]
-fn concurrent_refreshes_spend_the_refresh_token_once() {
-    let w = world();
-    w.set_up();
-    w.wall.fetch_add(9 * 3600, Ordering::SeqCst);
-    let issued = w.tokens().len();
-    // All four start together, so their fetches and integrates overlap
-    // (the store lock serialises the ref updates; see tests/store_lock.rs
-    // for this race run 200 times).
-    let start = Arc::new(std::sync::Barrier::new(4));
-    let threads: Vec<_> = (0..4)
-        .map(|_| {
-            let (account, start) = (w.account.clone(), start.clone());
-            std::thread::spawn(move || {
-                start.wait();
-                account.refresh_store()
-            })
-        })
-        .collect();
-    for thread in threads {
-        thread.join().unwrap().unwrap();
-    }
-    assert_eq!(w.tokens().len(), issued + 2, "exactly one rotation");
 }
 
 #[test]

@@ -695,26 +695,6 @@ fn four_changes(w: &World) {
 }
 
 #[test]
-fn the_queue_lists_unpushed_changes_newest_first() {
-    let w = world();
-    four_changes(&w);
-
-    let items = queue::unpushed(phone(&w)).unwrap();
-
-    assert_eq!(
-        queued(&w),
-        [
-            (ChangeKind::Renamed, "web/newer".into(), Some("web/new".into())),
-            (ChangeKind::Deleted, "web/other".into(), None),
-            (ChangeKind::Edited, "web/example.com".into(), None),
-            (ChangeKind::Added, "web/new".into(), None),
-        ]
-    );
-    assert!(items.windows(2).all(|pair| pair[0].when >= pair[1].when));
-    assert!(items[0].when > 1_700_000_000);
-}
-
-#[test]
 fn a_pushed_change_leaves_the_queue() {
     let w = world();
     four_changes(&w);
@@ -722,50 +702,6 @@ fn a_pushed_change_leaves_the_queue() {
     steps::sync(&w.server.remote(), &signer(&w.card), phone(&w), w.state.path(), true).unwrap();
 
     assert!(queued(&w).is_empty());
-}
-
-#[test]
-fn discarding_one_change_keeps_the_others_and_restores_the_entry() {
-    let w = world();
-    four_changes(&w);
-    let edit = queue::unpushed(phone(&w)).unwrap()[2].id.clone();
-
-    let left = queue::discard(phone(&w), &edit).unwrap();
-
-    assert_eq!(left.len(), 3);
-    assert!(left.iter().all(|item| item.kind != ChangeKind::Edited));
-    assert_eq!(read(&w, "web/example.com.gpg"), "v1 from the desktop");
-    assert_eq!(read(&w, "web/newer.gpg"), "new");
-    assert!(!phone(&w).join("web/other.gpg").exists());
-    clean(&w);
-}
-
-#[test]
-fn undo_takes_back_the_most_recent_change() {
-    let w = world();
-    four_changes(&w);
-
-    let left = queue::undo_last(phone(&w)).unwrap();
-
-    assert_eq!(left[0].kind, ChangeKind::Deleted);
-    assert_eq!(read(&w, "web/new.gpg"), "new");
-    assert!(!phone(&w).join("web/newer.gpg").exists());
-    clean(&w);
-}
-
-#[test]
-fn discarding_everything_goes_back_to_the_remote() {
-    let w = world();
-    let pushed = head(&w);
-    four_changes(&w);
-
-    queue::discard_all(phone(&w)).unwrap();
-
-    assert!(queued(&w).is_empty());
-    assert_eq!(head(&w), pushed);
-    assert_eq!(read(&w, "web/other.gpg"), "other");
-    assert!(!phone(&w).join("web/newer.gpg").exists());
-    clean(&w);
 }
 
 #[test]

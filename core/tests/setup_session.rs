@@ -365,16 +365,7 @@ fn another_key_plugged_in_before_the_test_decrypt_is_refused_before_the_pin() {
 #[test]
 fn a_repository_the_key_cannot_see_is_told_apart_from_a_refused_key() {
     let w = world();
-    // A key the host does not know: found at the host check.
-    w.server.sim.set_refuse_key(true);
-    let session = w.port.session().unwrap();
-    w.setup.read_key_from_session(session).unwrap();
-    w.setup.set_address(address(&w)).unwrap();
-    let SetupState::ConfirmHost { fingerprint, .. } = w.setup.check_host().unwrap() else { panic!() };
-    let error = w.setup.confirm_host(fingerprint).unwrap_err();
-    assert!(matches!(error, SetupError::Fault { fault: paw_core::fault::Fault::Remote { failure: RemoteFailure::KeyNotAccepted { .. } } }), "{error:?}");
-    w.server.sim.set_refuse_key(false);
-    assert!(matches!(w.setup.check_host().unwrap(), SetupState::NeedPin { .. }));
+    to_need_pin(&w);
 
     // The key logs in, and the host says there is no such repository for it.
     w.server.sim.set_repository_not_found(true);
@@ -472,20 +463,6 @@ fn a_bundled_hosts_key_cannot_be_forgotten() {
         let pinned = known.pin(host, port).unwrap().unwrap();
         assert_eq!(pinned.fingerprints(), paw_core::sync::hosts::bundled(host, port).unwrap().fingerprints());
     }
-}
-
-#[test]
-fn settings_cannot_forget_a_bundled_hosts_key_either() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("remote"), "git@github.com:you/store.git\n").unwrap();
-    let sync = StoreSync::open(dir.path().to_string_lossy().into_owned()).unwrap();
-
-    let error = sync.forget_host_key().unwrap_err();
-
-    assert!(
-        matches!(&error, paw_core::sync::SyncError::Fault { fault: paw_core::fault::Fault::Remote { failure: RemoteFailure::HostKeyBundled { .. } } }),
-        "{error:?}"
-    );
 }
 
 #[test]

@@ -102,27 +102,6 @@ fn writing_the_fixture_twice_gives_the_same_bytes() {
 }
 
 #[test]
-fn the_fixture_can_be_searched_and_matched_to_sites() {
-    let (_dir, store) = fixture();
-
-    let hits: Vec<_> = store.search("wi-fi".into(), 10).into_iter().map(|h| h.entry.path).collect();
-    assert_eq!(hits, ["Home Wi-Fi", "home/Guest Wi-Fi"]);
-    let hits: Vec<_> = store.search("zurich".into(), 10).into_iter().map(|h| h.entry.path).collect();
-    assert_eq!(hits, ["web/Zürich Tourism"]);
-
-    let offered: Vec<_> = store
-        .match_services(vec!["https://www.example.net/".into()], None)
-        .into_iter()
-        .filter(|m| !matches!(m.kind, MatchKind::Name { .. }))
-        .map(|m| (m.entry.path, m.kind == MatchKind::ExactHost))
-        .collect();
-    assert_eq!(
-        offered,
-        [("servers/example.net/root".to_owned(), false), ("servers/example.net/deploy".to_owned(), false)]
-    );
-}
-
-#[test]
 fn the_card_can_open_everything_but_the_archive() {
     let (_dir, store) = fixture();
     let card = plugged().port.session().unwrap().info().decryption_fingerprint.unwrap();

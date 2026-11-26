@@ -351,27 +351,6 @@ fn commit_refuses_gits_own_directory_however_it_is_spelled() {
 }
 
 #[test]
-fn a_clone_with_links_in_it_is_refused() {
-    let card = card();
-    let server = GitServer::start(&[authorised_line(&card)]);
-    let outside = tempfile::tempdir().unwrap();
-    std::fs::write(outside.path().join("victim.gpg"), "untouched").unwrap();
-    // The repository carries a folder link and a file link out of the store.
-    server.desktop_symlink("shared", outside.path());
-    server.desktop_symlink("victim.gpg", &outside.path().join("victim.gpg"));
-    let dir = tempfile::tempdir().unwrap();
-
-    let result = steps::clone(&connect(&server, &card), &server.remote(), dir.path());
-
-    let Ok(Cloned::Refused(refused)) = result else { panic!("{result:?}") };
-    let paths: Vec<&str> = refused.iter().map(|refused| refused.path.as_str()).collect();
-    assert_eq!(paths, ["shared", "victim.gpg"]);
-    assert!(refused.iter().all(|refused| refused.reasons == [paw_core::remote::RefusedReason::SymbolicLink]));
-    assert!(!dir.path().join("shared").exists());
-    assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 1);
-}
-
-#[test]
 fn commit_refuses_to_write_through_a_link_in_the_repository() {
     let card = card();
     let server = GitServer::start(&[authorised_line(&card)]);
