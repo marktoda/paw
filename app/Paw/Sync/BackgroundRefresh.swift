@@ -51,6 +51,8 @@ enum BackgroundRefresh {
     private static let resultKey = "pawBackgroundRunResult"
     private static let changedKey = "pawBackgroundRunChanged"
     private static let needsLookKey = "pawBackgroundRunNeedsLook"
+    /// Kept by builds that stored a sentence under `resultKey`.
+    private static let oldSuccessKey = "pawBackgroundRunSuccess"
 
     /// Call once, before `didFinishLaunching` returns.
     @MainActor
@@ -198,12 +200,18 @@ enum BackgroundRefresh {
         if run.needsLook { defaults.set(true, forKey: needsLookKey) }
     }
 
-    /// A record this build can't read (an older one's sentence) is none.
+    /// A record this build can't read (an older one's sentence) is none,
+    /// and is removed.
     static func lastRun() -> BackgroundRun? {
         let defaults = UserDefaults.standard
         let at = defaults.double(forKey: atKey)
-        guard at > 0, let outcome = defaults.string(forKey: resultKey).flatMap(BackgroundRun.Outcome.init(rawValue:))
-        else { return nil }
+        guard at > 0, let result = defaults.string(forKey: resultKey) else { return nil }
+        guard let outcome = BackgroundRun.Outcome(rawValue: result) else {
+            for key in [atKey, resultKey, oldSuccessKey] {
+                defaults.removeObject(forKey: key)
+            }
+            return nil
+        }
         return BackgroundRun(
             at: Date(timeIntervalSince1970: at), outcome: outcome, changed: defaults.bool(forKey: changedKey),
             needsLook: defaults.bool(forKey: needsLookKey))

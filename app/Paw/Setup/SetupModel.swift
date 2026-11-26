@@ -395,8 +395,10 @@ final class SetupModel {
         }
     }
 
-    /// "Open my passwords" on the last screen.
+    /// "Open my passwords" on the last screen. Home follows the key with
+    /// its own reader.
     func openStore() {
+        reader.stopWatching()
         finished()
     }
 
