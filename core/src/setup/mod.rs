@@ -637,12 +637,14 @@ impl SetupFlow {
     }
 
     /// The download stopped (cancelled, or the login failed): back to the
-    /// PIN step, with nothing left of it.
-    pub(crate) fn abandon_download(&mut self) -> Result<(), SetupError> {
+    /// PIN step, with nothing left of it. Called on the way out of a
+    /// failure that is already being reported: if this can't be done too
+    /// (the store is busy, the disk refuses), setup stays at "cloning",
+    /// which the next [`Self::open`] starts over from.
+    pub(crate) fn abandon_download(&mut self) {
         if self.saved.step == Step::Cloning {
-            self.restart_download()?;
+            let _ = self.restart_download();
         }
-        Ok(())
     }
 
     /// The login signed: a cached touch holds for a while from now.

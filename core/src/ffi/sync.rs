@@ -64,14 +64,14 @@ impl Setup {
         let cancelled = || TaskFailure::Key(KeyError::Cancelled);
         let (remote, repo) = self.flow().begin_download()?;
         if task.cancelled() {
-            let _ = self.flow().abandon_download();
+            self.flow().abandon_download();
             return Err(cancelled());
         }
         let connection = match Connection::open(&remote, signer) {
             Ok(connection) => connection,
             Err(error) => {
                 let mut flow = self.flow();
-                let _ = flow.abandon_download();
+                flow.abandon_download();
                 if task.cancelled() {
                     return Err(cancelled());
                 }
@@ -92,7 +92,7 @@ impl Setup {
         let cloned = crate::sync::clone_with_transfer(&connection, &remote, &repo, Some(&mut progress));
         drop(connection);
         if !task.begin_commit() {
-            let _ = self.flow().abandon_download();
+            self.flow().abandon_download();
             return Err(cancelled());
         }
         self.flow().finish_download(cloned)?;
