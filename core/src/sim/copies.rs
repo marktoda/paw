@@ -18,7 +18,8 @@ use rand::RngCore;
 use rand::rngs::OsRng;
 use zeroize::Zeroizing;
 
-use crate::copies::{Clock, DeviceKeystore, KeystoreError};
+use crate::clock::Clock;
+use crate::copies::{DeviceKeystore, KeystoreError};
 
 /// What the simulated Face ID does when asked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]

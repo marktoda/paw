@@ -18,7 +18,8 @@ use super::task::{Body, Failure, KeyDone, Running, Stage, StageListener, TaskCor
 use super::{KeyError, KeyPurpose, LoginPurpose};
 use super::CardConnection;
 use crate::PawError;
-use crate::copies::{Clock, CopyCache};
+use crate::clock::Clock;
+use crate::copies::CopyCache;
 use crate::files::content_id;
 use crate::store::PassStore;
 

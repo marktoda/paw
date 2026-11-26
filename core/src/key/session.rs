@@ -23,7 +23,7 @@ use super::apdu::{self, Verify};
 use super::task::TaskSide;
 use super::wire::Wire;
 use super::{FAST_REFUSAL, KeyError, MAX_PIN_LEN, MIN_PIN_LEN, PIN_BACKGROUND_LIMIT};
-use crate::copies::Clock;
+use crate::clock::Clock;
 use crate::ssh::SshPublicKey;
 use super::card::{self, CardConnection, CardInfo};
 use crate::PawError;
