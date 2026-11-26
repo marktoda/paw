@@ -130,10 +130,6 @@ impl PinKdf {
     }
 }
 
-/// What setup says when it stops at "Your key" for a KDF paw cannot follow.
-pub(crate) const UNSUPPORTED_AT_SETUP: &str =
-    "this key uses a PIN setting (KDF) that paw doesn't support yet. paw has not sent it the PIN, so no try was used";
-
 /// The refusal for a card whose KDF paw cannot follow. No VERIFY was sent.
 pub(crate) fn unsupported(why: &str) -> KeyError {
     KeyError::Reader { detail: format!("{why}; paw has not sent it the PIN, so no try was used") }

@@ -170,7 +170,7 @@ fn a_push_the_host_refuses_is_reported() {
     commit_entry(dir.path());
 
     match steps::push(&connection, dir.path()) {
-        Err(sync::PushError::Failed(sync::SyncError::PushRefused { message })) => {
+        Err(sync::PushError::Failed(sync::SyncError::PushRefused { detail: message })) => {
             assert!(message.contains("refused the push"), "{message}")
         }
         other => panic!("expected a refusal, got {other:?}"),

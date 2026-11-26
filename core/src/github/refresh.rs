@@ -197,7 +197,7 @@ impl From<FetchError> for SyncError {
     fn from(e: FetchError) -> Self {
         match e {
             FetchError::Paw(e) => e.into(),
-            FetchError::GitHub(GitHubError::Network { message }) => SyncError::Network { message },
+            FetchError::GitHub(GitHubError::Network { message }) => SyncError::Network { detail: message },
             FetchError::GitHub(other) => SyncError::Failed { message: other.to_string() },
             FetchError::Unauthorised => SyncError::Failed { message: still_refused().to_string() },
         }

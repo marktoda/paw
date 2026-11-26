@@ -14,7 +14,7 @@ use key_common::{Driver, PIN, WAIT, finish, is_pin, is_touch, port_with};
 use paw_core::ffi::sync::{Setup, StoreSync};
 use paw_core::key::{KeyError, KeyIdentity, KeyOutcome, KeyPort, KeyTaskListener, KeyTaskState, enrolment};
 use paw_core::setup::outcome::{RemoteMessage, RemoteReason};
-use paw_core::setup::{SetupError, SetupState};
+use paw_core::setup::{SetupError, SetupState, UnusableKeyReason};
 use paw_core::sim::copies::SimClock;
 use paw_core::sim::fixture::other_key_fingerprint_hex;
 use paw_core::sim::{SimTouch, SimulatedKey};
@@ -471,7 +471,7 @@ fn a_bundled_hosts_key_cannot_be_forgotten() {
 
         let error = w.setup.forget_host_key().unwrap_err();
 
-        assert!(matches!(&error, SetupError::Failed { message } if message.contains("can't be forgotten")), "{error:?}");
+        assert!(matches!(&error, SetupError::HostKeyBundled { .. }), "{error:?}");
         assert!(known.lookup(host, port).unwrap().is_some());
         // The bundled keys are what counts for it, whatever was saved.
         let pinned = known.pin(host, port).unwrap().unwrap();
@@ -487,7 +487,7 @@ fn settings_cannot_forget_a_bundled_hosts_key_either() {
 
     let error = sync.forget_host_key().unwrap_err();
 
-    assert!(matches!(&error, paw_core::sync::SyncError::Failed { message } if message.contains("can't be forgotten")), "{error:?}");
+    assert!(matches!(&error, paw_core::sync::SyncError::HostKeyBundled { .. }), "{error:?}");
 }
 
 #[test]
@@ -509,7 +509,7 @@ fn a_pin_kdf_paw_does_not_support_stops_setup_at_your_key_before_any_pin() {
         if supported {
             assert!(matches!(read, Ok(SetupState::Address { .. })), "{read:?}");
         } else {
-            assert!(matches!(&read, Err(SetupError::UnusableKey { message }) if message.contains("KDF")), "{read:?}");
+            assert!(matches!(&read, Err(SetupError::UnusableKey { reason: UnusableKeyReason::PinKdfUnsupported { .. } })), "{read:?}");
             assert_eq!(setup.state(), SetupState::ReadKey);
         }
         assert_eq!(sim.verify_attempts() + sim.pin_queries(), 0);

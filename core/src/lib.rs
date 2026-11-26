@@ -50,6 +50,10 @@ pub enum PawError {
     HostKeyMismatch { presented: String },
     #[error("the git host did not accept this key")]
     KeyRejected,
+    /// The host's keys ship with paw: they are never forgotten, and no
+    /// other key is pinned for it.
+    #[error("{host}'s keys come with paw and can't be forgotten")]
+    HostKeyBundled { host: String },
     /// The remote branch has commits this copy does not build on. Nothing
     /// was pushed; paw never forces.
     #[error("the remote has changes that are not in this copy")]

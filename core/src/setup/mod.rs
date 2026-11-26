@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::key::enrolment::save_enrolment;
-use crate::key::{CardInfo, KeyIdentity, KeyTouch};
+use crate::key::{CardInfo, KeyIdentity, KeyTouch, PinKdfStatus};
 use crate::recipients::Access;
 use crate::ssh::SshPublicKey;
 use crate::store::PassStore;
@@ -83,6 +83,9 @@ pub enum SetupError {
     /// `confirm_host` was given a fingerprint other than the one shown.
     #[error("that is not the fingerprint {host} presented")]
     HostKeyNotConfirmed { host: String },
+    /// See [`PawError::HostKeyBundled`].
+    #[error("{host}'s keys come with paw and can't be forgotten")]
+    HostKeyBundled { host: String },
     /// The host does not know this key. Add `public_key` to the account.
     #[error("{host} doesn't know this key yet")]
     KeyNotAccepted { host: String, public_key: String },
@@ -94,8 +97,8 @@ pub enum SetupError {
     KeyCannotOpenStore,
     #[error("paw downloaded your store but couldn't open {entry}: {detail}")]
     CannotOpenEntry { entry: String, detail: String },
-    #[error("this key cannot be used: {message}")]
-    UnusableKey { message: String },
+    #[error("this key cannot be used: {reason}")]
+    UnusableKey { reason: UnusableKeyReason },
     #[error("{message}")]
     WrongStep { message: String },
     /// See [`PawError::StoreBusy`].
@@ -103,6 +106,28 @@ pub enum SetupError {
     StoreBusy,
     #[error("{message}")]
     Failed { message: String },
+}
+
+/// Why a key cannot set up a store.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Enum)]
+pub enum UnusableKeyReason {
+    /// Its PIN KDF is one paw cannot follow. No PIN was sent to it.
+    /// `detail` says what the card asked for, when known.
+    #[error("this key uses a PIN setting (KDF) that paw doesn't support yet. paw has not sent it the PIN, so no try was used")]
+    PinKdfUnsupported { detail: Option<String> },
+    #[error("it has no authentication key, so it cannot log in to a git host")]
+    NoAuthenticationKey,
+    #[error("it has no decryption key")]
+    NoDecryptionKey,
+    /// Another key than the one read at "Your key".
+    #[error("this is not the key read at the start of setup; plug that one in")]
+    NotTheKeyRead,
+    /// The key read from the card is not the one its fingerprint names.
+    #[error("the key read from the card does not match its fingerprint")]
+    CardKeyMismatch,
+    /// The SSH key kept at "Your key" can't be read back as ed25519.
+    #[error("{detail}")]
+    SshKeyUnreadable { detail: String },
 }
 
 fn failed(error: impl std::fmt::Display) -> SetupError {
@@ -113,6 +138,7 @@ impl From<PawError> for SetupError {
     fn from(error: PawError) -> Self {
         match error {
             PawError::StoreBusy => Self::StoreBusy,
+            PawError::HostKeyBundled { host } => Self::HostKeyBundled { host },
             other => failed(other),
         }
     }
@@ -460,27 +486,29 @@ impl SetupFlow {
     }
 
     /// The key as its session read it when it was plugged in: no card
-    /// exchange at all. `pin_kdf_supported` is the session's; a key whose
-    /// PIN KDF paw cannot follow is refused here (`UnusableKey`).
+    /// exchange at all. `pin_kdf` is the session's; a key whose PIN KDF
+    /// paw cannot follow is refused here (`UnusableKey`).
     pub fn read_key_from(
         &mut self,
         info: &CardInfo,
         ssh: Option<&SshPublicKey>,
-        pin_kdf_supported: bool,
+        pin_kdf: PinKdfStatus,
     ) -> Result<SetupState, SetupError> {
         self.expect(&[Step::ReadKey, Step::Address], "read the key")?;
-        if !pin_kdf_supported {
-            return Err(SetupError::UnusableKey { message: crate::key::kdf::UNSUPPORTED_AT_SETUP.into() });
+        if !pin_kdf.supported {
+            return Err(SetupError::UnusableKey { reason: UnusableKeyReason::PinKdfUnsupported { detail: pin_kdf.detail } });
         }
-        let ssh = ssh.ok_or_else(|| SetupError::UnusableKey {
-            message: "it has no authentication key, so it cannot log in to a git host".into(),
-        })?;
+        // A key with neither is named by its missing decryption key.
+        if info.decryption_fingerprint.is_none() {
+            return Err(SetupError::UnusableKey { reason: UnusableKeyReason::NoDecryptionKey });
+        }
+        let ssh = ssh.ok_or(SetupError::UnusableKey { reason: UnusableKeyReason::NoAuthenticationKey })?;
         self.use_key(info.clone(), ssh)
     }
 
     fn use_key(&mut self, info: CardInfo, ssh: &SshPublicKey) -> Result<SetupState, SetupError> {
         let Some(decryption_fingerprint) = info.decryption_fingerprint else {
-            return Err(SetupError::UnusableKey { message: "it has no decryption key".into() });
+            return Err(SetupError::UnusableKey { reason: UnusableKeyReason::NoDecryptionKey });
         };
         let key = KeySummary {
             ident: info.ident,
@@ -816,9 +844,7 @@ impl SetupFlow {
         if identity.decryption_fingerprint.as_deref().map(str::to_ascii_uppercase)
             != Some(summary.decryption_fingerprint.to_ascii_uppercase())
         {
-            return Err(SetupError::UnusableKey {
-                message: "this is not the key read at the start of setup; plug that one in".into(),
-            });
+            return Err(SetupError::UnusableKey { reason: UnusableKeyReason::NotTheKeyRead });
         }
         // The key about to be trusted for every future save must be the very
         // key whose fingerprint the card reported, not merely one handed in
@@ -826,9 +852,7 @@ impl SetupFlow {
         if !crate::write::cert::fingerprint_of(card_key)
             .eq_ignore_ascii_case(&summary.decryption_fingerprint)
         {
-            return Err(SetupError::UnusableKey {
-                message: "the key read from the card does not match its fingerprint".into(),
-            });
+            return Err(SetupError::UnusableKey { reason: UnusableKeyReason::CardKeyMismatch });
         }
         let repo = self.repo_dir();
         // The keyring and the enrolment change as one critical section.
@@ -906,17 +930,21 @@ fn ssh_key(key: &KeySummary) -> Result<SshPublicKey, SetupError> {
     let encoded = key.ssh_public_key.split(' ').nth(1).unwrap_or_default();
     let blob = base64::engine::general_purpose::STANDARD
         .decode(encoded)
-        .map_err(|e| SetupError::UnusableKey { message: e.to_string() })?;
+        .map_err(|e| unreadable_ssh_key(e.to_string()))?;
     // An ssh-ed25519 blob ends in the 32-byte key.
     let raw: [u8; 32] = blob
         .get(blob.len().saturating_sub(32)..)
         .and_then(|tail| tail.try_into().ok())
-        .ok_or_else(|| SetupError::UnusableKey { message: "not an ed25519 key".into() })?;
+        .ok_or_else(|| unreadable_ssh_key("not an ed25519 key".into()))?;
     let key = SshPublicKey::ed25519(&raw);
     if key.blob() != blob.as_slice() {
-        return Err(SetupError::UnusableKey { message: "not an ed25519 key".into() });
+        return Err(unreadable_ssh_key("not an ed25519 key".into()));
     }
     Ok(key)
+}
+
+fn unreadable_ssh_key(detail: String) -> SetupError {
+    SetupError::UnusableKey { reason: UnusableKeyReason::SshKeyUnreadable { detail } }
 }
 
 #[cfg(test)]

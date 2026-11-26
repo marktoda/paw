@@ -121,7 +121,7 @@ fn waiting(dir: &Path) -> Result<u32, SyncError> {
 fn fetch_error(connection: &Connection, error: PawError) -> SyncError {
     match connection.remote_said() {
         Some(said) if super::says_repository_missing(&said) => {
-            SyncError::RepositoryMissing { message: error.to_string() }
+            SyncError::RepositoryMissing { detail: error.to_string() }
         }
         _ => error.into(),
     }

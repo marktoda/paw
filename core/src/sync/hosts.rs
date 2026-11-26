@@ -141,9 +141,7 @@ pub fn is_bundled(host: &str, port: u16) -> bool {
 
 /// Why a bundled host's key is not forgotten or replaced.
 fn bundled_refusal(host: &str) -> PawError {
-    PawError::Store(format!(
-        "{host}'s keys come with paw and can't be forgotten. A different key means this connection isn't reaching the real {host}: try another network"
-    ))
+    PawError::HostKeyBundled { host: host.to_owned() }
 }
 
 /// Host keys confirmed by the person, one host per line:

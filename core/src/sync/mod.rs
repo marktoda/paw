@@ -54,11 +54,14 @@ pub enum SyncError {
     /// The host presented a key other than the pinned ones. Nothing was sent.
     #[error("{host}'s key changed: expected {}, it presented {presented}", .expected.join(" or "))]
     HostKeyChanged { host: String, expected: Vec<String>, presented: String },
+    /// See [`PawError::HostKeyBundled`].
+    #[error("{host}'s keys come with paw and can't be forgotten")]
+    HostKeyBundled { host: String },
     /// The host does not accept the key. Asked before the PIN or a touch.
     #[error("the git host did not accept this key")]
     KeyRejected,
-    #[error("could not reach the git host: {message}")]
-    Network { message: String },
+    #[error("could not reach the git host: {detail}")]
+    Network { detail: String },
     /// The remote moved again while pushing, after one retry.
     #[error("the remote kept changing; try again")]
     RemoteKeptMoving,
@@ -67,14 +70,14 @@ pub enum SyncError {
     /// were; the remote has to be fixed from another computer.
     #[error("{message}")]
     RefusedRemote { paths: Vec<RefusedPath>, message: String },
-    /// The host refused the update, by a rule of its own. `message` is what
+    /// The host refused the update, by a rule of its own. `detail` is what
     /// git and the host said.
-    #[error("{message}")]
-    PushRefused { message: String },
+    #[error("{detail}")]
+    PushRefused { detail: String },
     /// The host says the repository is not there, or that this key can't
-    /// see it. `message` is what git and the host said.
-    #[error("{message}")]
-    RepositoryMissing { message: String },
+    /// see it. `detail` is what git and the host said.
+    #[error("{detail}")]
+    RepositoryMissing { detail: String },
     /// See [`PawError::StoreBusy`].
     #[error("{}", crate::lock::STORE_BUSY)]
     StoreBusy,
@@ -89,8 +92,9 @@ impl From<PawError> for SyncError {
     fn from(error: PawError) -> Self {
         match error {
             PawError::KeyRejected => Self::KeyRejected,
-            PawError::Network(message) => Self::Network { message },
+            PawError::Network(detail) => Self::Network { detail },
             PawError::StoreBusy => Self::StoreBusy,
+            PawError::HostKeyBundled { host } => Self::HostKeyBundled { host },
             other => Self::Failed { message: other.to_string() },
         }
     }
@@ -658,7 +662,7 @@ pub(crate) fn push_tip(
             Err(PushError::NotFastForward)
         }
         (Ok(()), Some(why)) => Err(PushError::Failed(SyncError::PushRefused {
-            message: PawError::Git(format!("the host refused the push: {why}")).to_string(),
+            detail: PawError::Git(format!("the host refused the push: {why}")).to_string(),
         })),
         (Ok(()), None) => Ok(()),
     };
