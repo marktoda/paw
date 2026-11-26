@@ -586,7 +586,7 @@ private struct CheckScreen: View {
             identifier: "setup-check"
         ) {
             Label {
-                Text("Downloaded \(passwordCount(entries)).")
+                Text("Downloaded \(passwordCount(Int(entries))).")
                     .font(PawFont.body)
                     .foregroundStyle(PawColor.label)
             } icon: {
@@ -659,7 +659,7 @@ private struct DoneScreen: View {
     }
 
     private var summary: String {
-        let passwords = passwordCount(entries)
+        let passwords = passwordCount(Int(entries))
         guard let folders = model.storeFacts?.folders, folders > 0 else { return passwords }
         return "\(passwords) in \(folders == 1 ? "1 folder" : "\(folders) folders")"
     }

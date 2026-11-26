@@ -26,6 +26,6 @@ func passwordCount(_ count: Int) -> String {
 }
 
 /// The search field's prompt on Home: "Search 3 passwords".
-func searchPrompt(entryCount: Int) -> String {
+func searchPromptWords(entryCount: Int) -> String {
     "Search \(passwordCount(entryCount))"
 }

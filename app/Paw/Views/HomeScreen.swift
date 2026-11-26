@@ -78,7 +78,7 @@ struct HomeScreen: View {
     }
 
     private var searchPrompt: String {
-        searchPrompt(entryCount: model.storeSession.live.entryCount)
+        searchPromptWords(entryCount: model.storeSession.live.entryCount)
     }
 
     private var home: some View {

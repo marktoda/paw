@@ -19,7 +19,7 @@ struct SplitRootView: View {
     }
 
     private var searchPrompt: String {
-        searchPrompt(entryCount: model.storeSession.live.entryCount)
+        searchPromptWords(entryCount: model.storeSession.live.entryCount)
     }
 
     var body: some View {
