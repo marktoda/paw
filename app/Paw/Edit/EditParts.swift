@@ -321,7 +321,7 @@ private struct EditingModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .sheet(item: formBinding) { purpose in
+            .pawSheet(item: formBinding) { purpose in
                 if let edits {
                     EntryFormSheet(model: model, edits: edits, purpose: purpose)
                 }

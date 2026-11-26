@@ -90,6 +90,8 @@ final class AppModel {
     var showsSettings = false
     /// The open entry's value in large type (a full-screen cover on iPad).
     var largeType: LargeTypeItem?
+    /// The sheets up other than key sheets.
+    let sheets = SheetsUp()
 
     @ObservationIgnored private var pendingRoute: Route?
     /// Lock now's so far, so an open can tell it came since the open began.
@@ -424,8 +426,10 @@ final class AppModel {
         setPath(routes)
     }
 
+    /// A sheet is up, key sheet or other: the iPad's keyboard shortcuts
+    /// do nothing under it.
     var sheetIsUp: Bool {
-        keyRequest != nil || showsSettings || largeType != nil || storeSession.sheetIsUp
+        storeSession.keyTasks.sheetShown || sheets.any
     }
 
     /// Closes every opened entry that is no longer on the navigation stack.

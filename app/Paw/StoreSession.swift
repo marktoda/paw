@@ -255,24 +255,20 @@ final class StoreSession {
         syncing?.cameForward()
     }
 
-    var sheetIsUp: Bool {
-        edits?.form != nil || syncing?.sheet != nil
-    }
 }
 
 /// Makes the drivers of a store's key sheets, all reading the key through
-/// its one reader. In the simulator's debug builds it also counts their key
-/// tasks not yet ended, for the UI tests' "task ended" signal.
+/// its one reader, and says whether any of their sheets is up. In the
+/// simulator's debug builds it also counts their key tasks not yet ended,
+/// for the UI tests' "task ended" signal.
 @MainActor
 final class KeyTaskDrivers {
     let reader: KeyReader
-    #if DEBUG && targetEnvironment(simulator)
     private var made: [WeakDriver] = []
 
     private struct WeakDriver {
         weak var driver: KeyTaskDriver?
     }
-    #endif
 
     init(reader: KeyReader) {
         self.reader = reader
@@ -280,11 +276,14 @@ final class KeyTaskDrivers {
 
     func make() -> KeyTaskDriver {
         let driver = KeyTaskDriver(reader: reader)
-        #if DEBUG && targetEnvironment(simulator)
         made.removeAll { $0.driver == nil }
         made.append(WeakDriver(driver: driver))
-        #endif
         return driver
+    }
+
+    /// One of their key sheets is up.
+    var sheetShown: Bool {
+        made.contains { $0.driver?.isShown == true }
     }
 
     #if DEBUG && targetEnvironment(simulator)

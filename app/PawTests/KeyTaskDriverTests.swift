@@ -266,6 +266,20 @@ final class KeyTaskDriverTests: XCTestCase {
         await waitFor("both tasks to end") { keyTasks.pendingTasks == 0 }
     }
 
+    /// Any key sheet a store's driver shows holds the iPad's shortcuts
+    /// back, with no list of sheets to keep.
+    func testEveryDriversSheetCountsAsASheetUp() async throws {
+        let fixture = try Fixture()
+        let other = driver(fixture)
+        let owner = Recorder()
+        XCTAssertFalse(fixture.model.sheetIsUp)
+        open("web/github.com", with: other, owner, fixture)
+        await waitForStage(other, .pin(triesLeft: 3, forgotten: false))
+        XCTAssertTrue(fixture.model.sheetIsUp)
+        other.cancel()
+        XCTAssertFalse(fixture.model.sheetIsUp)
+    }
+
     func testCancelEndsTheTaskAtOnceWhileTheKeyStillWaitsForATouch() async throws {
         let fixture = try Fixture(touch: true)
         let owner = Recorder()

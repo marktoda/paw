@@ -24,7 +24,7 @@ struct GitHubChooseButton: View {
         .buttonStyle(.pawSecondary)
         .disabled(model.working != nil)
         .accessibilityIdentifier("address-github")
-        .sheet(item: $picker) { picker in
+        .pawSheet(item: $picker) { picker in
             GitHubPickerSheet(picker: picker)
         }
     }

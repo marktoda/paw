@@ -42,7 +42,7 @@ struct RootView: View {
             .sheet(item: keySheet, onDismiss: { model.keySheetDismissed() }) { _ in
                 KeySheetHost(model: model)
             }
-            .sheet(isPresented: $model.showsSettings) {
+            .pawSheet(isPresented: $model.showsSettings) {
                 SettingsSheet(model: model)
             }
             .onChange(of: splitView, initial: true) {
@@ -60,6 +60,7 @@ struct RootView: View {
                 }
             }
             .privacyCover()
+            .environment(\.sheetsUp, model.sheets)
             #if DEBUG && targetEnvironment(simulator)
             .onChange(of: model.toast) {
                 if let toast = model.toast { lastToasts[toast.kind] = toast.text }

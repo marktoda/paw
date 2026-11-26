@@ -44,7 +44,7 @@ struct StoreSettingsSections: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("settings-key-diagnostics")
-            .sheet(isPresented: $showsDiagnostics) {
+            .pawSheet(isPresented: $showsDiagnostics) {
                 KeyDiagnosticsView(model: model)
                     .privacyCover()
             }
