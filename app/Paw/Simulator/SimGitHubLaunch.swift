@@ -1,6 +1,6 @@
 import Foundation
 
-#if targetEnvironment(simulator)
+#if DEBUG && targetEnvironment(simulator)
 /// The core's simulated GitHub, for the GitHub screens and their UI tests.
 /// `-pawSimGitHub <mode>` turns it on; without it the simulator has no
 /// GitHub sign-in at all. It serves the simulated git host's store as

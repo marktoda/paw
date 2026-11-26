@@ -186,7 +186,7 @@ final class SetupModel {
         }
         #endif
         reader.watch(startsUnplugged: simulator?.startsUnplugged ?? true)
-        #if targetEnvironment(simulator)
+        #if DEBUG && targetEnvironment(simulator)
         // Before the key is read, reading it opens the session, and shows
         // on Plug in if that fails.
         if state != .readKey { reader.readIfNeeded() }
@@ -591,12 +591,12 @@ final class SetupModel {
         sheet = nil
     }
 
-    #if targetEnvironment(simulator)
+    #if DEBUG && targetEnvironment(simulator)
     /// The debug control on the download screen after a cancel during the
     /// touch: the key's wait runs out now.
     func simulatedTouchTimeout() {
         touchLeftWaiting = false
-        KeyConnection.simulateTouchTimeout()
+        SimulatedKeyHolder.shared.key.timeOutTouch()
     }
     #endif
 

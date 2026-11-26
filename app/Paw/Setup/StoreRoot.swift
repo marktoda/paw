@@ -31,14 +31,14 @@ final class StoreRootModel {
     let gitHub: GitHubAccess?
     private let clock: Clock
     private let connect: KeyReader.Connect = { try KeyConnection.open() }
-    #if targetEnvironment(simulator)
+    #if DEBUG && targetEnvironment(simulator)
     private let simulatedClock: SimClock
     let keystore = SimKeystore()
     #endif
 
     init() throws {
         let location = try StoreLocation.standard()
-        #if targetEnvironment(simulator)
+        #if DEBUG && targetEnvironment(simulator)
         if SetupLaunch.isRequested, !SetupLaunch.keepsState {
             try location.removeAll()
         }
@@ -115,7 +115,7 @@ final class StoreRootModel {
     }
 
     private func makeSetup(_ setup: Setup) -> SetupModel {
-        #if targetEnvironment(simulator)
+        #if DEBUG && targetEnvironment(simulator)
         let simulator: SetupSimulator? = SimulatedHostHolder.shared.setupSimulator()
         #else
         let simulator: SetupSimulator? = nil
@@ -134,17 +134,10 @@ final class StoreRootModel {
             // Setup wrote the pinned keys, the enrolment and the known hosts.
             location.protect()
             let sync = try? StoreSync.open(stateDir: location.stateDir.path)
-            #if targetEnvironment(simulator)
+            #if DEBUG && targetEnvironment(simulator)
             let copies: CopyCache? = CopyCache(
                 dir: location.copiesDir.path, keystore: keystore.asKeystore(), clock: clock)
-            let held = SimulatedKeyHolder.shared
-            let simulatedClock = simulatedClock
-            let away = LaunchArgument.simAwayMs.int ?? 0
-            let simulator: SimulatorControls? = SimulatorControls(
-                advanceClock: { simulatedClock.advanceMs(ms: $0) },
-                plugIn: { held.key.plugIn() },
-                startsUnplugged: held.startsUnplugged && keyPort.session() == nil,
-                awayMs: UInt64(max(away, 0)))
+            let simulator: SimulatorControls? = .simulated(clock: simulatedClock, keyPort: keyPort)
             #else
             // Face ID copies in the Secure Enclave; `nil` where it can't be
             // used, and then every open uses the key (Settings says so).
@@ -197,7 +190,7 @@ final class StoreRootModel {
         var problems = StoreWipe.wipe(
             location, keyPort: keyPort,
             resetKeychain: {
-                #if targetEnvironment(simulator)
+                #if DEBUG && targetEnvironment(simulator)
                 try keystore.reset()
                 #else
                 try EnclaveKeystore().resetDetailed()
@@ -328,7 +321,7 @@ struct StoreRoot: View {
         let problems = StoreWipe.wipe(
             try? location.get(), keyPort: nil,
             resetKeychain: {
-                #if !targetEnvironment(simulator)
+                #if !(DEBUG && targetEnvironment(simulator))
                 DispatchQueue.global(qos: .utility).async { try? EnclaveKeystore().resetDetailed() }
                 #endif
             },
@@ -430,35 +423,6 @@ private struct WaitingForUnlockView: View {
             #endif
     }
 }
-
-#if DEBUG && targetEnvironment(simulator)
-/// `-pawSimLockedLaunch 1`: launch as iOS does in the background while the
-/// phone is locked, with the store's files unreadable, until the debug
-/// "unlock" control posts the system's own unlock notification.
-enum SimLockedLaunch {
-    struct Unreadable: Error, CustomStringConvertible {
-        var description: String { "Operation not permitted (os error 1) (simulated lock)" }
-    }
-
-    @MainActor static var isLocked = LaunchArgument.simLockedLaunch.bool
-
-    @MainActor static func unlock() {
-        isLocked = false
-        NotificationCenter.default.post(name: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil)
-    }
-}
-
-extension StoreRootModel {
-    /// "copies 0 · keychain resets 1 · pin none · pasteboard empty · legacy gone".
-    func debugState() -> String {
-        let copies = (try? FileManager.default.contentsOfDirectory(atPath: location.copiesDir.path).count) ?? 0
-        let pin = keyPort.session()?.holdsPin() == true ? "held" : "none"
-        let pasteboard = UIPasteboard.general.hasStrings ? "full" : "empty"
-        return "copies \(copies) · keychain resets \(keystore.resetCount()) · pin \(pin) · pasteboard \(pasteboard)"
-            + " · legacy \(legacyFolder)"
-    }
-}
-#endif
 
 /// The store could not be opened. Say what happened in words, keep the
 /// library's text under Details, and offer the ways out: try again, or set

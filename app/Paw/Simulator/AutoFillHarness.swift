@@ -250,7 +250,7 @@ private struct AutoFillHarnessView: View {
                         .font(PawFont.footnote.monospaced())
                         .accessibilityValue(run.codes)
                         .accessibilityIdentifier("harness-codes")
-                    Button("Touch the simulated key") { KeyConnection.simulateTouch() }
+                    Button("Touch the simulated key") { SimulatedKeyHolder.shared.key.touch() }
                         .buttonStyle(.pawSecondary)
                         .accessibilityIdentifier("harness-touch-key")
                     Button("Run again") { run.run() }

@@ -205,7 +205,7 @@ final class StoreSession {
         }
         #endif
         reader.watch(startsUnplugged: parts.simulator?.startsUnplugged == true)
-        #if targetEnvironment(simulator)
+        #if DEBUG && targetEnvironment(simulator)
         // A session already open (setup's) is kept, with the PIN it holds.
         if reader.present {
             reader.read()

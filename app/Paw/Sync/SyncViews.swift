@@ -298,14 +298,10 @@ private struct SyncModifier: ViewModifier {
                     SyncSheetHost(model: model, syncing: syncing)
                 }
             }
-            #if targetEnvironment(simulator)
+            #if DEBUG && targetEnvironment(simulator)
             .background(alignment: .topLeading) {
-                if let syncing {
-                    Text(syncing.simSummary)
-                        .font(.caption2)
-                        .frame(width: 1, height: 1)
-                        .opacity(0.02)
-                        .accessibilityIdentifier("sim-remote-summary")
+                if syncing != nil {
+                    SimRemoteSummary()
                 }
             }
             #endif
@@ -451,8 +447,8 @@ private struct SyncStatusSheet: View {
                         .accessibilityIdentifier("sync-not-sent")
                     }
                 }
-                #if targetEnvironment(simulator)
-                SyncSimulatorSection(syncing: syncing)
+                #if DEBUG && targetEnvironment(simulator)
+                SimRemoteSection()
                 #endif
             }
             .listStyle(.insetGrouped)
@@ -605,48 +601,6 @@ private struct SyncStatusSheet: View {
         .background(PawColor.bg)
     }
 }
-
-#if targetEnvironment(simulator)
-/// Debug controls for the simulated git host. Simulator only, and drawn so
-/// a screenshot never shows them as part of the design.
-private struct SyncSimulatorSection: View {
-    let syncing: SyncModel
-    @State private var shown = false
-
-    var body: some View {
-        Section {
-            SimulatorDisclosureRow(shown: $shown)
-            if shown {
-                controls
-            }
-        }
-    }
-
-    @ViewBuilder private var controls: some View {
-            // First, so it is on screen as soon as the controls open.
-            Text(syncing.simStatus.isEmpty ? syncing.simSummary : "\(syncing.simStatus) \(syncing.simSummary)")
-                .font(PawFont.footnote.monospaced())
-                .foregroundStyle(PawColor.labelSecondary)
-                .accessibilityIdentifier("sim-remote-status")
-            ForEach(SimRemoteChange.allCases) { change in
-                Button(change.title) { syncing.applySimChange(change) }
-                    .foregroundStyle(PawColor.label)
-                    .accessibilityIdentifier("sim-remote-\(change.rawValue)")
-            }
-            Button(SimRemoteHandle.shared.refusingPushes ? "Accept pushes again" : "Refuse pushes") {
-                syncing.setSimRefusesPushes(!SimRemoteHandle.shared.refusingPushes)
-            }
-            .foregroundStyle(PawColor.label)
-            .accessibilityIdentifier("sim-remote-refuse-pushes")
-            Button("Drop the next connection") { syncing.simDropNextConnection() }
-                .foregroundStyle(PawColor.label)
-                .accessibilityIdentifier("sim-remote-drop")
-            Button("Present another host key") { syncing.setSimChangedHostKey(true) }
-                .foregroundStyle(PawColor.label)
-                .accessibilityIdentifier("sim-remote-host-key")
-    }
-}
-#endif
 
 extension String {
     /// `nil` for "".

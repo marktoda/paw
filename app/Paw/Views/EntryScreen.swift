@@ -147,7 +147,7 @@ struct EntryScreen: View {
         .onChange(of: toast) {
             if let toast { lastToast = toast }
         }
-        #if targetEnvironment(simulator)
+        #if DEBUG && targetEnvironment(simulator)
         .background(alignment: .topLeading) {
             // The toast is not focusable, by design; UI tests read it here.
             if let lastToast {

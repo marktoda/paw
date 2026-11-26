@@ -155,7 +155,7 @@ private struct GitHubCodeView: View {
                     Button {
                         copyCode()
                         opened = true
-                        #if !targetEnvironment(simulator)
+                        #if !(DEBUG && targetEnvironment(simulator))
                         // The simulated GitHub has no page to open.
                         if let url = Self.pageURL(code) { openURL(url) }
                         #endif
@@ -191,10 +191,10 @@ private struct GitHubCodeView: View {
                     .foregroundStyle(PawColor.labelSecondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                #if targetEnvironment(simulator)
-                SetupSimulatorButton(title: "authorise the code", identifier: "sim-github-authorise") {
+                #if DEBUG && targetEnvironment(simulator)
+                SimulatorActionButton(action: SimulatorAction(title: "authorise the code", identifier: "sim-github-authorise") {
                     SimGitHubLaunch.shared.authorise()
-                }
+                })
                 #endif
             }
             .frame(maxWidth: PawMetrics.readableWidth)
@@ -207,7 +207,7 @@ private struct GitHubCodeView: View {
     /// "github.com/login/device": the address without its scheme. The
     /// simulated GitHub's own address would mean nothing in a picture.
     static func shown(_ uri: String) -> String {
-        #if targetEnvironment(simulator)
+        #if DEBUG && targetEnvironment(simulator)
         return "github.com/login/device"
         #else
         var text = uri
@@ -386,10 +386,10 @@ private struct GitHubNotInstalledView: View {
                         .buttonStyle(.pawSecondary)
                         .accessibilityIdentifier("github-check-again")
                 }
-                #if targetEnvironment(simulator)
-                SetupSimulatorButton(title: "choose the store on GitHub", identifier: "sim-github-install") {
+                #if DEBUG && targetEnvironment(simulator)
+                SimulatorActionButton(action: SimulatorAction(title: "choose the store on GitHub", identifier: "sim-github-install") {
                     SimGitHubLaunch.shared.install()
-                }
+                })
                 #endif
             }
             .frame(maxWidth: PawMetrics.sheetTextWidth)

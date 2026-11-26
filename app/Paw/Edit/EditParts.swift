@@ -361,7 +361,7 @@ private struct EditingModifier: ViewModifier {
             .onChange(of: model.toast) {
                 if let toast = model.toast { lastToast = toast }
             }
-            #if targetEnvironment(simulator)
+            #if DEBUG && targetEnvironment(simulator)
             .background(alignment: .topLeading) {
                 // The toast is not focusable, by design; UI tests read it here.
                 if let lastToast {
