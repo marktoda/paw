@@ -9,7 +9,8 @@ mod key_common;
 use std::time::Duration;
 
 use key_common::*;
-use paw_core::key::{KeyError, KeyIdentity, KeyPurpose};
+use paw_core::key::{KeyError, KeyIdentity};
+use paw_core::task::KeyPurpose;
 use paw_core::task::{KeyOutcome, KeyTaskState};
 use paw_core::sim::{SimTouch, SimulatedKey};
 

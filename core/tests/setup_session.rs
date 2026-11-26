@@ -518,22 +518,25 @@ fn a_pin_kdf_paw_does_not_support_stops_setup_at_your_key_before_any_pin() {
 fn a_download_reports_objects_and_bytes_received() {
     let w = world();
     to_need_pin(&w);
-    assert_eq!(w.setup.transfer_progress(), None);
     let driver = Driver::helpful(PIN, &w.sim);
     let task = w.setup.clone().download_with_key(w.port.clone(), driver.clone());
     driver.drive(&task);
     assert!(matches!(finish(&task), KeyTaskState::Done { .. }));
 
-    let transfer = w.setup.transfer_progress().unwrap();
-    assert!(transfer.total_objects > 0);
-    assert_eq!(transfer.received_objects, transfer.total_objects);
-    assert!(transfer.received_bytes > 0);
-    // The sheet saw it as Working with objects done and expected, ending
+    // The sheet saw it as Working with objects and bytes received, ending
     // at the total.
-    assert!(driver.saw(|state| matches!(
-        state,
-        KeyTaskState::Working { progress: Some(p) } if p.done == transfer.total_objects && p.total == transfer.total_objects
-    )));
+    let last = driver
+        .states()
+        .into_iter()
+        .rev()
+        .find_map(|state| match state {
+            KeyTaskState::Working { progress: Some(p) } => Some(p),
+            _ => None,
+        })
+        .unwrap();
+    assert!(last.total > 0);
+    assert_eq!(last.done, last.total);
+    assert!(last.bytes.is_some_and(|bytes| bytes > 0));
 }
 
 #[test]

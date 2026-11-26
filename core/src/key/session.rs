@@ -73,6 +73,15 @@ impl From<KeyError> for Halt {
     }
 }
 
+impl From<Halt> for KeyError {
+    fn from(halt: Halt) -> Self {
+        match halt {
+            Halt::Fail(error) => error,
+            Halt::AskPin(_) => KeyError::Internal { detail: "the PIN was needed where it cannot be asked".into() },
+        }
+    }
+}
+
 /// Read once, when the key is plugged in. Needs no PIN.
 struct Identity {
     info: CardInfo,
@@ -473,6 +482,41 @@ impl KeySession {
                 continue;
             }
             state = self.card_free.wait(state).unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+    }
+
+    /// Runs `op` in a card job with the PIN verified, asking `task` for it
+    /// first if paw holds none, and again after a wrong one.
+    pub(crate) fn unlocked<T>(
+        &self,
+        task: &dyn TaskSide,
+        mut op: impl FnMut(&mut CardJob<'_>) -> Result<T, Halt>,
+    ) -> Result<T, Halt> {
+        let mut last_error = None;
+        loop {
+            let supplied = if self.holds_pin_now() { None } else { Some(self.ask_pin(task, last_error.take())?) };
+            match self.run(task, |job| {
+                job.unlock(supplied)?;
+                op(job)
+            }) {
+                Err(Halt::AskPin(why)) => last_error = why,
+                other => return other,
+            }
+        }
+    }
+
+    /// Asks `task` for the PIN until one of a plausible length is typed.
+    fn ask_pin(&self, task: &dyn TaskSide, mut last_error: Option<KeyError>) -> Result<Pin, Halt> {
+        loop {
+            let prompt = self.pin_prompt();
+            if prompt.tries_left == 0 {
+                return Err(Halt::Fail(KeyError::PinBlocked));
+            }
+            let mut typed = task.ask_pin(self, prompt, last_error.take())?;
+            match Pin::new(std::mem::take(&mut *typed)) {
+                Ok(pin) => return Ok(pin),
+                Err(e) => last_error = Some(e),
+            }
         }
     }
 

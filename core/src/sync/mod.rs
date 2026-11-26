@@ -103,7 +103,7 @@ impl crate::remote::AboutRemote for SyncError {
 pub type TransferCallback<'a> = &'a mut dyn FnMut(TransferProgress) -> bool;
 
 /// How far a clone or fetch has got.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransferProgress {
     /// Objects received so far.
     pub received_objects: u32,
@@ -111,6 +111,12 @@ pub struct TransferProgress {
     pub total_objects: u32,
     /// Bytes of the pack received so far.
     pub received_bytes: u64,
+}
+
+impl From<TransferProgress> for crate::key::TaskProgress {
+    fn from(update: TransferProgress) -> Self {
+        Self { done: update.received_objects, total: update.total_objects, bytes: Some(update.received_bytes) }
+    }
 }
 
 /// The shortest time between two progress reports: at most ten a second.

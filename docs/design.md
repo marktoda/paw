@@ -197,7 +197,7 @@ UI tests (`SetupTests`):
 - Port 443: when github.com:22 cannot be connected to at all (TCP refused or timed out), `Setup.port_fallback()` offers `ssh.github.com:443`; only `use_port_fallback()` switches to it.
 - `KeySession.pin_kdf()` / `pin_kdf_supported()`; setup refuses an unsupported PIN KDF at "Your key" (`UnusableKey`), so 2.11's KDF line is built for setup.
 - The older per-call PIN paths (`open_entry`, `open_entry_keeping_copy`, `StoreSync.send`/`refresh`, `Setup.download`/`test_decrypt`) refuse a card other than the enrolled key before any VERIFY, as key tasks do. `PassStore` finds the state directory only when opened at `<state>/repo`.
-- Clone and fetch progress is throttled to ten reports a second, ends at the total, and stops at a cancel; `KeyTask.transfer_progress()` and `Setup.transfer_progress()` add bytes (`TransferProgress`).
+- Clone and fetch progress is throttled to ten reports a second, ends at the total, and stops at a cancel; the Working stage's progress (`TaskProgress`) also carries the bytes received.
 - `SimRemote.start_on(key, port)` and `SimRemote.serve(key, dir, port)` (kept repository, same address and host key after a relaunch), and `set_repository_not_found`.
 
 ### 2.5 Daily unlock
@@ -510,8 +510,10 @@ One crate. The simulated hardware is the `sim/` module behind the default `sim` 
 ```
 core/                 paw-core
   src/
-    key/              the card: APDUs, PIN and KDF, session, KeyPort, KeyTask (task.rs), touch, key log
-    copies/           Face ID copies: sealed format, folder, keystore and clock seams
+    key/              the card: APDUs, PIN and KDF, session, KeyPort, touch, key log
+    task/             key tasks: KeyTask and its stages, for every workflow that needs the key
+    clock.rs          the phone's clocks (a Swift seam)
+    copies/           Face ID copies: sealed format, folder, keystore seam
     store/            reading the store: tree, search, service matching, .gpg-id, pairings, codes
     write/            drafts, keyring, held-back changes, writes
     sync/             git: address, known hosts, transport, queue, integrate, history

@@ -1,6 +1,6 @@
 //! Key tasks for Rust tests whose work is their own: a git login whose
 //! signer the test uses, and one ciphertext deciphered. Both are the
-//! app's tasks (`KeyPort::sign_in_then`, `KeyPort::decrypt_then`); only the
+//! app's tasks (`sign_in_then`, `decrypt_then`); only the
 //! work after the key differs.
 
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use zeroize::Zeroizing;
 
-use crate::key::{DecryptWork, KeyError, KeyPort, KeyPurpose, LoginPurpose, SessionSigner, Work};
-use crate::task::{App, KeyOutcome, KeyTask, KeyTaskListener, KeyTaskState, relay};
+use crate::key::{KeyError, KeyPort, SessionSigner};
+use crate::task::{DecryptWork, KeyOutcome, KeyPurpose, KeyTask, KeyTaskListener, KeyTaskState, LoginPurpose, Work};
 use crate::ssh::{SshPublicKey, SshSigner};
 
 /// A sign-in task whose signer the test logs in with. The task stays at
@@ -56,7 +56,7 @@ impl SimLogin {
         let (signer_tx, signer_rx) = mpsc::channel();
         let (done_tx, done_rx) = mpsc::channel::<()>();
         let (failed_tx, failed_rx) = mpsc::channel::<KeyError>();
-        let work: Work<App> = Box::new(move |task, signer| {
+        let work: Work = Box::new(move |task, signer| {
             let _ = signer_tx.send(signer);
             // Like a clone or fetch, it stops when the task is cancelled.
             loop {
@@ -72,7 +72,7 @@ impl SimLogin {
                 }
             }
         });
-        let task = KeyTask::of(port.sign_in_then(login, relay(listener), port.expected(), work));
+        let task = port.sign_in_then(login, listener, port.expected(), work);
         Self { task, signer: Mutex::new(signer_rx), failed: failed_tx, done: Mutex::new(Some(done_tx)) }
     }
 
@@ -118,9 +118,9 @@ pub fn decipher(
     listener: Arc<dyn KeyTaskListener>,
 ) -> (Arc<KeyTask>, Receiver<Zeroizing<Vec<u8>>>) {
     let (text_tx, text_rx) = mpsc::channel();
-    let work: DecryptWork<App> = Box::new(move |_, open| {
+    let work: DecryptWork = Box::new(move |_, open| {
         let _ = text_tx.send(open(&ciphertext)?);
         Ok(KeyOutcome::KeyChecked)
     });
-    (KeyTask::of(port.decrypt_then(KeyPurpose::Reencrypt { count: 1 }, relay(listener), work)), text_rx)
+    (port.decrypt_then(KeyPurpose::Reencrypt { count: 1 }, listener, work), text_rx)
 }

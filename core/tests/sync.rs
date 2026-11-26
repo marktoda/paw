@@ -13,7 +13,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use key_common::{Driver, KeySigner, PIN, login, port_with};
 use paw_core::sim::remote::steps;
-use paw_core::key::{KeyError, LoginPurpose};
+use paw_core::key::KeyError;
+use paw_core::task::LoginPurpose;
 use paw_core::sim::SimulatedKey;
 use paw_core::ssh::{SshPublicKey, SshSigner};
 use paw_core::remote::RemoteFailure;

@@ -149,7 +149,7 @@ fn three_held_back() -> World {
 }
 
 fn progress(done: u32, total: u32) -> impl Fn(&KeyTaskState) -> bool {
-    move |s| matches!(s, KeyTaskState::Working { progress: Some(p) } if *p == TaskProgress { done, total })
+    move |s| matches!(s, KeyTaskState::Working { progress: Some(p) } if *p == TaskProgress { done, total, bytes: None })
 }
 
 #[test]
