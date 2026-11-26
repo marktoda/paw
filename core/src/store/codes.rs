@@ -185,7 +185,7 @@ mod tests {
     }
 
     fn opened(text: &[u8]) -> Arc<OpenedEntry> {
-        OpenedEntry::from_plaintext(text.to_vec()).unwrap()
+        OpenedEntry::decrypted(text.to_vec(), vec![0; 32]).unwrap()
     }
 
     /// The marks in `dir`, turned on.

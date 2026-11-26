@@ -315,7 +315,7 @@ fn a_one_time_code_secret_is_flagged_and_never_handed_out() {
 
 #[test]
 fn closing_an_opened_entry_takes_everything_away() {
-    let opened = OpenedEntry::from_plaintext(b"pw\nlogin: you\nurl: example.com\nport: 22\nnote\n".to_vec()).unwrap();
+    let opened = OpenedEntry::decrypted(b"pw\nlogin: you\nurl: example.com\nport: 22\nnote\n".to_vec(), vec![0; 32]).unwrap();
     let id = opened.view().fields[0].id;
     assert_eq!(opened.field_value(id).as_deref(), Some("22"));
 
@@ -340,7 +340,7 @@ fn an_entry_that_is_not_text_opens_as_an_error() {
     let store = PassStore::open(dir.path().to_str().unwrap().into()).unwrap();
     let refused = plugged_key(key).open(&store, PIN, "photo").result.err().unwrap();
     assert_eq!(refused, KeyError::EntryUnreadable { detail: "it is not text".into() });
-    assert!(matches!(OpenedEntry::from_plaintext(vec![0xC3, 0x28]), Err(PawError::NotText)));
+    assert!(matches!(OpenedEntry::decrypted(vec![0xC3, 0x28], vec![0; 32]), Err(PawError::NotText)));
 }
 
 #[test]

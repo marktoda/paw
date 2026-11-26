@@ -57,8 +57,8 @@ impl std::fmt::Debug for OtpCode {
 pub struct OpenedEntry {
     doc: Mutex<Option<EntryDoc>>,
     /// The content id ([`crate::files::content_id`]) of the file the text
-    /// was decrypted from, if known.
-    content_id: Option<Vec<u8>>,
+    /// was decrypted from.
+    content_id: Vec<u8>,
 }
 
 impl std::fmt::Debug for OpenedEntry {
@@ -79,18 +79,12 @@ fn field_views(doc: &EntryDoc) -> Vec<FieldView> {
 impl OpenedEntry {
     /// `doc`, decrypted from a file whose content id is `content_id`.
     pub fn new(doc: EntryDoc, content_id: Vec<u8>) -> Arc<Self> {
-        Arc::new(Self { doc: Mutex::new(Some(doc)), content_id: Some(content_id) })
+        Arc::new(Self { doc: Mutex::new(Some(doc)), content_id })
     }
 
     /// Decrypted bytes of a file whose content id is `content_id`.
     pub fn decrypted(plaintext: Vec<u8>, content_id: Vec<u8>) -> Result<Arc<Self>, PawError> {
         Ok(Self::new(EntryDoc::parse(plaintext)?, content_id))
-    }
-
-    /// Text that is already decrypted, from no known file: for tests.
-    pub fn from_plaintext(plaintext: Vec<u8>) -> Result<Arc<Self>, PawError> {
-        let doc = EntryDoc::parse(plaintext)?;
-        Ok(Arc::new(Self { doc: Mutex::new(Some(doc)), content_id: None }))
     }
 
     fn doc(&self) -> MutexGuard<'_, Option<EntryDoc>> {
@@ -109,9 +103,9 @@ impl OpenedEntry {
         self.read(EntryDoc::duplicate)
     }
 
-    /// The content id of the file the text was decrypted from, if known.
-    pub(crate) fn content_id(&self) -> Option<&[u8]> {
-        self.content_id.as_deref()
+    /// The content id of the file the text was decrypted from.
+    pub(crate) fn content_id(&self) -> &[u8] {
+        &self.content_id
     }
 }
 

@@ -33,10 +33,10 @@ pub(crate) fn keep_copy(
     opened: &OpenedEntry,
     ttl: Duration,
 ) -> Result<Option<i64>, PawError> {
-    let (Some(text), Some(id)) = (opened.read(|doc| doc.to_bytes()), opened.content_id()) else {
+    let Some(text) = opened.read(|doc| doc.to_bytes()) else {
         return Err(PawError::CopyUnavailable);
     };
-    copies.put(name, &text, id, ttl)
+    copies.put(name, &text, opened.content_id(), ttl)
 }
 
 /// What came of trying Face ID first.
