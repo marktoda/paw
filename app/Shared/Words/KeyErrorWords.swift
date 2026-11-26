@@ -101,6 +101,9 @@ struct KeyErrorWords: Equatable {
         case .NoAuthenticationKey:
             problem = "This key has no SSH key"
             nextStep = "Add an authentication subkey on a computer, then try again. It can still open passwords."
+        case .AuthenticationKeyNotEd25519(let algorithm):
+            problem = "This key has no SSH key"
+            nextStep = "Its authentication key is \(algorithm). paw needs an Ed25519 key."
         case .EntryUnreadable(let detail):
             problem = "\(entry) can't be read"
             nextStep = "Its file may be damaged (\(detail))."

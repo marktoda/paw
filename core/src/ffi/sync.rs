@@ -14,10 +14,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
-use crate::key::{
-    After, DecryptWork, Halt, KeyError, KeyPort, KeyPurpose, KeySession, KeyTouch, LoginPurpose, Work,
+use crate::key::{Halt, KeyError, KeyPort, KeySession, KeyTouch, TaskProgress};
+use crate::task::{
+    After, DecryptWork, KeyOutcome, KeyPurpose, KeyTask, KeyTaskListener, LoginPurpose, TaskFailure, Work,
 };
-use crate::task::{App, KeyOutcome, KeyTask, KeyTaskListener, TaskFailure, relay};
 use crate::key::touch_clock::{TouchClock, TouchExpectation};
 use crate::remote::RemoteFailure;
 use crate::setup::{SetupError, SetupFlow, SetupState, SetupWriteReadiness, keyed};
@@ -34,9 +34,6 @@ use crate::sync::{IntegrateReport, SyncError, TransferProgress, accept_replaced_
 #[derive(uniffi::Object)]
 pub struct Setup {
     flow: Mutex<SetupFlow>,
-    /// How far the last download's clone got. Outside `flow`, so it
-    /// answers while the download runs.
-    transfer: Arc<Mutex<Option<TransferProgress>>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -58,7 +55,7 @@ impl Setup {
     #[uniffi::constructor]
     pub fn open(state_dir: String) -> Result<Arc<Self>, SetupError> {
         let flow = SetupFlow::open(&PathBuf::from(state_dir))?;
-        Ok(Arc::new(Self { flow: Mutex::new(flow), transfer: Arc::default() }))
+        Ok(Arc::new(Self { flow: Mutex::new(flow) }))
     }
 
     pub fn state(&self) -> SetupState {
@@ -88,24 +85,23 @@ impl Setup {
     /// key whose PIN KDF paw does not support is refused here with
     /// `UnusableKey` (`PinKdfUnsupported`), before any PIN is asked.
     pub fn read_key_from_session(&self, session: Arc<KeySession>) -> Result<SetupState, SetupError> {
-        let ssh = session.ssh_key().ok().cloned();
-        self.flow().read_key_from(session.card_info(), ssh.as_ref(), session.pin_kdf())
+        self.flow().read_key_from(session.card_info(), session.ssh_key(), session.pin_kdf())
     }
 
     /// "Download your store" as a key task (sign-in, `Clone`): the PIN
     /// stage unless the session holds it, `Working` while connecting,
     /// `Touch` while the key signs the login, `Working` with progress while
-    /// cloning, then `Done`; read `state` for the next step. A key other
-    /// than the one read at "Your key" is refused before the PIN.
+    /// cloning (objects and bytes received, at most ten times a second),
+    /// then `Done`; read `state` for the next step. A key other than the
+    /// one read at "Your key" is refused before the PIN.
     pub fn download_with_key(self: Arc<Self>, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
-        *lock(&self.transfer) = None;
         let expected = self.flow().expected_key();
         let setup = self.clone();
-        let work: Work<App> = Box::new(move |task, signer| {
-            keyed::download(&setup.flow, &setup.transfer, task, &signer)?;
+        let work: Work = Box::new(move |task, signer| {
+            keyed::download(&setup.flow, task, &signer)?;
             Ok(KeyOutcome::SignedIn)
         });
-        KeyTask::of(port.sign_in_then(LoginPurpose::Clone, relay(listener), expected, work))
+        port.sign_in_then(LoginPurpose::Clone, listener, expected, work)
     }
 
     /// "Check your key" as a key task (`CheckKey`): opens one entry with
@@ -121,9 +117,8 @@ impl Setup {
         let setup = self.clone();
         let enrol = port.clone();
         let opened_entry = entry.clone();
-        let after: After<App> =
-            Box::new(move |session| Ok(keyed::after_check(&setup.flow, &enrol, session, opened_entry)?));
-        KeyTask::of(port.check_key_then(store, entry, relay(listener), expected, after))
+        let after: After = Box::new(move |session| Ok(keyed::after_check(&setup.flow, &enrol, session, opened_entry)?));
+        port.check_key_then(store, entry, listener, expected, after)
     }
 
     /// "I expected this change", on the changed-host-key screen: forgets
@@ -132,13 +127,6 @@ impl Setup {
     /// host whose keys ship with paw, such as github.com.
     pub fn forget_host_key(&self) -> Result<SetupState, SetupError> {
         self.flow().forget_host_key()
-    }
-
-    /// How far the current or last download's clone has got: objects and
-    /// bytes received, updated at most ten times a second. `None` before
-    /// its transfer starts. Answers while a download runs.
-    pub fn transfer_progress(&self) -> Option<TransferProgress> {
-        *lock(&self.transfer)
     }
 
     /// After `RemoteFailure::NoConnection` with a `fallback` (no
@@ -198,11 +186,10 @@ impl StoreSync {
         push: bool,
     ) -> Arc<KeyTask> {
         let sync = self.clone();
-        let work: Work<App> = Box::new(move |task, signer| {
+        let work: Work = Box::new(move |task, signer| {
             let remote = sync.remote()?;
             let stop = || task.cancelled();
-            let mut progress =
-                |update: TransferProgress| task.report_progress(update.received_objects, update.total_objects);
+            let mut progress = |update: TransferProgress| task.report_progress(update.into());
             let (repo, state_dir) = (sync.repo(), sync.state_dir.clone());
             let holds_back = || held_back::holds_back(&repo, &state_dir);
             let result: Result<_, TaskFailure> =
@@ -217,7 +204,7 @@ impl StoreSync {
             Ok(KeyOutcome::Synced { report })
         });
         let expected = port.expected();
-        KeyTask::of(port.sign_in_then(login, relay(listener), expected, work))
+        port.sign_in_then(login, listener, expected, work)
     }
 }
 
@@ -371,7 +358,7 @@ impl StoreSync {
             Err(error) => return KeyTask::failed(KeyPurpose::Reencrypt { count: 0 }, listener, error.into()),
         };
         let sync = self.clone();
-        let work: DecryptWork<App> = Box::new(move |task, opener| {
+        let work: DecryptWork = Box::new(move |task, opener| {
             let mut open = |_: &HeldBack, ciphertext: &[u8]| {
                 if task.cancelled() {
                     return Err(OpenFailure::from(KeyError::Cancelled));
@@ -382,7 +369,7 @@ impl StoreSync {
                 })
             };
             let mut progress = |done: u32, total: u32| {
-                task.report_progress(done, total);
+                task.report_progress(TaskProgress { done, total, bytes: None });
             };
             let result: Result<_, TaskFailure> =
                 held_back::reencrypt_each(&sync.repo(), &sync.state_dir, &mut open, &mut progress);
@@ -391,7 +378,7 @@ impl StoreSync {
             }
             Ok(KeyOutcome::Reencrypted { report: result? })
         });
-        KeyTask::of(port.decrypt_then(KeyPurpose::Reencrypt { count }, relay(listener), work))
+        port.decrypt_then(KeyPurpose::Reencrypt { count }, listener, work)
     }
 
     pub fn discard(&self, id: String) -> Result<Vec<QueueItem>, SyncError> {

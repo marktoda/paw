@@ -30,8 +30,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use super::task::{Stage, Workflow};
-use super::{KeyError, KeyPurpose, KeyTouch, LoginPurpose, apdu};
+use super::{KeyError, KeyTouch, apdu};
 use crate::PawError;
 
 /// Lines a session keeps in memory: about 40 card commands with the task
@@ -218,19 +217,6 @@ pub(crate) fn touch_words(policy: KeyTouch) -> &'static str {
     }
 }
 
-/// A task's purpose in one word. Never the entry's name.
-pub(crate) fn purpose_words(purpose: &KeyPurpose) -> &'static str {
-    match purpose {
-        KeyPurpose::OpenEntry { .. } => "open",
-        KeyPurpose::CheckKey { .. } => "setup check",
-        KeyPurpose::SignIn { login: LoginPurpose::Clone } => "sign in to download",
-        KeyPurpose::SignIn { login: LoginPurpose::Fetch } => "sign in to check for changes",
-        KeyPurpose::SignIn { login: LoginPurpose::Push { .. } } => "sign in to send",
-        KeyPurpose::CheckTouchTimeout => "touch timeout check",
-        KeyPurpose::Reencrypt { .. } => "re-encrypt",
-    }
-}
-
 /// The error's name only: its text can name an entry or a key.
 pub(crate) fn error_name(error: &KeyError) -> String {
     match error {
@@ -245,6 +231,7 @@ pub(crate) fn error_name(error: &KeyError) -> String {
         KeyError::DifferentKey { .. } => "DifferentKey".into(),
         KeyError::NoDecryptionKey => "NoDecryptionKey".into(),
         KeyError::NoAuthenticationKey => "NoAuthenticationKey".into(),
+        KeyError::AuthenticationKeyNotEd25519 { .. } => "AuthenticationKeyNotEd25519".into(),
         KeyError::EntryUnreadable { .. } => "EntryUnreadable".into(),
         KeyError::DecryptFailed { .. } => "DecryptFailed".into(),
         KeyError::Reader { .. } => "Reader".into(),
@@ -252,35 +239,6 @@ pub(crate) fn error_name(error: &KeyError) -> String {
         KeyError::StoreBusy => "StoreBusy".into(),
         KeyError::Cancelled => "Cancelled".into(),
     }
-}
-
-/// A stage as the log shows it. `None` for progress updates, which would
-/// fill the log during a download.
-pub(crate) fn stage_words<W: Workflow>(state: &Stage<W>) -> Option<String> {
-    Some(match state {
-        Stage::PlugIn => "PlugIn".into(),
-        Stage::Pin { tries_left, forgot_after_background, last_error } => {
-            let mut words = "Pin".to_string();
-            if let Some(error) = last_error {
-                words += &format!(" (again: {})", error_name(error));
-            }
-            if *tries_left < 3 {
-                words += &format!(" ({tries_left} tries left)");
-            }
-            if *forgot_after_background {
-                words += " (forgot after background)";
-            }
-            words
-        }
-        Stage::Busy => "Busy".into(),
-        Stage::Touch => "Touch".into(),
-        Stage::Working { progress: None } => "Working".into(),
-        Stage::Working { progress: Some(_) } => return None,
-        Stage::Done(_) => "Done".into(),
-        Stage::Failed(error) => format!("Failed({})", error_name(error)),
-        Stage::WorkFailed(failure) => W::failure_name(failure).into(),
-        Stage::Cancelled => "Cancelled".into(),
-    })
 }
 
 /// One line of the merged log.

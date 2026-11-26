@@ -8,7 +8,8 @@ mod key_common;
 use std::sync::Arc;
 
 use key_common::*;
-use paw_core::key::{KeyError, KeyIdentity, KeyPort, LoginPurpose, enrolment};
+use paw_core::key::{KeyError, KeyIdentity, KeyPort, enrolment};
+use paw_core::task::LoginPurpose;
 use paw_core::task::KeyTaskState;
 use paw_core::sim::copies::SimClock;
 use paw_core::sim::{SimOptions, SimTouch, SimulatedKey};

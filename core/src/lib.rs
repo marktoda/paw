@@ -8,6 +8,7 @@
 //! The same card signs the SSH login to the git host ([`ssh`]), which is how
 //! the password store is cloned and pushed ([`sync`]).
 
+pub mod clock;
 pub mod copies;
 pub mod entry;
 pub mod fault;
@@ -36,14 +37,8 @@ uniffi::setup_scaffolding!();
 
 #[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
 pub enum PawError {
-    #[error("could not talk to the key: {0}")]
-    Transport(String),
     #[error("this is not an encrypted pass entry: {0}")]
     NotAnEntry(String),
-    #[error("card error: {0}")]
-    Card(String),
-    #[error("this key cannot log in to a git host: {0}")]
-    NoSshKey(String),
     /// A file name that could reach outside the store or into git's own
     /// files. Nothing was written.
     #[error("not a safe name for an entry: {0}")]

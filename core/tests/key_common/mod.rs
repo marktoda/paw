@@ -5,15 +5,17 @@
 // Each test binary uses its own part of this.
 #![allow(dead_code)]
 
-use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use paw_core::copies::CopyCache;
-use paw_core::key::{KeyError, KeyPort, LoginPurpose};
-use paw_core::task::{KeyTask, KeyTaskListener, KeyTaskState};
+use paw_core::key::{KeyError, KeyPort};
+use paw_core::task::LoginPurpose;
+use paw_core::task::{KeyTask, KeyTaskState, TaskFailure};
 use paw_core::sim::copies::{SimClock, SimKeystore};
 use paw_core::sim::fixture::write_fixture_store;
-use paw_core::sim::tasks::{SimLogin, SimSigner, decipher};
+pub use paw_core::sim::tasks::{SimDriver as Driver, WAIT};
+use paw_core::sim::tasks::{SimLogin, SimSigner, decipher, ending, wait_final};
 use paw_core::sim::{SimOptions, SimTouch, SimulatedKey};
 use paw_core::ssh::{SshPublicKey, SshSigner};
 use paw_core::store::PassStore;
@@ -25,7 +27,6 @@ pub const ENTRY: &str = "web/github.com";
 pub const OTHER_ENTRY: &str = "phone-pin";
 /// Encrypted for a key the simulated card does not hold.
 pub const FOREIGN_ENTRY: &str = "archive/old-forum";
-pub const WAIT: Duration = Duration::from_secs(10);
 
 pub struct Rig {
     pub sim: Arc<SimulatedKey>,
@@ -117,92 +118,8 @@ pub fn rig(decrypt: SimTouch, auth: SimTouch) -> Rig {
     rig
 }
 
-/// Records every stage; can type the PIN and touch the key when asked.
-#[derive(Default)]
-pub struct Driver {
-    states: Mutex<Vec<KeyTaskState>>,
-    changed: Condvar,
-    task: OnceLock<Weak<KeyTask>>,
-    pin: Option<String>,
-    toucher: Option<Arc<SimulatedKey>>,
-}
-
-impl Driver {
-    /// Watches only.
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self::default())
-    }
-
-    /// Types `pin` at the PIN stage and touches `sim` at the touch stage.
-    pub fn helpful(pin: &str, sim: &Arc<SimulatedKey>) -> Arc<Self> {
-        Arc::new(Self { pin: Some(pin.into()), toucher: Some(sim.clone()), ..Self::default() })
-    }
-
-    /// Types `pin` at the PIN stage, but never touches.
-    pub fn typist(pin: &str) -> Arc<Self> {
-        Arc::new(Self { pin: Some(pin.into()), ..Self::default() })
-    }
-
-    /// Touches `sim` when asked, but types nothing.
-    pub fn toucher(sim: &Arc<SimulatedKey>) -> Arc<Self> {
-        Arc::new(Self { toucher: Some(sim.clone()), ..Self::default() })
-    }
-
-    /// Lets the driver type the PIN, including at a PIN stage the task
-    /// started in (which the listener is not told about).
-    pub fn drive(&self, task: &Arc<KeyTask>) {
-        let _ = self.task.set(Arc::downgrade(task));
-        if let (Some(pin), KeyTaskState::Pin { .. }) = (&self.pin, task.state()) {
-            task.supply_pin(pin.as_bytes().to_vec());
-        }
-    }
-
-    pub fn states(&self) -> Vec<KeyTaskState> {
-        self.states.lock().unwrap().clone()
-    }
-
-    pub fn saw(&self, wanted: impl Fn(&KeyTaskState) -> bool) -> bool {
-        self.states().iter().any(wanted)
-    }
-
-    pub fn count(&self, wanted: impl Fn(&KeyTaskState) -> bool) -> usize {
-        self.states().iter().filter(|s| wanted(s)).count()
-    }
-
-    /// Waits until a stage `wanted` has been reported.
-    pub fn wait_for(&self, wanted: impl Fn(&KeyTaskState) -> bool) {
-        let deadline = Instant::now() + WAIT;
-        let mut states = self.states.lock().unwrap();
-        while !states.iter().any(&wanted) {
-            let left = deadline.checked_duration_since(Instant::now()).expect("the stage never came");
-            states = self.changed.wait_timeout(states, left).unwrap().0;
-        }
-    }
-}
-
-impl KeyTaskListener for Driver {
-    fn state_changed(&self, state: KeyTaskState) {
-        match &state {
-            KeyTaskState::Pin { .. } => {
-                if let (Some(pin), Some(task)) = (&self.pin, self.task.get().and_then(Weak::upgrade)) {
-                    task.supply_pin(pin.as_bytes().to_vec());
-                }
-            }
-            KeyTaskState::Touch => {
-                if let Some(sim) = &self.toucher {
-                    sim.touch();
-                }
-            }
-            _ => {}
-        }
-        self.states.lock().unwrap().push(state);
-        self.changed.notify_all();
-    }
-}
-
 pub fn finish(task: &Arc<KeyTask>) -> KeyTaskState {
-    assert!(eventually(|| task.state().is_final()), "the task never finished");
-    task.state()
+    wait_final(task, WAIT).expect("the task never finished")
 }
 
 pub fn is_pin(state: &KeyTaskState) -> bool {
@@ -276,7 +193,7 @@ pub fn signer_with(sim: &Arc<SimulatedKey>, pin: &str) -> KeySigner {
 /// A sync's failure that is the sync's, not the key's.
 pub fn sync_failure(failure: paw_core::task::TaskFailure) -> paw_core::sync::SyncError {
     match failure {
-        paw_core::key::Failure::Work(paw_core::task::WorkFailure::Sync(error)) => error,
+        paw_core::task::TaskFailure::Sync(error) => error,
         other => panic!("expected the sync's failure, got {other:?}"),
     }
 }
@@ -302,10 +219,10 @@ pub fn decrypt_on(port: &Arc<KeyPort>, sim: &Arc<SimulatedKey>, pin: &str, ciphe
     let driver = Driver::helpful(pin, sim);
     let (task, text) = decipher(port, ciphertext.to_vec(), driver.clone());
     driver.drive(&task);
-    match finish(&task) {
-        KeyTaskState::Done { .. } => Ok(text.recv().unwrap().to_vec()),
-        KeyTaskState::Failed { error } => Err(error),
-        other => panic!("the decrypt ended {other:?}"),
+    match ending(finish(&task)) {
+        Ok(_) => Ok(text.recv().unwrap().to_vec()),
+        Err(TaskFailure::Key(error)) => Err(error),
+        Err(other) => panic!("the decrypt ended {other:?}"),
     }
 }
 

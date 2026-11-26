@@ -528,11 +528,10 @@ final class SetupModel {
     }
 
     /// "412 of 1,240 \u{00B7} 1.2 MB", once the host has said how many.
-    private static func transferLine(_ transfer: TransferProgress) -> String? {
-        guard transfer.totalObjects > 0 else { return nil }
-        let bytes = ByteCountFormatter.string(
-            fromByteCount: Int64(clamping: transfer.receivedBytes), countStyle: .file)
-        return "\(Int(transfer.receivedObjects).formatted()) of \(Int(transfer.totalObjects).formatted()) \u{00B7} \(bytes)"
+    private static func transferLine(_ progress: TaskProgress) -> String? {
+        guard progress.total > 0, let received = progress.bytes else { return nil }
+        let bytes = ByteCountFormatter.string(fromByteCount: Int64(clamping: received), countStyle: .file)
+        return "\(progress.counted) \u{00B7} \(bytes)"
     }
 
     private func succeeded() {
@@ -618,10 +617,8 @@ extension SetupModel {
     }
 
     private func working(_ purpose: SetupSheet.Purpose, _ progress: TaskProgress?) -> (message: String, progress: String?) {
-        // Re-read on every change: objects and bytes, when known.
-        let transfer = purpose == .download ? setup.transferProgress() : nil
-        let line = transfer.flatMap(Self.transferLine) ?? progress.map(\.counted)
-        return (workingMessage(purpose, started: progress != nil || transfer != nil), line)
+        let line = progress.flatMap(Self.transferLine) ?? progress.map(\.counted)
+        return (workingMessage(purpose, started: progress != nil), line)
     }
 
     private func ended(_ end: KeyTaskEnd<SetupError>, purpose: SetupSheet.Purpose) -> KeySheetStage? {

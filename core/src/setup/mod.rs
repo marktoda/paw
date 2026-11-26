@@ -26,7 +26,7 @@ use std::time::Instant;
 use crate::files::values::{self, Values};
 use crate::files::{self, layout};
 use crate::key::enrolment::save_enrolment;
-use crate::key::{CardInfo, KeyIdentity, KeyTouch, PinKdfStatus};
+use crate::key::{CardInfo, KeyError, KeyIdentity, KeyTouch, PinKdfStatus};
 use crate::recipients::Access;
 use crate::ssh::SshPublicKey;
 use crate::store::PassStore;
@@ -103,6 +103,10 @@ pub enum UnusableKeyReason {
     PinKdfUnsupported { detail: Option<String> },
     #[error("it has no authentication key, so it cannot log in to a git host")]
     NoAuthenticationKey,
+    /// Its authentication key is `algorithm` ("RSA", …), and paw logs in
+    /// with Ed25519 only.
+    #[error("its authentication key is {algorithm}, not Ed25519")]
+    AuthenticationKeyNotEd25519 { algorithm: String },
     #[error("it has no decryption key")]
     NoDecryptionKey,
     /// Another key than the one read at "Your key".
@@ -468,7 +472,7 @@ impl SetupFlow {
     pub fn read_key_from(
         &mut self,
         info: &CardInfo,
-        ssh: Option<&SshPublicKey>,
+        ssh: Result<&SshPublicKey, KeyError>,
         pin_kdf: PinKdfStatus,
     ) -> Result<SetupState, SetupError> {
         self.expect(&[Step::ReadKey, Step::Address], "read the key")?;
@@ -479,7 +483,14 @@ impl SetupFlow {
         if info.decryption_fingerprint.is_none() {
             return Err(SetupError::UnusableKey { reason: UnusableKeyReason::NoDecryptionKey });
         }
-        let ssh = ssh.ok_or(SetupError::UnusableKey { reason: UnusableKeyReason::NoAuthenticationKey })?;
+        let ssh = ssh.map_err(|error| SetupError::UnusableKey {
+            reason: match error {
+                KeyError::AuthenticationKeyNotEd25519 { algorithm } => {
+                    UnusableKeyReason::AuthenticationKeyNotEd25519 { algorithm }
+                }
+                _ => UnusableKeyReason::NoAuthenticationKey,
+            },
+        })?;
         self.use_key(info.clone(), ssh)
     }
 

@@ -31,7 +31,9 @@ use zeroize::Zeroizing;
 
 use crate::PawError;
 use format::{CopyFile, IndexKeys, Invalid, Meta};
-pub use seams::{Clock, DeviceKeystore, KeystoreError};
+pub use seams::{DeviceKeystore, KeystoreError};
+
+use crate::clock::Clock;
 
 /// No copy lives longer, whatever the caller asks for.
 pub const MAX_TTL: Duration = Duration::from_secs(12 * 60 * 60);

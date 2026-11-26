@@ -136,6 +136,10 @@ enum SetupWords {
             let words = KeyErrorWords(
                 reason == .noDecryptionKey ? .NoDecryptionKey : .NoAuthenticationKey, entry: "your store", purpose: .check)
             return SetupProblem(problem: words.problem, nextStep: words.nextStep)
+        case .authenticationKeyNotEd25519(let algorithm):
+            let words = KeyErrorWords(
+                .AuthenticationKeyNotEd25519(algorithm: algorithm), entry: "your store", purpose: .check)
+            return SetupProblem(problem: words.problem, nextStep: words.nextStep)
         case .pinKdfUnsupported(let detail):
             return SetupProblem(
                 problem: "paw doesn't support this key's PIN setting yet",

@@ -23,10 +23,9 @@ use super::apdu::{self, Verify};
 use super::task::TaskSide;
 use super::wire::Wire;
 use super::{FAST_REFUSAL, KeyError, MAX_PIN_LEN, MIN_PIN_LEN, PIN_BACKGROUND_LIMIT};
-use crate::copies::Clock;
+use crate::clock::Clock;
 use crate::ssh::SshPublicKey;
 use super::card::{self, CardConnection, CardInfo};
-use crate::PawError;
 
 /// A user PIN of a plausible length, wiped when dropped. It has no
 /// `Display`, and its `Debug` shows nothing of it.
@@ -74,11 +73,21 @@ impl From<KeyError> for Halt {
     }
 }
 
+impl From<Halt> for KeyError {
+    fn from(halt: Halt) -> Self {
+        match halt {
+            Halt::Fail(error) => error,
+            Halt::AskPin(_) => KeyError::Internal { detail: "the PIN was needed where it cannot be asked".into() },
+        }
+    }
+}
+
 /// Read once, when the key is plugged in. Needs no PIN.
 struct Identity {
     info: CardInfo,
     decryption_key: Option<pgp::packet::PublicKey>,
-    ssh_key: Option<SshPublicKey>,
+    /// Or why its authentication slot can't log in.
+    ssh_key: Result<SshPublicKey, KeyError>,
     /// How VERIFY must carry the PIN.
     pin_kdf: PinKdf,
 }
@@ -123,7 +132,7 @@ pub(crate) struct PinPrompt {
     pub(crate) forgot_after_background: bool,
 }
 
-fn read_error(wire: &Wire, error: PawError) -> KeyError {
+fn read_error(wire: &Wire, error: card::CardError) -> KeyError {
     if wire.failed() {
         KeyError::KeyRemoved
     } else {
@@ -166,11 +175,7 @@ impl KeySession {
             Some(_) => Some(card::card_decryption_key(wire.clone()).map_err(|e| read_error(&wire, e))?),
             None => None,
         };
-        let ssh_key = match card::card_ssh_public_key(wire.clone()) {
-            Ok(key) => Some(key),
-            Err(PawError::NoSshKey(_)) => None,
-            Err(e) => return Err(read_error(&wire, e)),
-        };
+        let ssh_key = card::card_ssh_public_key(wire.clone()).map_err(|e| read_error(&wire, e))?;
         let pin_kdf = PinKdf::read(&wire)?;
         let tries_left = info.pin_tries_left;
         Ok(Arc::new_cyclic(|me| Self {
@@ -244,7 +249,7 @@ impl KeySession {
     }
 
     pub(crate) fn ssh_key(&self) -> Result<&SshPublicKey, KeyError> {
-        self.identity.ssh_key.as_ref().ok_or(KeyError::NoAuthenticationKey)
+        self.identity.ssh_key.as_ref().map_err(KeyError::clone)
     }
 
     pub(crate) fn wire(&self) -> &Arc<Wire> {
@@ -477,6 +482,41 @@ impl KeySession {
                 continue;
             }
             state = self.card_free.wait(state).unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+    }
+
+    /// Runs `op` in a card job with the PIN verified, asking `task` for it
+    /// first if paw holds none, and again after a wrong one.
+    pub(crate) fn unlocked<T>(
+        &self,
+        task: &dyn TaskSide,
+        mut op: impl FnMut(&mut CardJob<'_>) -> Result<T, Halt>,
+    ) -> Result<T, Halt> {
+        let mut last_error = None;
+        loop {
+            let supplied = if self.holds_pin_now() { None } else { Some(self.ask_pin(task, last_error.take())?) };
+            match self.run(task, |job| {
+                job.unlock(supplied)?;
+                op(job)
+            }) {
+                Err(Halt::AskPin(why)) => last_error = why,
+                other => return other,
+            }
+        }
+    }
+
+    /// Asks `task` for the PIN until one of a plausible length is typed.
+    fn ask_pin(&self, task: &dyn TaskSide, mut last_error: Option<KeyError>) -> Result<Pin, Halt> {
+        loop {
+            let prompt = self.pin_prompt();
+            if prompt.tries_left == 0 {
+                return Err(Halt::Fail(KeyError::PinBlocked));
+            }
+            let mut typed = task.ask_pin(self, prompt, last_error.take())?;
+            match Pin::new(std::mem::take(&mut *typed)) {
+                Ok(pin) => return Ok(pin),
+                Err(e) => last_error = Some(e),
+            }
         }
     }
 

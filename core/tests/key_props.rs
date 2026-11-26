@@ -9,7 +9,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use key_common::*;
-use paw_core::key::{CardConnection, KeyPort, LoginPurpose};
+use paw_core::key::{CardConnection, KeyPort};
+use paw_core::task::LoginPurpose;
 use paw_core::sim::copies::SimClock;
 use paw_core::sim::{SimTouch, SimulatedKey};
 use proptest::prelude::*;
