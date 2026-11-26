@@ -546,7 +546,7 @@ fn an_entry_for_another_key_is_refused_with_no_verify_and_no_decipher() {
     match failed(&task.state()) {
         KeyError::NotForThisKey { recipients } => {
             assert_eq!(recipients.len(), 1);
-            assert!(recipients[0].starts_with("key ID "));
+            assert!(matches!(recipients[0], paw_core::recipients::Recipient::KeyId { .. }), "{recipients:?}");
         }
         other => panic!("expected NotForThisKey, got {other:?}"),
     }

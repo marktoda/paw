@@ -258,7 +258,7 @@ fn a_waiting_change_is_not_pushed_after_its_recipients_changed() {
     assert_eq!(held.len(), 1, "{held:?}");
     assert_eq!(held[0].entry, "Work/new");
     assert_eq!(held[0].gpg_id.as_deref(), Some(".gpg-id"));
-    assert_eq!(held[0].encrypted_for, [format!("key ID {}", &card_fpr[24..])]);
+    assert_eq!(held[0].encrypted_for, [paw_core::recipients::Recipient::KeyId { id: card_fpr[24..].to_owned() }]);
     assert_eq!(held[0].recipients, [card_fpr.clone(), other_fpr.clone()]);
     assert_eq!(held[0].list, held_back::HeldBackList::NotAccepted);
 
@@ -351,7 +351,7 @@ fn held_back_changes_are_encrypted_again_once_the_new_recipients_are_accepted_an
     let bytes = std::fs::read(w.repo().join("Work/new.gpg")).unwrap();
     let found = paw_core::recipients::entry_recipients(&bytes).unwrap();
     assert_eq!(found.keys.len(), 2, "{found:?}");
-    assert!(found.keys.iter().any(|k| k.describe().contains(&other_fpr[24..28])), "{found:?}");
+    assert!(found.keys.iter().any(|k| matches!(k, paw_core::recipients::Recipient::KeyId { id } if id.contains(&other_fpr[24..28]))), "{found:?}");
     assert_eq!(w.decrypt(&w.repo(), "Work/new"), "newer-pw\n");
 
     let report = steps::sync(&w.server.remote(), &signer(&w.card), &w.repo(), w.state.path(), true).unwrap();

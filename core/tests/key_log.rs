@@ -195,7 +195,17 @@ fn failures_are_logged_with_no_pin_no_data_and_no_names() {
         assert!(merged.contains(wanted), "the log should have {wanted:?}:\n{merged}");
     }
     let mut words: Vec<&str> = vec![wrong];
-    words.extend(recipients.iter().map(String::as_str));
+    // Which keys the entry is for stays out of the log.
+    let named: Vec<String> = recipients
+        .iter()
+        .filter_map(|recipient| match recipient {
+            paw_core::recipients::Recipient::KeyId { id } => Some(id.clone()),
+            paw_core::recipients::Recipient::Fingerprint { fingerprint } => Some(fingerprint.clone()),
+            paw_core::recipients::Recipient::Hidden => None,
+        })
+        .collect();
+    assert!(!named.is_empty());
+    words.extend(named.iter().map(String::as_str));
     let wrong_hex = hex(wrong.as_bytes()).0;
     words.push(&wrong_hex);
     assert_clean(&[&merged, &ring], &recording, &[], &words);
