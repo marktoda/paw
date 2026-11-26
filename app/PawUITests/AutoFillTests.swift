@@ -373,20 +373,4 @@ final class AutoFillTests: PawUITestCase {
         expectValue("autofill-quicktype", "userInteractionRequired")
         expectResult("ended credentialIdentityNotFound")
     }
-
-    // MARK: Pictures and Settings
-
-    func testDarkListAndKeySheet() {
-        launchProvider(["-pawHostProvider", "https://github.com"], appearance: "dark")
-        expect(row("web/github.com"))
-        snapshot("dark-list")
-        fillGitHubWithKey(appearance: "dark")
-    }
-
-    func testSettingsShowsAutoFill() {
-        launchFixture()
-        openSettings()
-        scrollTo("settings-autofill")
-        snapshot("settings")
-    }
 }

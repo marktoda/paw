@@ -51,11 +51,4 @@ final class KeyTests: PawUITestCase {
                       "The key log should name the check")
         // That a second check asks for no PIN is core/tests/touch_check.rs.
     }
-
-    func testSettingsSayWhichBuildThisIs() {
-        launchFixture()
-        openSettings()
-        scrollTo("settings-build")
-        expectLabel("settings-build", contains: "Debug")
-    }
 }

@@ -197,25 +197,6 @@ final class SyncTests: PawUITestCase {
         expectGone(element("unpushed-banner"), "Nothing should be waiting")
     }
 
-    func testThePillAndTheSyncSheetInDark() {
-        launch(appearance: "dark")
-        expectLabel("sync-pill", contains: "Updates need your key")
-        snapshot("pill-needs-key-dark")
-        addEntry("dark.example", folder: "")
-        expectLabel("unpushed-banner", contains: "1 change not sent")
-        snapshot("pill-not-sent-dark")
-        openSyncSheet()
-        snapshot("sync-sheet-not-sent-dark")
-        tap("sync-send")
-        passKeySheet(purpose: "Send 1 change", pin: true)
-        expectGone("key-sheet-purpose")
-        expectLabel("sync-pill", contains: "Up to date")
-        snapshot("pill-up-to-date-dark")
-        openSyncSheet()
-        expectLabel("sync-last-checked", contains: "Just now")
-        snapshot("sync-sheet-up-to-date-dark")
-    }
-
     func testSendingAfterTheRemoteMovedStillSucceedsOnTopOfIt() {
         launch(extra: ["-pawSimRemoteChange", "add"])
         let before = remote

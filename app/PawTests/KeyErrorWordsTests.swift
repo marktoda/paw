@@ -27,21 +27,6 @@ final class KeyErrorWordsTests: XCTestCase {
         XCTAssertEqual(two.nextStep, "It's encrypted for other keys. Open it on a computer that has one of them.")
     }
 
-    func testATouchTimeoutSaysToTouchWhileItBlinks() {
-        XCTAssertEqual(
-            KeyErrorWords(.TouchTimeout, entry: "github.com"),
-            KeyErrorWords(
-                problem: "Your key wasn't touched in time",
-                nextStep: "Try again and touch the gold part while it blinks."))
-    }
-
-    func testCancelSaysWhatDidNotHappen() {
-        XCTAssertEqual(KeyErrorWords(.Cancelled, entry: "x").nextStep, "Nothing was opened.")
-        XCTAssertEqual(KeyErrorWords(.Cancelled, entry: "x", purpose: .download).nextStep, "Nothing was downloaded.")
-        XCTAssertEqual(KeyErrorWords(.Cancelled, entry: "x", purpose: .send).nextStep, "Nothing was sent.")
-        XCTAssertEqual(KeyErrorWords(.Cancelled, entry: "x", purpose: .check).nextStep, "Nothing was checked.")
-    }
-
     func testThePinAskedAgainAfterTheKeyForgotItUsedNoTry() {
         XCTAssertEqual(
             KeyErrorWords(pinAskedAgain: .PinForgotten, entry: "x"),

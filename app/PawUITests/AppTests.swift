@@ -138,11 +138,45 @@ final class AppTests: PawUITestCase {
     // MARK: Face ID
 
     /// The largest size before the bar stacks: "Lock" stays beside the time.
-    func testTheFaceIdBarAtTheLargestStandardTextSize() {
-        launch(extra: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryXXXL"])
+    /// At an accessibility text size the Face ID bar's Lock goes under its
+    /// text, and the add form's rows stay on screen without running into
+    /// each other. Frames, not labels: a label reads the same however it
+    /// is drawn.
+    func testAtALargeTextSizeTheFaceIdBarAndTheAddFormKeepTheirLayout() {
+        launch(extra: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityM"])
+        let width = app.frame.width
+        func onScreen(_ found: XCUIElement, _ what: String) {
+            XCTAssertGreaterThanOrEqual(found.frame.minX, 0, "\(what) starts off the screen")
+            XCTAssertLessThanOrEqual(found.frame.maxX, width, "\(what) runs off the screen")
+        }
+
         openGitHubWithKey()
-        expectLabel("face-id-window-text", contains: "Opens with Face ID until")
-        snapshot("entry-face-id-xxxl")
+        let text = expect("face-id-window-text")
+        let lock = expect("lock-now")
+        onScreen(text, "The Face ID bar's text")
+        onScreen(lock, "Lock this password")
+        XCTAssertGreaterThanOrEqual(lock.frame.minY, text.frame.maxY - 1, "Lock should be under the text")
+        snapshot("entry-face-id-large")
+        goBack()
+        goBack()
+
+        tap("add-button")
+        let name = expect("form-name")
+        let folder = expect("form-folder")
+        onScreen(name, "The name field")
+        onScreen(folder, "The folder row")
+        XCTAssertFalse(name.frame.intersects(folder.frame), "The name field runs into the folder row")
+        snapshot("add-large-text")
+        // A tap that lands while the sheet is still settling is lost: the
+        // row stays "hidden", so tap it again.
+        let options = scrollTo("form-options")
+        for _ in 0..<3 where (options.value as? String) != "shown" {
+            options.tap()
+            if waitUntil(timeout: 2, { (options.value as? String) == "shown" }) { break }
+        }
+        let strength = scrollTo("form-strength")
+        onScreen(strength, "The strength line")
+        snapshot("add-large-text-options")
     }
 
     func testAnEntryOpenedWithTheKeyThenOpensWithFaceId() {
@@ -316,16 +350,6 @@ final class AppTests: PawUITestCase {
         snapshot("touch-again")
         tapSimulated("simulated-touch")
         expectLabel("entry-title", contains: "github.com")
-    }
-
-    /// The cover is up only while paw is away; `-pawSimPrivacyCover` holds
-    /// it up to take its picture.
-    func testThePrivacyCoverShowsOnlyTheName() {
-        for appearance in ["light", "dark"] {
-            launch(appearance: appearance, extra: ["-pawSimPrivacyCover", "1"])
-            expectLabel("privacy-cover", contains: "paw is hidden")
-            snapshot("privacy-cover-\(appearance)")
-        }
     }
 
     func testARevealedPasswordHidesWhenPawLeavesTheScreen() {

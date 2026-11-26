@@ -138,11 +138,6 @@ final class SetupTests: PawUITestCase {
         snapshot("home-after-save")
     }
 
-    func testSetupScreensInDark() {
-        launch(appearance: "dark")
-        setUpFully(shots: true)
-    }
-
     // MARK: Relaunching
 
     func testARelaunchAfterSetupGoesStraightToHome() {

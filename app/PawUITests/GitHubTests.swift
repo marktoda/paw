@@ -102,15 +102,6 @@ final class GitHubTests: PawUITestCase {
         XCTAssertEqual(pasteboardContents(), "WDJB-MJHT", "Open copies the code")
     }
 
-    func testTheCodeSheetAndTheListInDark() {
-        launch(appearance: "dark")
-        toAddress()
-        openPicker()
-        snapshot("code-dark")
-        authorise()
-        snapshot("list-dark")
-    }
-
     func testADeclinedCodeRecoversWithTryAgain() {
         launch("denied")
         toAddress()

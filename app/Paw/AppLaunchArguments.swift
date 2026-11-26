@@ -43,8 +43,6 @@ enum LaunchArgument: String, CaseIterable, DebugLaunchArgument {
     case simAwayMs = "pawSimAwayMs"
     /// Number: seconds the system keeps a copied password on the pasteboard.
     case simPasteboardSecs = "pawSimPasteboardSecs"
-    /// Flag: the privacy cover stays up.
-    case simPrivacyCover = "pawSimPrivacyCover"
     /// Flag: launch as if the phone were locked (`SimLockedLaunch`).
     case simLockedLaunch = "pawSimLockedLaunch"
     /// Flag: a store left where paw kept it before (`LegacyStore`).
