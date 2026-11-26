@@ -194,7 +194,7 @@ final class AppModel {
     /// Why the key could not be read the last time paw tried, as the
     /// sheet's Plug in stage says it. `nil` once a read works.
     var attachProblem: KeyErrorWords? {
-        reader.problem.map { KeyErrorWords($0) }
+        reader.problem.map { KeyErrorWords($0, table: .app) }
     }
 
     /// A key was read: asks the core which entries it can open. Only the
@@ -308,7 +308,7 @@ final class AppModel {
         case .success(.needsKey):
             openWithKey(entry)
         case .failure(let error):
-            let words = FaceIdWords.notice(error, entry: entry.name)
+            let words = FaceIdWords.notice(error, entry: entry.name, table: .app)
             notice = Notice(problem: words.problem, nextStep: words.nextStep, keyEntry: words.offersKey ? entry : nil)
         }
     }

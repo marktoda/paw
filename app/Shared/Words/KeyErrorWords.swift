@@ -129,7 +129,7 @@ struct KeyErrorWords: Equatable {
 
     /// "paw couldn't read your key", then why and what to do: the Plug in
     /// stage after a failed read.
-    init(_ problem: KeyReadProblem, table: WordTable = .app) {
+    init(_ problem: KeyReadProblem, table: WordTable) {
         switch problem {
         case .unsupported:
             self = KeyErrorWords(

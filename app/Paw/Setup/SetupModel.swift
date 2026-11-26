@@ -166,7 +166,7 @@ final class SetupModel {
     /// Why the key in could not be read (its session not opened), or that
     /// this iPhone can't read one, for the Plug in screen.
     var attachProblem: KeyErrorWords? {
-        reader.problem.map { KeyErrorWords($0) }
+        reader.problem.map { KeyErrorWords($0, table: .app) }
     }
 
     /// The key was read, or reading it failed. On Plug in, a key read is
