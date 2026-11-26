@@ -2,7 +2,7 @@ import Foundation
 
 #if DEBUG && targetEnvironment(simulator)
 /// One simulated Face ID keystore per launch, for the app's Face ID copies
-/// (`PlatformCopies`), the fixture's and the AutoFill harness's.
+/// (`Platform.simulated`), the fixture's and the AutoFill harness's.
 /// `-pawSimFaceId ok|cancel|nomatch|lockout|notenrolled` says how Face ID
 /// answers.
 enum SimulatedKeystoreHolder {

@@ -118,13 +118,10 @@ private final class HarnessWorld: @unchecked Sendable {
             // `finance/northwind` and `contoso/alice`: named without a domain.
             try writeNameMatchEntries(dir: location.repoDir.path)
             let simClock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000))
-            let clock = simClock.asClock()
             // Copies, as the app keeps in the simulator; the extension keeps none there.
-            let source = try AutoFillSource.open(
-                at: location, clock: clock, connect: { try KeyConnection.open() },
-                copies: { dir in
-                    CopyCache(dir: dir.path, keystore: SimulatedKeystoreHolder.keystore.asKeystore(), clock: clock)
-                })
+            let platform = Platform.simulated(
+                .fill, keys: .launched, clock: simClock.asClock(), keystore: SimulatedKeystoreHolder.keystore.asKeystore())
+            let source = try AutoFillSource.open(at: location, on: platform)
             if LaunchArgument.simOneTimeCodes.bool {
                 try source.codes.setEnabled(enabled: true)
             }
@@ -132,7 +129,7 @@ private final class HarnessWorld: @unchecked Sendable {
             self.source = source
             self.clock = simClock
         } catch {
-            opening = .unreadable(String(describing: error))
+            opening = .unreadable
         }
     }
 }
@@ -241,7 +238,7 @@ private struct AutoFillHarnessView: View {
             if let model = run.model {
                 AutoFillRootView(model: model)
                     .overlay(alignment: .topLeading) {
-                        KeyTasksSignal(tasks: model.keyTask.pendingTasks)
+                        KeyTasksSignal { model.keyTask.pendingTasks }
                     }
                     .overlay(alignment: .topTrailing) {
                         // `-pawHarnessDismiss 1`: stands in for a swipe down.
@@ -279,7 +276,7 @@ private struct AutoFillHarnessView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .background(PawColor.bg.ignoresSafeArea())
                 .overlay(alignment: .topLeading) {
-                    KeyTasksSignal(tasks: 0)
+                    KeyTasksSignal { 0 }
                 }
             }
         }

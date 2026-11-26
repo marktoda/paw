@@ -51,14 +51,7 @@ struct KeySheetContent: View {
     #if DEBUG && targetEnvironment(simulator)
     @Environment(\.simulatorActions) private var simulatorActions
     #endif
-    @State private var showPin = false
-    @State private var shake: CGFloat = 0
     @State private var showTouchHint = false
-    @FocusState private var focus: PinFocus?
-
-    private enum PinFocus {
-        case secure
-    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -96,7 +89,7 @@ struct KeySheetContent: View {
                 hero
                 words
                 if stage.asksForPin {
-                    pinField
+                    KeyPinField(stage: stage, pin: $pin, onContinue: onContinue)
                 }
                 if showsSteps {
                     KeyStepPills(current: currentStep)
@@ -189,13 +182,113 @@ struct KeySheetContent: View {
         }
     }
 
-    /// One secure field whatever Show says: a plain text field would let a
-    /// third-party keyboard in (paw also refuses them app-wide). With Show
-    /// on, the dots are drawn clear and the PIN is drawn over them.
-    private var pinField: some View {
+    @ViewBuilder private var buttons: some View {
+        VStack(spacing: PawMetrics.Spacing.s) {
+            switch stage {
+            case .pin, .wrongPin, .pinAgain:
+                Button(stage.continueTitle, action: onContinue)
+                    .buttonStyle(.pawPrimary)
+                    .disabled(!canContinue)
+                    .accessibilityIdentifier("pin-continue")
+                cancelButton("Cancel")
+            case .locked:
+                cancelButton("Close")
+            case .failed:
+                Button("Try again", action: onRetry)
+                    .buttonStyle(.pawPrimary)
+                    .accessibilityIdentifier("key-sheet-retry")
+                cancelButton("Cancel")
+            case .done:
+                EmptyView()
+            case .plugIn, .busy, .touch, .working:
+                cancelButton("Cancel")
+            }
+        }
+    }
+
+    private func cancelButton(_ title: String) -> some View {
+        Button(title, action: onCancel)
+            .buttonStyle(.pawSecondary)
+            .padShortcut(.cancelAction)
+            .accessibilityIdentifier("key-sheet-cancel")
+    }
+
+    // MARK: Words
+
+    private var headline: String {
+        stage.headline
+    }
+
+    private var explanation: String? {
+        stage.explanation
+    }
+
+    private static func haptic(for stage: KeySheetStage) -> SensoryFeedback? {
+        switch stage {
+        case .wrongPin(let triesLeft): return triesLeft == 1 ? .warning : .error
+        case .pinAgain: return .error
+        case .done: return .success
+        default: return nil
+        }
+    }
+
+    private var triesLine: String? {
+        stage.triesLine
+    }
+
+    private var announcement: String {
+        Device.words([headline, triesLine, explanation].compactMap { $0 }.joined(separator: ". ")
+            .replacingOccurrences(of: ".. ", with: ". "))
+    }
+
+    // MARK: State
+
+    private var showsSteps: Bool {
+        switch stage {
+        case .locked, .done, .failed: false
+        default: true
+        }
+    }
+
+    private var canContinue: Bool {
+        pin.count >= 6
+    }
+
+    private var currentStep: Int {
+        switch stage {
+        case .plugIn: 0
+        case .pin, .wrongPin, .pinAgain, .locked: 1
+        case .busy, .touch, .failed: 2
+        case .working, .done: 3
+        }
+    }
+
+    private func stageChanged() {
+        showTouchHint = false
+        AccessibilityNotification.Announcement(announcement).post()
+    }
+}
+
+/// The PIN stage's field, in the key sheet and inline (Key diagnostics'
+/// touch check). One secure field whatever Show says: a plain text field
+/// would let a third-party keyboard in (paw also refuses them app-wide).
+/// With Show on, the dots are drawn clear and the PIN is drawn over them.
+/// It takes the focus on each PIN stage, shakes after a refused PIN, and
+/// shows the PIN with one try left, so a slip is seen before it counts.
+struct KeyPinField: View {
+    let stage: KeySheetStage
+    @Binding var pin: String
+    let onContinue: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var showPin = false
+    @State private var shake: CGFloat = 0
+    @FocusState private var focused: Bool
+
+    var body: some View {
         HStack(spacing: PawMetrics.Spacing.s) {
             SecureField("Key PIN", text: $pin)
-                .focused($focus, equals: .secure)
+                .focused($focused)
                 .font(PawFont.password)
                 .foregroundStyle(showPin ? Color.clear : PawColor.label)
                 .textInputAutocapitalization(.never)
@@ -237,122 +330,16 @@ struct KeySheetContent: View {
         .padding(.trailing, PawMetrics.Spacing.s)
         .frame(minHeight: PawMetrics.control)
         .background(
-            isWrongPin ? PawColor.dangerFill : PawColor.fill,
+            stage.followsRefusedPin ? PawColor.dangerFill : PawColor.fill,
             in: RoundedRectangle(cornerRadius: PawMetrics.inlineRadius, style: .continuous))
         .modifier(ShakeEffect(animatableData: shake))
-    }
-
-    @ViewBuilder private var buttons: some View {
-        VStack(spacing: PawMetrics.Spacing.s) {
-            switch stage {
-            case .pin, .wrongPin, .pinAgain:
-                Button(triesLeft == 1 ? "Use last try" : "Continue", action: onContinue)
-                    .buttonStyle(.pawPrimary)
-                    .disabled(!canContinue)
-                    .accessibilityIdentifier("pin-continue")
-                cancelButton("Cancel")
-            case .locked:
-                cancelButton("Close")
-            case .failed:
-                Button("Try again", action: onRetry)
-                    .buttonStyle(.pawPrimary)
-                    .accessibilityIdentifier("key-sheet-retry")
-                cancelButton("Cancel")
-            case .done:
-                EmptyView()
-            case .plugIn, .busy, .touch, .working:
-                cancelButton("Cancel")
+        .onChange(of: stage, initial: true) {
+            if stage.triesLeft == 1 { showPin = true }
+            focused = true
+            if stage.followsRefusedPin, !reduceMotion {
+                withAnimation(.linear(duration: 0.4)) { shake += 1 }
             }
         }
-    }
-
-    private func cancelButton(_ title: String) -> some View {
-        Button(title, action: onCancel)
-            .buttonStyle(.pawSecondary)
-            .padShortcut(.cancelAction)
-            .accessibilityIdentifier("key-sheet-cancel")
-    }
-
-    // MARK: Words
-
-    private var headline: String {
-        stage.headline
-    }
-
-    private var explanation: String? {
-        stage.explanation
-    }
-
-    private var triesLeft: Int? {
-        stage.triesLeft
-    }
-
-    private static func haptic(for stage: KeySheetStage) -> SensoryFeedback? {
-        switch stage {
-        case .wrongPin(let triesLeft): return triesLeft == 1 ? .warning : .error
-        case .pinAgain: return .error
-        case .done: return .success
-        default: return nil
-        }
-    }
-
-    private var triesLine: String? {
-        stage.triesLine
-    }
-
-    private var announcement: String {
-        Device.words([headline, triesLine, explanation].compactMap { $0 }.joined(separator: ". ")
-            .replacingOccurrences(of: ".. ", with: ". "))
-    }
-
-    // MARK: State
-
-    private var showsSteps: Bool {
-        switch stage {
-        case .locked, .done, .failed: false
-        default: true
-        }
-    }
-
-    private var isWrongPin: Bool {
-        stage.followsRefusedPin
-    }
-
-    private var canContinue: Bool {
-        pin.count >= 6
-    }
-
-    private var currentStep: Int {
-        switch stage {
-        case .plugIn: 0
-        case .pin, .wrongPin, .pinAgain, .locked: 1
-        case .busy, .touch, .failed: 2
-        case .working, .done: 3
-        }
-    }
-
-    private func stageChanged() {
-        showTouchHint = false
-        if stage.asksForPin {
-            // With one try left the PIN is shown, so a slip is seen before it counts.
-            if triesLeft == 1 { showPin = true }
-            focus = .secure
-        } else {
-            focus = nil
-        }
-        if isWrongPin, !reduceMotion {
-            withAnimation(.linear(duration: 0.4)) { shake += 1 }
-        }
-        AccessibilityNotification.Announcement(announcement).post()
-    }
-}
-
-extension View {
-    /// An opaque ground for a sheet that opens part-way up. The system's
-    /// glass sheet lets the screen behind show through at a small detent,
-    /// and its rows end up under the sheet's own words.
-    func pawSheetBackground() -> some View {
-        presentationBackground(PawColor.bg)
     }
 }
 

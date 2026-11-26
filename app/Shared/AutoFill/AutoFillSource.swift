@@ -7,7 +7,8 @@ struct AutoFillSource: @unchecked Sendable {
     /// `nil` where Face ID copies cannot be kept: every fill uses the key.
     let copies: CopyCache?
     let keyPort: KeyPort
-    let connect: @Sendable () throws -> CardConnection
+    /// Where the key comes from.
+    let keys: any KeySource
     /// What a one-time code is made at.
     let clock: Clock
     /// The sites each name-only entry has filled on.
@@ -24,9 +25,9 @@ enum AutoFillOpening: @unchecked Sendable {
     /// paw held the store lock longer than the core waits (a save, a
     /// download). Nothing is wrong: trying again works.
     case busy
-    /// There is a store, but it could not be read. The raw reason, for no
-    /// one but a debugger: the screen says only what to do.
-    case unreadable(String)
+    /// There is a store, but it could not be read. AutoFill says only
+    /// what to do: open paw, which says why.
+    case unreadable
 }
 
 /// Opens the store paw set up, for the extension. Reads only: no `Setup`
@@ -43,29 +44,36 @@ enum StoreForAutoFill {
         do {
             let location = try StoreLocation.standard()
             guard location.isSetUp else { return .noStore }
-            return .ready(try AutoFillSource.open(
-                at: location, clock: SystemClock(), connect: { try KeyConnection.open() }))
+            return .ready(try AutoFillSource.open(at: location, on: platform))
         } catch {
-            return isStoreBusy(error) ? .busy : .unreadable(String(describing: error))
+            return isStoreBusy(error) ? .busy : .unreadable
         }
+    }
+
+    /// The extension's hardware: in the simulator's debug builds the
+    /// launch's simulated key on the system clock, with no Face ID copies
+    /// (the simulator has no Secure Enclave the two processes share).
+    private static var platform: Platform {
+        #if DEBUG && targetEnvironment(simulator)
+        .simulated(.fill, keys: .launched, clock: SystemClock(), keystore: nil)
+        #else
+        .device(.fill)
+        #endif
     }
 }
 
 extension AutoFillSource {
     /// Everything the AutoFill screens read, for the store set up at
-    /// `location`, in this order: the store's folder names, the extension's
-    /// key side (`StoreKeys`; `copies` as there), the site pairings and the
-    /// list of entries with a code.
-    static func open(
-        at location: StoreLocation, clock: Clock, connect: @escaping KeyReader.Connect,
-        copies: ((URL) -> CopyCache?)? = nil
-    ) throws -> AutoFillSource {
+    /// `location`, in this order: the store's folder names, the key side
+    /// on `platform` (`StoreKeys`), the site pairings and the list of
+    /// entries with a code.
+    static func open(at location: StoreLocation, on platform: Platform) throws -> AutoFillSource {
         let stateDir = location.stateDir.path
         let store = try PassStore(dir: location.repoDir.path)
-        let keys = StoreKeys(.fill, at: location, clock: clock, copies: copies)
+        let keys = StoreKeys(platform, at: location)
         return AutoFillSource(
-            store: store, copies: try keys.openEnrolled(), keyPort: keys.keyPort, connect: connect, clock: clock,
-            pairings: SitePairings.open(stateDir: stateDir),
+            store: store, copies: try keys.openEnrolled(), keyPort: keys.keyPort, keys: platform.keys,
+            clock: platform.clock, pairings: SitePairings.open(stateDir: stateDir),
             codes: OneTimeCodeEntries.open(stateDir: stateDir))
     }
 }

@@ -120,6 +120,8 @@ final class SetupModel {
     private var sheetPurpose: SetupSheet.Purpose = .download
     private(set) var readiness: SetupWriteReadiness?
     private(set) var storeFacts: StoreFacts?
+    /// The store's lists of keys couldn't be read for the done screen.
+    private(set) var whoCanOpenUnread = false
     /// Hex fingerprint of the key's SSH key, once read this launch.
     private(set) var sshFingerprint: String?
     /// "Set up", Plug in or Try again asked for the key to be read: the
@@ -128,12 +130,12 @@ final class SetupModel {
 
     private let workQueue = DispatchQueue(label: "paw-setup", qos: .userInitiated)
 
-    init(setup: Setup, repoPath: String, keyPort: KeyPort, connect: @escaping KeyReader.Connect,
+    init(setup: Setup, repoPath: String, keyPort: KeyPort, keys: any KeySource,
          finished: @escaping () -> Void, startOver: @escaping () -> Void) {
         self.setup = setup
         self.repoPath = repoPath
         self.keyPort = keyPort
-        let reader = KeyReader(port: keyPort, connect: connect)
+        let reader = KeyReader(port: keyPort, source: keys)
         self.reader = reader
         keyTask = KeyTaskDriver(reader: reader)
         self.finished = finished
@@ -150,10 +152,8 @@ final class SetupModel {
         reader.onRead = { [weak self] read in
             self?.keyWasRead(read)
         }
+        // A key already in is read now; a failure shows on Plug in.
         reader.watch()
-        // Past the first step, the key sheet will want the key's session:
-        // a key already in is read now, and a failure shows on Plug in.
-        if state != .readKey { reader.readIfNeeded() }
     }
 
     /// The key sheet while it is up.
@@ -521,11 +521,23 @@ final class SetupModel {
 
     /// For the done screen: whether saving works, and what is in the store.
     private func learnAboutStore() {
-        readiness = try? setup.writeReadiness()
+        var unread = false
+        do {
+            readiness = try setup.writeReadiness()
+        } catch {
+            unread = true
+        }
         if let store = try? PassStore(dir: repoPath) {
-            let recipients = (try? store.recipients(folder: "")) ?? []
+            let recipients: [String]
+            do {
+                recipients = try store.recipients(folder: "")
+            } catch {
+                recipients = []
+                unread = true
+            }
             storeFacts = StoreFacts(folders: store.home().folders.count, recipients: recipients.count)
         }
+        whoCanOpenUnread = unread
     }
 
     /// The task ended without its step done: `error` says why, if it was
@@ -577,12 +589,10 @@ extension SetupModel {
         let port = keyPort
         return KeyJob(
             begin: { listener in
-                let task: KeyTask = switch purpose {
+                switch purpose {
                 case .download: setup.downloadWithKey(port: port, listener: listener)
                 case .check: setup.testDecryptWithKey(port: port, listener: listener)
                 }
-                BackgroundTime.hold("Setup", while: task)
-                return task
             },
             words: { [weak self] in
                 KeyErrorWords.Context(entry: self?.entryName ?? "your store", purpose: purpose == .download ? .download : .check)
@@ -591,13 +601,14 @@ extension SetupModel {
                 self?.working(purpose, progress) ?? ("", nil)
             },
             ended: { [weak self] end in
-                self?.ended(end, purpose: purpose)
+                self?.ended(end, purpose: purpose) ?? .close
             },
-            letGo: { [weak self] _, _ in
+            letGo: { [weak self] _ in
                 // Show where setup is.
                 guard let self else { return }
                 state = setup.state()
             },
+            hold: { BackgroundTime.begin("Setup") },
             // A download stopped while the key waited for a touch is still
             // being removed: this one starts once it is.
             waitsForLetGoTasks: true)
@@ -610,25 +621,24 @@ extension SetupModel {
         return (SetupWords.working(purpose, host: host, started: progress != nil || transfer != nil), line)
     }
 
-    private func ended(_ end: KeyTaskEnd<SetupError>, purpose: SetupSheet.Purpose) -> KeySheetStage? {
-        let words = KeyErrorWords.Context(entry: entryName, purpose: purpose == .download ? .download : .check)
+    private func ended(_ end: KeyTaskEnd<SetupError>, purpose: SetupSheet.Purpose) -> KeySheetAfterEnd {
         switch end {
         case .done:
             succeeded()
-            return .done
+            return .standard
         case .stepFailed(let error):
             // Not the key's problem: the host, the repository or the store.
             stopped(purpose, because: error)
-            return nil
+            return .close
         case .cancelled:
             state = setup.state()
-            return nil
-        case .failed(.Reader), .failed(.Internal):
-            // The sheet says what the key answered; setup is where it was.
-            state = setup.state()
-            return end.standardStage(words)
+            return .close
         case .failed:
-            return end.standardStage(words)
+            if end.failedNotByKey {
+                // The reader or paw itself: setup is where it was.
+                state = setup.state()
+            }
+            return .standard
         }
     }
 }

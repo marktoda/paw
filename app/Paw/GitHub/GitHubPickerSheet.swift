@@ -58,6 +58,9 @@ struct GitHubPickerSheet: View {
                 }
                 .background(PawColor.bg.ignoresSafeArea())
         }
+        #if DEBUG && targetEnvironment(simulator)
+        .simEndsFirstSignIn(picker)
+        #endif
         .onDisappear { picker.dismissed() }
         .privacyCover()
     }

@@ -73,6 +73,11 @@ extension KeySheetStage {
         }
     }
 
+    /// The PIN stage's button.
+    var continueTitle: String {
+        triesLeft == 1 ? "Use last try" : "Continue"
+    }
+
     /// The PIN was just refused: a wrong PIN, or one asked again for a
     /// reason.
     var followsRefusedPin: Bool {

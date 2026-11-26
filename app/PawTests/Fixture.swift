@@ -16,6 +16,9 @@ final class Fixture {
     static let githubPassword = "tidal-Quartz-88-ferns"
 
     let key: SimulatedKey
+    /// The key as the platform has it, for "finish the next open after
+    /// Cancel".
+    let keys: SimulatedKeySource
     let clock: SimClock
     let keystore: SimKeystore
     /// Reads of the key that fail before one answers.
@@ -26,17 +29,17 @@ final class Fixture {
     init(touch: Bool = false, failingReads: Int = 0, writable: Bool = false) throws {
         let key = SimulatedKey(pin: Self.pin, touchRequired: touch, touchTimeoutMs: 15_000)
         let reads = FailingReads(failingReads)
-        let fixture = try FixtureSession(
-            key: .own(key, connect: {
-                if reads.take() {
-                    throw ConnectionError.Failed(message: "The key didn't answer while it was being read.")
-                }
-                return key.asConnection()
-            }),
-            writable: writable)
+        let hardware = FixtureSession.OwnHardware(connect: {
+            if reads.take() {
+                throw ConnectionError.Failed(message: "The key didn't answer while it was being read.")
+            }
+            return key.asConnection()
+        })
+        let fixture = try FixtureSession(on: hardware.platform, writable: writable)
         self.key = key
-        clock = fixture.clock
-        keystore = fixture.keystore
+        keys = hardware.keys
+        clock = hardware.clock
+        keystore = hardware.keystore
         self.reads = reads
         model = AppModel(session: fixture.session)
         touchRequired = touch
@@ -116,15 +119,8 @@ final class Fixture {
 
     /// A new entry with a typed password, saved as the form's Save does once
     /// it knows who can open the folder. Needs a `writable` fixture.
-    func add(_ name: String, folder: String, file: StaticString = #filePath, line: UInt = #line) async throws {
-        let edits = try XCTUnwrap(model.storeSession.edits, "The fixture store should be writable", file: file, line: line)
-        let form = edits.addForm(folder: folder)
-        form.name = name
-        form.password = "Typed-pass-42"
-        form.changed()
-        await waitFor("who can open \(folder)", file: file, line: line) { form.folderWritable != nil }
-        XCTAssertTrue(form.canSave, "\(form.problems)", file: file, line: line)
-        XCTAssertTrue(edits.save(form), "\(String(describing: form.saveProblem))", file: file, line: line)
+    func add(_ name: String, folder: String) async throws {
+        try await FixtureSession.add(name, folder: folder, in: model)
     }
 }
 

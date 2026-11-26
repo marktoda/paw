@@ -19,10 +19,20 @@ struct KeyDiagnosticsView: View {
     /// What Copy diagnostics put on the pasteboard, shown below it.
     @State private var copiedReport: String?
     @State private var assembling = false
-    @State private var touchCheck = TouchTimeoutCheck()
+    @State private var touchCheck: TouchTimeoutCheck
 
     /// The most lines shown; Copy log takes them all.
     private static let shownLines = 300
+
+    init(model: AppModel) {
+        self.model = model
+        _touchCheck = State(initialValue: TouchTimeoutCheck(session: model.storeSession))
+    }
+
+    /// The readers there are now, by name.
+    private var readerNames: [String] {
+        model.storeSession.reader.source.readerNames
+    }
 
     var body: some View {
         NavigationStack {
@@ -69,7 +79,7 @@ struct KeyDiagnosticsView: View {
                     }
                 }
                 Section {
-                    row("Connected", KeyConnection.readerNames.isEmpty ? "None" : KeyConnection.readerNames.joined(separator: ", "),
+                    row("Connected", readerNames.isEmpty ? "None" : readerNames.joined(separator: ", "),
                         identifier: "diagnostics-readers")
                 }
                 reportSection
@@ -125,7 +135,7 @@ struct KeyDiagnosticsView: View {
             deviceModel: Self.deviceModel,
             lastSync: syncSummary,
             lastCheckedMs: model.storeSession.syncing?.lastChecked.map { Int64($0.timeIntervalSince1970 * 1000) })
-        let stateDir = model.storeSession.edits?.stateDir
+        let stateDir = model.storeSession.stateDir
         let port = model.storeSession.keyPort
         let github = model.storeSession.gitHub?.core
         let copies = model.storeSession.copies
@@ -285,16 +295,5 @@ private struct CopiedLine: View {
             .font(PawFont.footnote)
             .foregroundStyle(PawColor.labelSecondary)
             .accessibilityIdentifier(identifier)
-    }
-}
-
-extension KeyConnection {
-    /// The readers the system lists, for Key diagnostics.
-    static var readerNames: [String] {
-        #if DEBUG && targetEnvironment(simulator)
-        return ["Simulated key"]
-        #else
-        return UsbCardConnection.slotNames()
-        #endif
     }
 }

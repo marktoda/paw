@@ -122,9 +122,6 @@ final class GitHubPicker: Identifiable {
     private func polled(_ result: Result<SignInState, Error>, generation: Int) {
         guard generation == self.generation else { return }
         signIn = nil
-        #if DEBUG && targetEnvironment(simulator)
-        SimGitHubLaunch.shared.signInEnded()
-        #endif
         switch result {
         case .success(.signedIn):
             access.reload()

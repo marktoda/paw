@@ -137,8 +137,7 @@ final class LiveStore {
     }
 }
 
-/// What only the store paw set up has: AutoFill's suggestions, its state
-/// folder and Remove. A fixture has none of it.
+/// What only the store paw set up has: Remove. A fixture has none of it.
 struct SetUpStore {
     let location: StoreLocation
     /// Removes the store from this iPhone; why not, if it could not.
@@ -159,17 +158,21 @@ final class StoreSession {
         /// The copies' clock, the key port's and the clipboard's.
         let clock: Clock
         let keyPort: KeyPort
-        let connect: KeyReader.Connect
+        /// Where the key comes from.
+        let keys: any KeySource
         /// The write side: `nil` where the store can't be written.
         let writing: Writing?
         let gitHub: GitHubAccess?
+        /// AutoFill's suggestions, from this store from now on; `nil` where
+        /// nothing is suggested.
+        let autoFill: AutoFillSuggestions?
         let setUp: SetUpStore?
     }
 
     struct Writing {
         let writer: StoreWriter
-        /// `nil` if the queue could not be opened; then nothing syncs.
-        let sync: StoreSync?
+        /// The queue, or why it could not be opened: then nothing syncs.
+        let sync: Result<StoreSync, Error>
         let stateDir: String
     }
 
@@ -181,11 +184,18 @@ final class StoreSession {
     let clipboard: Clipboard
     /// The key going in and out, and reading it.
     let reader: KeyReader
+    /// Every key sheet's driver on this store.
+    let keyTasks: KeyTaskDrivers
+    /// Where the store keeps its own state; `nil` where it can't be
+    /// written.
+    let stateDir: String?
     /// Adding, editing and deleting; `nil` where the store can't be written.
     let edits: StoreEdits?
     /// The unpushed queue, sending and checking for changes; `nil` without
     /// the queue.
     let syncing: SyncModel?
+    /// Why the queue could not be opened, so nothing syncs.
+    let syncProblem: Error?
     let gitHub: GitHubAccess?
     let autoFill: AutoFillSuggestions?
     let setUp: SetUpStore?
@@ -204,33 +214,36 @@ final class StoreSession {
         clipboard = Clipboard(clock: parts.clock)
         gitHub = parts.gitHub
         setUp = parts.setUp
-        let reader = KeyReader(port: parts.keyPort, connect: parts.connect)
+        stateDir = parts.writing?.stateDir
+        let reader = KeyReader(port: parts.keyPort, source: parts.keys)
         self.reader = reader
+        let keyTasks = KeyTaskDrivers(reader: reader)
+        self.keyTasks = keyTasks
         let requests = Signal<ScreenRequest>()
         self.requests = requests
         let syncing: SyncModel?
-        if let sync = parts.writing?.sync {
+        switch parts.writing?.sync {
+        case .success(let sync)?:
             syncing = SyncModel(
-                sync: sync, live: live, requests: requests, reader: reader, copies: parts.copies, gitHub: parts.gitHub)
-        } else {
+                sync: sync, live: live, requests: requests, keyTasks: keyTasks, copies: parts.copies,
+                gitHub: parts.gitHub)
+            syncProblem = nil
+        case .failure(let error)?:
             syncing = nil
+            syncProblem = error
+        case nil:
+            syncing = nil
+            syncProblem = nil
         }
         self.syncing = syncing
         edits = parts.writing.map { writing in
             StoreEdits(
-                writer: writing.writer, stateDir: writing.stateDir, queue: syncing?.queue, live: live,
-                copies: parts.copies, requests: requests)
+                writer: writing.writer, queue: syncing?.queue, live: live, copies: parts.copies, requests: requests)
         }
-        autoFill = parts.setUp.map { setUp in
-            let suggestions = AutoFillSuggestions(stateDir: setUp.location.stateDir.path)
-            suggestions.follow(live)
-            return suggestions
-        }
-        reader.watch()
+        autoFill = parts.autoFill
+        autoFill?.follow(live)
         // A session already open (setup's) is kept, with the PIN it holds.
-        if reader.present {
-            reader.read()
-        }
+        reader.watch()
         // A background check that ends while paw is on screen; one that
         // ends in the background waits for the next `cameForward`.
         backgroundWatch = NotificationCenter.default.addObserver(
@@ -254,4 +267,39 @@ final class StoreSession {
     var sheetIsUp: Bool {
         edits?.form != nil || syncing?.sheet != nil
     }
+}
+
+/// Makes the drivers of a store's key sheets, all reading the key through
+/// its one reader. In the simulator's debug builds it also counts their key
+/// tasks not yet ended, for the UI tests' "task ended" signal.
+@MainActor
+final class KeyTaskDrivers {
+    let reader: KeyReader
+    #if DEBUG && targetEnvironment(simulator)
+    private var made: [WeakDriver] = []
+
+    private struct WeakDriver {
+        weak var driver: KeyTaskDriver?
+    }
+    #endif
+
+    init(reader: KeyReader) {
+        self.reader = reader
+    }
+
+    func make() -> KeyTaskDriver {
+        let driver = KeyTaskDriver(reader: reader)
+        #if DEBUG && targetEnvironment(simulator)
+        made.removeAll { $0.driver == nil }
+        made.append(WeakDriver(driver: driver))
+        #endif
+        return driver
+    }
+
+    #if DEBUG && targetEnvironment(simulator)
+    /// Key tasks not yet ended, across every driver made here.
+    var pendingTasks: Int {
+        made.reduce(0) { $0 + ($1.driver?.pendingTasks ?? 0) }
+    }
+    #endif
 }

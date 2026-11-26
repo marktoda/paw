@@ -27,13 +27,20 @@ import Security
 /// Stateless apart from a lock that serialises key creation in this
 /// process; safe to call from any thread.
 final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
-    /// What the keychain items are called. The check screen uses its own
-    /// namespace so it never touches the real copies' keys.
-    let namespace: String
+    /// What the keychain items are called.
+    private let namespace: String
 
-    init(namespace: String = "com.marktoda.paw.copies") {
+    init() {
+        namespace = "com.marktoda.paw.copies"
+    }
+
+    #if DEBUG
+    /// Keys of the check screen's own (`app/Paw/Debug`), so it never
+    /// touches the real copies' keys.
+    init(namespace: String) {
         self.namespace = namespace
     }
+    #endif
 
     private let lock = NSLock()
 
@@ -69,11 +76,11 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
     }
 
     func reset() throws {
-        try core { try resetDetailed() }
+        try core { try deleteCopyKeys() }
     }
 
-    /// The core sees only `KeystoreError`; the check screen sees the raw
-    /// codes too.
+    /// The core sees only `KeystoreError`. The `…Detailed` steps throw the
+    /// raw failure, whose codes the check screen shows.
     private func core<T>(_ body: () throws -> T) throws -> T {
         do {
             return try body()
@@ -84,8 +91,9 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
 
     // MARK: Seal
 
+    #if DEBUG
     /// Finds or makes the seal key without sealing anything, for the check
-    /// screen (`app/Paw/Debug`).
+    /// screen.
     @discardableResult
     func prepare() throws -> String {
         let group = try KeychainGroup.shared()
@@ -93,6 +101,7 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
         let key = try lock.withLock { try findOrCreateKey(group: group) }
         return key.created ? "created" : "found"
     }
+    #endif
 
     func sealDetailed(_ secret: Data) throws -> Data {
         let group = try KeychainGroup.shared()
@@ -291,15 +300,18 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
         }
     }
 
-    // MARK: Reset
+    // MARK: Deleting the keys
 
-    func resetDetailed() throws {
-        try resetDetailed(group: try KeychainGroup.shared())
+    /// Deletes the seal key, the index key and the enrolment records, so
+    /// every copy sealed so far can never open again: Lock now, and
+    /// removing the store.
+    func deleteCopyKeys() throws {
+        try deleteCopyKeys(group: try KeychainGroup.shared())
     }
 
     /// Deletes this namespace's keys in `group`: the shared group, or the
     /// app's own, where paw kept them before AutoFill (`LegacyStore`).
-    func resetDetailed(group: String) throws {
+    func deleteCopyKeys(group: String) throws {
         try lock.withLock {
             var failures: [String] = []
             let keys: [String: Any] = [
@@ -659,30 +671,5 @@ func wipe(_ data: inout Data) {
     let count = data.count
     data.withUnsafeMutableBytes { buffer in
         if let base = buffer.baseAddress { _ = memset_s(base, count, 0, count) }
-    }
-}
-
-// MARK: - Factory
-
-/// The Face ID copies for a process. On a device: a `CopyCache` backed by
-/// the Secure Enclave, always made once paw's keychain group can be
-/// reached (Face ID problems surface as the core's errors when a copy is
-/// sealed or opened); without the group, none, and then every open uses
-/// the key (Settings says so). The simulator has no Secure Enclave the two
-/// processes share: the debug app keeps its copies on the simulated
-/// keystore, and the extension keeps none.
-enum PlatformCopies {
-    static func make(dir: String, clock: Clock, process: StoreProcess) -> CopyCache? {
-        #if targetEnvironment(simulator)
-        #if DEBUG
-        guard process == .app else { return nil }
-        return CopyCache(dir: dir, keystore: SimulatedKeystoreHolder.keystore.asKeystore(), clock: clock)
-        #else
-        return nil
-        #endif
-        #else
-        guard (try? KeychainGroup.shared()) != nil else { return nil }
-        return CopyCache(dir: dir, keystore: EnclaveKeystore(), clock: clock)
-        #endif
     }
 }

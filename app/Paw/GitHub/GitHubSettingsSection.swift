@@ -15,7 +15,7 @@ struct GitHubSettingsSection: View {
     @State private var problem: String?
 
     var body: some View {
-        if let gitHub, let address, shows(gitHub, address: address) {
+        if let gitHub, let address, gitHub.offered(for: address) {
             Section {
                 if gitHub.signedIn {
                     status(gitHub)
@@ -65,14 +65,6 @@ struct GitHubSettingsSection: View {
             }
             #endif
         }
-    }
-
-    private func shows(_ gitHub: GitHubAccess, address: String) -> Bool {
-        #if DEBUG && targetEnvironment(simulator)
-        return true
-        #else
-        return gitHub.signedIn || gitHub.link != nil || isGithubAddress(address: address)
-        #endif
     }
 
     private func status(_ gitHub: GitHubAccess) -> some View {

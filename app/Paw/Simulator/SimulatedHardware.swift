@@ -28,4 +28,14 @@ final class SimulatedClockHolder {
         clock.advanceMs(ms: UInt64(hours) * 3_600_000)
     }
 }
+/// The app's platform on the launch's simulated hardware: its key
+/// (`-pawSimPin`, `-pawSimTouch`, `-pawSimUnplugged`, …), clock and Face ID
+/// (`SimulatedClockHolder`, `SimulatedKeystoreHolder`).
+enum LaunchedHardware {
+    @MainActor static var app: Platform {
+        .simulated(
+            .app, keys: .launched, clock: SimulatedClockHolder.shared.clock.asClock(),
+            keystore: SimulatedKeystoreHolder.keystore.asKeystore())
+    }
+}
 #endif

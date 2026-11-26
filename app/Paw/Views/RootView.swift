@@ -85,7 +85,7 @@ struct RootView: View {
                 // For the UI tests: how many key tasks have not ended, so a
                 // test can wait for "0" instead of sleeping before it checks
                 // that a cancelled open left nothing.
-                KeyTasksSignal(tasks: model.keyTask.pendingTasks)
+                KeyTasksSignal { model.storeSession.keyTasks.pendingTasks }
                 // And how many times the privacy cover has been drawn.
                 Text(verbatim: "\(PrivacyCoverLog.shared.shown)")
                     .font(.caption2)

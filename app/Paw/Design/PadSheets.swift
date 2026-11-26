@@ -27,3 +27,12 @@ extension View {
         }
     }
 }
+
+extension View {
+    /// An opaque ground for a sheet that opens part-way up. The system's
+    /// glass sheet lets the screen behind show through at a small detent,
+    /// and its rows end up under the sheet's own words.
+    func pawSheetBackground() -> some View {
+        presentationBackground(PawColor.bg)
+    }
+}

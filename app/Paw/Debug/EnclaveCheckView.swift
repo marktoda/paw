@@ -162,7 +162,7 @@ struct EnclaveCheckView: View {
             return second == first && !first.isEmpty ? "pass (same)" : "fail: different"
         })
         add("reset", "Reset: " + outcome {
-            try keystore.resetDetailed()
+            try keystore.deleteCopyKeys()
             return "pass"
         })
         add("index-after-reset", "Index key after reset: " + outcome {
@@ -173,7 +173,7 @@ struct EnclaveCheckView: View {
         wipe(&first)
         wipe(&second)
         // Leave nothing of the check's own behind.
-        _ = try? keystore.resetDetailed()
+        _ = try? keystore.deleteCopyKeys()
 
         let clock = SystemClock()
         var previous = clock.monotonicMs()

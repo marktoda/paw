@@ -113,8 +113,9 @@ final class AutoFillProviderTests: XCTestCase {
         try writeFixtureStore(dir: location.repoDir.path)
         let key = SimulatedKey(pin: Fixture.pin, touchRequired: false, touchTimeoutMs: 15_000)
         let clock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000)).asClock()
-        let source = try AutoFillSource.open(
-            at: location, clock: clock, connect: { key.asConnection() }, copies: { _ in nil })
+        let platform = Platform.simulated(
+            .fill, keys: SimulatedKeySource(connect: { key.asConnection() }), clock: clock, keystore: nil)
+        let source = try AutoFillSource.open(at: location, on: platform)
         let answers = Answers()
         let provider = makeProvider(.ready(source), answering: answers)
 

@@ -343,3 +343,9 @@ extension ChangeQueue {
         "Send \(changeCount(unpushed.count))"
     }
 }
+
+enum SyncWords {
+    /// The queue of unsent changes couldn't be opened: nothing sends or
+    /// checks for changes until paw opens the store again.
+    static let off = "Sync is off"
+}

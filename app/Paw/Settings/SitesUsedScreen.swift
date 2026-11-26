@@ -5,10 +5,10 @@ struct SitesUsedSettingsSection: View {
     let model: AppModel
 
     var body: some View {
-        if let stateDir = model.storeSession.edits?.stateDir {
+        if let autoFill = model.storeSession.autoFill {
             Section {
                 NavigationLink {
-                    SitesUsedScreen(model: model, pairings: SitePairings.open(stateDir: stateDir))
+                    SitesUsedScreen(autoFill: autoFill)
                 } label: {
                     Text("Sites used")
                         .foregroundStyle(PawColor.label)
@@ -28,8 +28,7 @@ struct SitesUsedSettingsSection: View {
 /// fills on without asking (core `SitePairings`). Removing one means the
 /// next fill there asks again. Names and domains only.
 struct SitesUsedScreen: View {
-    let model: AppModel
-    let pairings: SitePairings
+    let autoFill: AutoFillSuggestions
     @State private var rows: [Pairing] = []
     @State private var confirmingClear = false
     @State private var problem: String?
@@ -86,23 +85,19 @@ struct SitesUsedScreen: View {
     }
 
     private func load() {
-        #if DEBUG && targetEnvironment(simulator)
-        SimulatedSitePairings.seedOnce(pairings, store: model.store)
-        #endif
-        rows = pairings.pairings().sorted { $0.entry < $1.entry }
+        rows = autoFill.sites
     }
 
     private func forget(entry: String, site: String) {
-        changed { try pairings.forgetSite(entry: entry, site: site) }
+        changed { try autoFill.forgetSite(entry: entry, site: site) }
     }
 
     private func clearAll() {
         confirmingClear = false
-        changed { try pairings.clearPairings(entry: nil) }
+        changed { try autoFill.forgetAllSites() }
     }
 
-    /// Makes the change, shows the list again and writes the AutoFill
-    /// suggestions again, as paw does at launch.
+    /// Makes the change and shows the list again.
     private func changed(_ change: () throws -> Void) {
         do {
             try change()
@@ -110,7 +105,6 @@ struct SitesUsedScreen: View {
         } catch {
             problem = describe(error)
         }
-        rows = pairings.pairings().sorted { $0.entry < $1.entry }
-        model.storeSession.autoFill?.republish()
+        rows = autoFill.sites
     }
 }

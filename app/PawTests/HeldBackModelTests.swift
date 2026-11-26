@@ -25,7 +25,7 @@ final class HeldBackModelTests: XCTestCase {
         let edits = try XCTUnwrap(model.storeSession.edits)
         let sync = try XCTUnwrap(model.storeSession.syncing, "The fixture store should sync")
         let other = SimulatedKey.newOther(pin: Fixture.pin, touchRequired: false, touchTimeoutMs: 15_000)
-        _ = try other.pinAsCard(stateDir: edits.stateDir)
+        _ = try other.pinAsCard(stateDir: try XCTUnwrap(model.storeSession.stateDir))
         try await fixture.add("held.example", folder: "work")
         let host = try XCTUnwrap(SimRemoteHandle.shared.host)
         let list = fixture.key.fingerprintHex() + "\n" + other.fingerprintHex() + "\n"

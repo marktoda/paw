@@ -35,8 +35,6 @@ struct UndoOffer: Identifiable, Equatable {
 @MainActor @Observable
 final class StoreEdits {
     let writer: StoreWriter
-    /// The core's state directory of the store.
-    let stateDir: String
     /// The unpushed changes, from sync; `nil` if the queue could not be
     /// opened, and then nothing can be undone.
     let queue: ChangeQueue?
@@ -51,10 +49,9 @@ final class StoreEdits {
     @ObservationIgnored private let copies: CopyCache?
     @ObservationIgnored private let requests: Signal<ScreenRequest>
 
-    init(writer: StoreWriter, stateDir: String, queue: ChangeQueue?, live: LiveStore, copies: CopyCache?,
+    init(writer: StoreWriter, queue: ChangeQueue?, live: LiveStore, copies: CopyCache?,
          requests: Signal<ScreenRequest>) {
         self.writer = writer
-        self.stateDir = stateDir
         self.queue = queue
         self.live = live
         self.copies = copies
@@ -104,6 +101,9 @@ final class StoreEdits {
             requests.send(.saved(sessionID: id, saved))
         }
         requests.send(.toast(saved.commits.isEmpty ? "Nothing changed." : "Saved. Not sent yet."))
+        if let notice = followUpNotice(saved.followUpFailures) {
+            requests.send(.notice(notice))
+        }
         return true
     }
 
@@ -126,8 +126,9 @@ final class StoreEdits {
     /// Delete after its inline confirm: back to the list, with Undo.
     func delete(_ session: OpenSession) {
         confirmingDelete = nil
+        let deleted: Deleted
         do {
-            _ = try BackgroundTime.run("Delete") { try writer.delete(entry: session.ref.path, copies: copies) }
+            deleted = try BackgroundTime.run("Delete") { try writer.delete(entry: session.ref.path, copies: copies) }
         } catch let error as WriteError {
             let words = editProblem(error, folder: session.ref.folder)
             requests.send(.notice(Notice(problem: words.problem, nextStep: words.nextStep)))
@@ -138,9 +139,12 @@ final class StoreEdits {
         }
         live.announce(.wrote(entries: [session.ref.path], renamed: nil))
         requests.send(.deleted(sessionID: session.id))
-        if let newest = queue?.unpushed.first {
+        if let notice = followUpNotice(deleted.followUpFailures) {
+            requests.send(.notice(notice))
+        }
+        if queue != nil {
             undoOffer = UndoOffer(
-                message: "Deleted \(session.ref.name).", entryName: session.ref.name, change: newest.id)
+                message: "Deleted \(session.ref.name).", entryName: session.ref.name, change: deleted.commit)
         }
     }
 
@@ -154,6 +158,8 @@ final class StoreEdits {
         }
         if queue.undoLast(task: "Undo") {
             requests.send(.toast("\(offer.entryName) is back."))
+        } else {
+            requests.send(.notice(Notice(problem: "Not undone", nextStep: queue.problem ?? "")))
         }
     }
 

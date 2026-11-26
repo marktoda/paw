@@ -1,8 +1,5 @@
 import Foundation
 import Observation
-#if !(DEBUG && targetEnvironment(simulator))
-import CryptoTokenKit
-#endif
 
 /// Why the key could not be read.
 enum KeyReadProblem {
@@ -12,19 +9,16 @@ enum KeyReadProblem {
     case failed(Error)
 }
 
-/// The key going in and out. Follows the system's smart card readers (in
-/// the simulator, the simulated key) and reads a key that is in into the
-/// port's session: no PIN, no touch. A key task waiting at Plug in goes on
-/// by itself once the key is read; a read that failed is kept for the
-/// sheet's Plug in stage and its Try again.
+/// The key going in and out. Follows the platform's key source and reads a
+/// key that is in into the port's session: no PIN, no touch. A key task
+/// waiting at Plug in goes on by itself once the key is read; a read that
+/// failed is kept for the sheet's Plug in stage and its Try again.
 @MainActor @Observable
 final class KeyReader {
-    typealias Connect = @Sendable () throws -> CardConnection
-
     let port: KeyPort
-    private let connect: Connect
-    /// A reader is there: on a device the system lists one; in the
-    /// simulator the simulated key is plugged in.
+    /// Where the key comes from.
+    let source: any KeySource
+    /// A key is in, as the source last said.
     private(set) var present = false
     /// Why the last read failed; `nil` once one works.
     private(set) var failure: Error?
@@ -39,17 +33,12 @@ final class KeyReader {
     /// `stopWatching` ran: nothing queued before it reads the key or
     /// follows a reader again.
     @ObservationIgnored private var stopped = false
-    #if DEBUG && targetEnvironment(simulator)
-    @ObservationIgnored private var plugWatch: NSObjectProtocol?
-    #else
-    @ObservationIgnored private var slotWatch: NSKeyValueObservation?
-    @ObservationIgnored private var slotStateWatch: NSKeyValueObservation?
-    #endif
+    @ObservationIgnored private var following: AnyObject?
     @ObservationIgnored private let queue = DispatchQueue(label: "paw-card", qos: .userInitiated)
 
-    init(port: KeyPort, connect: @escaping Connect) {
+    init(port: KeyPort, source: any KeySource) {
         self.port = port
-        self.connect = connect
+        self.source = source
     }
 
     var problem: KeyReadProblem? {
@@ -57,54 +46,24 @@ final class KeyReader {
         return failure.map { .failed($0) }
     }
 
-    /// Starts following the readers, once. A key already in is read
-    /// (in the simulator, the owner reads it when it needs to).
+    /// Starts following the key, once. A key that is in is read now, and
+    /// whenever one comes in: a session already open is kept, with the
+    /// PIN it holds, and heard of again (`onRead`).
     func watch() {
         guard !watching, !stopped else { return }
         watching = true
-        #if DEBUG && targetEnvironment(simulator)
-        present = SimulatedKeyHolder.shared.isPluggedIn || port.session() != nil
-        plugWatch = NotificationCenter.default.addObserver(
-            forName: SimulatedKeyHolder.pluggedInNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, !self.stopped else { return }
-                self.present = true
-                self.readIfNeeded()
-            }
+        following = source.follow { [weak self] present in
+            self?.keyChanged(present: present)
         }
-        #else
-        // Minimal, and unverified on hardware: a reader appearing plugs in,
-        // the list emptying unplugs. A key pulled out mid-command is also
-        // caught by the core as a reader failure.
-        guard let manager = TKSmartCardSlotManager.default else {
+        if following == nil {
             unsupported = true
-            return
         }
-        // Called on whatever thread the system changes the list on.
-        slotWatch = manager.observe(\.slotNames, options: [.initial, .new]) { [weak self] manager, _ in
-            let present = !manager.slotNames.isEmpty
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    self?.readersChanged(present: present)
-                }
-            }
-        }
-        #endif
     }
 
-    /// Stops following the readers, for good: the screen is going away.
+    /// Stops following the key, for good: the screen is going away.
     func stopWatching() {
         stopped = true
-        #if DEBUG && targetEnvironment(simulator)
-        if let plugWatch {
-            NotificationCenter.default.removeObserver(plugWatch)
-        }
-        plugWatch = nil
-        #else
-        slotWatch = nil
-        slotStateWatch = nil
-        #endif
+        following = nil
     }
 
     /// Reads the key if one is in and has no session yet.
@@ -123,10 +82,10 @@ final class KeyReader {
         attempt += 1
         let attempt = attempt
         let port = port
-        let connect = connect
+        let source = source
         queue.async {
             let result: Result<KeySession, Error> = Result {
-                try port.session() ?? port.pluggedIn(connection: connect())
+                try port.session() ?? port.pluggedIn(connection: source.connect())
             }
             let handoff = Handoff(value: result)
             DispatchQueue.main.async { [weak self] in
@@ -142,6 +101,16 @@ final class KeyReader {
     func retry() {
         failure = nil
         read()
+    }
+
+    private func keyChanged(present: Bool) {
+        guard !stopped else { return }
+        self.present = present
+        if present {
+            read()
+        } else {
+            wentAway()
+        }
     }
 
     private func readFinished(_ result: Result<KeySession, Error>) {
@@ -163,44 +132,4 @@ final class KeyReader {
         failure = nil
         port.unplugged()
     }
-
-    #if !(DEBUG && targetEnvironment(simulator))
-    private func readersChanged(present: Bool) {
-        guard !stopped else { return }
-        self.present = present
-        if present {
-            watchSlotState()
-            readIfNeeded()
-        } else {
-            slotStateWatch = nil
-            wentAway()
-        }
-    }
-
-    /// Follows the first reader's card state, so a key that finishes
-    /// powering up after its reader appeared is read then, without a
-    /// replug. KVO on `TKSmartCardSlot.state`; unverified on hardware.
-    private func watchSlotState() {
-        guard let manager = TKSmartCardSlotManager.default, let name = manager.slotNames.first else { return }
-        manager.getSlot(withName: name) { [weak self] slot in
-            guard let slot else { return }
-            let watch = slot.observe(\.state, options: [.new]) { [weak self] slot, _ in
-                guard slot.state == .validCard else { return }
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated {
-                        guard let self, !self.stopped else { return }
-                        self.readIfNeeded()
-                    }
-                }
-            }
-            let handoff = Handoff(value: watch)
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, !self.stopped else { return }
-                    self.slotStateWatch = handoff.value
-                }
-            }
-        }
-    }
-    #endif
 }
