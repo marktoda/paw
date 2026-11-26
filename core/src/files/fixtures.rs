@@ -42,7 +42,7 @@ fn the_setup_step() {
     let bytes = format!(
         "step=check-host\nident=0006:12345678\nssh_public_key={SSH_KEY}\ndecryption_fingerprint={FINGERPRINT}\n\
          authentication_touch=cached\ndecryption_touch=each-use\naddress=ssh://git@example.com/you/store.git\n\
-         notice=Port 22 of github.com could not be reached.\n"
+         notice=port-fallback github.com 22 ssh.github.com 443\n"
     );
     let dir = state();
     put(dir.path(), layout::SETUP, bytes.as_bytes());
@@ -51,7 +51,12 @@ fn the_setup_step() {
         flow.state(),
         SetupState::CheckHost {
             address: "ssh://git@example.com/you/store.git".into(),
-            notice: Some("Port 22 of github.com could not be reached.".into()),
+            notice: Some(crate::sync::address::AddressNotice::PortFallback {
+                from_host: "github.com".into(),
+                from_port: 22,
+                host: "ssh.github.com".into(),
+                port: 443,
+            }),
         }
     );
     assert!(!layout::is_set_up(dir.path()));
@@ -59,7 +64,7 @@ fn the_setup_step() {
     // Setting the same address saves the file again, as it was.
     flow.set_address("ssh://git@example.com/you/store.git").unwrap();
     let written = String::from_utf8(get(dir.path(), layout::SETUP)).unwrap();
-    assert_eq!(written, bytes.replace("notice=Port 22 of github.com could not be reached.\n", ""));
+    assert_eq!(written, bytes.replace("notice=port-fallback github.com 22 ssh.github.com 443\n", ""));
 }
 
 #[test]

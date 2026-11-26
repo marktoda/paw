@@ -25,8 +25,10 @@ use russh::keys::agent::AgentIdentity;
 use russh::keys::{Algorithm, HashAlg, PublicKey, PublicKeyOrCertificate};
 use russh::{Channel, ChannelMsg, Disconnect};
 
+use super::SyncError;
 use crate::PawError;
 use crate::key::KeyError;
+use crate::remote::RemoteFailure;
 use crate::ssh::{SshPublicKey, SshSigner};
 
 /// How long to wait for the TCP connection and SSH handshake.
@@ -43,22 +45,21 @@ const TRANSPORT_URL: &str = "paw-ssh://connection";
 pub const DOWNLOAD_LIMIT: u64 = 256 << 20;
 /// How much of the remote's stderr is kept for error messages.
 const STDERR_LIMIT: usize = 2048;
-/// The start of a [`PawError::Network`] detail when no connection was made
-/// at all: the TCP connection failed (refused, no route, no such host), or
-/// the host did not complete the SSH handshake in time. A network that
-/// blocks a port looks like this; a host that answered and then refused
-/// something does not.
-pub(crate) const NO_CONNECTION: &str = "could not connect";
 
-/// Whether a [`PawError::Network`] detail says no connection was made at
-/// all (see [`NO_CONNECTION`]).
-pub(crate) fn made_no_connection(detail: &str) -> bool {
-    detail.starts_with(NO_CONNECTION)
+/// [`RemoteFailure::NoConnection`] to `host:port`, offering the other way
+/// in if it has one.
+fn no_connection(host: &str, port: u16, why: &str) -> SyncError {
+    let fallback = super::hosts::port_fallback(host, port);
+    RemoteFailure::NoConnection { host: host.to_owned(), detail: format!("could not connect: {why}"), fallback }.into()
+}
+
+fn unreachable(host: &str, detail: impl ToString) -> SyncError {
+    RemoteFailure::Unreachable { host: host.to_owned(), detail: detail.to_string() }.into()
 }
 
 /// Why dialling a host failed.
 enum Dial<E> {
-    /// No TCP connection, or no SSH handshake in time.
+    /// No TCP connection, or no SSH handshake in time: why.
     NoConnection(String),
     /// The SSH side failed (the handler's error).
     Ssh(E),
@@ -76,42 +77,59 @@ async fn dial<H: client::Handler + Send + 'static>(
     let attempt = async {
         let stream = tokio::net::TcpStream::connect(route.address(host, port))
             .await
-            .map_err(|e| Dial::NoConnection(format!("{NO_CONNECTION}: {e}")))?;
+            .map_err(|e| Dial::NoConnection(e.to_string()))?;
         if config.nodelay {
             let _ = stream.set_nodelay(true);
         }
         client::connect_stream(config, stream, handler).await.map_err(Dial::Ssh)
     };
     match tokio::time::timeout(CONNECT_TIMEOUT, attempt).await {
-        Err(_) => Err(Dial::NoConnection(format!("{NO_CONNECTION}: timed out"))),
+        Err(_) => Err(Dial::NoConnection("timed out".into())),
         Ok(dialled) => dialled,
     }
 }
 
 /// Where the TCP connection for `host:port` is opened: there, unless a
-/// simulation plays that host (`sim::remote::SimRoutes`, test builds only).
-/// Host keys are still checked against what `host:port` is pinned to.
+/// simulation plays that host (`sim::remote::SimRoutes`). A device build
+/// has no simulation, so its route is always direct. Host keys are still
+/// checked against what `host:port` is pinned to.
 #[derive(Clone, Default)]
-pub struct Route(Option<Arc<Resolve>>);
+pub struct Route {
+    #[cfg(feature = "sim")]
+    resolve: Option<Arc<Resolve>>,
+}
 
 /// Where to connect instead of `host:port`, if anywhere.
+#[cfg(feature = "sim")]
 type Resolve = dyn Fn(&str, u16) -> Option<(String, u16)> + Send + Sync;
 
 impl Route {
     /// Connections go where `resolve` says, or, given `None`, where they say.
     #[cfg(feature = "sim")]
     pub(crate) fn new(resolve: impl Fn(&str, u16) -> Option<(String, u16)> + Send + Sync + 'static) -> Self {
-        Self(Some(Arc::new(resolve)))
+        Self { resolve: Some(Arc::new(resolve)) }
     }
 
+    #[cfg(feature = "sim")]
     fn address(&self, host: &str, port: u16) -> (String, u16) {
-        self.0.as_ref().and_then(|resolve| resolve(host, port)).unwrap_or_else(|| (host.to_owned(), port))
+        self.resolve.as_ref().and_then(|resolve| resolve(host, port)).unwrap_or_else(|| (host.to_owned(), port))
+    }
+
+    #[cfg(not(feature = "sim"))]
+    fn address(&self, host: &str, port: u16) -> (String, u16) {
+        (host.to_owned(), port)
     }
 }
 
 impl std::fmt::Debug for Route {
+    #[cfg(feature = "sim")]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(if self.0.is_some() { "Route(simulated)" } else { "Route(direct)" })
+        f.write_str(if self.resolve.is_some() { "Route(simulated)" } else { "Route(direct)" })
+    }
+
+    #[cfg(not(feature = "sim"))]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Route(direct)")
     }
 }
 
@@ -257,6 +275,7 @@ pub struct Connection {
 struct Shared {
     runtime: tokio::runtime::Runtime,
     session: client::Handle<PinnedHost>,
+    host: String,
     path: String,
     /// What the remote printed on stderr and how the connection failed, kept
     /// because libgit2 reports either only as "early EOF".
@@ -267,6 +286,8 @@ struct Shared {
 
 #[derive(Default)]
 struct Diagnostics {
+    /// The service runs `git-upload-pack`: a fetch or a clone.
+    fetching: bool,
     stderr: Vec<u8>,
     network: Option<String>,
     /// The service sent more than this many bytes and was stopped.
@@ -324,30 +345,58 @@ struct ProbeOnly {
 }
 
 impl russh::Signer for ProbeOnly {
-    type Error = PawError;
+    type Error = LoginError;
 
     async fn auth_sign(
         &mut self,
         _key: &AgentIdentity,
         _hash_alg: Option<HashAlg>,
         _signed: Vec<u8>,
-    ) -> Result<Vec<u8>, PawError> {
+    ) -> Result<Vec<u8>, LoginError> {
         self.asked = true;
-        Err(PawError::Sign("only asking whether the key is accepted".into()))
+        Err(LoginError::OnlyAsking)
     }
 }
 
-fn runtime() -> Result<tokio::runtime::Runtime, PawError> {
+/// Why a login did not finish, in the signer's error type.
+enum LoginError {
+    /// The key failed to sign.
+    Key(KeyError),
+    /// The session closed during the login.
+    Closed,
+    /// [`ProbeOnly`] does not sign.
+    OnlyAsking,
+}
+
+/// russh needs to report a closed session through the signer's error type.
+impl From<russh::SendError> for LoginError {
+    fn from(_: russh::SendError) -> Self {
+        Self::Closed
+    }
+}
+
+impl LoginError {
+    fn on(self, remote: &Remote) -> ConnectError {
+        match self {
+            Self::Key(error) => ConnectError::Key(error),
+            Self::Closed | Self::OnlyAsking => {
+                ConnectError::Sync(unreachable(&remote.host, "the connection closed during login"))
+            }
+        }
+    }
+}
+
+fn runtime(host: &str) -> Result<tokio::runtime::Runtime, SyncError> {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
         .build()
-        .map_err(|e| PawError::Network(e.to_string()))
+        .map_err(|e| unreachable(host, e))
 }
 
 /// Connects and checks the host key against `remote`'s pin. Nothing has
 /// been sent that identifies the user when this returns.
-async fn handshake(remote: &Remote) -> Result<client::Handle<PinnedHost>, PawError> {
+async fn handshake(remote: &Remote) -> Result<client::Handle<PinnedHost>, SyncError> {
     let pin = remote.host_key.clone();
     let mut config = client::Config {
         inactivity_timeout: Some(INACTIVITY_TIMEOUT),
@@ -357,17 +406,23 @@ async fn handshake(remote: &Remote) -> Result<client::Handle<PinnedHost>, PawErr
     // would otherwise be free to present one that cannot match the pin.
     let algorithms = pin.algorithms();
     if algorithms.is_empty() {
-        return Err(PawError::Git("none of the pinned host keys is of a type paw supports".into()));
+        return Err(PawError::Git("none of the pinned host keys is of a type paw supports".into()).into());
     }
     config.preferred.key = algorithms.into();
 
     let refused = Arc::new(Mutex::new(None));
     let handler = PinnedHost { pin, refused: refused.clone() };
     match dial(Arc::new(config), &remote.host, remote.port, &remote.route, handler).await {
-        Err(Dial::NoConnection(detail)) => Err(PawError::Network(detail)),
+        Err(Dial::NoConnection(why)) => Err(no_connection(&remote.host, remote.port, &why)),
         Err(Dial::Ssh(e)) => Err(match refused.lock().unwrap().take() {
-            Some(presented) => PawError::HostKeyMismatch { presented },
-            None => PawError::Network(e.to_string()),
+            Some(presented) => RemoteFailure::HostKeyChanged {
+                host: remote.host.clone(),
+                expected: remote.host_key.fingerprints(),
+                presented,
+                bundled: super::hosts::is_bundled(&remote.host, remote.port),
+            }
+            .into(),
+            None => unreachable(&remote.host, e),
         }),
         Ok(session) => Ok(session),
     }
@@ -376,8 +431,8 @@ async fn handshake(remote: &Remote) -> Result<client::Handle<PinnedHost>, PawErr
 /// Connects to `host` and returns the host key it presents, without
 /// accepting it or sending anything else. For a host that is not pinned
 /// yet: the key is shown to the person, and pinned only once confirmed.
-pub fn scan_host_key(host: &str, port: u16, route: &Route) -> Result<PresentedHostKey, PawError> {
-    let runtime = runtime()?;
+pub fn scan_host_key(host: &str, port: u16, route: &Route) -> Result<PresentedHostKey, SyncError> {
+    let runtime = runtime(host)?;
     let presented = Arc::new(Mutex::new(None));
     let handler = RecordHost { presented: presented.clone() };
     let config = client::Config {
@@ -386,10 +441,10 @@ pub fn scan_host_key(host: &str, port: u16, route: &Route) -> Result<PresentedHo
     };
     let outcome = runtime.block_on(dial(Arc::new(config), host, port, route, handler));
     let error = match outcome {
-        Err(Dial::NoConnection(detail)) => PawError::Network(detail),
+        Err(Dial::NoConnection(why)) => no_connection(host, port, &why),
         // The handler refuses every key, so the handshake cannot succeed.
-        Ok(_) => PawError::Network("the host did not ask to be checked".into()),
-        Err(Dial::Ssh(e)) => PawError::Network(e.to_string()),
+        Ok(_) => unreachable(host, "the host did not ask to be checked"),
+        Err(Dial::Ssh(e)) => unreachable(host, e),
     };
     match presented.lock().unwrap().take() {
         Some(key) => Ok(PresentedHostKey(key)),
@@ -408,41 +463,28 @@ pub enum ConnectError {
     Key(KeyError),
     /// The host, the network or the host key.
     #[error(transparent)]
-    Remote(PawError),
+    Sync(SyncError),
 }
 
-impl From<PawError> for ConnectError {
-    fn from(error: PawError) -> Self {
-        Self::Remote(error)
-    }
-}
-
-impl From<russh::SendError> for ConnectError {
-    fn from(error: russh::SendError) -> Self {
-        Self::Remote(error.into())
-    }
-}
-
-/// russh needs to report a closed session through the signer's error type.
-impl From<russh::SendError> for PawError {
-    fn from(_: russh::SendError) -> Self {
-        PawError::Network("the connection closed during login".into())
+impl From<SyncError> for ConnectError {
+    fn from(error: SyncError) -> Self {
+        Self::Sync(error)
     }
 }
 
 impl russh::Signer for LoginSigner<'_> {
-    type Error = ConnectError;
+    type Error = LoginError;
 
     async fn auth_sign(
         &mut self,
         _key: &AgentIdentity,
         _hash_alg: Option<HashAlg>,
         mut signed: Vec<u8>,
-    ) -> Result<Vec<u8>, ConnectError> {
+    ) -> Result<Vec<u8>, LoginError> {
         // This blocks, possibly on a touch. It runs on the thread that called
         // `Connection::open`, not on the runtime's worker, so the session
         // keeps answering the host meanwhile.
-        let signature = self.0.sign(&signed).map_err(ConnectError::Key)?;
+        let signature = self.0.sign(&signed).map_err(LoginError::Key)?;
 
         // russh wants the signed data back with the SSH signature appended:
         // string(string(algorithm) string(signature)).
@@ -464,19 +506,19 @@ impl Connection {
     ///
     /// The host is asked whether it accepts the public key before the signer
     /// is used, so a key the host does not know costs no PIN try and no
-    /// touch: that case is [`PawError::KeyRejected`].
+    /// touch: that case is [`RemoteFailure::KeyNotAccepted`].
     pub fn open(remote: &Remote, signer: &dyn SshSigner) -> Result<Self, ConnectError> {
-        let runtime = runtime()?;
+        let runtime = runtime(&remote.host)?;
         let session = runtime.block_on(async {
             let mut session = handshake(remote).await?;
-            let key = PublicKey::from_bytes(signer.public_key().blob())
-                .map_err(|e| PawError::NoSshKey(e.to_string()))?;
+            let key = login_key(signer.public_key())?;
             let login = session
                 .authenticate_publickey_with(&remote.user, key, None, &mut LoginSigner(signer))
-                .await?;
+                .await
+                .map_err(|e| e.on(remote))?;
             match login {
                 AuthResult::Success => Ok(session),
-                AuthResult::Failure { .. } => Err(ConnectError::Remote(PawError::KeyRejected)),
+                AuthResult::Failure { .. } => Err(ConnectError::Sync(not_accepted(remote, signer.public_key()))),
             }
         })?;
 
@@ -484,6 +526,7 @@ impl Connection {
             shared: Arc::new(Shared {
                 runtime,
                 session,
+                host: remote.host.clone(),
                 path: remote.path.clone(),
                 diagnostics: Mutex::default(),
                 download_limit: AtomicU64::new(DOWNLOAD_LIMIT),
@@ -494,12 +537,11 @@ impl Connection {
     /// Asks the host whether it would accept `key` for `remote.user`,
     /// without a signature: no PIN, no touch. Checks the host key first,
     /// exactly as [`Self::open`] does. Returns whether the key is accepted.
-    pub fn probe(remote: &Remote, key: &SshPublicKey) -> Result<bool, PawError> {
-        let runtime = runtime()?;
-        runtime.block_on(async {
+    pub fn probe(remote: &Remote, key: &SshPublicKey) -> Result<(), SyncError> {
+        let runtime = runtime(&remote.host)?;
+        let accepted = runtime.block_on(async {
             let mut session = handshake(remote).await?;
-            let public = PublicKey::from_bytes(key.blob())
-                .map_err(|e| PawError::NoSshKey(e.to_string()))?;
+            let public = login_key(key)?;
             let mut probe = ProbeOnly { asked: false };
             let answer = session
                 .authenticate_publickey_with(&remote.user, public, None, &mut probe)
@@ -509,30 +551,18 @@ impl Connection {
                 Ok(AuthResult::Success) => Ok(true),
                 Ok(AuthResult::Failure { .. }) => Ok(probe.asked),
                 Err(_) if probe.asked => Ok(true),
-                Err(e) => Err(e),
+                Err(_) => Err(unreachable(&remote.host, "the connection closed during login")),
             }
-        })
+        })?;
+        if accepted { Ok(()) } else { Err(not_accepted(remote, key)) }
     }
 
     /// Sets the most one git service on this connection may send, in
     /// bytes, in place of [`DOWNLOAD_LIMIT`]. A fetch or clone that would
-    /// receive more stops with [`PawError::Git`] saying so.
+    /// receive more stops saying so.
+    #[cfg(feature = "sim")]
     pub fn set_download_limit(&self, bytes: u64) {
         self.shared.download_limit.store(bytes, Ordering::SeqCst);
-    }
-
-    /// What the host printed on stderr during the last git service on this
-    /// connection, e.g. GitHub's "ERROR: Repository not found.": control
-    /// characters made spaces, trimmed, at most 2 KiB. `None` if nothing.
-    /// It is the host's text, not paw's: show it only as a quote.
-    pub fn remote_said(&self) -> Option<String> {
-        let diagnostics = self.shared.diagnostics.lock().unwrap_or_else(|p| p.into_inner());
-        let said: String = String::from_utf8_lossy(&diagnostics.stderr)
-            .chars()
-            .map(|c| if c.is_control() { ' ' } else { c })
-            .collect();
-        let said = said.trim();
-        (!said.is_empty()).then(|| said.to_owned())
     }
 
     /// Runs `operation` against a libgit2 remote whose transport is this
@@ -541,7 +571,7 @@ impl Connection {
         &self,
         repo: &git2::Repository,
         operation: impl FnOnce(&mut git2::Remote<'_>) -> Result<T, git2::Error>,
-    ) -> Result<T, PawError> {
+    ) -> Result<T, SyncError> {
         register_transport();
         *self.shared.diagnostics.lock().unwrap() = Diagnostics::default();
 
@@ -555,6 +585,15 @@ impl Connection {
     }
 }
 
+/// The key `key` as russh offers it for a login.
+fn login_key(key: &SshPublicKey) -> Result<PublicKey, SyncError> {
+    PublicKey::from_bytes(key.blob()).map_err(|e| RemoteFailure::LoginKeyUnusable { detail: e.to_string() }.into())
+}
+
+fn not_accepted(remote: &Remote, key: &SshPublicKey) -> SyncError {
+    RemoteFailure::KeyNotAccepted { host: remote.host.clone(), public_key: key.authorized_key() }.into()
+}
+
 /// Whether what a host printed when a git command failed says the
 /// repository is not there, or not there for this key. Hosts word it
 /// differently:
@@ -565,7 +604,7 @@ impl Connection {
 /// - Bitbucket: "repository does not exist", "Forbidden"
 /// - git-daemon and plain `git-upload-pack`: "... does not appear to be a
 ///   git repository"
-pub(crate) fn says_repository_missing(said: &str) -> bool {
+fn says_repository_missing(said: &str) -> bool {
     let said = said.to_ascii_lowercase();
     if said.contains("command not found") {
         return false;
@@ -596,25 +635,35 @@ impl Drop for Connection {
 }
 
 impl Shared {
-    /// Turns a libgit2 failure into the most specific error we know.
-    fn explain(&self, error: git2::Error) -> PawError {
-        if error.code() == git2::ErrorCode::NotFastForward {
-            return PawError::NotFastForward;
-        }
+    /// Turns a libgit2 failure into the most specific error we know. A
+    /// fetch the host refused, saying the repository is not there, is
+    /// [`RemoteFailure::RepositoryMissing`].
+    fn explain(&self, error: git2::Error) -> SyncError {
         let mut diagnostics = self.diagnostics.lock().unwrap();
         if let Some(limit) = diagnostics.too_big.take() {
             return PawError::Git(format!(
                 "the git host sent more than {} MiB, far more than a password store; paw stopped the download",
                 limit >> 20
-            ));
+            ))
+            .into();
         }
         if let Some(network) = diagnostics.network.take() {
-            return PawError::Network(network);
+            return unreachable(&self.host, network);
         }
         let stderr = String::from_utf8_lossy(&diagnostics.stderr);
-        match stderr.trim() {
+        let detail = match stderr.trim() {
             "" => PawError::Git(error.message().to_owned()),
             said => PawError::Git(format!("{} (the host said: {said})", error.message())),
+        };
+        match said(&diagnostics.stderr) {
+            Some(said) if diagnostics.fetching && says_repository_missing(&said) => RemoteFailure::RepositoryMissing {
+                host: self.host.clone(),
+                repository: self.path.trim_start_matches('/').to_owned(),
+                said: Some(said),
+                detail: detail.to_string(),
+            }
+            .into(),
+            _ => detail.into(),
         }
     }
 
@@ -669,6 +718,7 @@ impl SmartSubtransport for Subtransport {
             }
         };
         let command = format!("{program} {}", shell_quote(&self.0.path));
+        self.0.diagnostics.lock().unwrap().fetching = program == "git-upload-pack";
 
         let shared = self.0.clone();
         let channel = shared
@@ -688,6 +738,18 @@ impl SmartSubtransport for Subtransport {
         // open for the next service.
         Ok(())
     }
+}
+
+/// What the host printed on stderr, e.g. GitHub's "ERROR: Repository not
+/// found.": control characters made spaces, trimmed, at most 2 KiB. `None`
+/// if nothing. It is the host's text, not paw's: show it only as a quote.
+fn said(stderr: &[u8]) -> Option<String> {
+    let said: String = String::from_utf8_lossy(stderr)
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let said = said.trim();
+    (!said.is_empty()).then(|| said.to_owned())
 }
 
 /// Quotes a repository path for the remote shell, as git itself does.

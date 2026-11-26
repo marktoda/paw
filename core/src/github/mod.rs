@@ -50,6 +50,8 @@ pub use refresh::{BackgroundOutcome, BackgroundRefreshReport, BackgroundStop, Gi
 pub use repos::{GitHubRepository, RepositoryList};
 pub use session::{TokenVault, VaultError};
 
+use crate::remote::RemoteFailure;
+
 /// paw's GitHub App's client id. Public: it identifies the app, it is not
 /// a secret, and paw has no client secret at all.
 pub const CLIENT_ID: &str = "Iv23liyBePbnvQPCcGRz";
@@ -75,11 +77,14 @@ pub struct Endpoints {
     api: String,
     client_id: String,
     app_slug: String,
-    /// Set only by [`Endpoints::simulated`], so never in a device build.
+    /// Set only by [`Endpoints::simulated`]. A device build has no field
+    /// for it.
+    #[cfg(feature = "sim")]
     simulation: Option<Simulation>,
 }
 
 /// A test build's simulated GitHub.
+#[cfg(feature = "sim")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Simulation {
     /// Its store (`owner/name`) and the SSH address of the simulated host
@@ -95,6 +100,7 @@ impl Endpoints {
             api: API.into(),
             client_id: CLIENT_ID.into(),
             app_slug: APP_SLUG.into(),
+            #[cfg(feature = "sim")]
             simulation: None,
         }
     }
@@ -115,8 +121,16 @@ impl Endpoints {
     }
 
     /// Whether these are a test build's simulated endpoints.
+    #[cfg(feature = "sim")]
     pub(crate) fn is_simulated(&self) -> bool {
         self.simulation.is_some()
+    }
+
+    /// Whether these are a test build's simulated endpoints: never, in a
+    /// device build.
+    #[cfg(not(feature = "sim"))]
+    pub(crate) fn is_simulated(&self) -> bool {
+        false
     }
 
     pub fn web(&self) -> &str {
@@ -148,6 +162,7 @@ impl Endpoints {
     /// The SSH address setup clones `owner/repo` from: GitHub's, except in
     /// a simulation, whose repositories live on a simulated SSH host.
     pub(crate) fn ssh_address(&self, full_name: &str) -> Option<String> {
+        #[cfg(feature = "sim")]
         if let Some((name, address)) = self.simulation.as_ref().and_then(|s| s.store.as_ref())
             && name.eq_ignore_ascii_case(full_name)
         {
@@ -161,28 +176,15 @@ impl Endpoints {
 /// by one of these.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
 pub enum GitHubError {
-    /// No sign-in is kept on this device. Nothing was sent anywhere.
-    #[error("not signed in to GitHub")]
-    NotSignedIn,
-    /// GitHub no longer accepts the sign-in (revoked, or unused for six
-    /// months). It has been forgotten here; sign in again.
-    #[error("GitHub sign-in ended; sign in again")]
-    SignedOut,
-    #[error("could not reach GitHub: {message}")]
-    Network { message: String },
+    /// GitHub, the network, the sign-in or the chosen repository.
+    #[error(transparent)]
+    Remote { failure: RemoteFailure },
     /// The app's settings on GitHub do not allow device sign-in.
     #[error("GitHub sign-in is turned off for paw's app")]
     DeviceFlowDisabled,
-    /// No repository has been chosen for this store yet.
-    #[error("no GitHub repository is chosen for this store")]
-    NotLinked,
-    /// The store's remote is not the repository the sign-in is for.
-    #[error("this store is {store}, but GitHub sign-in is for {granted}; paw did not use it")]
-    WrongRepository { store: String, granted: String },
-    /// GitHub answered something paw does not accept. `message` is paw's
-    /// text, never a token.
-    #[error("GitHub: {message}")]
-    Refused { message: String },
+    /// `select_repository` was given a name the last list did not have.
+    #[error("{full_name} is not in the list; list the repositories again")]
+    NotListed { full_name: String },
     /// The keychain could not keep or read the sign-in.
     #[error("the sign-in could not be kept: {message}")]
     Vault { message: String },
@@ -191,6 +193,47 @@ pub enum GitHubError {
     StoreBusy,
     #[error("{message}")]
     Failed { message: String },
+}
+
+/// The host GitHub's failures name.
+const GITHUB: &str = "github.com";
+
+impl GitHubError {
+    /// GitHub could not be reached, or answered as if down.
+    pub(crate) fn network(detail: impl Into<String>) -> Self {
+        RemoteFailure::Unreachable { host: GITHUB.into(), detail: detail.into() }.into()
+    }
+
+    /// GitHub answered something paw does not accept: `message` says what,
+    /// never with a token.
+    pub(crate) fn refused(message: impl Into<String>) -> Self {
+        RemoteFailure::GitHubRefused { message: message.into() }.into()
+    }
+}
+
+impl From<RemoteFailure> for GitHubError {
+    fn from(failure: RemoteFailure) -> Self {
+        Self::Remote { failure }
+    }
+}
+
+impl crate::remote::AboutRemote for GitHubError {
+    fn remote_failure(&self) -> Option<&RemoteFailure> {
+        match self {
+            Self::Remote { failure } => Some(failure),
+            _ => None,
+        }
+    }
+}
+
+impl From<GitHubError> for crate::sync::SyncError {
+    fn from(error: GitHubError) -> Self {
+        match error {
+            GitHubError::Remote { failure } => Self::Remote { failure },
+            GitHubError::StoreBusy => Self::StoreBusy,
+            other => Self::Failed { message: other.to_string() },
+        }
+    }
 }
 
 /// A token or code, kept in memory that is wiped when dropped. It has no

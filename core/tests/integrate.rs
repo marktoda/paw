@@ -15,10 +15,11 @@ use std::sync::Arc;
 
 use paw_core::sim::remote::steps;
 use paw_core::sim::SimulatedKey;
+use paw_core::remote::RemoteFailure;
 use paw_core::sync::operation::SyncState;
 use paw_core::sync::queue;
 use paw_core::sync::{
-    self, Author, ChangeKind, Connection, HostKeyPin, IntegrateReport, Integration, KeptBoth,
+    self, Author, ChangeKind, Cloned, Connection, HostKeyPin, IntegrateReport, Integration, KeptBoth,
     RecipientsChange, SyncError,
 };
 use paw_core::write::WriteStore;
@@ -55,7 +56,7 @@ fn world() -> World {
     desktop_write(&w, "web/other.gpg", "other");
     desktop_write(&w, ".gpg-id", "AAAA1111\n");
     let connection = Connection::open(&w.server.remote(), &signer(&w.card)).unwrap();
-    steps::clone(&connection, &w.server.remote(), w.phone.path()).unwrap();
+    assert_eq!(steps::clone(&connection, &w.server.remote(), w.phone.path()).unwrap(), Cloned::Store);
     w
 }
 
@@ -651,7 +652,7 @@ fn a_sync_with_a_key_the_host_does_not_know_stops_before_the_pin() {
 
     let error = sync_failure(steps::sync(&server.remote(), &signer(&w.card), phone(&w), w.state.path(), true).unwrap_err());
 
-    assert!(matches!(error, SyncError::KeyRejected), "{error:?}");
+    assert!(matches!(error, SyncError::Remote { failure: RemoteFailure::KeyNotAccepted { .. } }), "{error:?}");
     assert_eq!(w.card.authentication_count(), signatures);
     assert_eq!(w.card.pin_tries_left(), 3);
 }
@@ -667,7 +668,7 @@ fn a_sync_to_a_host_with_another_key_is_refused_with_both_fingerprints() {
     let error = sync_failure(steps::sync(&remote, &signer(&w.card), phone(&w), w.state.path(), true).unwrap_err());
 
     match error {
-        SyncError::HostKeyChanged { expected, presented, .. } => {
+        SyncError::Remote { failure: RemoteFailure::HostKeyChanged { expected, presented, .. } } => {
             assert_eq!(expected, [pinned]);
             assert_eq!(presented, real);
         }

@@ -580,13 +580,13 @@ final class SyncModel {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     time.end()
-                    self?.checkedWithSignIn(checked.value.result, stillSignedIn: checked.value.stillSignedIn)
+                    self?.checkedWithSignIn(checked.value)
                 }
             }
         }
     }
 
-    private func checkedWithSignIn(_ result: Result<SyncReport, Error>, stillSignedIn: Bool) {
+    private func checkedWithSignIn(_ result: Result<SyncReport, Error>) {
         running = nil
         gitHub?.reload()
         switch result {
@@ -600,7 +600,7 @@ final class SyncModel {
                 }
             }
         case .failure(let error):
-            if !stillSignedIn {
+            if case .Remote(let failure)? = error as? SyncError, signInEnded(failure) {
                 start(.refresh)
                 keyPathNote = "Your GitHub sign-in ended, so this check uses your key."
                 return

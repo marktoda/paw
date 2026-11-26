@@ -81,7 +81,7 @@ pub(crate) fn network(error: ureq::Error) -> GitHubError {
         // tokens are only ever sent in headers and bodies.
         other => other.to_string(),
     };
-    GitHubError::Network { message }
+    GitHubError::network(message)
 }
 
 /// The answer to a small request: status and the whole body.
@@ -129,7 +129,7 @@ impl Http {
             Some(deadline) => {
                 let left = deadline.saturating_duration_since(Instant::now());
                 if left.is_zero() {
-                    Err(GitHubError::Network { message: "out of time".into() })
+                    Err(GitHubError::network("out of time"))
                 } else {
                     Ok(left.min(cap))
                 }
@@ -167,7 +167,7 @@ impl Http {
     }
 
     fn refuse_target() -> GitHubError {
-        GitHubError::Refused { message: "paw only sends its GitHub sign-in to github.com".into() }
+        GitHubError::refused("paw only sends its GitHub sign-in to github.com")
     }
 
     /// POSTs `form` (url-encoded) to `path` on github.com, asking for JSON.
@@ -258,9 +258,7 @@ impl Http {
                 return Err(if hops == 0 {
                     Self::refuse_target()
                 } else {
-                    GitHubError::Refused {
-                        message: "GitHub sent paw to another address; paw did not follow it".into(),
-                    }
+                    GitHubError::refused("GitHub sent paw to another address; paw did not follow it")
                 });
             }
             let basic = Zeroizing::new(format!("x-access-token:{}", token.expose()));
@@ -293,13 +291,13 @@ impl Http {
                 return Ok(response);
             }
             if post.is_some() || hops >= MAX_REDIRECTS {
-                return Err(GitHubError::Refused { message: format!("GitHub redirected the fetch ({status})") });
+                return Err(GitHubError::refused(format!("GitHub redirected the fetch ({status})")));
             }
             let location = response
                 .headers()
                 .get("location")
                 .and_then(|value| value.to_str().ok())
-                .ok_or_else(|| GitHubError::Refused { message: "GitHub redirected the fetch nowhere".into() })?;
+                .ok_or_else(|| GitHubError::refused("GitHub redirected the fetch nowhere"))?;
             url = if location.starts_with('/') && !location.starts_with("//") {
                 format!("{}{location}", self.endpoints.web())
             } else {
@@ -317,7 +315,7 @@ fn read_answer(response: Response<ureq::Body>, limit: u64) -> Result<Answer, Git
     let mut body = Zeroizing::new(Vec::new());
     reader
         .read_to_end(&mut body)
-        .map_err(|e| GitHubError::Network { message: format!("the answer was cut short or too large: {e}") })?;
+        .map_err(|e| GitHubError::network(format!("the answer was cut short or too large: {e}")))?;
     Ok(Answer { status, body })
 }
 

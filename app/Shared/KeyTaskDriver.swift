@@ -122,8 +122,8 @@ extension KeyTaskOwner {
 /// Try again) is cancelled, and its end still reaches the owner, once.
 @MainActor @Observable
 final class KeyTaskDriver {
-    /// The state of the task started last, as the core last gave it: still
-    /// followed after Cancel, until the task has really ended.
+    /// The state of the task started last, as the core last gave it, also
+    /// once the sheet let go of it: `cancelled` from the moment of Cancel.
     private(set) var state: KeyTaskState?
     /// What is typed in the sheet's PIN field. Handed to the core and
     /// cleared at once on Continue; cleared too whenever the sheet stops

@@ -16,14 +16,14 @@ use key_common::{Driver, PIN, WAIT, finish, is_touch, port_with};
 use paw_core::ffi::sync::Setup;
 use paw_core::key::{KeyError, KeyPort, KeyTouch};
 use paw_core::task::KeyTaskState;
-use paw_core::sync::address::StoreAddress;
-use paw_core::setup::outcome::RemoteReason;
+use paw_core::sync::address::{AddressNotice, AddressProblem, StoreAddress};
+use paw_core::remote::RemoteFailure;
 use paw_core::key::touch_clock::{TouchClock, TouchExpectation};
 use paw_core::setup::{SetupError, SetupFlow, SetupState};
 use paw_core::sim::{SimTouch, SimulatedKey};
 use paw_core::ssh::SshPublicKey;
 use paw_core::sync::hosts::{self, GITHUB_HOST_KEYS, KnownHosts};
-use paw_core::sync::{Connection, HostKeyPin};
+use paw_core::sync::{Connection, HostKeyPin, RefusedReason, SyncError};
 use paw_core::write::LineStatus;
 use support::{GitServer, git};
 
@@ -236,7 +236,7 @@ fn a_wrong_fingerprint_does_not_pin_the_host() {
 
     let error = rig.setup.confirm_host("SHA256:not-what-was-shown".into()).unwrap_err();
 
-    assert!(matches!(error, SetupError::HostKeyNotConfirmed { .. }), "{error:?}");
+    assert!(matches!(error, SetupError::Remote { failure: RemoteFailure::HostKeyNotConfirmed { .. } }), "{error:?}");
     assert!(!rig.dir.path().join(paw_core::files::layout::KNOWN_HOSTS).exists());
     assert!(matches!(rig.setup.state(), SetupState::ConfirmHost { .. }));
 }
@@ -253,9 +253,14 @@ fn an_unreachable_host_is_its_own_failure() {
 
     let error = rig.setup.check_host().unwrap_err();
 
-    assert!(matches!(&error, SetupError::HostUnreachable { host, .. } if host == "127.0.0.1"), "{error:?}");
+    // Refused, or reset by the closing server.
+    let host = match &error {
+        SetupError::Remote { failure: RemoteFailure::NoConnection { host, fallback: None, .. } }
+        | SetupError::Remote { failure: RemoteFailure::Unreachable { host, .. } } => host,
+        _ => panic!("{error:?}"),
+    };
+    assert_eq!(host, "127.0.0.1");
     assert!(matches!(rig.setup.state(), SetupState::CheckHost { .. }));
-    assert_eq!(rig.setup.last_remote_message().unwrap().reason, RemoteReason::Unreachable);
 }
 
 #[test]
@@ -264,8 +269,11 @@ fn the_key_check_asks_without_a_signature() {
     let server = GitServer::start(&[sim.ssh_public_key()]);
     let key = SshPublicKey::ed25519(&sim.authentication_public_key());
 
-    assert!(Connection::probe(&server.remote(), &key).unwrap());
-    assert!(!Connection::probe(&server.remote(), &SshPublicKey::ed25519(&[3u8; 32])).unwrap());
+    Connection::probe(&server.remote(), &key).unwrap();
+    let other = SshPublicKey::ed25519(&[3u8; 32]);
+    let refused = Connection::probe(&server.remote(), &other).unwrap_err();
+    let not_accepted = RemoteFailure::KeyNotAccepted { host: "127.0.0.1".into(), public_key: other.authorized_key() };
+    assert!(matches!(&refused, SyncError::Remote { failure } if *failure == not_accepted), "{refused:?}");
     assert_eq!(sim.authentication_count(), 0);
     assert_eq!(server.logins(), 0);
 }
@@ -322,20 +330,18 @@ fn a_store_with_a_link_in_it_is_refused_and_says_where() {
 
     let error = rig.download().unwrap_err();
 
-    let SetupError::Failed { message } = &error else { panic!("{error:?}") };
-    assert!(message.starts_with("the remote contains something paw will not check out"), "{message}");
-    let refused = rig.setup.refused_remote();
+    let SetupError::Remote { failure: RemoteFailure::RefusedContent { paths: refused } } = &error else { panic!("{error:?}") };
+    assert!(error.to_string().starts_with("the remote contains something paw will not check out"), "{error}");
     assert_eq!(refused.len(), 1, "{refused:?}");
-    assert_eq!((refused[0].path.as_str(), refused[0].reason.as_str()), ("up", "it is a symbolic link"));
+    assert_eq!((refused[0].path.as_str(), &refused[0].reasons[..]), ("up", &[RefusedReason::SymbolicLink][..]));
     assert!(!rig.repo().exists());
     assert!(matches!(rig.setup.state(), SetupState::NeedPin { .. }));
-    // A download that succeeds forgets it.
+    // Once the remote is fixed, the download goes through.
     let desktop = server.desktop();
     git(desktop.path(), &["rm", "--quiet", "up"]);
     git(desktop.path(), &["commit", "--quiet", "-m", "No link."]);
     git(desktop.path(), &["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
     rig.download().unwrap();
-    assert!(rig.setup.refused_remote().is_empty());
 }
 
 #[test]
@@ -350,11 +356,7 @@ fn a_repository_without_gpg_id_is_not_a_pass_store() {
     assert!(matches!(error, SetupError::NotAPassStore), "{error:?}");
     assert!(!rig.repo().exists());
     assert!(matches!(rig.setup.state(), SetupState::Address { .. }), "{:?}", rig.setup.state());
-    assert_eq!(rig.setup.last_remote_message().unwrap().reason, RemoteReason::NotAPassStore);
-    assert_eq!(open_setup(rig.dir.path()).last_remote_message().unwrap().reason, RemoteReason::NotAPassStore);
-    // Going back from the address forgets it.
-    rig.setup.back().unwrap();
-    assert_eq!(open_setup(rig.dir.path()).last_remote_message(), None);
+    assert!(matches!(open_setup(rig.dir.path()).state(), SetupState::Address { .. }));
 }
 
 #[test]
@@ -491,7 +493,7 @@ fn a_second_login_within_the_cached_window_does_not_ask_for_a_touch() {
     // The first login asks; the repository is not there, so it is tried again.
     let first = Driver::helpful(PIN, &sim);
     let error = rig.result(rig.download_by(&first)).unwrap_err();
-    assert!(matches!(error, SetupError::Failed { .. }), "{error:?}");
+    assert!(matches!(error, SetupError::Remote { failure: RemoteFailure::RepositoryMissing { .. } }), "{error:?}");
     assert_eq!(first.count(is_touch), 1);
     assert_eq!(rig.setup.state(), SetupState::NeedPin { address: address(&server), touch: TouchExpectation::NotNeeded });
 
@@ -522,7 +524,7 @@ fn a_key_that_needs_a_touch_each_time_is_asked_each_time() {
 #[test]
 fn addresses_are_read_in_the_forms_git_hosts_show() {
     let ok = |text: &str, user: &str, host: &str, port: u16, path: &str| {
-        let parsed = StoreAddress::parse(text).unwrap_or_else(|e| panic!("{text}: {e}"));
+        let parsed = StoreAddress::parse(text).unwrap_or_else(|e| panic!("{text}: {e:?}"));
         let expected = StoreAddress { user: user.into(), host: host.into(), port, path: path.into() };
         assert_eq!(parsed.address, expected, "{text}");
         assert_eq!(parsed.notice, None, "{text}");
@@ -549,31 +551,32 @@ fn a_github_web_address_becomes_its_ssh_address_and_says_so() {
         let parsed = StoreAddress::parse(text).unwrap();
         assert_eq!(parsed.address.display(), "git@github.com:you/password-store.git", "{text}");
         let notice = parsed.notice.unwrap();
-        assert!(notice.contains("git@github.com:you/password-store.git"), "{notice}");
+        assert_eq!(notice, AddressNotice::GitHubWebAddress { address: "git@github.com:you/password-store.git".into() });
     }
 }
 
 #[test]
 fn addresses_paw_cannot_use_are_refused_with_what_to_do() {
     for (text, says) in [
-        ("", "Type or paste"),
-        ("git@github.com:you/my store.git", "no spaces"),
-        ("https://gitlab.com/you/store", "connects over SSH"),
-        ("https://github.com/you/store/tree/main", "repository itself"),
-        ("git://github.com/you/store.git", "connects over SSH"),
-        ("file:///home/you/store", "connects over SSH"),
-        ("github.com:you/store.git", "user name"),
-        ("/home/you/store", "doesn't look like a git address"),
-        ("C:/Users/you/store", "user name"),
-        ("git@github.com:", "after the colon"),
-        ("ssh://github.com/you/store.git", "user name"),
-        ("ssh://git@github.com:99999/you/store.git", "port"),
-        ("ssh://git@github.com", "path"),
-        ("git@-oProxyCommand=x:store", "doesn't look like"),
-        ("git@github.com:-u", "after the colon"),
+        ("", AddressProblem::Empty),
+        ("git@github.com:you/my store.git", AddressProblem::HasSpaces),
+        ("https://gitlab.com/you/store", AddressProblem::UseSsh),
+        ("https://github.com/you/store/tree/main", AddressProblem::NotARepositoryPage),
+        ("git://github.com/you/store.git", AddressProblem::UseSsh),
+        ("file:///home/you/store", AddressProblem::UseSsh),
+        ("github.com:you/store.git", AddressProblem::NoUser),
+        ("/home/you/store", AddressProblem::NotGit),
+        ("C:/Users/you/store", AddressProblem::NoUser),
+        ("git@github.com:", AddressProblem::NoRepository),
+        ("ssh://github.com/you/store.git", AddressProblem::SshWithoutUser),
+        ("ssh://git@github.com:99999/you/store.git", AddressProblem::BadPort),
+        ("ssh://git@github.com", AddressProblem::SshWithoutPath),
+        ("git@-oProxyCommand=x:store", AddressProblem::NotGit),
+        ("git@github.com:-u", AddressProblem::NoRepository),
+        ("home/you:store", AddressProblem::LooksLikeFolder),
     ] {
-        let message = StoreAddress::parse(text).err().unwrap_or_else(|| panic!("{text:?} was accepted"));
-        assert!(message.contains(says), "{text:?}: {message}");
+        let problem = StoreAddress::parse(text).err().unwrap_or_else(|| panic!("{text:?} was accepted"));
+        assert_eq!(problem, says, "{text:?}");
     }
 }
 

@@ -17,7 +17,8 @@ use git2::{Oid, Repository, Signature};
 use paw_core::sim::remote::steps;
 use paw_core::PawError;
 use paw_core::sim::SimulatedKey;
-use paw_core::sync::{self, Author, Connection, SyncError, queue};
+use paw_core::remote::RemoteFailure;
+use paw_core::sync::{self, Author, Cloned, Connection, SyncError, queue};
 use key_common::{PIN, signer};
 use support::{GitServer, git};
 
@@ -194,9 +195,10 @@ fn a_clone_of_a_hostile_tree_checks_out_nothing() {
 
         let result = steps::clone(&connect(&server, &card), &server.remote(), &dir);
 
-        let Err(PawError::UnsafePath(message)) = result else {
+        let Ok(Cloned::Refused(paths)) = result else {
             panic!("{what}: the clone was not refused: {result:?}");
         };
+        let message = RemoteFailure::RefusedContent { paths }.to_string();
         assert_refusal_names(&message, path, what);
         assert_eq!(files(&dir), BTreeSet::new(), "{what}: something was checked out");
         assert_eq!(beside(state.path()), [paw_core::files::layout::REPO], "{what}: wrote beside the store");
@@ -212,7 +214,7 @@ fn integrate_after(card: &Arc<SimulatedKey>, what: &str, extra: Vec<(&'static st
     let state = tempfile::tempdir().unwrap();
     let dir = state.path().join(paw_core::files::layout::REPO);
     let connection = connect(&server, card);
-    steps::clone(&connection, &server.remote(), &dir).unwrap();
+    assert_eq!(steps::clone(&connection, &server.remote(), &dir).unwrap(), Cloned::Store);
     if queued {
         sync::commit(&dir, "web/new.gpg", b"local ciphertext", "Add given password for web/new to store.", &author())
             .unwrap();
@@ -226,7 +228,7 @@ fn integrate_after(card: &Arc<SimulatedKey>, what: &str, extra: Vec<(&'static st
     let result = sync::integrate(&dir);
 
     let message = match result {
-        Err(error @ SyncError::RefusedRemote { .. }) => error.to_string(),
+        Err(error @ SyncError::Remote { failure: RemoteFailure::RefusedContent { .. } }) => error.to_string(),
         other => panic!("{what}: integrate was not refused: {other:?}"),
     };
     assert_eq!(git(&dir, &["rev-parse", "HEAD"]), head, "{what}");
@@ -272,7 +274,7 @@ fn a_good_tree_passes_and_names_nothing() {
         ]),
     );
     let dir = tempfile::tempdir().unwrap();
-    steps::clone(&connect(&server, &card), &server.remote(), dir.path()).unwrap();
+    assert_eq!(steps::clone(&connect(&server, &card), &server.remote(), dir.path()).unwrap(), Cloned::Store);
     assert!(dir.path().join("web/caf\u{e9}.gpg").is_file());
     assert!(sync::refused_remote(dir.path()).unwrap().is_empty());
     assert_eq!(git(dir.path(), &["status", "--porcelain"]), "");
@@ -285,7 +287,7 @@ fn a_local_name_that_collides_with_a_remote_one_is_not_replayed() {
     host_commit(&server, &store(Vec::new()));
     let dir = tempfile::tempdir().unwrap();
     let connection = connect(&server, &card);
-    steps::clone(&connection, &server.remote(), dir.path()).unwrap();
+    assert_eq!(steps::clone(&connection, &server.remote(), dir.path()).unwrap(), Cloned::Store);
     // This device saves `Bank.gpg`; the desktop, meanwhile, `bank.gpg`.
     sync::commit(dir.path(), "web/Bank.gpg", b"mine", "Add given password for web/Bank to store.", &author()).unwrap();
     let head = git(dir.path(), &["rev-parse", "HEAD"]);
@@ -294,7 +296,7 @@ fn a_local_name_that_collides_with_a_remote_one_is_not_replayed() {
 
     let result = sync::integrate(dir.path());
 
-    let Err(error @ SyncError::RefusedRemote { .. }) = result else { panic!("{result:?}") };
+    let Err(error @ SyncError::Remote { failure: RemoteFailure::RefusedContent { .. } }) = result else { panic!("{result:?}") };
     let message = error.to_string();
     assert_refusal_names(&message, "web/bank.gpg", "replay");
     assert_eq!(git(dir.path(), &["rev-parse", "HEAD"]), head);
@@ -309,7 +311,7 @@ fn saving_a_name_that_collides_with_one_in_the_store_is_refused() {
     let server = server(&card);
     host_commit(&server, &store(Vec::new()));
     let dir = tempfile::tempdir().unwrap();
-    steps::clone(&connect(&server, &card), &server.remote(), dir.path()).unwrap();
+    assert_eq!(steps::clone(&connect(&server, &card), &server.remote(), dir.path()).unwrap(), Cloned::Store);
     let head = git(dir.path(), &["rev-parse", "HEAD"]);
 
     for path in ["Web/x.gpg", "web/Example.com.gpg", "WEB"] {
@@ -330,7 +332,7 @@ fn a_folder_turned_into_a_link_under_a_waiting_change_is_refused() {
     let state = tempfile::tempdir().unwrap();
     let dir = state.path().join(paw_core::files::layout::REPO);
     let connection = connect(&server, &card);
-    steps::clone(&connection, &server.remote(), &dir).unwrap();
+    assert_eq!(steps::clone(&connection, &server.remote(), &dir).unwrap(), Cloned::Store);
     sync::commit(&dir, "web/new.gpg", b"mine", "Add given password for web/new to store.", &author()).unwrap();
 
     let repo = Repository::open_bare(server.bare()).unwrap();
@@ -346,12 +348,12 @@ fn a_folder_turned_into_a_link_under_a_waiting_change_is_refused() {
 
     let result = sync::integrate(&dir);
 
-    let Err(error @ SyncError::RefusedRemote { .. }) = result else { panic!("{result:?}") };
+    let Err(error @ SyncError::Remote { failure: RemoteFailure::RefusedContent { .. } }) = result else { panic!("{result:?}") };
     let message = error.to_string();
     assert_eq!(message, format!("{REFUSED}: web (it is a symbolic link)"));
     assert_eq!(
         sync::refused_remote(&dir).unwrap(),
-        vec![sync::RefusedPath { path: "web".into(), reason: "it is a symbolic link".into() }]
+        vec![sync::RefusedPath { path: "web".into(), reasons: vec![sync::RefusedReason::SymbolicLink] }]
     );
     assert_eq!(queue::unpushed(&dir).unwrap().len(), 1);
     assert!(dir.join("web").is_dir() && !dir.join("web").is_symlink());
@@ -457,7 +459,7 @@ fn a_pull_cannot_write_beside_the_store_on_a_casefold_file_system() {
     let result = sync::integrate(&dir);
 
     assert!(!state.join(paw_core::files::layout::RECIPIENTS).exists(), "a pull wrote outside the store: {result:?}");
-    let Err(error @ SyncError::RefusedRemote { .. }) = result else { panic!("{result:?}") };
+    let Err(error @ SyncError::Remote { failure: RemoteFailure::RefusedContent { .. } }) = result else { panic!("{result:?}") };
     let message = error.to_string();
     assert!(message.starts_with(REFUSED), "{message}");
     // The NFC link and the NFD folder are one name here.
@@ -477,7 +479,7 @@ fn a_pull_cannot_write_beside_the_store_on_a_casefold_file_system() {
     );
     repo.reference("refs/remotes/origin/main", third, true, "fetch").unwrap();
     let result = sync::integrate(&dir);
-    let Err(error @ SyncError::RefusedRemote { .. }) = result else { panic!("{result:?}") };
+    let Err(error @ SyncError::Remote { failure: RemoteFailure::RefusedContent { .. } }) = result else { panic!("{result:?}") };
     let message = error.to_string();
     assert!(message.contains("same name as"), "{message}");
     assert!(!state.join(paw_core::files::layout::RECIPIENTS).exists());
@@ -497,7 +499,8 @@ fn a_clone_on_a_casefold_file_system_writes_no_link() {
 
     let result = steps::clone(&connect(&server, &card), &server.remote(), &dir);
 
-    assert!(matches!(&result, Err(PawError::UnsafePath(m)) if m.starts_with(REFUSED)), "{result:?}");
+    let Ok(Cloned::Refused(paths)) = result else { panic!("{result:?}") };
+    assert!(RemoteFailure::RefusedContent { paths }.to_string().starts_with(REFUSED));
     assert!(!dir.join("caf\u{e9}").exists());
     assert_eq!(files(&dir), BTreeSet::new());
 }

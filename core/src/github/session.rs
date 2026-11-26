@@ -13,7 +13,7 @@
 //! token is used only after that write succeeded. If paw is killed (or the
 //! write fails) after GitHub answered and before the write, the old pair is
 //! still stored but GitHub no longer accepts it: the next refresh is
-//! refused, the sign-in ends cleanly ([`GitHubError::SignedOut`]) and the
+//! refused, the sign-in ends cleanly ([`RemoteFailure::SignedOut`]) and the
 //! person signs in again. No order of writes avoids that window, because
 //! GitHub has already rotated; one write keeps it to one keychain call.
 //!
@@ -31,6 +31,7 @@
 //! is the sign-in over. So the token is still spent once, and the race
 //! costs one refused request, not the sign-in.
 
+use crate::remote::RemoteFailure;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -193,7 +194,7 @@ impl std::fmt::Debug for TokenAnswer {
 
 /// Reads a token answer. Anything that is not JSON is refused.
 pub(crate) fn parse_token_answer(body: &[u8]) -> Result<TokenAnswer, GitHubError> {
-    serde_json::from_slice(body).map_err(|_| GitHubError::Refused { message: "GitHub's sign-in answer was not readable".into() })
+    serde_json::from_slice(body).map_err(|_| GitHubError::refused("GitHub's sign-in answer was not readable"))
 }
 
 /// Seconds since 1970 now.
@@ -240,14 +241,14 @@ impl TokenKeeper {
         let deadline = std::time::Instant::now() + OTHER_PROCESS_GRACE;
         loop {
             match self.load()? {
-                None => return Err(GitHubError::SignedOut),
+                None => return Err(GitHubError::from(RemoteFailure::SignedOut)),
                 Some(kept) if kept.refresh.as_ref() != Some(spent) => return Ok(kept.access),
                 Some(_) if std::time::Instant::now() >= deadline => break,
                 Some(_) => std::thread::sleep(Duration::from_millis(50)),
             }
         }
         self.forget()?;
-        Err(GitHubError::SignedOut)
+        Err(GitHubError::from(RemoteFailure::SignedOut))
     }
 
     pub(crate) fn now(&self) -> u64 {
@@ -281,12 +282,12 @@ impl TokenKeeper {
     /// refreshed meanwhile, and its new token is used: refreshing again
     /// would spend the refresh token a second time and end that caller's
     /// fetch. With nothing kept, nothing is sent
-    /// ([`GitHubError::NotSignedIn`]). A refresh GitHub refuses ends the
-    /// sign-in: it is forgotten here ([`GitHubError::SignedOut`]).
+    /// ([`RemoteFailure::NotSignedIn`]). A refresh GitHub refuses ends the
+    /// sign-in: it is forgotten here ([`RemoteFailure::SignedOut`]).
     pub(crate) fn access_token(&self, http: &Http, refused: Option<&Secret>) -> Result<Secret, GitHubError> {
         let _one_at_a_time = REFRESHING.lock().unwrap_or_else(|p| p.into_inner());
         let Some(tokens) = self.load()? else {
-            return Err(GitHubError::NotSignedIn);
+            return Err(GitHubError::from(RemoteFailure::NotSignedIn));
         };
         let force = refused.is_some_and(|refused| *refused == tokens.access);
         let now = self.now();
@@ -298,13 +299,13 @@ impl TokenKeeper {
             // A token that cannot be refreshed and is refused or over.
             if force || !fresh {
                 self.forget()?;
-                return Err(GitHubError::SignedOut);
+                return Err(GitHubError::from(RemoteFailure::SignedOut));
             }
             return Ok(tokens.access);
         };
         if tokens.refresh_expires_at.is_some_and(|at| at <= now) {
             self.forget()?;
-            return Err(GitHubError::SignedOut);
+            return Err(GitHubError::from(RemoteFailure::SignedOut));
         }
         let client_id = http.endpoints().client_id().to_owned();
         let answer = http.post_form(
@@ -316,7 +317,7 @@ impl TokenKeeper {
             ],
         )?;
         if answer.status >= 500 || answer.status == 429 {
-            return Err(GitHubError::Network { message: format!("GitHub answered {}", answer.status) });
+            return Err(GitHubError::network(format!("GitHub answered {}", answer.status)));
         }
         let parsed = parse_token_answer(&answer.body)?;
         match parsed.error.as_deref() {
@@ -328,12 +329,12 @@ impl TokenKeeper {
             // app, a rate limit): keep it, and say so.
             other => {
                 let code: String = other.unwrap_or("none").chars().filter(|c| c.is_ascii_lowercase() || *c == '_').take(64).collect();
-                return Err(GitHubError::Refused { message: format!("GitHub would not refresh the sign-in ({code}, {})", answer.status) });
+                return Err(GitHubError::refused(format!("GitHub would not refresh the sign-in ({code}, {})", answer.status)));
             }
         }
         drop(refresh);
         let Some(new) = Tokens::from_answer(parsed, self.now()) else {
-            return Err(GitHubError::Refused { message: "GitHub's refreshed sign-in was not usable".into() });
+            return Err(GitHubError::refused("GitHub's refreshed sign-in was not usable"));
         };
         // Kept first; used only once kept.
         self.save(&new)?;

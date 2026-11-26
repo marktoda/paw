@@ -11,7 +11,7 @@ use paw_core::sim::remote::steps;
 use paw_core::key::LoginPurpose;
 use paw_core::task::{KeyOutcome, KeyTaskState};
 use paw_core::sim::SimTouch;
-use paw_core::sync::Connection;
+use paw_core::sync::{Cloned, Connection};
 use support::{GitServer, git};
 
 #[test]
@@ -28,7 +28,7 @@ fn a_clone_and_an_entry_open_take_one_pin_entry() {
     let signer = login.signer().unwrap();
     assert_eq!(rig.sim.verify_attempts(), 1);
     let connection = Connection::open(&server.remote(), &signer).unwrap();
-    steps::clone(&connection, &server.remote(), dir.path()).unwrap();
+    assert_eq!(steps::clone(&connection, &server.remote(), dir.path()).unwrap(), Cloned::Store);
     drop(connection);
     login.finish();
     assert!(matches!(finish(login.task()), KeyTaskState::Done { outcome: KeyOutcome::SignedIn }));

@@ -12,14 +12,24 @@ use std::sync::Arc;
 use key_common::{WAIT, port_with};
 use paw_core::ffi::sync::Setup;
 use paw_core::key::KeyPort;
-use paw_core::setup::outcome::RemoteReason;
-use paw_core::setup::{PortFallback, SetupError, SetupState};
+use paw_core::remote::RemoteFailure;
+use paw_core::setup::{SetupError, SetupState};
 use paw_core::sim::SimTouch;
 use paw_core::sim::remote::{SimRemote, SimRoutes};
+use paw_core::sync::address::AddressNotice;
+use paw_core::sync::hosts::PortFallback;
 
 /// A port nothing listens on.
 fn closed_port() -> u16 {
     TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port()
+}
+
+/// The other way in a failed host check offered, if it made no connection.
+fn offered(error: &SetupError) -> Option<PortFallback> {
+    match error {
+        SetupError::Remote { failure: RemoteFailure::NoConnection { fallback, .. } } => fallback.clone(),
+        _ => None,
+    }
 }
 
 fn at_check_host(routes: &SimRoutes, dir: &std::path::Path, port: &Arc<KeyPort>, address: &str) -> Arc<Setup> {
@@ -43,17 +53,10 @@ fn port_443_is_offered_only_when_port_22_cannot_be_reached_and_used_only_when_as
 
     let error = setup.check_host().unwrap_err();
 
-    assert!(matches!(&error, SetupError::HostUnreachable { host, .. } if host == "github.com"), "{error:?}");
-    assert_eq!(setup.last_remote_message().unwrap().reason, RemoteReason::Unreachable);
+    assert!(matches!(&error, SetupError::Remote { failure: RemoteFailure::NoConnection { host, .. } } if host == "github.com"), "{error:?}");
     assert_eq!(
-        setup.port_fallback(),
-        Some(PortFallback {
-            from_host: "github.com".into(),
-            from_port: 22,
-            host: "ssh.github.com".into(),
-            port: 443,
-            address: "ssh://git@ssh.github.com:443/you/store.git".into(),
-        })
+        offered(&error),
+        Some(PortFallback { from_host: "github.com".into(), from_port: 22, host: "ssh.github.com".into(), port: 443 })
     );
     // Offered, not used.
     assert!(matches!(setup.state(), SetupState::CheckHost { address, .. } if address == "git@github.com:you/store.git"));
@@ -62,8 +65,8 @@ fn port_443_is_offered_only_when_port_22_cannot_be_reached_and_used_only_when_as
 
     let SetupState::CheckHost { address, notice } = state else { panic!("{state:?}") };
     assert_eq!(address, "ssh://git@ssh.github.com:443/you/store.git");
-    assert!(notice.unwrap().contains("port 443"));
-    assert_eq!(setup.port_fallback(), None);
+    let fallback = AddressNotice::PortFallback { from_host: "github.com".into(), from_port: 22, host: "ssh.github.com".into(), port: 443 };
+    assert_eq!(notice, Some(fallback));
     // Survives a relaunch, as any address does.
     assert!(matches!(Setup::open(dir.path().to_string_lossy().into_owned()).unwrap().state(), SetupState::CheckHost { address, .. } if address.contains(":443/")));
 
@@ -72,8 +75,10 @@ fn port_443_is_offered_only_when_port_22_cannot_be_reached_and_used_only_when_as
     // offered and nothing sent.
     routes.redirect("ssh.github.com", 443, Some(host.port()));
     let error = setup.check_host().unwrap_err();
-    assert!(matches!(&error, SetupError::HostKeyChanged { host, .. } if host == "ssh.github.com"), "{error:?}");
-    assert_eq!(setup.port_fallback(), None);
+    assert!(
+        matches!(&error, SetupError::Remote { failure: RemoteFailure::HostKeyChanged { host, bundled: true, .. } } if host == "ssh.github.com"),
+        "{error:?}"
+    );
     assert_eq!(host.logins(), 0);
     assert!(setup.use_port_fallback().is_err());
 
@@ -82,8 +87,8 @@ fn port_443_is_offered_only_when_port_22_cannot_be_reached_and_used_only_when_as
     routes.redirect("github.com", 22, Some(host.port()));
     let dir = tempfile::tempdir().unwrap();
     let setup = at_check_host(&routes, dir.path(), &port, "git@github.com:you/store.git");
-    assert!(matches!(setup.check_host().unwrap_err(), SetupError::HostKeyChanged { .. }));
-    assert_eq!(setup.port_fallback(), None);
+    let error = setup.check_host().unwrap_err();
+    assert!(matches!(error, SetupError::Remote { failure: RemoteFailure::HostKeyChanged { .. } }), "{error:?}");
 
     // Nor is one that accepts the connection and hangs up before SSH.
     let hangs_up = TcpListener::bind(("127.0.0.1", 0)).unwrap();
@@ -94,12 +99,14 @@ fn port_443_is_offered_only_when_port_22_cannot_be_reached_and_used_only_when_as
         }
     });
     routes.redirect("github.com", 22, Some(hang_up_port));
-    assert!(matches!(setup.check_host().unwrap_err(), SetupError::HostUnreachable { .. }));
-    assert_eq!(setup.port_fallback(), None);
+    let error = setup.check_host().unwrap_err();
+    assert!(matches!(error, SetupError::Remote { failure: RemoteFailure::Unreachable { .. } }), "{error:?}");
 
     // Another host's blocked port has nothing to offer.
     let dir = tempfile::tempdir().unwrap();
     let setup = at_check_host(&routes, dir.path(), &port, &format!("ssh://git@127.0.0.1:{}/store.git", closed_port()));
-    assert!(matches!(setup.check_host().unwrap_err(), SetupError::HostUnreachable { .. }));
-    assert_eq!(setup.port_fallback(), None);
+    let error = setup.check_host().unwrap_err();
+    assert!(matches!(error, SetupError::Remote { failure: RemoteFailure::NoConnection { .. } }), "{error:?}");
+    assert_eq!(offered(&error), None);
+    assert!(setup.use_port_fallback().is_err());
 }

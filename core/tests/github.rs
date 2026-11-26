@@ -23,6 +23,7 @@ use paw_core::sim::SimulatedKey;
 use paw_core::sim::github::{SIM_USER_CODE, SimBystander, SimDeviceOutcome, SimGitHub, SimPollClock, SimTokenVault};
 use paw_core::sim::remote::SimRemote;
 use paw_core::sync::operation::{self, SyncState};
+use paw_core::remote::RemoteFailure;
 use paw_core::sync::{self, SyncError};
 
 use key_common::{Driver, finish, port_with, signer_with};
@@ -405,7 +406,7 @@ fn a_repository_not_in_the_list_cannot_be_chosen() {
     let w = world();
     w.sign_in();
     w.account.repositories().unwrap();
-    assert!(matches!(w.account.select_repository("someone/else"), Err(GitHubError::Failed { .. })));
+    assert!(matches!(w.account.select_repository("someone/else"), Err(GitHubError::NotListed { .. })));
     assert!(w.account.linked_repository().is_none());
 }
 
@@ -413,7 +414,7 @@ fn a_repository_not_in_the_list_cannot_be_chosen() {
 fn with_the_vault_empty_nothing_is_sent_anywhere() {
     let w = world();
     assert!(!w.account.is_signed_in().unwrap());
-    assert_eq!(w.account.repositories().unwrap_err(), GitHubError::NotSignedIn);
+    assert_eq!(w.account.repositories().unwrap_err(), GitHubError::Remote { failure: RemoteFailure::NotSignedIn });
     assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::NotSignedIn);
     assert!(w.account.refresh_store().is_err());
     assert!(!w.account.sign_out(true).unwrap().revoked);
@@ -586,7 +587,7 @@ fn a_revoked_sign_in_ends_cleanly_and_leaves_the_store_alone() {
     w.github.revoke_authorisation();
 
     let error = w.account.refresh_store().unwrap_err();
-    assert!(matches!(&error, SyncError::Failed { message } if *message == GitHubError::SignedOut.to_string()), "{error}");
+    assert!(matches!(&error, SyncError::Remote { failure: RemoteFailure::SignedOut }), "{error}");
     assert!(!w.account.is_signed_in().unwrap());
     assert_eq!(w.head(), head);
     w.assert_consistent();
@@ -627,7 +628,7 @@ fn a_hostile_tree_fetched_over_https_is_refused_exactly_as_over_ssh() {
     let over_https = w.account.refresh_store().unwrap_err();
     let over_ssh = ssh_refresh(&w, twin.path()).unwrap_err();
 
-    assert!(matches!((&over_https, &over_ssh), (SyncError::RefusedRemote { .. }, SyncError::RefusedRemote { .. })));
+    assert!(matches!((&over_https, &over_ssh), (SyncError::Remote { failure: RemoteFailure::RefusedContent { .. } }, SyncError::Remote { failure: RemoteFailure::RefusedContent { .. } })));
     assert_eq!(over_https.to_string(), over_ssh.to_string());
     assert!(over_https.to_string().starts_with("the remote contains something paw will not check out"), "{over_https}");
     assert_eq!(sync::refused_remote(&w.repo()).unwrap(), sync::refused_remote(&twin.path().join(paw_core::files::layout::REPO)).unwrap());

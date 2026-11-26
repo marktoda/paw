@@ -1,7 +1,7 @@
 //! Keeping the local copy of the password store in step with the git host.
 //!
 //! This is the whole of paw's use of libgit2: [`clone_with_transfer`], the
-//! fetch, [`integrate`], [`commit`] and the push, plus the unpushed
+//! fetch, the integrate, [`commit`] and the push, plus the unpushed
 //! [`queue`]. The network ones take a [`Connection`], which the caller
 //! opens once and may use for several of them; see `transport` for why
 //! that matters. [`operation`] runs a whole sync on one connection, so one
@@ -24,18 +24,17 @@ use std::time::{Duration, Instant};
 
 use git2::{AutotagOption, Direction, FetchOptions, FileMode, PushOptions, RemoteCallbacks, Repository};
 
-pub(crate) use guard::Refused;
-pub use guard::RefusedPath;
+pub use guard::{RefusedPath, RefusedReason};
 pub use history::{ChangeKind, KeptBoth};
-pub use integrate::{
-    IntegrateReport, Integration, RecipientsChange, Replaced, accept_replaced_remote, integrate,
-};
+pub use integrate::{IntegrateReport, Integration, RecipientsChange, Replaced, accept_replaced_remote};
+#[cfg(feature = "sim")]
+pub use integrate::integrate;
 pub use transport::{ConnectError, Connection, DOWNLOAD_LIMIT, HostKeyPin, PresentedHostKey, Remote, Route, key_type_words, scan_host_key};
-pub(crate) use transport::{made_no_connection, says_repository_missing};
 
 use crate::PawError;
 use crate::files::refs;
 use crate::lock::{Exclusive, FETCH_WAIT, Fetching, StoreLock};
+use crate::remote::RemoteFailure;
 use crate::path::{unsafe_path, unsafe_path_err};
 
 /// Why a sync, an integrate or a change to the queue did not happen. In
@@ -51,33 +50,20 @@ pub enum SyncError {
     /// overwritten.
     #[error("the store has changes that were never saved: {}", .paths.join(", "))]
     UncommittedChanges { paths: Vec<String> },
-    /// The host presented a key other than the pinned ones. Nothing was sent.
-    #[error("{host}'s key changed: expected {}, it presented {presented}", .expected.join(" or "))]
-    HostKeyChanged { host: String, expected: Vec<String>, presented: String },
-    /// See [`PawError::HostKeyBundled`].
-    #[error("{host}'s keys come with paw and can't be forgotten")]
-    HostKeyBundled { host: String },
-    /// The host does not accept the key. Asked before the PIN or a touch.
-    #[error("the git host did not accept this key")]
-    KeyRejected,
-    #[error("could not reach the git host: {detail}")]
-    Network { detail: String },
-    /// The remote moved again while pushing, after one retry.
-    #[error("the remote kept changing; try again")]
-    RemoteKeptMoving,
-    /// The remote holds something paw will not check out (see
-    /// [`refused_remote`]). The store and the waiting changes stay as they
-    /// were; the remote has to be fixed from another computer.
-    #[error("{message}")]
-    RefusedRemote { paths: Vec<RefusedPath>, message: String },
-    /// The host refused the update, by a rule of its own. `detail` is what
-    /// git and the host said.
-    #[error("{detail}")]
-    PushRefused { detail: String },
-    /// The host says the repository is not there, or that this key can't
-    /// see it. `detail` is what git and the host said.
-    #[error("{detail}")]
-    RepositoryMissing { detail: String },
+    /// The remote, its host or the GitHub sign-in that reads it. The store
+    /// and the waiting changes stay as they were.
+    #[error(transparent)]
+    Remote { failure: RemoteFailure },
+    /// The change to discard is being sent right now. Nothing was changed.
+    #[error("this change is being sent right now; wait for the send to finish")]
+    BeingSent,
+    /// No waiting change has this id (it was sent, or discarded).
+    #[error("{id} is not an unpushed change")]
+    NotWaiting { id: String },
+    /// Re-encrypting found the waiting changes changed under it, again and
+    /// again. Those already done stay done.
+    #[error("the waiting changes kept changing while paw was re-encrypting them; try again")]
+    QueueKeptChanging,
     /// See [`PawError::StoreBusy`].
     #[error("{}", crate::lock::STORE_BUSY)]
     StoreBusy,
@@ -91,11 +77,23 @@ pub enum SyncError {
 impl From<PawError> for SyncError {
     fn from(error: PawError) -> Self {
         match error {
-            PawError::KeyRejected => Self::KeyRejected,
-            PawError::Network(detail) => Self::Network { detail },
             PawError::StoreBusy => Self::StoreBusy,
-            PawError::HostKeyBundled { host } => Self::HostKeyBundled { host },
             other => Self::Failed { message: other.to_string() },
+        }
+    }
+}
+
+impl From<RemoteFailure> for SyncError {
+    fn from(failure: RemoteFailure) -> Self {
+        Self::Remote { failure }
+    }
+}
+
+impl crate::remote::AboutRemote for SyncError {
+    fn remote_failure(&self) -> Option<&RemoteFailure> {
+        match self {
+            Self::Remote { failure } => Some(failure),
+            _ => None,
         }
     }
 }
@@ -288,7 +286,7 @@ pub(crate) fn fetch_branches(
     store: &StoreLock,
     repo: &Repository,
     progress: Option<TransferCallback<'_>>,
-) -> Result<(Option<String>, Exclusive), PawError> {
+) -> Result<(Option<String>, Exclusive), SyncError> {
     let fetching = begin_fetch(store, repo)?;
     let default = connection.with_remote(repo, |remote| fetch_connected(remote, progress))?;
     let held = store.exclusive()?;
@@ -348,7 +346,7 @@ pub fn clone_with_transfer(
     remote: &Remote,
     dir: &Path,
     progress: Option<TransferCallback<'_>>,
-) -> Result<Cloned, PawError> {
+) -> Result<Cloned, SyncError> {
     // A new repository at `<state>/repo` is made under its store's lock;
     // one anywhere else is known to nobody until it exists.
     let repo = {
@@ -581,9 +579,7 @@ pub(crate) fn check_not_being_sent(
         return Ok(());
     }
     if sending == removed || repo.graph_descendant_of(sending, removed).unwrap_or(true) {
-        return Err(SyncError::Failed {
-            message: "this change is being sent right now; wait for the send to finish".into(),
-        });
+        return Err(SyncError::BeingSent);
     }
     Ok(())
 }
@@ -593,7 +589,7 @@ pub(crate) fn check_not_being_sent(
 pub enum PushError {
     /// The remote has moved since it was fetched: fetch, integrate and try
     /// again. paw never forces.
-    #[error("{}", PawError::NotFastForward)]
+    #[error("the remote has changes that are not in this copy")]
     NotFastForward,
     #[error(transparent)]
     Failed(SyncError),
@@ -601,10 +597,7 @@ pub enum PushError {
 
 impl From<PawError> for PushError {
     fn from(error: PawError) -> Self {
-        match error {
-            PawError::NotFastForward => Self::NotFastForward,
-            other => Self::Failed(other.into()),
-        }
+        Self::Failed(error.into())
     }
 }
 
@@ -637,6 +630,7 @@ pub(crate) fn push_tip(
     // there are no tracking refs for libgit2 to update).
     let refspec = format!("{tip}:{branch}");
     let mut refused = None;
+    let mut behind = false;
     let sent = connection.with_remote(repo, |remote| {
         let mut callbacks = RemoteCallbacks::new();
         // A push "succeeds" even when the host rejects the branch update;
@@ -647,18 +641,24 @@ pub(crate) fn push_tip(
         });
         let mut options = PushOptions::new();
         options.remote_callbacks(callbacks);
-        remote.push(&[&refspec], Some(&mut options))
+        let pushed = remote.push(&[&refspec], Some(&mut options));
+        behind = pushed.as_ref().is_err_and(|e| e.code() == git2::ErrorCode::NotFastForward);
+        pushed
     });
 
     let outcome = match (sent, refused) {
-        (Err(e), _) => Err(e.into()),
+        (Err(_), _) if behind => Err(PushError::NotFastForward),
+        (Err(e), _) => Err(PushError::Failed(e)),
         // The host moved between our look at its branch and our update.
         (Ok(()), Some(why)) if why.contains("non-fast-forward") || why.contains("fetch first") => {
             Err(PushError::NotFastForward)
         }
-        (Ok(()), Some(why)) => Err(PushError::Failed(SyncError::PushRefused {
-            detail: PawError::Git(format!("the host refused the push: {why}")).to_string(),
-        })),
+        (Ok(()), Some(why)) => Err(PushError::Failed(
+            RemoteFailure::PushRefused {
+                detail: PawError::Git(format!("the host refused the push: {why}")).to_string(),
+            }
+            .into(),
+        )),
         (Ok(()), None) => Ok(()),
     };
     let clear_marker = || {

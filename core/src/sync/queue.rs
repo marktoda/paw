@@ -86,7 +86,7 @@ fn discard_locked(held: &Exclusive, dir: &Path, id: &str) -> Result<(), SyncErro
     let repo = super::guard::open(dir)?;
     let local = waiting(&repo)?;
     let Some(position) = local.commits.iter().position(|c| c.commit.id().to_string() == id) else {
-        return Err(SyncError::Failed { message: format!("{id} is not an unpushed change") });
+        return Err(SyncError::NotWaiting { id: id.to_owned() });
     };
     check_not_being_sent(held, &StoreLock::for_repo(dir), &repo, &local.short, local.commits[position].commit.id())?;
     ensure_clean(&repo)?;

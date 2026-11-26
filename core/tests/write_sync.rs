@@ -15,8 +15,10 @@ use std::sync::Arc;
 use paw_core::sim::remote::steps;
 use paw_core::files::content_id;
 use paw_core::entry::EntryDoc;
+use paw_core::key::KeyError;
 use paw_core::sim::SimulatedKey;
 use paw_core::sync::operation::SyncState;
+use paw_core::task::TaskFailure;
 use paw_core::sync::{self, ChangeKind, Connection, Integration, KeptBoth, queue};
 use paw_core::write::{EntryDraft, Keyring, WriteStore, held_back};
 use pgp::types::KeyDetails;
@@ -255,7 +257,7 @@ fn a_waiting_change_is_not_pushed_after_its_recipients_changed() {
     let held = held_back::held_back(&w.repo(), w.state.path()).unwrap();
     assert_eq!(held.len(), 1, "{held:?}");
     assert_eq!(held[0].entry, "Work/new");
-    assert_eq!(held[0].gpg_id, ".gpg-id");
+    assert_eq!(held[0].gpg_id.as_deref(), Some(".gpg-id"));
     assert_eq!(held[0].encrypted_for, [format!("key ID {}", &card_fpr[24..])]);
     assert_eq!(held[0].recipients, [card_fpr.clone(), other_fpr.clone()]);
     assert_eq!(held[0].list, held_back::HeldBackList::NotAccepted);
@@ -293,7 +295,7 @@ fn add_a_recipient(w: &World) -> (String, String) {
 fn open_with_card(
     w: &World,
     opened: &std::cell::RefCell<Vec<String>>,
-) -> impl FnMut(&held_back::HeldBack, &[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>, held_back::OpenFailure> {
+) -> impl FnMut(&held_back::HeldBack, &[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>, held_back::OpenFailure<TaskFailure>> {
     move |item, bytes| {
         opened.borrow_mut().push(item.entry.clone());
         Ok(zeroize::Zeroizing::new(decrypt(&w.card, PIN, bytes).unwrap()))
@@ -302,7 +304,10 @@ fn open_with_card(
 
 /// Re-encrypts the held-back changes as the app's key task does, opening
 /// each with the card.
-fn reencrypt(w: &World, opened: &std::cell::RefCell<Vec<String>>) -> Result<held_back::ReencryptReport, sync::SyncError> {
+fn reencrypt(
+    w: &World,
+    opened: &std::cell::RefCell<Vec<String>>,
+) -> Result<held_back::ReencryptReport, TaskFailure> {
     held_back::reencrypt_each(&w.repo(), w.state.path(), &mut open_with_card(w, opened), &mut |_, _| {})
 }
 
@@ -375,13 +380,33 @@ fn a_held_back_change_that_cannot_be_opened_is_left_as_it_was() {
     Keyring::open(w.state.path()).unwrap().accept_recipients(&paw_core::lock::StoreLock::for_repo(&w.repo()).exclusive().unwrap(), &w.repo(), "Work").unwrap();
     let tip = head(&w.repo());
 
-    let mut open =
-        |_: &held_back::HeldBack, _: &[u8]| Err(held_back::OpenFailure::Stop(sync::SyncError::Failed { message: "no touch".into() }));
+    let mut open = |_: &held_back::HeldBack, _: &[u8]| Err(held_back::OpenFailure::from(KeyError::TouchTimeout));
     let error = held_back::reencrypt_each(&w.repo(), w.state.path(), &mut open, &mut |_, _| {}).unwrap_err();
 
-    assert!(error.to_string().contains("no touch"), "{error}");
+    assert!(matches!(error, TaskFailure::Key(KeyError::TouchTimeout)), "{error:?}");
     assert_eq!(head(&w.repo()), tip);
     assert_eq!(held_back::held_back(&w.repo(), w.state.path()).unwrap().len(), 1);
+}
+
+#[test]
+fn a_held_back_change_the_key_cannot_open_is_left_with_why_and_the_run_goes_on() {
+    let w = world();
+    w.write().save(&new_entry("Work", "new", "new-pw")).unwrap();
+    add_a_recipient(&w);
+    Keyring::open(w.state.path()).unwrap().accept_recipients(&paw_core::lock::StoreLock::for_repo(&w.repo()).exclusive().unwrap(), &w.repo(), "Work").unwrap();
+    let tip = head(&w.repo());
+
+    for (error, reason) in [
+        (KeyError::NotForThisKey { recipients: vec![] }, held_back::LeftReason::NotForThisKey),
+        (KeyError::DecryptFailed { detail: "damaged".into() }, held_back::LeftReason::Unreadable),
+    ] {
+        let mut open = |_: &held_back::HeldBack, _: &[u8]| Err(held_back::OpenFailure::from(error.clone()));
+        let report: held_back::ReencryptReport =
+            held_back::reencrypt_each::<TaskFailure>(&w.repo(), w.state.path(), &mut open, &mut |_, _| {}).unwrap();
+
+        assert_eq!((report.reencrypted, left(&report)), (0, vec![reason]));
+        assert_eq!(head(&w.repo()), tip);
+    }
 }
 
 /// How many keys each version of `path` in the queue is encrypted for,

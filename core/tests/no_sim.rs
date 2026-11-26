@@ -7,7 +7,7 @@
 fn the_device_build_keeps_its_limits() {
     assert_eq!(paw_core::key::MAX_DECIPHERS, 1);
     assert_eq!(paw_core::sync::DOWNLOAD_LIMIT, 256 << 20);
-    let refused = paw_core::sync::RefusedPath { path: "up".into(), reason: "it is a symbolic link".into() };
+    let refused = paw_core::sync::RefusedPath { path: "up".into(), reasons: vec![paw_core::sync::RefusedReason::SymbolicLink] };
     assert_eq!(refused.clone(), refused);
 }
 

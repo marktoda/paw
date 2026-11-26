@@ -5,10 +5,9 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::{SetupError, SetupFlow};
-use crate::PawError;
 use crate::key::{Failure, KeyError, KeyIdentity, KeyPort, KeySession, SessionSigner, TaskSide};
 use crate::store::PassStore;
-use crate::sync::{Cloned, ConnectError, Connection, TransferProgress};
+use crate::sync::{ConnectError, Connection, TransferProgress};
 
 /// How a keyed setup step failed: the key, or setup.
 pub(crate) type StepFailure = Failure<SetupError>;
@@ -30,20 +29,20 @@ pub(crate) fn download(
     let cancelled = || Failure::Key(KeyError::Cancelled);
     let (remote, repo) = lock(flow).begin_download().map_err(Failure::Work)?;
     if task.cancelled() {
-        let _ = lock(flow).abandon_download();
+        lock(flow).abandon_download();
         return Err(cancelled());
     }
     let connection = match Connection::open(&remote, signer) {
         Ok(connection) => connection,
         Err(error) => {
             let mut flow = lock(flow);
-            let _ = flow.abandon_download();
+            flow.abandon_download();
             if task.cancelled() {
                 return Err(cancelled());
             }
             return Err(match error {
                 ConnectError::Key(error) => error.into(),
-                ConnectError::Remote(error) => Failure::Work(flow.connection_error(&remote, error, None)),
+                ConnectError::Sync(error) => Failure::Work(SetupError::from(error)),
             });
         }
     };
@@ -56,14 +55,12 @@ pub(crate) fn download(
         task.report_progress(update.received_objects, update.total_objects)
     };
     let cloned = crate::sync::clone_with_transfer(&connection, &remote, &repo, Some(&mut progress));
-    let said = connection.remote_said();
     drop(connection);
     if !task.begin_commit() {
-        let _ = lock(flow).abandon_download();
+        lock(flow).abandon_download();
         return Err(cancelled());
     }
-    let cloned: Result<Cloned, PawError> = cloned;
-    lock(flow).finish_download(&remote, cloned, said).map_err(Failure::Work)?;
+    lock(flow).finish_download(cloned).map_err(Failure::Work)?;
     Ok(())
 }
 

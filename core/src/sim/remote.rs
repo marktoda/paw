@@ -1105,32 +1105,26 @@ async fn receive_pack(shared: &Shared, input: &mut Input, out: &mut (impl AsyncW
 pub mod steps {
     use std::path::Path;
 
-    use crate::PawError;
     use crate::lock::{FETCH_WAIT, StoreLock};
     use crate::ssh::SshSigner;
     use crate::sync::operation::{self, SyncReport};
     use crate::files::refs;
-    use crate::sync::{self, Cloned, Connection, Remote, git_err};
+    use crate::sync::{self, Cloned, Connection, Remote, SyncError, git_err};
 
     /// Clones the remote's default branch into `dir`, which must be empty
-    /// or not exist yet. An empty repository, or one holding what paw will
-    /// not check out, is an error.
-    pub fn clone(connection: &Connection, remote: &Remote, dir: &Path) -> Result<(), PawError> {
-        match sync::clone_with_transfer(connection, remote, dir, None)? {
-            Cloned::Store => Ok(()),
-            Cloned::Empty => Err(PawError::Git("the remote repository is empty".into())),
-            Cloned::Refused(paths) => Err(sync::Refused(paths).into()),
-        }
+    /// or not exist yet, as setup's download does.
+    pub fn clone(connection: &Connection, remote: &Remote, dir: &Path) -> Result<Cloned, SyncError> {
+        sync::clone_with_transfer(connection, remote, dir, None)
     }
 
     /// Updates `origin/*` from the remote and returns the new tip of the
     /// current branch's remote counterpart. The working copy is not changed.
-    pub fn fetch(connection: &Connection, dir: &Path) -> Result<String, PawError> {
+    pub fn fetch(connection: &Connection, dir: &Path) -> Result<String, SyncError> {
         let store = StoreLock::for_repo(dir);
         let repo = sync::guard::open(dir)?;
         let (_, _held) = sync::fetch_branches(connection, &store, &repo, None)?;
         let (_, short) = sync::current_branch(&repo)?;
-        repo.refname_to_id(&refs::remote_tracking(&short)).map(|id| id.to_string()).map_err(git_err)
+        Ok(repo.refname_to_id(&refs::remote_tracking(&short)).map(|id| id.to_string()).map_err(git_err)?)
     }
 
     /// Pushes the current branch to the branch of the same name, as a

@@ -9,7 +9,7 @@ enum SetupScreen: Equatable {
     case welcome
     case plugIn
     case yourKey(KeySummary)
-    case address(notice: String?)
+    case address(notice: AddressNotice?)
     case confirmHost(host: String, algorithm: String, fingerprint: String)
     case keyNotAccepted(host: String, publicKey: String)
     case download(address: String)
@@ -278,7 +278,7 @@ final class SetupModel {
     var addressReading: AddressReading? {
         let typed = addressText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !typed.isEmpty else { return nil }
-        return try? readStoreAddress(text: typed)
+        return readStoreAddress(text: typed)
     }
 
     /// "Connects to github.com as git."
@@ -610,16 +610,7 @@ final class SetupModel {
     private func stopped(_ purpose: SetupSheet.Purpose, because error: SetupError?) {
         state = setup.state()
         if let error {
-            let refused = purpose == .download ? setup.refusedRemote() : []
-            if refused.isEmpty {
-                show(error, during: purpose == .download ? .downloading : .checkingKey)
-            } else {
-                problem = SetupProblem(
-                    problem: SyncFailure.refusedRemoteProblem,
-                    nextStep: "Rename or remove them on a computer, then try again.",
-                    details: refused.map { "\($0.path): \($0.reason)" },
-                    action: .retry, actionTitle: "Try again")
-            }
+            show(error, during: purpose == .download ? .downloading : .checkingKey)
         }
         if purpose == .download {
             simulator?.downloadFailed()
@@ -635,26 +626,12 @@ final class SetupModel {
                 actionTitle: "Try again")
             return
         }
-        // What the host said picks the words for a few failures that share
-        // a case, "no store at that address" in particular.
-        if [.checkingHost, .downloading, .forgettingHostKey].contains(moment),
-           let remote = setup.lastRemoteMessage(), let words = SetupWords.remoteWords(remote) {
-            problem = words
-            return
-        }
         switch error {
-        case .BadAddress(let message):
-            addressProblem = message
-        case .KeyNotAccepted(let host, let publicKey):
+        case .BadAddress(let problem):
+            addressProblem = addressProblemWords(problem)
+        case .Remote(.keyNotAccepted(let host, let publicKey)):
             notAccepted = KeyNotAccepted(host: host, publicKey: publicKey)
-        case .HostKeyChanged(let host, let expected, let presented):
-            let bundled = (try? readStoreAddress(text: addressSet))?.hostKeyBundled ?? false
-            problem = SetupWords.hostKeyChanged(host: host, expected: expected, presented: presented, bundled: bundled)
-        case .HostUnreachable:
-            var words = SetupWords.words(error, during: moment)
-            words.offer = setup.portFallback().map(SetupWords.portFallbackOffer)
-            problem = words
-        case .HostKeyBundled(let host) where moment == .forgettingHostKey:
+        case .Remote(.hostKeyBundled(let host)) where moment == .forgettingHostKey:
             problem = SetupWords.hostKeyKept(hostKeyBundled(host))
         case .Failed(let message) where moment == .forgettingHostKey:
             problem = SetupWords.hostKeyKept(message)
