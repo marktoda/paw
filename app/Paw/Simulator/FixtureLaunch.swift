@@ -11,19 +11,11 @@ import SwiftUI
 /// (`WritableFixture`, `-pawSimRecipients changed|missing`).
 enum FixtureLaunch {
     static var isRequested: Bool {
-        LaunchArguments.bool("pawFixture")
-    }
-
-    static var colorScheme: ColorScheme? {
-        switch LaunchArguments.string("pawAppearance") {
-        case "dark": return .dark
-        case "light": return .light
-        default: return nil
-        }
+        LaunchArgument.fixture.bool
     }
 
     private static var faceId: SimFaceId {
-        switch LaunchArguments.string("pawSimFaceId") {
+        switch LaunchArgument.simFaceId.string {
         case "cancel": return .cancel
         case "nomatch": return .noMatch
         case "lockout": return .lockedOut
@@ -60,7 +52,7 @@ enum FixtureLaunch {
         let copies = CopyCache(
             dir: copiesDir.path, keystore: SimKeystoreAdapter(sim: keystore), clock: sharedClock)
         let key = SimulatedKeyHolder.shared
-        let away = LaunchArguments.int("pawSimAwayMs") ?? 0
+        let away = LaunchArgument.simAwayMs.int ?? 0
         // The key log goes into the fixture's own folder, so Settings ›
         // Key diagnostics shows it; set before the key is first read.
         let keyPort = KeyPort(clock: sharedClock)
@@ -123,7 +115,7 @@ struct FixtureRoot: View {
                 PawColor.bg.ignoresSafeArea()
             }
         }
-        .preferredColorScheme(FixtureLaunch.colorScheme)
+        .preferredColorScheme(LaunchArgument.colorScheme)
         .onAppear {
             guard model == nil, problem == nil else { return }
             do {

@@ -83,7 +83,7 @@ enum WritableFixture {
             throw Failure(errorDescription: "Setup stopped at \(state).")
         }
         let sync = try? StoreSync.open(stateDir: stateDir.path)
-        if let mode = LaunchArguments.string("pawSimRecipients"), let sync {
+        if let mode = LaunchArgument.simRecipients.string, let sync {
             var lines = key.fingerprintHex() + "\n"
             if mode == "missing" {
                 lines += SimulatedKey.newOther(pin: pin, touchRequired: false, touchTimeoutMs: 1_000).fingerprintHex() + "\n"

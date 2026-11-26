@@ -6,19 +6,11 @@ import SwiftUI
 /// `-pawAppearance dark|light`. Debug builds only.
 enum GalleryLaunch {
     static var isRequested: Bool {
-        LaunchArguments.bool("pawGallery")
+        LaunchArgument.gallery.bool
     }
 
     static var page: GalleryPage? {
-        LaunchArguments.string("pawGalleryPage").flatMap(GalleryPage.init(rawValue:))
-    }
-
-    static var colorScheme: ColorScheme? {
-        switch LaunchArguments.string("pawAppearance") {
-        case "dark": return .dark
-        case "light": return .light
-        default: return nil
-        }
+        LaunchArgument.galleryPage.string.flatMap(GalleryPage.init(rawValue:))
     }
 }
 
@@ -77,7 +69,7 @@ struct GalleryRoot: View {
                 }
             }
         }
-        .preferredColorScheme(GalleryLaunch.colorScheme)
+        .preferredColorScheme(LaunchArgument.colorScheme)
     }
 }
 

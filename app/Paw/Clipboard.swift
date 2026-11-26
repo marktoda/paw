@@ -25,7 +25,7 @@ enum Clipboard {
     /// own expiry on the simulated clock instead.
     private static var systemLifetime: TimeInterval {
         #if DEBUG && targetEnvironment(simulator)
-        if let seconds = LaunchArguments.int("pawSimPasteboardSecs") {
+        if let seconds = LaunchArgument.simPasteboardSecs.int {
             return TimeInterval(seconds)
         }
         #endif

@@ -139,7 +139,7 @@ final class StoreRootModel {
                 dir: location.copiesDir.path, keystore: keystore.asKeystore(), clock: clock)
             let held = SimulatedKeyHolder.shared
             let simulatedClock = simulatedClock
-            let away = LaunchArguments.int("pawSimAwayMs") ?? 0
+            let away = LaunchArgument.simAwayMs.int ?? 0
             let simulator: SimulatorControls? = SimulatorControls(
                 advanceClock: { simulatedClock.advanceMs(ms: $0) },
                 plugIn: { held.key.plugIn() },
@@ -350,7 +350,7 @@ struct StoreRoot: View {
 
     private static var appearance: ColorScheme? {
         #if DEBUG && targetEnvironment(simulator)
-        FixtureLaunch.colorScheme
+        LaunchArgument.colorScheme
         #else
         nil
         #endif
@@ -440,7 +440,7 @@ enum SimLockedLaunch {
         var description: String { "Operation not permitted (os error 1) (simulated lock)" }
     }
 
-    @MainActor static var isLocked = LaunchArguments.bool("pawSimLockedLaunch")
+    @MainActor static var isLocked = LaunchArgument.simLockedLaunch.bool
 
     @MainActor static func unlock() {
         isLocked = false

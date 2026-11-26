@@ -15,15 +15,15 @@ import Foundation
 /// The simulated key's own arguments (`-pawSimPin` and the rest) apply too.
 enum SetupLaunch {
     static var isRequested: Bool {
-        LaunchArguments.bool("pawSetup")
+        LaunchArgument.setup.bool
     }
 
     static var keepsState: Bool {
-        LaunchArguments.bool("pawSetupKeep")
+        LaunchArgument.setupKeep.bool
     }
 
     fileprivate static var remoteMode: String? {
-        LaunchArguments.string("pawSimRemote")
+        LaunchArgument.simRemote.string
     }
 }
 

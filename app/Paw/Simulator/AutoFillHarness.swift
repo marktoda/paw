@@ -28,7 +28,7 @@ import SwiftUI
 /// SHA-256, never the password; a code likewise, by length and SHA-256.
 enum AutoFillHarnessLaunch {
     static var isRequested: Bool {
-        LaunchArguments.string("pawHostProvider") != nil || LaunchArguments.string("pawHostProviderEntry") != nil
+        LaunchArgument.hostProvider.string != nil || LaunchArgument.hostProviderEntry.string != nil
     }
 
     /// What iOS would ask for.
@@ -38,11 +38,11 @@ enum AutoFillHarnessLaunch {
     }
 
     static func request(run: Int) -> Ask {
-        if let path = LaunchArguments.string("pawHostProviderEntry") {
+        if let path = LaunchArgument.hostProviderEntry.string {
             let (kind, bare) = parse(path)
             return .entry(suggestion(kind, path: bare))
         }
-        let sites = (LaunchArguments.string("pawHostProvider") ?? "").split(separator: ",").map(String.init)
+        let sites = (LaunchArgument.hostProvider.string ?? "").split(separator: ",").map(String.init)
         let (kind, site) = parse(sites.isEmpty ? "" : sites[min(run, sites.count - 1)])
         // `app`: an app iOS gives no site for.
         return .list(site == "app" ? [] : [ASCredentialServiceIdentifier(identifier: site, type: .URL)], kind)
@@ -66,20 +66,12 @@ enum AutoFillHarnessLaunch {
     private static func parse(_ value: String) -> (AutoFillKind, String) {
         value.hasPrefix("code:") ? (.oneTimeCode, String(value.dropFirst(5))) : (.password, value)
     }
-
-    static var colorScheme: ColorScheme? {
-        switch LaunchArguments.string("pawAppearance") {
-        case "dark": return .dark
-        case "light": return .light
-        default: return nil
-        }
-    }
 }
 
 struct AutoFillHarnessRoot: View {
     var body: some View {
         AutoFillHarnessView()
-            .preferredColorScheme(AutoFillHarnessLaunch.colorScheme)
+            .preferredColorScheme(LaunchArgument.colorScheme)
     }
 }
 
@@ -91,7 +83,7 @@ private final class HarnessWorld: @unchecked Sendable {
     /// and the site pairings and code list, to show what was recorded.
     private(set) var source: AutoFillSource?
     private let lock = NSLock()
-    private var busyOnce = LaunchArguments.string("pawHostProviderStore") == "busy"
+    private var busyOnce = LaunchArgument.hostProviderStore.string == "busy"
 
     /// What the model's open finds: busy once if asked, then `opening`.
     func open() -> AutoFillOpening {
@@ -105,7 +97,7 @@ private final class HarnessWorld: @unchecked Sendable {
     }
 
     init() {
-        if LaunchArguments.string("pawHostProviderStore") == "none" {
+        if LaunchArgument.hostProviderStore.string == "none" {
             opening = .noStore
             return
         }
@@ -118,7 +110,7 @@ private final class HarnessWorld: @unchecked Sendable {
             // `finance/northwind` and `contoso/alice`: named without a domain.
             try writeNameMatchEntries(dir: location.repoDir.path)
             let keystore = SimKeystore()
-            switch LaunchArguments.string("pawSimFaceId") {
+            switch LaunchArgument.simFaceId.string {
             case "cancel": keystore.setFaceId(answer: .cancel)
             case "nomatch": keystore.setFaceId(answer: .noMatch)
             default: keystore.setFaceId(answer: .match)
@@ -127,7 +119,7 @@ private final class HarnessWorld: @unchecked Sendable {
             let source = try AutoFillSource.open(
                 at: location, clock: clock, connect: { try KeyConnection.open() },
                 copies: { CopyCache(dir: $0.path, keystore: keystore.asKeystore(), clock: clock) })
-            if LaunchArguments.bool("pawSimOneTimeCodes") {
+            if LaunchArgument.simOneTimeCodes.bool {
                 try source.codes?.setEnabled(enabled: true)
             }
             opening = .ready(source)
@@ -236,7 +228,7 @@ private struct AutoFillHarnessView: View {
                     }
                     .overlay(alignment: .topTrailing) {
                         // `-pawHarnessDismiss 1`: stands in for a swipe down.
-                        if LaunchArguments.bool("pawHarnessDismiss") {
+                        if LaunchArgument.harnessDismiss.bool {
                             SimulatorActionButton(action: SimulatorAction(
                                 title: "swipe the sheet away", identifier: "harness-dismiss") { run.dismiss() })
                                 .padding(.top, PawMetrics.Spacing.xxl * 2)
