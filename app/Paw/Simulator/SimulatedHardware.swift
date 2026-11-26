@@ -30,12 +30,32 @@ final class SimulatedClockHolder {
 }
 /// The app's platform on the launch's simulated hardware: its key
 /// (`-pawSimPin`, `-pawSimTouch`, `-pawSimUnplugged`, …), clock and Face ID
-/// (`SimulatedClockHolder`, `SimulatedKeystoreHolder`).
+/// (`SimulatedClockHolder`, `SimulatedKeystoreHolder`), and its lock
+/// (`-pawSimLockedLaunch`).
 enum LaunchedHardware {
     @MainActor static var app: Platform {
         .simulated(
             .app, keys: .launched, clock: SimulatedClockHolder.shared.clock.asClock(),
-            keystore: SimulatedKeystoreHolder.keystore.asKeystore())
+            keystore: SimulatedKeystoreHolder.keystore.asKeystore(), lockedOut: SimLockedLaunch.refusal,
+            removesLegacyStore: !LegacyStore.plantsInstead)
     }
+
+    /// `app` for `StoreRoot`, which reads the store only after this.
+    @MainActor static var storeRoot: Platform {
+        _ = launchedStore
+        return app
+    }
+
+    /// Once per launch: `-pawSetup 1` deletes what earlier launches set up
+    /// (unless `-pawSetupKeep 1`), and `-pawPlantLegacy 1` leaves a store
+    /// where paw kept it before, for the next launch to delete.
+    private static let launchedStore: Void = {
+        if SetupLaunch.isRequested, !SetupLaunch.keepsState {
+            try? StoreLocation.standard().removeAll()
+        }
+        if LegacyStore.plantsInstead {
+            LegacyStore.plant()
+        }
+    }()
 }
 #endif

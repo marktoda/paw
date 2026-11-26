@@ -31,11 +31,6 @@ final class StoreRootModel {
 
         init(_ platform: Platform) throws {
             let location = try StoreLocation.standard()
-            #if DEBUG && targetEnvironment(simulator)
-            if SetupLaunch.isRequested, !SetupLaunch.keepsState {
-                try location.removeAll()
-            }
-            #endif
             try location.prepare()
             self.location = location
             keys = StoreKeys(platform, at: location)
@@ -58,13 +53,9 @@ final class StoreRootModel {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.retryAfterUnlock() }
         }
-        #if DEBUG && targetEnvironment(simulator)
-        if LegacyStore.plantsInstead {
-            LegacyStore.plant()
-            return
+        if platform.removesLegacyStore {
+            LegacyStore.remove()
         }
-        #endif
-        LegacyStore.remove()
     }
 
     /// Opens the store again if it could not be read before: after the
@@ -80,9 +71,7 @@ final class StoreRootModel {
         guard let base = base ?? makeBase() else { return }
         gitHub?.reload()
         do {
-            #if DEBUG && targetEnvironment(simulator)
-            if SimLockedLaunch.isLocked { throw SimLockedLaunch.Unreadable() }
-            #endif
+            if let refused = platform.protectedDataRefusal() { throw refused }
             let setup = try Setup.open(stateDir: base.location.stateDir.path)
             if case .done = setup.state() {
                 openHome()
@@ -115,7 +104,7 @@ final class StoreRootModel {
     private func fail(_ error: Error) {
         // While the phone is locked the protected files can't be read, so
         // the failure says nothing about the store: wait for the unlock.
-        guard ProtectedData.isAvailable else {
+        guard platform.isProtectedDataAvailable else {
             phase = .waitingForUnlock
             return
         }
@@ -310,24 +299,21 @@ private struct StoreRootContent: View {
     }
 }
 
-/// Whether files protected with `NSFileProtectionComplete` can be read now.
-enum ProtectedData {
-    @MainActor static var isAvailable: Bool {
-        #if DEBUG && targetEnvironment(simulator)
-        if SimLockedLaunch.isLocked { return false }
-        #endif
-        return UIApplication.shared.isProtectedDataAvailable
+extension Platform {
+    /// Whether files protected with `NSFileProtectionComplete` can be read
+    /// now: not while the iPhone is locked.
+    @MainActor var isProtectedDataAvailable: Bool {
+        protectedDataRefusal() == nil && UIApplication.shared.isProtectedDataAvailable
     }
+}
 
+enum ProtectedData {
     /// Whether `error` may only mean that the system refused paw's files,
     /// as iOS does for protected files while the phone is locked: the
     /// error says so, or the store's files in `stateDir` are refused now
     /// (the core's errors carry no such kind). Such an error never offers
     /// to delete the store: the store is probably fine.
     static func mayBeLocked(_ error: Error, stateDir: URL?) -> Bool {
-        #if DEBUG && targetEnvironment(simulator)
-        if error is SimLockedLaunch.Unreadable { return true }
-        #endif
         if let error = error as? CocoaError,
            error.code == .fileReadNoPermission || error.code == .fileWriteNoPermission {
             return true

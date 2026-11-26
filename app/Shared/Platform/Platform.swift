@@ -2,28 +2,35 @@ import CryptoTokenKit
 import Foundation
 
 /// The hardware one paw process runs on: where the key comes from, the
-/// clock, the Face ID keystore, and the process's name in the key log.
-/// There are two: the device's, and in the simulator's debug builds a
-/// simulated one. Each process entry point (the app's launch, the
-/// extension's request, the fixture and the AutoFill harness) picks one
-/// and hands it down; nothing below an entry point picks either.
+/// clock, the Face ID keystore, the iPhone's lock, and the process's name
+/// in the key log. There are two: the device's, and in the simulator's
+/// debug builds a simulated one. Each process entry point (the app's
+/// launch, the extension's request, the fixture and the AutoFill harness)
+/// picks one and hands it down; nothing below an entry point picks either.
 struct Platform {
     let process: StoreProcess
     let keys: any KeyConnector
     /// The copies' clock, the key port's and the clipboard's.
     let clock: Clock
+    /// Whether the app's launch deletes what paw left where it kept the
+    /// store before (`LegacyStore`).
+    let removesLegacyStore: Bool
     private let makeCopies: (_ dir: String) -> CopyCache?
     private let wipeKeychain: () throws -> Void
+    private let lockedOut: @MainActor () -> Error?
 
     private init(
         process: StoreProcess, keys: any KeyConnector, clock: Clock, copies: @escaping (_ dir: String) -> CopyCache?,
-        resetKeychain: @escaping () throws -> Void
+        resetKeychain: @escaping () throws -> Void, lockedOut: @escaping @MainActor () -> Error?,
+        removesLegacyStore: Bool
     ) {
         self.process = process
         self.keys = keys
         self.clock = clock
         makeCopies = copies
         wipeKeychain = resetKeychain
+        self.lockedOut = lockedOut
+        self.removesLegacyStore = removesLegacyStore
     }
 
     /// The phone: the key on the USB-C port, the system's clocks, and the
@@ -40,19 +47,31 @@ struct Platform {
                 guard (try? KeychainGroup.shared()) != nil else { return nil }
                 return CopyCache(dir: dir, keystore: EnclaveKeystore(), clock: clock)
             },
-            resetKeychain: { try EnclaveKeystore().deleteCopyKeys() })
+            resetKeychain: { try EnclaveKeystore().deleteCopyKeys() },
+            lockedOut: { nil }, removesLegacyStore: true)
     }
 
     #if DEBUG && targetEnvironment(simulator)
+    /// `lockedOut` is the simulated iPhone's lock: while it is locked,
+    /// what reading the store's files throws.
     static func simulated(
-        _ process: StoreProcess, keys: SimulatedKeyConnector, clock: Clock, keystore: DeviceKeystore?
+        _ process: StoreProcess, keys: SimulatedKeyConnector, clock: Clock, keystore: DeviceKeystore?,
+        lockedOut: @escaping @MainActor () -> Error? = { nil }, removesLegacyStore: Bool = true
     ) -> Platform {
         Platform(
             process: process, keys: keys, clock: clock,
             copies: { dir in keystore.map { CopyCache(dir: dir, keystore: $0, clock: clock) } },
-            resetKeychain: { try keystore?.reset() })
+            resetKeychain: { try keystore?.reset() }, lockedOut: lockedOut, removesLegacyStore: removesLegacyStore)
     }
     #endif
+
+    /// What reading the store's protected files throws now although the
+    /// files themselves would be read: the simulated iPhone's lock. Always
+    /// `nil` on a device, where the system itself refuses them while the
+    /// iPhone is locked.
+    @MainActor func protectedDataRefusal() -> Error? {
+        lockedOut()
+    }
 
     /// The Face ID copies kept in `dir`; `nil` where this platform keeps
     /// none, and then every open uses the key.

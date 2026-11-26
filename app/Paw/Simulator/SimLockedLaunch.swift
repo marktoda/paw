@@ -12,6 +12,12 @@ enum SimLockedLaunch {
 
     @MainActor static var isLocked = LaunchArgument.simLockedLaunch.bool
 
+    /// What reading the store's files throws now (`Platform.simulated`).
+    @MainActor static func refusal() -> Error? {
+        if isLocked { return Unreadable() }
+        return nil
+    }
+
     @MainActor static func unlock() {
         isLocked = false
         NotificationCenter.default.post(name: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil)
