@@ -145,7 +145,8 @@ final class Fixture {
     /// it knows who can open the folder. Needs a `writable` fixture.
     func add(_ name: String, folder: String, file: StaticString = #filePath, line: UInt = #line) async throws {
         let edits = try XCTUnwrap(model.edits, "The fixture store should be writable", file: file, line: line)
-        let form = EntryFormModel(adding: folder, writer: edits.writer, folders: model.allFolders)
+        let form = EntryFormModel(
+            adding: folder, writer: edits.writer, folders: model.allFolders, live: model.storeSession.live)
         form.name = name
         form.password = "Typed-pass-42"
         form.changed()
