@@ -21,6 +21,8 @@ extension SyncError: WordedError {
             capitalised(remoteDetail(failure)) + "."
         case .StoreBusy:
             capitalised(storeBusyText) + "."
+        case .BeingSent, .NotWaiting, .QueueKeptChanging:
+            capitalised(SyncFailure.queueDetail(self) ?? "") + "."
         case .Cancelled:
             "Stopped."
         case .NotPawHistory:

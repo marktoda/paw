@@ -15,6 +15,7 @@ use std::sync::Arc;
 use paw_core::sim::remote::steps;
 use paw_core::copies::content_id;
 use paw_core::entry::EntryDoc;
+use paw_core::key::KeyError;
 use paw_core::sim::SimulatedKey;
 use paw_core::sync::operation::SyncState;
 use paw_core::sync::{self, ChangeKind, Connection, Integration, KeptBoth, queue};
@@ -302,7 +303,10 @@ fn open_with_card(
 
 /// Re-encrypts the held-back changes as the app's key task does, opening
 /// each with the card.
-fn reencrypt(w: &World, opened: &std::cell::RefCell<Vec<String>>) -> Result<queue::ReencryptReport, sync::SyncError> {
+fn reencrypt(
+    w: &World,
+    opened: &std::cell::RefCell<Vec<String>>,
+) -> Result<queue::ReencryptReport, paw_core::key::TaskFailure> {
     queue::reencrypt_each(&w.repo(), w.state.path(), &mut open_with_card(w, opened), &mut |_, _| {})
 }
 
@@ -375,13 +379,32 @@ fn a_held_back_change_that_cannot_be_opened_is_left_as_it_was() {
     Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Work").unwrap();
     let tip = head(&w.repo());
 
-    let mut open =
-        |_: &queue::HeldBack, _: &[u8]| Err(queue::OpenFailure::Stop(sync::SyncError::Failed { message: "no touch".into() }));
+    let mut open = |_: &queue::HeldBack, _: &[u8]| Err(queue::OpenFailure::from(KeyError::TouchTimeout));
     let error = queue::reencrypt_each(&w.repo(), w.state.path(), &mut open, &mut |_, _| {}).unwrap_err();
 
-    assert!(error.to_string().contains("no touch"), "{error}");
+    assert!(matches!(error, paw_core::key::TaskFailure::Key(KeyError::TouchTimeout)), "{error:?}");
     assert_eq!(head(&w.repo()), tip);
     assert_eq!(queue::held_back(&w.repo(), w.state.path()).unwrap().len(), 1);
+}
+
+#[test]
+fn a_held_back_change_the_key_cannot_open_is_left_with_why_and_the_run_goes_on() {
+    let w = world();
+    w.write().save(&new_entry("Work", "new", "new-pw")).unwrap();
+    add_a_recipient(&w);
+    Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Work").unwrap();
+    let tip = head(&w.repo());
+
+    for (error, reason) in [
+        (KeyError::NotForThisKey { recipients: vec![] }, queue::LeftReason::NotForThisKey),
+        (KeyError::DecryptFailed { detail: "damaged".into() }, queue::LeftReason::Unreadable),
+    ] {
+        let mut open = |_: &queue::HeldBack, _: &[u8]| Err(queue::OpenFailure::from(error.clone()));
+        let report = queue::reencrypt_each(&w.repo(), w.state.path(), &mut open, &mut |_, _| {}).unwrap();
+
+        assert_eq!((report.reencrypted, left(&report)), (0, vec![reason]));
+        assert_eq!(head(&w.repo()), tip);
+    }
 }
 
 /// How many keys each version of `path` in the queue is encrypted for,

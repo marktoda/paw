@@ -113,12 +113,28 @@ extension SyncFailure {
             nextStep = sentences("Try again.", waiting)
             details = [storeBusyText]
             pill = notDone
+        case .BeingSent, .NotWaiting, .QueueKeptChanging:
+            self.kind = .other
+            problem = Self.couldNot(kind)
+            nextStep = sentences("Try again.", waiting)
+            details = [Self.queueDetail(error) ?? ""]
+            pill = notDone
         case .Failed(let message):
             self.kind = .other
             problem = Self.couldNot(kind)
             nextStep = sentences("Try again.", waiting)
             details = [message]
             pill = notDone
+        }
+    }
+
+    /// Why a change to the waiting queue didn't happen, in one line.
+    static func queueDetail(_ error: SyncError) -> String? {
+        switch error {
+        case .BeingSent: "this change is being sent right now; wait for the send to finish"
+        case .NotWaiting(let id): "\(id) is not an unpushed change"
+        case .QueueKeptChanging: "the waiting changes kept changing while paw was re-encrypting them; try again"
+        default: nil
         }
     }
 

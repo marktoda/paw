@@ -54,6 +54,16 @@ pub enum SyncError {
     /// and the waiting changes stay as they were.
     #[error(transparent)]
     Remote { failure: RemoteFailure },
+    /// The change to discard is being sent right now. Nothing was changed.
+    #[error("this change is being sent right now; wait for the send to finish")]
+    BeingSent,
+    /// No waiting change has this id (it was sent, or discarded).
+    #[error("{id} is not an unpushed change")]
+    NotWaiting { id: String },
+    /// Re-encrypting found the waiting changes changed under it, again and
+    /// again. Those already done stay done.
+    #[error("the waiting changes kept changing while paw was re-encrypting them; try again")]
+    QueueKeptChanging,
     /// See [`PawError::StoreBusy`].
     #[error("{}", crate::lock::STORE_BUSY)]
     StoreBusy,
@@ -578,9 +588,7 @@ pub(crate) fn check_not_being_sent(
         return Ok(());
     }
     if sending == removed || repo.graph_descendant_of(sending, removed).unwrap_or(true) {
-        return Err(SyncError::Failed {
-            message: "this change is being sent right now; wait for the send to finish".into(),
-        });
+        return Err(SyncError::BeingSent);
     }
     Ok(())
 }

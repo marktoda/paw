@@ -112,6 +112,17 @@ final class RemoteWordsTests: XCTestCase {
             "Git.example has no saved key; set the store up again.")
     }
 
+    func testQueueRefusalsReadAsTheyDid() {
+        XCTAssertEqual(
+            SyncError.BeingSent.sentence, "This change is being sent right now; wait for the send to finish.")
+        XCTAssertEqual(SyncError.NotWaiting(id: "abc123").sentence, "Abc123 is not an unpushed change.")
+        XCTAssertEqual(
+            SyncError.QueueKeptChanging.sentence,
+            "The waiting changes kept changing while paw was re-encrypting them; try again.")
+        let failure = SyncFailure(SyncError.QueueKeptChanging, during: .reencrypt, unpushed: 0, host: "h")
+        XCTAssertEqual(failure.details, ["the waiting changes kept changing while paw was re-encrypting them; try again"])
+    }
+
     func testGitHubSaysAnUnacceptedSignInAndAnUnlistedRepositoryAsBefore() {
         XCTAssertEqual(
             GitHubWords.problem(GitHubError.Remote(failure: .unauthorised)),

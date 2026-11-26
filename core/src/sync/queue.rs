@@ -10,6 +10,7 @@ use git2::{Oid, Repository};
 
 use super::history::{ChangeKind, PawCommit, Replay, ensure_clean, move_branch, paw_commits};
 use super::{SyncError, check_not_being_sent, current_branch, git_err, refs};
+use crate::key::{KeyError, TaskFailure};
 use crate::lock::{Exclusive, StoreLock};
 
 /// One unpushed change.
@@ -85,7 +86,7 @@ fn discard_locked(held: &Exclusive, dir: &Path, id: &str) -> Result<(), SyncErro
     let repo = super::guard::open(dir)?;
     let local = waiting(&repo)?;
     let Some(position) = local.commits.iter().position(|c| c.commit.id().to_string() == id) else {
-        return Err(SyncError::Failed { message: format!("{id} is not an unpushed change") });
+        return Err(SyncError::NotWaiting { id: id.to_owned() });
     };
     check_not_being_sent(held, &StoreLock::for_repo(dir), &repo, &local.short, local.commits[position].commit.id())?;
     ensure_clean(&repo)?;
@@ -324,39 +325,42 @@ pub struct ReencryptReport {
 
 /// Why [`OpenEach`] did not give a change's text.
 #[derive(Debug)]
-pub enum OpenFailure<S = SyncError> {
+pub enum OpenFailure {
     /// This one can't be opened; leave it and go on with the next.
     Skip(LeftReason),
     /// Stop here (cancel, the key went away, no touch), and end
-    /// [`reencrypt_each`] with `S`. What is already re-encrypted stays so.
-    Stop(S),
+    /// [`reencrypt_each`] with this. What is already re-encrypted stays so.
+    Stop(TaskFailure),
+}
+
+/// What the key's failure to open one change means: that change is left
+/// (not encrypted for this key, or damaged), or the whole run stops.
+impl From<KeyError> for OpenFailure {
+    fn from(error: KeyError) -> Self {
+        match error {
+            KeyError::NotForThisKey { .. } => Self::Skip(LeftReason::NotForThisKey),
+            KeyError::EntryUnreadable { .. } | KeyError::DecryptFailed { .. } => Self::Skip(LeftReason::Unreadable),
+            other => Self::Stop(other.into()),
+        }
+    }
 }
 
 /// Gives the text of a held-back change from its waiting ciphertext, for
 /// [`reencrypt_each`].
-pub type OpenEach<'a, S = SyncError> =
-    dyn FnMut(&HeldBack, &[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>, OpenFailure<S>> + 'a;
+pub type OpenEach<'a> = dyn FnMut(&HeldBack, &[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>, OpenFailure> + 'a;
+
+/// A run that keeps finding the queue changed under it gives up after
+/// this many looks in a row.
+const MOST_LOOKS_AGAIN: u32 = 3;
 
 /// How [`reencrypt_each`] stopped early.
-enum Ended<S> {
+enum Ended {
     Failed(SyncError),
-    Stopped(S),
+    Stopped(TaskFailure),
 }
 
-impl<S> From<SyncError> for Ended<S> {
-    fn from(error: SyncError) -> Self {
-        Self::Failed(error)
-    }
-}
-
-impl<S> From<crate::PawError> for Ended<S> {
-    fn from(error: crate::PawError) -> Self {
-        Self::Failed(error.into())
-    }
-}
-
-impl<S> From<crate::write::WriteError> for Ended<S> {
-    fn from(error: crate::write::WriteError) -> Self {
+impl<E: Into<SyncError>> From<E> for Ended {
+    fn from(error: E) -> Self {
         Self::Failed(error.into())
     }
 }
@@ -444,12 +448,12 @@ pub fn reencrypt_check(dir: &Path, state_dir: &Path) -> Result<ReencryptCheck, S
 /// is written. Two changes with the same waiting ciphertext are opened
 /// once. The store lock is never held while `open` runs; a save in between
 /// only makes it look again.
-pub fn reencrypt_each<S: From<SyncError>>(
+pub fn reencrypt_each(
     dir: &Path,
     state_dir: &Path,
-    open: &mut OpenEach<'_, S>,
+    open: &mut OpenEach<'_>,
     progress: &mut dyn FnMut(u32, u32),
-) -> Result<ReencryptReport, S> {
+) -> Result<ReencryptReport, TaskFailure> {
     match reencrypt_each_until(dir, state_dir, open, progress) {
         Ok(report) => Ok(report),
         Err(Ended::Failed(error)) => Err(error.into()),
@@ -457,12 +461,12 @@ pub fn reencrypt_each<S: From<SyncError>>(
     }
 }
 
-fn reencrypt_each_until<S>(
+fn reencrypt_each_until(
     dir: &Path,
     state_dir: &Path,
-    open: &mut OpenEach<'_, S>,
+    open: &mut OpenEach<'_>,
     progress: &mut dyn FnMut(u32, u32),
-) -> Result<ReencryptReport, Ended<S>> {
+) -> Result<ReencryptReport, Ended> {
     use std::collections::HashMap;
     let mut done = 0;
     let mut total = reencrypt_check(dir, state_dir)?.ready;
@@ -528,11 +532,8 @@ fn reencrypt_each_until<S>(
         if local.head != head {
             // A save or a discard in between: look again (the text is kept).
             moved += 1;
-            if moved > 3 {
-                return Err(SyncError::Failed {
-                    message: "the waiting changes kept changing while paw was re-encrypting them; try again".into(),
-                }
-                .into());
+            if moved > MOST_LOOKS_AGAIN {
+                return Err(SyncError::QueueKeptChanging.into());
             }
             continue;
         }

@@ -26,7 +26,7 @@ use crate::sync::{ConnectError, Connection, Route};
 use crate::sync::address::{StoreAddress, saved_address};
 use crate::sync::hosts::{KnownHosts, is_bundled};
 use crate::sync::operation;
-use crate::sync::queue::{self, HeldBack, LeftReason, OpenFailure, QueueItem, ReencryptCheck};
+use crate::sync::queue::{self, HeldBack, OpenFailure, QueueItem, ReencryptCheck};
 use crate::sync::{IntegrateReport, RefusedPath, SyncError, TransferProgress, accept_replaced_remote};
 
 /// First-run setup; see [`crate::setup`]. Each call is one step and returns
@@ -434,22 +434,17 @@ impl StoreSync {
         let work: DecryptWork = Box::new(move |task, opener| {
             let mut open = |_: &HeldBack, ciphertext: &[u8]| {
                 if task.cancelled() {
-                    return Err(OpenFailure::Stop(KeyError::Cancelled.into()));
+                    return Err(OpenFailure::from(KeyError::Cancelled));
                 }
-                match opener(ciphertext) {
-                    Ok(text) => Ok(text),
-                    Err(Halt::Fail(KeyError::NotForThisKey { .. })) => Err(OpenFailure::Skip(LeftReason::NotForThisKey)),
-                    Err(Halt::Fail(KeyError::EntryUnreadable { .. } | KeyError::DecryptFailed { .. })) => {
-                        Err(OpenFailure::Skip(LeftReason::Unreadable))
-                    }
-                    Err(halt) => Err(OpenFailure::Stop(halt.into())),
-                }
+                opener(ciphertext).map_err(|halt| match halt {
+                    Halt::Fail(error) => OpenFailure::from(error),
+                    halt => OpenFailure::Stop(halt.into()),
+                })
             };
             let mut progress = |done: u32, total: u32| {
                 task.set(KeyTaskState::Working { progress: Some(TaskProgress { done, total }) });
             };
-            let result: Result<_, TaskFailure> =
-                queue::reencrypt_each(&sync.repo(), &sync.state_dir, &mut open, &mut progress);
+            let result = queue::reencrypt_each(&sync.repo(), &sync.state_dir, &mut open, &mut progress);
             if task.cancelled() {
                 return Err(KeyError::Cancelled.into());
             }

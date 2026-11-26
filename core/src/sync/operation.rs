@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use super::integrate::{IntegrateReport, Integration, Replaced, integrate_locked};
 use super::transport::{ConnectError, Connection, Remote};
 use super::{PushError, SyncError, TransferCallback, current_branch, fetch_branches, git_err, push_tip};
-use crate::key::KeyError;
+use crate::key::TaskFailure;
 use crate::remote::RemoteFailure;
 use crate::lock::{Exclusive, StoreLock};
 use crate::ssh::{SshPublicKey, SshSigner};
@@ -127,13 +127,6 @@ fn branch_tip(dir: &Path) -> Result<(git2::Repository, String, git2::Oid), SyncE
     Ok((repo, branch, tip))
 }
 
-/// What a sync that was asked to stop returns. Nothing is left half done:
-/// it stops only between whole steps (after the login, after a fetch and
-/// its integrate, before a push).
-fn stopped() -> SyncError {
-    SyncError::Cancelled
-}
-
 /// Whether any waiting change is held back (see [`super::queue::held_back`]).
 fn holding_back(dir: &Path, state_dir: &Path) -> Result<bool, SyncError> {
     Ok(!super::queue::held_back(dir, state_dir)?.is_empty())
@@ -157,7 +150,7 @@ fn reborrow<'b>(progress: &'b mut Option<TransferCallback<'_>>) -> Option<Transf
 ///
 /// Fails with the key's own error if the key did not sign the login, else
 /// with the sync's.
-pub(crate) fn run_until<E: From<KeyError> + From<SyncError>>(
+pub(crate) fn run_until(
     remote: &Remote,
     signer: &dyn SshSigner,
     dir: &Path,
@@ -165,7 +158,7 @@ pub(crate) fn run_until<E: From<KeyError> + From<SyncError>>(
     send: bool,
     stop: &dyn Fn() -> bool,
     progress: Option<TransferCallback<'_>>,
-) -> Result<SyncReport, E> {
+) -> Result<SyncReport, TaskFailure> {
     let counting = Counting { inner: signer, count: AtomicU32::new(0) };
     let connection = match Connection::open(remote, &counting) {
         Ok(connection) => connection,
@@ -177,7 +170,10 @@ pub(crate) fn run_until<E: From<KeyError> + From<SyncError>>(
     Ok(report)
 }
 
-/// [`run_until`] on a connection already logged in.
+/// [`run_until`] on a connection already logged in. A stop ends it with
+/// [`SyncError::Cancelled`], only between whole steps (after the login,
+/// after a fetch and its integrate, before a push): nothing is left half
+/// done.
 fn run_on(
     connection: &Connection,
     dir: &Path,
@@ -187,7 +183,7 @@ fn run_on(
     mut progress: Option<TransferCallback<'_>>,
 ) -> Result<SyncReport, SyncError> {
     if stop() {
-        return Err(stopped());
+        return Err(SyncError::Cancelled);
     }
     let mut report = SyncReport::new();
 
@@ -204,7 +200,7 @@ fn run_on(
         return Ok(report);
     };
     if send && waiting > 0 && stop() {
-        return Err(stopped());
+        return Err(SyncError::Cancelled);
     }
     // A waiting change encrypted for recipients its entry no longer has
     // is not sent: nothing is, until the person has dealt with it.
@@ -220,7 +216,7 @@ fn run_on(
         Ok(()) => {}
         Err(PushError::NotFastForward) => {
             if stop() {
-                return Err(stopped());
+                return Err(SyncError::Cancelled);
             }
             report.retried = true;
             let (again, held) =
