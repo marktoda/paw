@@ -28,7 +28,7 @@ final class SetupTests: PawUITestCase {
         expect("setup-your-key")
         expectText("key-serial", contains: "serial")
         if shots { snapshot("your-key") }
-        tap("key-continue")
+        tapUntilGone("key-continue")
         expect("repo-address")
     }
 
