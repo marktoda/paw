@@ -61,7 +61,7 @@ final class SheetsUp {
         !up.isEmpty
     }
 
-    fileprivate func set(_ id: UUID, up isUp: Bool) {
+    fileprivate func mark(_ id: UUID, up isUp: Bool) {
         if isUp {
             up.insert(id)
         } else {
@@ -73,7 +73,7 @@ final class SheetsUp {
 extension EnvironmentValues {
     /// Where the sheets presented below count themselves; `nil` outside
     /// an open store (setup has no shortcuts).
-    @Entry var sheetsUp: SheetsUp?
+    @Entry var sheetsUp: SheetsUp? = nil
 }
 
 private struct CountedSheet: ViewModifier {
@@ -84,10 +84,10 @@ private struct CountedSheet: ViewModifier {
     func body(content: Content) -> some View {
         content
             .onChange(of: isUp, initial: true) {
-                sheetsUp?.set(id, up: isUp)
+                sheetsUp?.mark(id, up: isUp)
             }
             .onDisappear {
-                sheetsUp?.set(id, up: false)
+                sheetsUp?.mark(id, up: false)
             }
     }
 }

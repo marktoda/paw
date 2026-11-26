@@ -533,8 +533,6 @@ final class SetupModel {
         whoCanOpenUnread = unread
     }
 
-    /// The task ended without its step done: `error` says why, if it was
-    /// the setup's.
     private func show(_ error: Error, downloading: Bool = false) {
         guard let error = error as? SetupError else {
             problem = SetupProblem(

@@ -254,7 +254,6 @@ final class StoreSession {
         autoFill?.republish()
         syncing?.cameForward()
     }
-
 }
 
 /// Makes the drivers of a store's key sheets, all reading the key through
