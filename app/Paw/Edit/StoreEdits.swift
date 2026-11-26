@@ -92,7 +92,7 @@ final class StoreEdits {
     /// other; an edited one stays on screen with the text just saved.
     /// `false` if the form refused or said why not.
     func save(_ form: EntryFormModel) -> Bool {
-        guard let saved = form.save(copies: copies) else { return false }
+        guard let saved = write("Save", { form.save(copies: copies) }) else { return false }
         let renamed = saved.previous.map { StoreChange.Renamed(from: $0, to: saved.entry) }
         live.announce(.wrote(entries: [saved.previous, saved.entry].compactMap { $0 }, renamed: renamed))
         if case .edit(let id, _) = form.purpose {
@@ -107,8 +107,14 @@ final class StoreEdits {
 
     /// "Accept the new list" for `folder`.
     func acceptRecipients(folder: String) throws {
-        try writer.acceptRecipients(folder: folder)
+        try write("Accept list") { try writer.acceptRecipients(folder: folder) }
         live.announce(.recipientsAccepted(folder: folder))
+    }
+
+    /// Every write here, and the queue's (`ChangeQueue.change`): it takes
+    /// the store lock, so it runs inside background time (`BackgroundTime`).
+    private func write<T>(_ name: String, _ work: () throws -> T) rethrows -> T {
+        try BackgroundTime.run(name, work)
     }
 
     // MARK: Deleting and undoing
@@ -126,7 +132,7 @@ final class StoreEdits {
         confirmingDelete = nil
         let deleted: Deleted
         do {
-            deleted = try BackgroundTime.run("Delete") { try writer.delete(entry: session.ref.path, copies: copies) }
+            deleted = try write("Delete") { try writer.delete(entry: session.ref.path, copies: copies) }
         } catch let error as WriteError {
             let words = editProblem(error, folder: session.ref.folder)
             requests.send(.notice(Notice(problem: words.problem, nextStep: words.nextStep)))
@@ -154,7 +160,7 @@ final class StoreEdits {
             requests.send(.toast("Not undone: other changes came after it."))
             return
         }
-        if queue.undoLast(task: "Undo") {
+        if queue.undoLast() {
             requests.send(.toast("\(offer.entryName) is back."))
         } else {
             requests.send(.notice(Notice(problem: "Not undone", nextStep: queue.problem ?? "")))
@@ -171,7 +177,7 @@ final class StoreEdits {
     // MARK: The unpushed list
 
     func undoLastChange() {
-        changeQueue { $0.undoLast(task: "Change") }
+        changeQueue { $0.undoLast() }
     }
 
     func discardChange(_ id: String) {

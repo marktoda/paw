@@ -450,9 +450,7 @@ final class EntryFormModel {
             // phone, usually to fill it straight in. An edit keeps the
             // copy's deadline, which the core handles.
             let ttl = isEditing ? 0 : FaceIdOpener.windowSecs
-            let saved = try BackgroundTime.run("Save") {
-                try writer.save(draft: draft, copies: copies, newCopyTtlSecs: ttl)
-            }
+            let saved = try writer.save(draft: draft, copies: copies, newCopyTtlSecs: ttl)
             // Its own save must not show as a name already used while
             // the sheet closes.
             done = true

@@ -3,10 +3,12 @@ import UIKit
 /// Time from iOS to finish store work after paw leaves the screen. The
 /// store lives in the App Group container, and iOS kills a process that is
 /// suspended while it holds a file lock there (0xdead10cc). Everything that
-/// can take the store lock in the app (save, delete, rename, undo, send,
-/// check for changes, setup's download and check, removing the store) runs
-/// inside one of these. When the time runs out first, the expiration
-/// handler ends it, as iOS requires. App target only.
+/// can take the store lock in the app runs inside one of these, taken by
+/// the one place each kind of write goes through: `StoreEdits.write`,
+/// `ChangeQueue.change`, `GitHubAccess.run`, `SetupModel.run`, the key
+/// jobs' `hold`, and the few single writes (taking a replaced history,
+/// server keys, removing the store). When the time runs out first, the
+/// expiration handler ends it, as iOS requires. App target only.
 @MainActor
 final class BackgroundTime {
     private var id = UIBackgroundTaskIdentifier.invalid

@@ -31,15 +31,19 @@ final class GitHubAccess {
 
     /// Runs `work` on the core, then reads again whether a sign-in is kept
     /// and which repository is chosen (`work` may have changed either)
-    /// before `done` hears how it went.
+    /// before `done` hears how it went. Choosing a repository and checking
+    /// for changes take the store lock: every call runs inside background
+    /// time (`BackgroundTime`).
     func run<Value>(_ work: @escaping @Sendable (GitHubAccount) throws -> Value,
                     done: @escaping @MainActor (Result<Value, Error>) -> Void = { _ in }) {
         let core = core
+        let time = BackgroundTime.begin("GitHub")
         queue.async { [weak self] in
             let result = Handoff(value: Result { try work(core) })
             let kept = GitHubAccess.kept(core)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
+                    time.end()
                     self?.heard(kept)
                     done(result.value)
                 }

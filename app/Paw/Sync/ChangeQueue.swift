@@ -43,40 +43,44 @@ final class ChangeQueue {
         }
     }
 
-    /// Takes back the newest change. `task` names the time asked of iOS to
-    /// finish it. `false`, with `problem` said, if it failed.
+    /// Takes back the newest change. `false`, with `problem` said, if it
+    /// failed.
     @discardableResult
-    func undoLast(task: String) -> Bool {
-        change { try BackgroundTime.run(task) { try sync.undoLast() } }
+    func undoLast() -> Bool {
+        change { sync in try ChangeQueue.touched(sync.undoLast()) }
     }
 
     @discardableResult
     func discard(_ id: String) -> Bool {
-        change { try BackgroundTime.run("Change") { try sync.discard(id: id) } }
+        change { sync in try ChangeQueue.touched(sync.discard(id: id)) }
     }
 
     @discardableResult
     func discardAll() -> Bool {
         let entries = unpushed.map(\.entry)
+        return change { sync in
+            try sync.discardAll()
+            return entries
+        }
+    }
+
+    /// The entries the changes `items` took back touched.
+    private static func touched(_ items: [QueueItem]) -> [String] {
+        items.flatMap { [$0.previous, $0.entry].compactMap { $0 } }
+    }
+
+    /// Every change to the queue: it takes the store lock, so it runs
+    /// inside background time (`BackgroundTime`). `run` gives the entries
+    /// it touched.
+    private func change(_ run: (StoreSync) throws -> [String]) -> Bool {
+        let entries: [String]
         do {
-            try BackgroundTime.run("Change") { try sync.discardAll() }
+            entries = try BackgroundTime.run("Change") { try run(sync) }
         } catch {
             problem = describe(error)
             return false
         }
         live.announce(.wrote(entries: entries, renamed: nil))
-        return true
-    }
-
-    private func change(_ run: () throws -> [QueueItem]) -> Bool {
-        let changed: [QueueItem]
-        do {
-            changed = try run()
-        } catch {
-            problem = describe(error)
-            return false
-        }
-        live.announce(.wrote(entries: changed.flatMap { [$0.previous, $0.entry].compactMap { $0 } }, renamed: nil))
         return true
     }
 }

@@ -13,6 +13,8 @@ final class SyncModel {
     let sync: StoreSync
     let address: String
     let queue: ChangeQueue
+    /// The server's keys, for Settings.
+    let serverKeys: ServerKeysModel
 
     let keyTask: KeyTaskDriver
     private(set) var running: SyncKind? {
@@ -68,6 +70,7 @@ final class SyncModel {
          copies: CopyCache?, gitHub: GitHubAccess?) {
         self.sync = sync
         queue = ChangeQueue(sync: sync, live: live)
+        serverKeys = ServerKeysModel(sync: sync)
         self.live = live
         self.requests = requests
         keyPort = keyTasks.reader.port
@@ -347,9 +350,7 @@ final class SyncModel {
         running = .refresh
         progress = nil
         keyPathNote = nil
-        let time = BackgroundTime.begin("Sync")
         gitHub.run({ try $0.refreshStore() }) { [weak self] checked in
-            time.end()
             self?.checkedWithSignIn(checked)
         }
     }
