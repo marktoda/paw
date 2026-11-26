@@ -382,11 +382,8 @@ final class AutoFillModel {
     }
 
     private static func faceIdNotice(_ error: Error, entry: EntryRef) -> AutoFillNotice {
-        if isStoreBusy(error) {
-            return AutoFillNotice(problem: "The store is busy", nextStep: "Tap \(entry.name) again.")
-        }
-        let words = FaceIdWords.notice(error, entry: entry.name)
-        return AutoFillNotice(problem: words.problem, nextStep: words.nextStep, keyEntry: entry)
+        let words = FaceIdWords.notice(error, entry: entry.name, shownIn: .autoFill)
+        return AutoFillNotice(problem: words.problem, nextStep: words.nextStep, keyEntry: words.offersKey ? entry : nil)
     }
 
     // MARK: The key
@@ -538,7 +535,7 @@ final class AutoFillModel {
 
 extension AutoFillModel: KeyTaskOwner {
     var keyWords: KeyErrorWords.Context {
-        KeyErrorWords.Context(entry: keyEntry?.name ?? "")
+        KeyErrorWords.Context(entry: keyEntry?.name ?? "", shownIn: .autoFill)
     }
 
     func workingStage(_ progress: TaskProgress?) -> KeySheetStage {
@@ -562,9 +559,6 @@ extension AutoFillModel: KeyTaskOwner {
                 fill(opened, entry: entry)
             }
             return .done
-        case .failed(.StoreBusy):
-            let words = KeyErrorWords.storeBusyInAutoFill
-            return .failed(problem: words.problem, nextStep: words.nextStep)
         // An open never syncs or sets up.
         case .cancelled, .syncFailed, .setupFailed:
             return nil

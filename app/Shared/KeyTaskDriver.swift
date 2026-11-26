@@ -182,7 +182,7 @@ final class KeyTaskDriver {
     /// What the key sheet shows.
     var stage: KeySheetStage {
         if case .plugIn = mapped, let problem = reader?.problem {
-            let words = KeyErrorWords(problem)
+            let words = KeyErrorWords(problem, shownIn: owner?.keyWords.shownIn ?? .app)
             return .failed(problem: words.problem, nextStep: words.nextStep)
         }
         return mapped

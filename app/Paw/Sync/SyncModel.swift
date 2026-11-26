@@ -608,8 +608,11 @@ final class SyncModel {
                 keyPathNote = "Your GitHub sign-in ended, so this check uses your key."
                 return
             }
-            let syncError = error as? SyncError ?? SyncError.Failed(message: describe(error))
-            failure = SyncFailure(syncError, during: .refresh, unpushed: unpushed, host: "github.com")
+            if let error = error as? SyncError {
+                failure = SyncFailure(error, during: .refresh, unpushed: unpushed, host: "github.com")
+            } else {
+                failure = SyncFailure.signInCheckFailed(error, unpushed: unpushed)
+            }
             recomputeLocal()
         }
     }

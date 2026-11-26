@@ -29,13 +29,14 @@ struct KeyErrorWords: Equatable {
         /// Said after the key stopped (unplugged, not touched) when work is
         /// still waiting, such as a sync's unsent changes; "" for none.
         var waiting: String = ""
+        var shownIn: ShownIn = .app
 
         /// `error` in this workflow's words; `pinAskedAgain` when the PIN
         /// stage is shown again because of it.
         func words(_ error: KeyError, pinAskedAgain: Bool = false) -> KeyErrorWords {
             pinAskedAgain
-                ? KeyErrorWords(pinAskedAgain: error, entry: entry, purpose: purpose, waiting: waiting)
-                : KeyErrorWords(error, entry: entry, purpose: purpose, waiting: waiting)
+                ? KeyErrorWords(pinAskedAgain: error, entry: entry, purpose: purpose, waiting: waiting, shownIn: shownIn)
+                : KeyErrorWords(error, entry: entry, purpose: purpose, waiting: waiting, shownIn: shownIn)
         }
     }
 
@@ -51,15 +52,31 @@ struct KeyErrorWords: Equatable {
     /// (any but a wrong PIN, which has its own stage). `PinForgotten` there
     /// means the key lost the PIN's verification during the task: paw
     /// dropped the PIN without trying it again, so no try was used.
-    init(pinAskedAgain error: KeyError, entry: String, purpose: Purpose = .open, waiting: String = "") {
+    init(
+        pinAskedAgain error: KeyError, entry: String, purpose: Purpose = .open, waiting: String = "",
+        shownIn: ShownIn = .app
+    ) {
         if case .PinForgotten = error {
             self.init(problem: "Your key asked for its PIN again", nextStep: "Enter it again; no try was used.")
         } else {
-            self.init(error, entry: entry, purpose: purpose, waiting: waiting)
+            self.init(error, entry: entry, purpose: purpose, waiting: waiting, shownIn: shownIn)
         }
     }
 
-    init(_ error: KeyError, entry: String, purpose: Purpose = .open, waiting: String = "") {
+    init(_ error: KeyError, entry: String, purpose: Purpose = .open, waiting: String = "", shownIn: ShownIn = .app) {
+        switch (error, shownIn) {
+        // AutoFill's sheet says these more shortly.
+        case (.DifferentKey, .autoFill):
+            problem = "This isn't your store's key"
+            nextStep = "Plug in the key you set paw up with."
+            return
+        case (.StoreBusy, .autoFill):
+            problem = "The store is busy"
+            nextStep = "Try again in a moment."
+            return
+        default:
+            break
+        }
         switch error {
         case .WrongPin(let triesLeft):
             problem = "Wrong PIN"
@@ -119,16 +136,19 @@ struct KeyErrorWords: Equatable {
     }
 
     /// "paw couldn't read your key", then why and what to do: the Plug in
-    /// stage after a failed read, in every workflow.
-    init(_ problem: KeyReadProblem) {
+    /// stage after a failed read. AutoFill says only what to do.
+    init(_ problem: KeyReadProblem, shownIn: ShownIn = .app) {
         let error: Error
-        switch problem {
-        case .unsupported:
+        switch (problem, shownIn) {
+        case (.unsupported, _):
             self.init(
                 problem: "This iPhone can't use USB keys",
                 nextStep: "paw needs an iPhone with USB-C and smart card support.")
             return
-        case .failed(let failure):
+        case (.failed, .autoFill):
+            self.init(problem: "paw couldn't read your key", nextStep: "Unplug it, plug it back in, then try again.")
+            return
+        case (.failed(let failure), .app):
             error = failure
         }
         let why: String
@@ -148,10 +168,6 @@ struct KeyErrorWords: Equatable {
         }
         self.init(problem: "paw couldn't read your key", nextStep: "\(why) Try again, or unplug the key and plug it back in.")
     }
-
-    /// AutoFill's key sheet when the store was busy. The app's sheet says
-    /// it as `KeyError.StoreBusy` above.
-    static let storeBusyInAutoFill = KeyErrorWords(problem: "The store is busy", nextStep: "Try again in a moment.")
 
     /// "serial 12 345 678, ending 2C11 41DE".
     private static func spoken(_ key: KeyIdentity) -> String {

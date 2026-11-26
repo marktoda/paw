@@ -56,6 +56,13 @@ struct SyncFailure: Equatable {
         sentences("Rename them on a computer.", waiting(unpushed))
     }
 
+    /// A check with the GitHub sign-in that failed other than as a sync.
+    static func signInCheckFailed(_ error: Error, unpushed: Int) -> SyncFailure {
+        SyncFailure(
+            kind: .other, during: .refresh, problem: "paw couldn't check for changes.",
+            nextStep: waiting(unpushed), details: [describe(error)], pill: "Check failed")
+    }
+
     static func cancelled(during kind: SyncKind, unpushed: Int) -> SyncFailure {
         let problem = switch kind {
         case .send: "Sending was cancelled."

@@ -105,4 +105,21 @@ final class SharedWordsTests: XCTestCase {
         XCTAssertEqual(changed.nextStep, "Open github.com with your key.")
         XCTAssertEqual(describe(PawError.FaceIdNotRecognised), "Face ID didn't recognise you.")
     }
+
+    func testAutoFillSaysItMoreShortly() {
+        let autoFill = KeyErrorWords.Context(entry: "x", shownIn: .autoFill)
+        let presented = KeyIdentity(ident: "0006:1", decryptionFingerprint: nil, authenticationFingerprint: nil)
+        XCTAssertEqual(
+            autoFill.words(.DifferentKey(mismatch: KeyMismatch(enrolled: presented, presented: presented))),
+            KeyErrorWords(problem: "This isn't your store's key", nextStep: "Plug in the key you set paw up with."))
+        XCTAssertEqual(
+            KeyErrorWords(.failed(KeyError.KeyRemoved), shownIn: .autoFill).nextStep,
+            "Unplug it, plug it back in, then try again.")
+        let locked = FaceIdWords.notice(PawError.FaceIdLockedOut, entry: "github.com", shownIn: .autoFill)
+        XCTAssertEqual(locked.problem, "Face ID is locked")
+        let other = FaceIdWords.notice(PawError.CopyUnavailable, entry: "github.com", shownIn: .autoFill)
+        XCTAssertEqual(other.problem, "Face ID didn't open github.com")
+        XCTAssertEqual(other.nextStep, "")
+        XCTAssertFalse(FaceIdWords.notice(PawError.StoreBusy, entry: "github.com", shownIn: .autoFill).offersKey)
+    }
 }
