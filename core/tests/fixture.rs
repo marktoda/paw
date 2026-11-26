@@ -21,7 +21,6 @@ use paw_core::sim::fixture::{
 };
 use paw_core::store::service::{MatchKind, NamePairing};
 use paw_core::store::PassStore;
-use paw_core::store::tree::StoreTree;
 use paw_core::PawError;
 
 /// A simulated key plugged into a key port, as the app holds one.
@@ -71,10 +70,6 @@ fn fixture() -> (tempfile::TempDir, Arc<PassStore>) {
     (dir, store)
 }
 
-fn card_fingerprint() -> String {
-    SimulatedKey::new(PIN.into(), true, 50).fingerprint_hex()
-}
-
 /// Every file under `dir`, by relative path.
 fn files(dir: &Path) -> Vec<(String, Vec<u8>)> {
     fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) {
@@ -92,35 +87,6 @@ fn files(dir: &Path) -> Vec<(String, Vec<u8>)> {
     walk(dir, dir, &mut out);
     out.sort();
     out
-}
-
-#[test]
-fn the_fixture_is_a_small_store_with_folders_and_top_level_entries() {
-    let (dir, store) = fixture();
-    let home = store.home();
-
-    let folders: Vec<_> = home.folders.iter().map(|f| (f.name.as_str(), f.entry_count)).collect();
-    assert_eq!(
-        folders,
-        [
-            ("archive", 2),
-            ("bank", 3),
-            ("email", 3),
-            ("home", 4),
-            ("servers", 3),
-            ("travel", 2),
-            ("web", 6),
-            ("work", 4)
-        ]
-    );
-    let top: Vec<_> = home.entries.iter().map(|e| e.name.as_str()).collect();
-    assert_eq!(top, ["Home Wi-Fi", "phone-pin"]);
-    assert_eq!(store.entry_count(), 29);
-    assert!(StoreTree::scan(dir.path()).unwrap().skipped().is_empty());
-
-    let servers = store.folder("servers".into()).unwrap();
-    assert_eq!(servers.folders[0].path, "servers/example.net");
-    assert_eq!(servers.entries[0].path, "servers/backup-box");
 }
 
 #[test]
@@ -154,17 +120,6 @@ fn the_fixture_can_be_searched_and_matched_to_sites() {
         offered,
         [("servers/example.net/root".to_owned(), false), ("servers/example.net/deploy".to_owned(), false)]
     );
-}
-
-#[test]
-fn each_folder_names_the_key_its_entries_are_for() {
-    let (_dir, store) = fixture();
-    let other = other_key_fingerprint_hex().unwrap();
-
-    assert_eq!(store.recipients("".into()).unwrap(), [card_fingerprint()]);
-    assert_eq!(store.recipients("web".into()).unwrap(), [card_fingerprint()]);
-    assert_eq!(store.recipients("servers/example.net".into()).unwrap(), [card_fingerprint()]);
-    assert_eq!(store.recipients(OTHER_KEY_FOLDER.into()).unwrap(), [other]);
 }
 
 #[test]

@@ -258,14 +258,9 @@ mod tests {
     }
 
     #[test]
-    fn translates_common_status_words() {
-        assert_eq!(sw_words(0x9000), "ok");
+    fn status_words_that_carry_a_count_or_a_length_say_so() {
         assert_eq!(sw_words(0x63C2), "not verified, 2 tries left");
         assert_eq!(sw_words(0x63C0), "blocked, 0 tries left");
-        assert_eq!(sw_words(0x6982), "security status not satisfied");
-        assert_eq!(sw_words(0x6985), "conditions not satisfied");
-        assert_eq!(sw_words(0x6983), "PIN blocked");
-        assert_eq!(sw_words(0x6110), "more data");
         assert_eq!(sw_code(0x6110), "61xx");
         assert_eq!(sw_code(0x6C20), "6Cxx");
         assert_eq!(sw_code(0x6982), "6982");

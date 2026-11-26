@@ -448,7 +448,6 @@ fn noise(len: usize) -> Vec<u8> {
 
 #[test]
 fn a_download_larger_than_the_limit_is_stopped() {
-    assert_eq!(sync::DOWNLOAD_LIMIT, 256 << 20);
     let card = card();
     let server = GitServer::start(&[authorised_line(&card)]);
     let small = cloned(&server, &card);

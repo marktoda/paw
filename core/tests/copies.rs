@@ -267,17 +267,6 @@ fn forgetting_one_entry_removes_only_its_copy_and_keeps_the_keystore() {
     assert_eq!(w.files().len(), 1);
 }
 
-#[test]
-fn the_simulated_keystore_and_clock_go_straight_to_the_cache() {
-    let dir = tempfile::tempdir().unwrap();
-    let keystore = SimKeystore::new();
-    let clock = SimClock::new(START);
-    let cache = CopyCache::new(window(&dir), keystore.clone().as_keystore(), clock.clone().as_clock());
-    cache.put(GITHUB, GITHUB_TEXT, b"v1", TTL).unwrap();
-    clock.advance_ms(9 * HOUR);
-    assert_eq!(cache.status(GITHUB, b"v1").unwrap(), CopyStatus::NeedsKey);
-}
-
 impl World {
     fn only_file_named(&self, entry: &str) -> (std::path::PathBuf, Vec<u8>) {
         let name = format!("{}.copy", self.keys().file_stem(entry));

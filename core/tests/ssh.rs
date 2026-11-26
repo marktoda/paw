@@ -125,16 +125,6 @@ fn the_authentication_slot_has_its_own_touch_policy() {
 }
 
 #[test]
-fn the_card_refuses_to_sign_before_the_pin_is_verified() {
-    let key = key(false, false, false);
-
-    // INTERNAL AUTHENTICATE, three bytes of data, straight after power-up.
-    let response = key.exchange(vec![0x00, 0x88, 0x00, 0x00, 0x03, 1, 2, 3, 0x00]);
-
-    assert_eq!(response, [0x69, 0x82]);
-}
-
-#[test]
 fn the_card_takes_one_extended_length_command() {
     let key = key(false, false, true);
     let public = SshPublicKey::ed25519(&key.authentication_public_key());

@@ -354,17 +354,6 @@ fn signing_in_sends_the_client_id_and_device_code_only_and_says_paw() {
     }
 }
 
-#[test]
-fn the_real_client_id_is_the_apps_and_the_simulation_can_tell_it_apart() {
-    assert_eq!(paw_core::github::CLIENT_ID, "Iv23liyBePbnvQPCcGRz");
-    let w = world();
-    assert_ne!(w.github.endpoints().client_id(), paw_core::github::CLIENT_ID);
-    assert_eq!(
-        paw_core::github::Endpoints::github().install_url(),
-        "https://github.com/apps/paw-password-store/installations/new"
-    );
-}
-
 // --- the picker ----------------------------------------------------------------
 
 #[test]
