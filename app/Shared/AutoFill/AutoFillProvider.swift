@@ -13,12 +13,11 @@ protocol AutoFillAnswers: AnyObject {
 /// gets. The extension's controller and the app's debug harness both run
 /// requests through this; only `answers` differs.
 @MainActor
-final class AutoFillProvider: AutoFillCompletion {
-    /// The request under way; `nil` once it has its answer.
+final class AutoFillProvider {
+    /// The request under way; `nil` once it has ended.
     private(set) var model: AutoFillModel?
     weak var answers: AutoFillAnswers?
     private let open: @Sendable () -> AutoFillOpening
-    private var answered = true
 
     init(open: @escaping @Sendable () -> AutoFillOpening) {
         self.open = open
@@ -35,8 +34,8 @@ final class AutoFillProvider: AutoFillCompletion {
     /// request ended, when the suggestion is not one of paw's.
     func entry(_ request: ASCredentialRequest) -> AutoFillModel? {
         guard let asked = Self.entry(of: request) else {
-            answered = false
-            end(.credentialIdentityNotFound)
+            model = nil
+            answers?.cancel(.credentialIdentityNotFound)
             return nil
         }
         return start(asked.request, kind: asked.kind)
@@ -62,9 +61,8 @@ final class AutoFillProvider: AutoFillCompletion {
     }
 
     private func start(_ request: AutoFillRequest, kind: AutoFillKind) -> AutoFillModel {
-        let model = AutoFillModel(request: request, kind: kind, completion: self, open: open)
+        let model = AutoFillModel(request: request, kind: kind, provider: self, open: open)
         self.model = model
-        answered = false
         return model
     }
 
@@ -73,24 +71,31 @@ final class AutoFillProvider: AutoFillCompletion {
         model?.viewWentAway()
     }
 
-    /// The provider itself is going away.
+    /// The provider itself is going away: the request ends unanswered.
     func shutDown() {
+        let model = model
+        self.model = nil
         model?.shutDown()
     }
 
-    // MARK: AutoFillCompletion
-
-    func fill(_ credential: AutoFillCredential) {
-        guard !answered else { return }
-        answered = true
-        model = nil
+    /// `model`'s fill, the request's one answer if it is still under way.
+    func fill(_ credential: AutoFillCredential, for model: AutoFillModel) {
+        guard finish(model) else { return }
         answers?.complete(with: credential)
     }
 
-    func end(_ reason: ASExtensionError.Code) {
-        guard !answered else { return }
-        answered = true
-        model = nil
+    /// `model`'s request ends without a fill, likewise.
+    func end(_ reason: ASExtensionError.Code, for model: AutoFillModel) {
+        guard finish(model) else { return }
         answers?.cancel(reason)
+    }
+
+    /// Ends `model`'s request if it is the one under way, and says whether
+    /// it was.
+    private func finish(_ model: AutoFillModel) -> Bool {
+        guard model === self.model else { return false }
+        self.model = nil
+        model.shutDown()
+        return true
     }
 }

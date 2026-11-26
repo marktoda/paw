@@ -12,13 +12,6 @@ enum AutoFillRequest: Equatable, Sendable {
     case entry(path: String, service: String? = nil)
 }
 
-/// Where a request ends (`AutoFillProvider`). Called once per request.
-@MainActor
-protocol AutoFillCompletion: AnyObject {
-    func fill(_ credential: AutoFillCredential)
-    func end(_ reason: ASExtensionError.Code)
-}
-
 /// Why a picked entry asks before it fills.
 enum AutoFillConfirmReason: Equatable, Sendable {
     /// Not one of this site's entries (found by search).
@@ -44,11 +37,11 @@ struct AutoFillNotice: Equatable {
 
 /// The AutoFill screens' one model: the list for a site, search, and a
 /// fill by Face ID copy or by the key. The same code runs in the extension
-/// and, in debug builds, in the app's harness (`-pawHostProvider`), with
-/// the completion injected.
+/// and, in debug builds, in the app's harness (`-pawHostProvider`), both
+/// through `AutoFillProvider`.
 ///
 /// The password never reaches a view: it goes from the opened entry
-/// straight to the completion, and the entry is wiped at once. So does a
+/// straight to the provider, and the entry is wiped at once. So does a
 /// one-time code, made from the entry at that moment: neither the code nor
 /// its secret is kept. File and card work runs off the main thread.
 @MainActor @Observable
@@ -120,20 +113,18 @@ final class AutoFillModel {
 
     @ObservationIgnored private let open: @Sendable () -> AutoFillOpening
     @ObservationIgnored private var source: AutoFillSource?
-    @ObservationIgnored private weak var completion: AutoFillCompletion?
+    /// Where the request ends, and whether it has.
+    @ObservationIgnored private weak var provider: AutoFillProvider?
     /// Reads the key, once a fill needs it: a list alone never touches the card.
     @ObservationIgnored private var reader: KeyReader?
     @ObservationIgnored private var started = false
-    /// The request has ended: filled, or handed back to iOS.
-    @ObservationIgnored private var finished = false
-    @ObservationIgnored private var shutdown = false
     @ObservationIgnored private let work = DispatchQueue(label: "paw-autofill", qos: .userInitiated)
 
-    init(request: AutoFillRequest, kind: AutoFillKind = .password, completion: AutoFillCompletion,
+    init(request: AutoFillRequest, kind: AutoFillKind = .password, provider: AutoFillProvider,
          open: @escaping @Sendable () -> AutoFillOpening) {
         self.request = request
         self.kind = kind
-        self.completion = completion
+        self.provider = provider
         self.open = open
         keyTask = KeyTaskDriver()
         faceId = FaceIdOpener()
@@ -432,7 +423,7 @@ final class AutoFillModel {
         }
         if let warning = urlWarning(opened, entry: entry) {
             opened.close()
-            guard !finished else { return }
+            guard isUnderWay else { return }
             pairing = nil
             page = .confirm(entry, warning)
             return
@@ -453,11 +444,10 @@ final class AutoFillModel {
             }
             return
         }
-        guard !finished else { return }
+        guard isUnderWay else { return }
         page = .filled
         recordPairing(entry)
-        shutDown()
-        completion?.fill(credential)
+        provider?.fill(credential, for: self)
         noteCode(taken.hasCode, entry: entry, codes: codes)
     }
 
@@ -497,10 +487,12 @@ final class AutoFillModel {
         _ = try? source.pairings.recordPairing(store: source.store, entry: entry.path, service: pairing.site)
     }
 
+    private var isUnderWay: Bool {
+        provider?.model === self
+    }
+
     private func end(_ reason: ASExtensionError.Code) {
-        guard !finished else { return }
-        shutDown()
-        completion?.end(reason)
+        provider?.end(reason, for: self)
     }
 
     /// The provider's view went away without a fill or a cancel from
@@ -518,14 +510,11 @@ final class AutoFillModel {
     }
 
     /// The request's one end, however it ends (a fill, `end`, the view or
-    /// the controller going away): every key task is let go of (the key
-    /// sheet closing forgets the PIN), a Face ID answer still to come is
-    /// wiped unread, and the readers are no longer followed. Runs once;
-    /// later calls do nothing.
+    /// the controller going away), run by the provider once: every key
+    /// task is let go of (the key sheet closing forgets the PIN), a Face ID
+    /// answer still to come is wiped unread, and the readers are no longer
+    /// followed.
     func shutDown() {
-        guard !shutdown else { return }
-        shutdown = true
-        finished = true
         keyTask.cancelAll()
         faceId.forget()
         reader?.stopWatching()
