@@ -615,6 +615,7 @@ impl From<PawError> for PushError {
 /// forward to `tip` if it went, waiting up to `record_wait` for the lock
 /// ([`crate::lock::RECORD_WAIT`]). The caller holds the push lock
 /// throughout.
+#[expect(clippy::too_many_arguments, reason = "the locks held are passed as evidence, one argument each")]
 pub(crate) fn push_tip(
     connection: &Connection,
     store: &StoreLock,

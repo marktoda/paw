@@ -60,8 +60,6 @@ use std::time::{Duration, Instant};
 
 use crate::PawError;
 
-/// The store lock's file, in the state directory: paw's only file lock.
-
 /// What every error type's `StoreBusy` says.
 pub const STORE_BUSY: &str =
     "the password store is busy: another part of paw (or the AutoFill extension) is using it; try again";
