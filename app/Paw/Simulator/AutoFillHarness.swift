@@ -122,7 +122,9 @@ private final class HarnessWorld: @unchecked Sendable {
             // Copies, as the app keeps in the simulator; the extension keeps none there.
             let source = try AutoFillSource.open(
                 at: location, clock: clock, connect: { try KeyConnection.open() },
-                copies: { CopyCache(dir: $0.path, keystore: SimulatedKeystoreHolder.keystore.asKeystore(), clock: clock) })
+                copies: { dir in
+                    CopyCache(dir: dir.path, keystore: SimulatedKeystoreHolder.keystore.asKeystore(), clock: clock)
+                })
             if LaunchArgument.simOneTimeCodes.bool {
                 try source.codes.setEnabled(enabled: true)
             }
