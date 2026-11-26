@@ -59,15 +59,19 @@ final class StoreChangeTests: XCTestCase {
         let stateDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("paw-codes-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true)
-        let codes = OneTimeCodeEntries.open(stateDir: stateDir.path)
-        try codes.setEnabled(enabled: true)
         var published: [PassStore] = []
+        var codes: OneTimeCodeEntries?
         let suggestions = AutoFillSuggestions(stateDir: stateDir.path) { request in
-            if case .replace(let store, _, _) = request { published.append(store) }
+            if case .replace(let store, _, let used) = request {
+                published.append(store)
+                codes = used
+            }
             return Task {}
         }
         suggestions.follow(model.storeSession.live)
         XCTAssertEqual(published.count, 1, "Written when the store opens")
+        let used = try XCTUnwrap(codes)
+        try used.setEnabled(enabled: true)
 
         try await fixture.add("suggested.example", folder: "web")
         XCTAssertEqual(published.count, 2, "And after a change")
@@ -75,7 +79,8 @@ final class StoreChangeTests: XCTestCase {
 
         await fixture.open("web/github.com")
         await waitFor("the one-time code to be noted") { published.count == 3 }
-        XCTAssertEqual(codes.entries(store: model.store), ["web/github.com"])
+        XCTAssertEqual(used.entries(store: model.store), ["web/github.com"])
+        withExtendedLifetime(suggestions) {}
     }
 
     /// The suggestions a background check publishes are made as the open
