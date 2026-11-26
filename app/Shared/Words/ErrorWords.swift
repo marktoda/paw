@@ -74,10 +74,6 @@ private func oneLine(_ error: Swift.Error) -> String {
         return storeBusyText
     case .NotText:
         return "This entry is not text, so paw cannot show it."
-    case .NotForThisKey(let recipients):
-        return recipients.isEmpty
-            ? "This entry is encrypted for another key."
-            : "This entry is encrypted for another key: \(recipients.joined(separator: ", "))."
     case .InvalidField(let message):
         return message
     case .CopyUnavailable:
