@@ -59,7 +59,6 @@ pub enum WriteError {
     /// A binding names a key that is not pinned.
     #[error("there is no saved key {fingerprint}")]
     NotPinned { fingerprint: String },
-    /// A password policy that cannot be used.
     #[error("{message}")]
     Policy { message: String },
     /// Underneath the change: the store, a refused name, or the files.
@@ -90,7 +89,6 @@ pub(crate) fn encrypt(keys: &[PublicKey], plaintext: &[u8]) -> Result<Vec<u8>, F
     encrypt_with(OsRng, keys, plaintext)
 }
 
-/// [`encrypt`], drawing its randomness from `rng`.
 pub(crate) fn encrypt_with<R: rand::Rng + rand::CryptoRng>(
     mut rng: R,
     keys: &[PublicKey],

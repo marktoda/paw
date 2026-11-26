@@ -21,13 +21,11 @@ const MAX_DEPTH: usize = 64;
 pub struct EntryRef {
     /// The full name `pass` uses, e.g. `web/github.com`.
     pub path: String,
-    /// The last part of the path, e.g. `github.com`.
     pub name: String,
     /// The folder it is in, e.g. `web`; empty at the top of the store.
     pub folder: String,
 }
 
-/// The entry at `path` (e.g. `web/github.com`): its name and its folder.
 #[uniffi::export]
 pub fn entry_ref(path: String) -> EntryRef {
     let (folder, name) = crate::path::split(&path);
@@ -81,7 +79,6 @@ fn sort_key(name: &str) -> (String, &str) {
 }
 
 impl StoreTree {
-    /// Walks the checked-out store at `root`.
     pub fn scan(root: &Path) -> Result<Self, PawError> {
         let mut tree = Self { listings: HashMap::new(), entries: Vec::new(), skipped: Vec::new() };
         tree.walk(root, "", 0)

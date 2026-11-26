@@ -210,14 +210,12 @@ pub enum LineStatus {
     Refused { fingerprint: String, subkey: String, reason: String },
 }
 
-/// One line of a `.gpg-id` and how it is satisfied.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct RecipientLine {
     pub line: String,
     pub status: LineStatus,
 }
 
-/// The recipients for one folder.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FolderRecipients {
     /// The `.gpg-id` that decides them, e.g. `work/.gpg-id`.
@@ -334,7 +332,6 @@ impl Keyring {
         StoreLock::for_repo(&self.repo())
     }
 
-    /// The keyring of the store whose state directory is `state_dir`.
     /// Empty if nothing has been pinned yet.
     pub fn open(state_dir: &Path) -> Result<Self, Fault> {
         let file = state_dir.join(crate::files::layout::RECIPIENTS);
@@ -430,7 +427,6 @@ impl Keyring {
         write_atomic(&self.file, TEMP_PREFIX, text.as_bytes()).map_err(|e| failed("save", e))
     }
 
-    /// Every pinned key.
     pub fn keys(&self) -> &[PinnedKey] {
         &self.keys
     }

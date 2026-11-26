@@ -33,9 +33,8 @@ pub struct PassStore {
 }
 
 impl PassStore {
-    /// The lock of the store at `root` ([`crate::lock`]). A folder that is
-    /// not a repository has only the in-process one: nothing paw does writes
-    /// it.
+    /// A folder that is not a repository has only the in-process lock:
+    /// nothing paw does writes it.
     fn lock(root: &std::path::Path) -> crate::lock::StoreLock {
         crate::lock::StoreLock::for_repo(root)
     }
@@ -43,7 +42,6 @@ impl PassStore {
 
 #[uniffi::export]
 impl PassStore {
-    /// Reads the names in the store checked out at `dir`.
     #[uniffi::constructor(name = "new")]
     pub fn open(dir: String) -> Result<Arc<Self>, PawError> {
         let root = PathBuf::from(dir);
@@ -55,7 +53,6 @@ impl PassStore {
         Ok(Arc::new(Self { root, tree }))
     }
 
-    /// The top of the store, for Home.
     pub fn home(&self) -> FolderListing {
         self.tree.folder("").cloned().unwrap_or(FolderListing {
             path: String::new(),
@@ -64,7 +61,6 @@ impl PassStore {
         })
     }
 
-    /// The contents of one folder, e.g. `web`.
     pub fn folder(&self, path: String) -> Result<FolderListing, PawError> {
         self.tree
             .folder(&path)
@@ -72,9 +68,7 @@ impl PassStore {
             .ok_or_else(|| PawError::Store(format!("there is no folder called {path}")))
     }
 
-    /// Every entry in the store, sorted by path. With [`Self::all_folders`]
-    /// it is everything the scan could read; [`Self::skipped`] says what it
-    /// could not.
+    /// Every entry in the store, sorted by path.
     pub fn all_entries(&self) -> Vec<EntryRef> {
         self.tree.entries().to_vec()
     }
@@ -91,18 +85,15 @@ impl PassStore {
         self.tree.skipped().to_vec()
     }
 
-    /// The entry at `path`, if the store has it.
     pub fn entry(&self, path: String) -> Option<EntryRef> {
         let (folder, _) = crate::path::split(&path);
         self.tree.folder(folder)?.entries.iter().find(|entry| entry.path == path).cloned()
     }
 
-    /// How many entries the store holds.
     pub fn entry_count(&self) -> u32 {
         self.tree.entries().len() as u32
     }
 
-    /// Searches entry and folder names; see [`search::search`].
     pub fn search(&self, query: String, limit: u32) -> Vec<SearchHit> {
         search::search(self.tree.entries(), &query, limit)
     }
@@ -146,7 +137,6 @@ impl PassStore {
         self.tree.entries()
     }
 
-    /// The names as read when this was opened.
     pub(crate) fn tree(&self) -> &StoreTree {
         &self.tree
     }

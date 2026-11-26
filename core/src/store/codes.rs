@@ -8,12 +8,9 @@
 //! whether it has a code that works is kept here: one yes per entry path,
 //! nothing else. Never the secret, never a code.
 //!
-//! The file is `one-time-codes.json` in the store's state directory, next
-//! to `site-pairings.json` and written the same way
-//! ([`crate::files::list`]). Two processes writing in the same instant can lose one
+//! Two processes writing in the same instant can lose one
 //! mark, which costs one entry missing from the code list until it is
-//! opened again. Bounded to [`MAX_ENTRIES`] paths, the least recently
-//! marked dropped first.
+//! opened again.
 //!
 //! Off until the person turns it on (Settings › AutoFill, "Suggest
 //! one-time codes"): which entries have a code is learned from decrypted
@@ -30,7 +27,6 @@ use super::PassStore;
 use crate::files::list::{ListFile, ListKind, MAX_PATH_BYTES};
 use crate::PawError;
 
-/// The most entries kept.
 pub const MAX_ENTRIES: usize = 1000;
 
 static LIST: ListKind = ListKind {
@@ -42,7 +38,6 @@ static LIST: ListKind = ListKind {
     writing: Mutex::new(()),
 };
 
-/// The one-time-code marks of one store.
 pub struct CodeFile {
     list: ListFile,
 }
@@ -56,12 +51,11 @@ impl CodeFile {
         self.list.path()
     }
 
-    /// Whether the person turned the list on.
     pub fn enabled(&self) -> bool {
         self.list.enabled()
     }
 
-    /// Turns the list on or off. Either way it starts empty.
+    /// Either way the list starts empty.
     pub fn set_enabled(&self, enabled: bool) -> std::io::Result<()> {
         self.list.set_enabled(enabled)
     }
@@ -72,9 +66,8 @@ impl CodeFile {
         self.list.load()
     }
 
-    /// Keeps whether `entry` has a code. True if that changed the file. A
-    /// mark already kept is not moved: an entry opened often is no reason
-    /// to write each time.
+    /// True if the file changed. A mark already kept is not moved: an
+    /// entry opened often is no reason to write each time.
     pub fn mark(&self, entry: &str, has_code: bool) -> std::io::Result<bool> {
         if entry.is_empty() || entry.len() > MAX_PATH_BYTES {
             return Ok(false);
@@ -108,7 +101,6 @@ impl CodeFile {
         .map(|_| ())
     }
 
-    /// Forgets every mark.
     pub fn clear(&self) -> std::io::Result<()> {
         self.list.clear()
     }
@@ -127,8 +119,7 @@ pub struct OneTimeCodeEntries {
 
 #[uniffi::export]
 impl OneTimeCodeEntries {
-    /// The marks of the store whose state directory is `state_dir`. Reads
-    /// nothing until asked.
+    /// Reads nothing until asked.
     #[uniffi::constructor]
     pub fn open(state_dir: String) -> Arc<Self> {
         Arc::new(Self { file: CodeFile::new(Path::new(&state_dir)) })
@@ -142,7 +133,7 @@ impl OneTimeCodeEntries {
         self.file.mark(&entry, has_code).map_err(failed)
     }
 
-    /// Whether the person turned the list on. Off by default.
+    /// Off by default.
     pub fn enabled(&self) -> bool {
         self.file.enabled()
     }
@@ -162,7 +153,6 @@ impl OneTimeCodeEntries {
         out
     }
 
-    /// Forgets every mark.
     pub fn clear(&self) -> Result<(), PawError> {
         self.file.clear().map_err(failed)
     }

@@ -48,13 +48,11 @@ fn problem(field: DraftField, message: impl Into<String>) -> DraftProblem {
     DraftProblem { field, message: message.into() }
 }
 
-/// A change to one of the other fields.
 enum FieldEdit {
     Set { key: String, value: Zeroizing<String> },
     Remove { key: String },
 }
 
-/// A change to the one-time-code line.
 enum OtpEdit {
     /// What was typed or pasted: a base32 setup key or an `otpauth://`
     /// address.
@@ -62,7 +60,6 @@ enum OtpEdit {
     Remove,
 }
 
-/// The entry being edited, as it was opened.
 struct Original {
     path: String,
     doc: EntryDoc,
@@ -71,7 +68,6 @@ struct Original {
     content_id: Vec<u8>,
 }
 
-/// An entry being added or edited.
 pub struct EntryDraft {
     original: Option<Original>,
     name: String,
@@ -102,7 +98,6 @@ fn place(folder: &str) -> String {
     if folder.is_empty() { "at the top level".into() } else { format!("in {folder}") }
 }
 
-/// Problems with one entry name, as the form words them.
 pub(crate) fn name_problems(name: &str) -> Vec<DraftProblem> {
     let Some(refusal) = name_refusal(name) else { return Vec::new() };
     let message = match refusal {
@@ -173,8 +168,6 @@ fn collision(tree: &StoreTree, path: &str, except: Option<&str>) -> Option<Draft
     None
 }
 
-/// Whether some entry lives in a folder that is `folded` once letter case
-/// and normalisation are ignored ([`case_folded`]).
 fn tree_has_folder(tree: &StoreTree, folded: &str) -> bool {
     tree.entries().iter().any(|entry| {
         folder_and_parents(&entry.folder).take_while(|folder| !folder.is_empty()).any(|folder| case_folded(folder) == folded)
@@ -206,7 +199,6 @@ pub(crate) fn field_problem(key: &str, value: Option<&str>) -> Option<DraftProbl
 }
 
 impl EntryDraft {
-    /// A new entry in `folder`.
     pub fn new(folder: &str) -> Self {
         Self {
             original: None,
@@ -260,7 +252,6 @@ impl EntryDraft {
         &self.folder
     }
 
-    /// Where the entry will be saved, e.g. `Work/github.com`.
     pub fn path(&self) -> String {
         join(&self.folder, &self.name)
     }
@@ -318,13 +309,10 @@ impl EntryDraft {
         self.otp = (!setup.trim().is_empty()).then(|| OtpEdit::Set(Zeroizing::new(setup.to_owned())));
     }
 
-    /// Removes the entry's one-time-code lines.
     pub fn remove_one_time_code(&mut self) {
         self.otp = Some(OtpEdit::Remove);
     }
 
-    /// The line a typed setup key or address would be saved as, or why it
-    /// can't be.
     fn otp_line(&self, setup: &str) -> Result<Zeroizing<String>, DraftProblem> {
         crate::otp::setup_line(setup, &self.name).map_err(|why| problem(DraftField::OneTimeCode, why.reason()))
     }
