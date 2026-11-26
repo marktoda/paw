@@ -84,8 +84,8 @@ final class EntryFormModel {
 
     @ObservationIgnored private let writer: StoreWriter
     /// The names Home and search hold, for "already used", followed as the
-    /// store changes. Without it (some tests) the writer reads the store on
-    /// each change.
+    /// store changes. Without it (some tests) a name already used is left
+    /// for Save to refuse.
     @ObservationIgnored private var store: PassStore?
     /// Saved: the store changes no longer concern it.
     @ObservationIgnored private var done = false
@@ -304,13 +304,9 @@ final class EntryFormModel {
         } else {
             draft.setOneTimeCode(setup: setupKey)
         }
-        // From the names in memory: the writer would wait for the store's
-        // lock. Save checks again with the lock held.
-        if let store {
-            problems = draft.problemsIn(store: store)
-        } else {
-            problems = (try? writer.validate(draft: draft)) ?? draft.problems()
-        }
+        // From the names in memory, never the store's lock. Save checks
+        // again with the lock held.
+        problems = draft.problems(store: store)
         if recipientsFolder != effectiveFolder {
             loadRecipients()
         }

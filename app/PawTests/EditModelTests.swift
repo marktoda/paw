@@ -8,7 +8,8 @@ final class EditModelTests: XCTestCase {
     func testTheCoreSaysWhatIsWrongWithANameAndSaveWaits() async throws {
         let fixture = try Fixture(writable: true)
         let edits = try XCTUnwrap(fixture.model.edits)
-        let form = EntryFormModel(adding: "", writer: edits.writer, folders: fixture.model.allFolders)
+        let form = EntryFormModel(
+            adding: "", writer: edits.writer, folders: fixture.model.allFolders, live: fixture.model.storeSession.live)
 
         form.changed()
         XCTAssertEqual(form.problem(for: .name), "Give it a name.")

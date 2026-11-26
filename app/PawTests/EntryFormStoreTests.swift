@@ -30,7 +30,6 @@ final class EntryFormStoreTests: XCTestCase {
         XCTAssertNil(form.problem(for: .name))
         XCTAssertTrue(form.canSave)
         XCTAssertEqual(writer.counts, before, "Typing a name should read nothing from the store")
-        XCTAssertEqual(writer.counts.validate, 0)
 
         // A new folder, typed: who can open it is read once, after the pause.
         form.chooseNewFolder()
@@ -71,7 +70,6 @@ final class EntryFormStoreTests: XCTestCase {
 /// The fixture's writer, counting the calls that read the store under its lock.
 private final class CountingWriter: StoreWriter {
     struct Counts: Equatable {
-        var validate = 0
         var recipients = 0
     }
 
@@ -102,11 +100,6 @@ private final class CountingWriter: StoreWriter {
 
     override func newDraft(folder: String) -> EntryDraft {
         real.newDraft(folder: folder)
-    }
-
-    override func validate(draft: EntryDraft) throws -> [DraftProblem] {
-        count { $0.validate += 1 }
-        return try real.validate(draft: draft)
     }
 
     override func folderRecipients(folder: String) throws -> FolderRecipients {
