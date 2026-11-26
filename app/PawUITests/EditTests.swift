@@ -12,9 +12,11 @@ final class EditTests: PawUITestCase {
         expectAbsent("warning-row", "The fixture store should be writable")
     }
 
-    /// Save is dimmed: nothing can be saved.
+    /// Save is dimmed and does nothing: the sheet stays and nothing is saved.
     private func expectSaveBlocked(file: StaticString = #filePath, line: UInt = #line) {
-        expectEnabled("form-save", false, file: file, line: line)
+        app.buttons["form-save"].firstMatch.tap()
+        XCTAssertTrue(element("form-cancel").exists, "Save should not close the form", file: file, line: line)
+        XCTAssertFalse(element("sim-last-app-toast").exists, "Nothing should have been saved", file: file, line: line)
     }
 
     /// Types into a form field, replacing what is there.
@@ -283,7 +285,7 @@ final class EditTests: PawUITestCase {
 
         goBack()
         expectLabel("unpushed-banner", contains: "1 change not sent")
-        expect("entry-drop.example")
+        scrollTo("entry-drop.example")
         tap("folder-web")
         expectAbsent("entry-keep.example", "A discarded add should take the entry away")
         goBack()

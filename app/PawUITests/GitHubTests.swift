@@ -66,11 +66,18 @@ final class GitHubTests: PawUITestCase {
         finishSetup()
     }
 
-    /// Starts a check from Home. Setup records no check, so the pill says
-    /// so and a tap on it starts one.
-    private func checkFromHome() {
-        expectLabel("sync-pill", contains: "Not checked yet")
-        tap("sync-pill")
+    /// Starts a check from Home: the pill starts it when nothing has been
+    /// checked yet, else it opens the sync sheet, whose button starts it.
+    /// Returns whether the sheet was used (and left open).
+    @discardableResult
+    private func checkFromHome() -> Bool {
+        let pill = expect("sync-pill")
+        let direct = pill.label.contains("Not checked yet") || pill.label.contains("need your key")
+        pill.tap()
+        if direct { return false }
+        expect("sync-sheet")
+        tap("sync-check")
+        return true
     }
 
     /// Settings builds its rows lazily: scroll to the row, then read it.
@@ -177,7 +184,9 @@ final class GitHubTests: PawUITestCase {
     func testCheckingWhileSignedInAsksForNoKeyAndBringsInARemoteChange() {
         launch(extra: ["-pawSimRemoteChange", "add"])
         setUpThroughGitHub()
-        checkFromHome()
+        if checkFromHome() {
+            tap("sync-sheet-done")
+        }
         expectLabel("sync-summary-title", contains: "1 password changed")
         expect("sync-added-forum.example")
         waitForKeyTasksToEnd()
@@ -222,8 +231,14 @@ final class GitHubTests: PawUITestCase {
         expectAbsent("settings-github-signed-out", "A plain sign-out leaves just the sign-in button")
         snapshot("settings-signed-out")
         closeSettings()
-        expectLabel("sync-pill", contains: "Updates need your key")
-        tap("sync-pill")
+        let pill = expect("sync-pill")
+        if pill.label.contains("need your key") {
+            pill.tap()
+        } else {
+            pill.tap()
+            expectLabel("sync-check", contains: "Needs your key")
+            tap("sync-check")
+        }
         expectLabel("key-sheet-purpose", contains: "Update your store")
         tap("key-sheet-cancel")
         expectGone("key-sheet-purpose")

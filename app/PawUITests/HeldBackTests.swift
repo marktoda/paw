@@ -96,20 +96,9 @@ final class HeldBackTests: PawUITestCase {
 
     // MARK: Tests
 
-    func testReencryptingAHeldBackChangeLetsItBeSentAndCancelLeavesItHeldBack() {
+    func testReencryptingAHeldBackChangeLetsItBeSent() {
         holdBackAChangeAndAcceptTheNewList()
         snapshot("reencrypt-offered")
-
-        tap("held-back-reencrypt")
-        expectLabel("key-sheet-purpose", contains: "Re-encrypt 1 change")
-        // The PIN is still held from the send: the touch comes next.
-        expect("touch-prompt")
-        tap("key-sheet-cancel")
-        expectGone("key-sheet-purpose")
-        expect("held-back-held.example")
-        expectLabel("held-back-reencrypt", contains: "Re-encrypt 1 change")
-        expectEnabled("held-back-reencrypt", true)
-
         tap("held-back-reencrypt")
         passKeySheet(purpose: "Re-encrypt 1 change")
         // The sync sheet stays up, now offering to send it as it is.
@@ -120,5 +109,18 @@ final class HeldBackTests: PawUITestCase {
         expectGone("sync-sheet-done")
         expectLabel("sim-last-app-toast", contains: "Re-encrypted. Not sent yet.")
         expect("held-back-empty")
+    }
+
+    func testCancellingTheReencryptLeavesTheChangeHeldBack() {
+        holdBackAChangeAndAcceptTheNewList()
+        tap("held-back-reencrypt")
+        expectLabel("key-sheet-purpose", contains: "Re-encrypt 1 change")
+        // The PIN is still held from the send: the touch comes next.
+        expect("touch-prompt")
+        tap("key-sheet-cancel")
+        expectGone("key-sheet-purpose")
+        expect("held-back-held.example")
+        expectLabel("held-back-reencrypt", contains: "Re-encrypt 1 change")
+        expectEnabled("held-back-reencrypt", true)
     }
 }
