@@ -14,19 +14,6 @@ enum PadLayout {
 }
 
 extension View {
-    /// On iPad: a centred form sheet with an opaque ground. Apply to a
-    /// sheet's content, next to its detents (which iPad ignores in regular
-    /// width and keeps in Slide Over).
-    @MainActor @ViewBuilder
-    func padFormSheet() -> some View {
-        if PadLayout.isPad {
-            presentationSizing(.form)
-                .presentationBackground(PawColor.bg)
-        } else {
-            self
-        }
-    }
-
     /// A hardware-keyboard shortcut, on iPad only, and only while `enabled`
     /// (off while a sheet covers the button). It runs the button's own
     /// action, so it can do nothing the button can't.
@@ -55,18 +42,6 @@ extension View {
     @MainActor
     func padReadableWidth() -> some View {
         modifier(PadReadableWidth())
-    }
-
-    /// A sheet on iPhone; on iPad the whole screen (large type).
-    @MainActor @ViewBuilder
-    func sheetOrPadCover<Item: Identifiable, Sheet: View>(
-        item: Binding<Item?>, @ViewBuilder content: @escaping (Item) -> Sheet
-    ) -> some View {
-        if PadLayout.isPad {
-            fullScreenCover(item: item, content: content)
-        } else {
-            sheet(item: item, content: content)
-        }
     }
 }
 
