@@ -49,20 +49,6 @@ extension SetupError: KeyStepError {
     }
 }
 
-/// A workflow's own failure, whichever workflow's: a task's end read
-/// without knowing its workflow.
-struct AnyStepFailure: KeyStepError {
-    let error: Error
-
-    static func failure(in state: KeyTaskState) -> AnyStepFailure? {
-        switch state {
-        case .syncFailed(let error): AnyStepFailure(error: error)
-        case .setupFailed(let error): AnyStepFailure(error: error)
-        default: nil
-        }
-    }
-}
-
 /// How a key task ended, for a workflow whose own step fails with `Step`.
 enum KeyTaskEnd<Step: KeyStepError> {
     case done(KeyOutcome)
@@ -194,15 +180,9 @@ final class KeyTaskDriver {
     /// cleared at once on Continue; cleared too whenever the sheet stops
     /// asking for the PIN.
     var pin = ""
-    /// Key tasks not yet ended, and a start waiting for them, for the UI
-    /// tests' "task ended" signal.
-    private(set) var pendingTasks = 0
     /// The sheet's run of tasks, kept across Try again; `nil` while no key
     /// sheet is up.
     private(set) var shown: UUID?
-    /// How the task the sheet followed last ended, until the next one
-    /// starts.
-    private(set) var lastEnd: KeyTaskEnd<AnyStepFailure>?
     /// Reads the key the task waits for at Plug in. A read that failed
     /// shows on that stage, with Try again. `nil` only until AutoFill has
     /// opened the store, before any task can start.
@@ -212,12 +192,8 @@ final class KeyTaskDriver {
     private var followed: UUID?
     @ObservationIgnored private var job: Workflow?
     @ObservationIgnored private var purpose: KeyPurpose?
-    @ObservationIgnored private var startWaits = false {
-        didSet { countTasks() }
-    }
-    @ObservationIgnored private var tasks: [UUID: Running] = [:] {
-        didSet { countTasks() }
-    }
+    @ObservationIgnored private var startWaits = false
+    @ObservationIgnored private var tasks: [UUID: Running] = [:]
 
     /// A `KeyJob` with its end read for its workflow.
     private struct Workflow {
@@ -277,12 +253,6 @@ final class KeyTaskDriver {
         return mapped
     }
 
-    /// The task waits at Plug in and the key could not be read.
-    var readProblem: KeyReadProblem? {
-        if case .plugIn = mapped { return reader?.problem }
-        return nil
-    }
-
     var isFollowing: Bool {
         followed != nil
     }
@@ -295,7 +265,11 @@ final class KeyTaskDriver {
     /// Puts the sheet up for `job`'s task. A task the sheet followed until
     /// now is let go of.
     func start<Step>(_ job: KeyJob<Step>) {
-        let adapted = reader?.source.adapted(job) ?? job
+        #if DEBUG && targetEnvironment(simulator)
+        let adapted = reader?.simulated?.adapted(job) ?? job
+        #else
+        let adapted = job
+        #endif
         letGoOfFollowed()
         shown = UUID()
         let workflow = Workflow(adapted)
@@ -362,7 +336,6 @@ final class KeyTaskDriver {
         guard let job else { return }
         startWaits = false
         pin = ""
-        lastEnd = nil
         job.starting()
         let id = UUID()
         let listener = MainQueueTaskListener { [weak self] in
@@ -417,7 +390,6 @@ final class KeyTaskDriver {
         tasks[id] = nil
         followed = nil
         running.hold?.end()
-        lastEnd = KeyTaskEnd(state)
         let run = shown
         let next = running.job.ended(state)
         // The workflow may have closed the sheet, or started again, as it heard the end.
@@ -486,7 +458,11 @@ final class KeyTaskDriver {
         }
     }
 
-    private func countTasks() {
-        pendingTasks = tasks.count + (startWaits ? 1 : 0)
+    #if DEBUG && targetEnvironment(simulator)
+    /// Key tasks not yet ended, and a start waiting for them, for the UI
+    /// tests' "task ended" signal.
+    var pendingTasks: Int {
+        tasks.count + (startWaits ? 1 : 0)
     }
+    #endif
 }

@@ -4,7 +4,7 @@ import SwiftUI
 /// The simulated git host follows setup as the screens show it: it starts
 /// with the setup flow, presents another key once one was trusted
 /// (`changedHostKey`), and lets the next download through once one failed
-/// (`dropMidClone`). Applied once, to the setup flow.
+/// (`dropMidClone`, `SimTaskFailed`). Applied once, to the setup flow.
 struct SimSetupHostWatch: ViewModifier {
     let model: SetupModel
 
@@ -20,11 +20,15 @@ struct SimSetupHostWatch: ViewModifier {
                 default: break
                 }
             }
-            .onChange(of: model.keyTask.lastEnd?.failedNotByKey == true) { _, failed in
+            .onChange(of: failed) { _, failed in
                 if failed, case .download = model.screen {
                     SimulatedHostHolder.shared.downloadFailed()
                 }
             }
+    }
+
+    private var failed: Bool {
+        SimTaskFailed.shown(ownFailure: model.problem != nil, sheet: model.sheet == nil ? nil : model.keyTask)
     }
 }
 

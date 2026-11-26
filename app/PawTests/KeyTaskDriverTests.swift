@@ -286,7 +286,6 @@ final class KeyTaskDriverTests: XCTestCase {
         await waitFor("the key to stop waiting") { !fixture.key.waitingForTouch() }
         XCTAssertEqual(owner.lateEnds.count, 1, "The key's late answer changes nothing")
         XCTAssertEqual(owner.ends.count, 0)
-        XCTAssertNil(driver.lastEnd, "Not the sheet's end")
     }
 
     func testAKeyThatDropsOutMidTaskIsReadAgainSoTryAgainCarriesOn() async throws {

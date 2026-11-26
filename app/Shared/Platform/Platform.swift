@@ -94,16 +94,6 @@ protocol KeyConnector: Sendable {
     /// follows for as long as what it returns is kept; `nil` where this
     /// device can't use USB keys at all.
     @MainActor func follow(_ changed: @escaping @MainActor (_ present: Bool) -> Void) -> AnyObject?
-
-    /// `job` as a key task on this key runs it: as it is, but for the
-    /// simulated key, which can finish an open just after its Cancel.
-    @MainActor func adapted<Step>(_ job: KeyJob<Step>) -> KeyJob<Step>
-}
-
-extension KeyConnector {
-    @MainActor func adapted<Step>(_ job: KeyJob<Step>) -> KeyJob<Step> {
-        job
-    }
 }
 
 /// The YubiKey on the USB-C port, through the system's smart card support.

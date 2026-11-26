@@ -26,4 +26,15 @@ struct KeyTasksSignal: View {
         }
     }
 }
+
+/// The simulated hosts' one rule for "the task failed": its workflow says
+/// so on its own screen, or its key sheet shows the key's failure.
+enum SimTaskFailed {
+    /// `sheet` is the workflow's driver while its key sheet is up.
+    @MainActor static func shown(ownFailure: Bool, sheet: KeyTaskDriver?) -> Bool {
+        if ownFailure { return true }
+        guard let sheet, case .failed = sheet.stage else { return false }
+        return true
+    }
+}
 #endif

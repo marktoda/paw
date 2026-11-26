@@ -68,8 +68,7 @@ final class SimulatedHostHolder: @unchecked Sendable {
         }
     }
 
-    /// A download failed for a reason that was not the key's: with
-    /// `dropMidClone`, the next one goes through.
+    /// A download failed: with `dropMidClone`, the next one goes through.
     func downloadFailed() {
         if SetupLaunch.remoteMode == "dropMidClone" {
             host?.setDropMidClone(drop: false)

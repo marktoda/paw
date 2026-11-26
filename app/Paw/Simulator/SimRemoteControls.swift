@@ -318,11 +318,11 @@ struct SimRemoteWatch: ViewModifier {
     }
 
     private static func failed(_ syncing: SyncModel) -> Bool {
-        if let failure = syncing.failure {
-            return failure.kind != .cancelled
+        let ownFailure = syncing.failure.map { $0.kind != .cancelled } ?? false
+        guard case .key? = syncing.sheet?.mode else {
+            return SimTaskFailed.shown(ownFailure: ownFailure, sheet: nil)
         }
-        guard case .key? = syncing.sheet?.mode, case .failed = syncing.keyTask.stage else { return false }
-        return true
+        return SimTaskFailed.shown(ownFailure: ownFailure, sheet: syncing.keyTask)
     }
 }
 
