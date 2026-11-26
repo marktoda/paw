@@ -25,7 +25,7 @@ use rand::rngs::OsRng;
 use crate::fault::Fault;
 use crate::sync::Author;
 pub use draft::{DraftField, DraftProblem, EntryDraft};
-pub use keyring::{FolderRecipients, KeySource, Keyring, LineStatus, RecipientLine};
+pub use keyring::{FolderRecipients, Keyring, LineStatus, RecipientLine};
 pub use ops::{Deleted, FollowUp, FollowUpFailure, Saved, WriteStore};
 pub use scopes::{RecipientScope, ScopeKey};
 
@@ -35,8 +35,8 @@ pub enum WriteError {
     /// The form has problems; each says what to fix.
     #[error("{}", .problems.iter().map(|p| p.message.as_str()).collect::<Vec<_>>().join(" "))]
     Invalid { problems: Vec<DraftProblem> },
-    /// Some recipients `.gpg-id` names have no public key on this device
-    /// (or theirs expired). Saving would encrypt to fewer keys than
+    /// Some recipients `.gpg-id` names have no public key on this device.
+    /// Saving would encrypt to fewer keys than
     /// `.gpg-id` says, so paw does not.
     #[error("paw doesn't have the key for {} (listed in {gpg_id})", .missing.join(", "))]
     MissingRecipients { gpg_id: String, missing: Vec<String> },
@@ -106,12 +106,4 @@ pub(crate) fn encrypt_with<R: rand::Rng + rand::CryptoRng>(
         builder.encrypt_to_key(&mut rng, key).map_err(failed)?;
     }
     builder.to_vec(rng).map_err(failed)
-}
-
-/// Seconds since 1970, as recipients' expiry is measured.
-pub(crate) fn now_secs() -> u32 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| u32::try_from(d.as_secs()).unwrap_or(u32::MAX))
-        .unwrap_or(0)
 }

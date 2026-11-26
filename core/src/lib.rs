@@ -35,6 +35,13 @@ pub mod write;
 
 uniffi::setup_scaffolding!();
 
+/// Takes `mutex` even if a thread panicked holding it. Only for values
+/// written whole (one assignment, or a file saved by rename), which a
+/// panic cannot leave half written.
+pub(crate) fn locked<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
 pub enum PawError {
     #[error("this is not an encrypted pass entry: {0}")]

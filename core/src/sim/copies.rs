@@ -7,7 +7,7 @@
 //! Like [`super::SimulatedKey`], neither may reach a device build
 //! (design.md 5.5).
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
@@ -15,6 +15,7 @@ use rand::RngCore;
 use rand::rngs::OsRng;
 use zeroize::Zeroizing;
 
+use crate::locked;
 use crate::clock::Clock;
 use crate::copies::{DeviceKeystore, KeystoreError};
 
@@ -27,10 +28,6 @@ pub enum SimFaceId {
     NotEnrolled,
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    // Nothing panics while holding these locks with the state half changed.
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-}
 
 fn random_key() -> Zeroizing<[u8; 32]> {
     let mut key = Zeroizing::new([0u8; 32]);
@@ -73,11 +70,11 @@ impl SimKeystore {
     }
 
     pub fn set_face_id(&self, answer: SimFaceId) {
-        lock(&self.state).face_id = answer;
+        locked(&self.state).face_id = answer;
     }
 
     pub fn reset_count(&self) -> u32 {
-        lock(&self.state).resets
+        locked(&self.state).resets
     }
 
     /// This keystore as the Secure Enclave seam, to hand straight to
@@ -88,7 +85,7 @@ impl SimKeystore {
 
     /// Makes new keys: nothing sealed before can be opened.
     pub fn reset(&self) -> Result<(), KeystoreError> {
-        let mut state = lock(&self.state);
+        let mut state = locked(&self.state);
         state.seal_key = random_key();
         state.index_key = random_key();
         state.invalidated = false;
@@ -102,18 +99,18 @@ impl SimKeystore {
     /// A face is added or removed in Settings: the seal key is invalidated
     /// until [`Self::reset`] makes a new one.
     pub fn change_enrolment(&self) {
-        lock(&self.state).invalidated = true;
+        locked(&self.state).invalidated = true;
     }
 
     /// How many times Face ID was shown (each `open` that reached a
     /// working key).
     pub fn prompt_count(&self) -> u32 {
-        lock(&self.state).prompts
+        locked(&self.state).prompts
     }
 
     pub fn seal(&self, secret: Vec<u8>) -> Result<Vec<u8>, KeystoreError> {
         let secret = Zeroizing::new(secret);
-        let state = lock(&self.state);
+        let state = locked(&self.state);
         if state.invalidated {
             return Err(KeystoreError::KeyGone);
         }
@@ -126,7 +123,7 @@ impl SimKeystore {
     }
 
     pub fn unseal(&self, sealed: Vec<u8>, _reason: String) -> Result<Vec<u8>, KeystoreError> {
-        let mut state = lock(&self.state);
+        let mut state = locked(&self.state);
         if state.invalidated {
             return Err(KeystoreError::KeyGone);
         }
@@ -152,7 +149,7 @@ impl SimKeystore {
     }
 
     pub fn index_key(&self) -> Result<Vec<u8>, KeystoreError> {
-        Ok(lock(&self.state).index_key.to_vec())
+        Ok(locked(&self.state).index_key.to_vec())
     }
 }
 
@@ -197,21 +194,21 @@ impl SimClock {
     /// Time passes: both clocks move on.
     pub fn advance_ms(&self, ms: u64) {
         let ms = i64::try_from(ms).unwrap_or(i64::MAX);
-        let mut state = lock(&self.state);
+        let mut state = locked(&self.state);
         state.wall_ms = state.wall_ms.saturating_add(ms);
         state.monotonic_ms = state.monotonic_ms.saturating_add(ms);
     }
 
     pub fn wall_ms(&self) -> i64 {
-        lock(&self.state).wall_ms
+        locked(&self.state).wall_ms
     }
 
     pub fn monotonic_ms(&self) -> i64 {
-        lock(&self.state).monotonic_ms
+        locked(&self.state).monotonic_ms
     }
 
     pub fn boot_id(&self) -> String {
-        format!("sim-boot-{}", lock(&self.state).boot)
+        format!("sim-boot-{}", locked(&self.state).boot)
     }
 
     /// These clocks as the clock seam, to hand straight to `CopyCache` and
@@ -225,12 +222,12 @@ impl SimClock {
 impl SimClock {
     /// The person sets the clock: only the wall clock moves.
     pub fn set_wall_ms(&self, wall_ms: i64) {
-        lock(&self.state).wall_ms = wall_ms;
+        locked(&self.state).wall_ms = wall_ms;
     }
 
     /// The phone restarts: a new boot id and the monotonic clock from zero.
     pub fn reboot(&self) {
-        let mut state = lock(&self.state);
+        let mut state = locked(&self.state);
         state.boot += 1;
         state.monotonic_ms = 0;
     }

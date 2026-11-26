@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::run::{Body, TaskCore, purpose_words, stage_words};
+use super::run::{Body, Job, TaskCore, purpose_words, stage_words};
 use super::{KeyOutcome, KeyPurpose, KeyTask, KeyTaskListener, KeyTaskState, LoginPurpose, TaskFailure};
 use crate::PawError;
 use crate::copies::CopyCache;
@@ -25,17 +25,17 @@ pub(crate) type After = Box<dyn FnOnce(&Arc<KeySession>) -> Result<(), TaskFailu
 
 /// What a sign-in task does on the network with the signer, in the task's
 /// thread. It reports progress and ends the task.
-pub(crate) type Work = Box<dyn FnOnce(&dyn TaskSide, SessionSigner) -> Result<KeyOutcome, TaskFailure> + Send>;
+pub(crate) type Work = Box<dyn FnOnce(&Job<'_>, SessionSigner) -> Result<KeyOutcome, TaskFailure> + Send>;
 
 /// Deciphers one ciphertext with the session's key, in a decrypting
 /// task's thread: the PIN is asked once, the key is touched for each.
 pub(crate) type Opener<'a> = dyn FnMut(&[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>, Halt> + 'a;
 
 /// What a decrypting task does with its [`Opener`], in the task's thread.
-/// It reports progress, checks for cancel between ciphertexts, and returns
-/// how the task ends.
+/// It reports progress and returns how the task ends. Once the task is
+/// cancelled, the opener gives nothing more.
 pub(crate) type DecryptWork =
-    Box<dyn FnOnce(&dyn TaskSide, &mut Opener<'_>) -> Result<KeyOutcome, TaskFailure> + Send>;
+    Box<dyn FnOnce(&Job<'_>, &mut Opener<'_>) -> Result<KeyOutcome, TaskFailure> + Send>;
 
 /// What an open does once the entry has decrypted.
 enum Then {
@@ -156,8 +156,8 @@ fn start(
 impl KeyPort {
     /// A sign-in task that, once the PIN is verified, runs `work` with a
     /// signer in the task's own thread: setup's download and sync's send
-    /// and refresh. `work` reports progress, checks for cancel between its
-    /// network steps, and returns how the task ends.
+    /// and refresh. `work` reports progress, stops between its network
+    /// steps once cancelled, and returns how the task ends.
     pub(crate) fn sign_in_then(
         self: &Arc<Self>,
         login: LoginPurpose,
@@ -179,7 +179,7 @@ impl KeyPort {
                 }
                 task.show_working();
                 let signer = SessionSigner::new(task.clone(), session.clone())?;
-                work(task.as_ref(), signer)
+                work(&Job::of(task), signer)
             },
         )
     }
@@ -206,12 +206,13 @@ impl KeyPort {
                 let mut open = |ciphertext: &[u8]| -> Result<zeroize::Zeroizing<Vec<u8>>, Halt> {
                     let plan = Plan::new(ciphertext, &key)?;
                     let session_key = session.unlocked(task.as_ref(), |job| plan.decipher(job, &side, &key))?;
+                    // A late answer is not written anywhere once cancelled.
                     if task.cancelled() {
                         return Err(Halt::Fail(KeyError::Cancelled));
                     }
                     Ok(plan.finish(session_key)?)
                 };
-                work(task.as_ref(), &mut open)
+                work(&Job::of(task), &mut open)
             },
         )
     }
@@ -253,26 +254,18 @@ impl KeyPort {
                 let plan = Plan::new(&ciphertext, key)?;
                 let side: Arc<dyn TaskSide> = task.clone();
                 let session_key = session.unlocked(task.as_ref(), |job| plan.decipher(job, &side, key))?;
-                if task.cancelled() {
-                    // The late answer of a cancelled task: wiped on drop.
-                    return Err(KeyError::Cancelled.into());
-                }
+                // The late answer of a cancelled task is wiped on drop.
+                Job::of(task).commit()?;
                 let plaintext = plan.finish(session_key)?;
                 let opened = crate::open::opened(plaintext, content_id(&ciphertext)).map_err(entry_unreadable)?;
                 let copies = match then {
                     Then::Keep(copies) => copies,
                     Then::Check(after) => {
                         opened.close();
-                        if !task.begin_commit() {
-                            return Err(KeyError::Cancelled.into());
-                        }
                         after(session)?;
                         return Ok(KeyOutcome::KeyChecked);
                     }
                 };
-                if !task.begin_commit() {
-                    return Err(KeyError::Cancelled.into());
-                }
                 // The entry opens even if keeping the copy fails: the
                 // person has already touched the key.
                 let (face_id_until_ms, copy_failed) =
@@ -335,9 +328,6 @@ impl KeyPort {
                 let unsigned: Vec<u8> = (0..TOUCH_CHECK_LEN).map(|i| i as u8).collect();
                 let side: Arc<dyn TaskSide> = task.clone();
                 session.unlocked(task.as_ref(), |job| authenticate(job, &side, &unsigned))?;
-                if task.cancelled() {
-                    return Err(KeyError::Cancelled.into());
-                }
                 Ok(KeyOutcome::SignedIn)
             },
         )

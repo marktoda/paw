@@ -102,7 +102,6 @@ func faultDetail(_ fault: Fault) -> String {
     case .remote(let failure): remoteDetail(failure)
     case .refused(let paths): "not a safe name for an entry: " + refusedMessage(paths)
     case .local(let detail): detail
-    case .cancelled: "stopped"
     }
 }
 

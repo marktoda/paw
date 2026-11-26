@@ -10,7 +10,8 @@ use zeroize::Zeroizing;
 
 use super::SimulatedKey;
 use crate::key::{KeyError, KeyPort, SessionSigner};
-use crate::ssh::{SshPublicKey, SshSigner};
+use crate::key::SshSigner;
+use crate::ssh::SshPublicKey;
 use crate::task::{
     DecryptWork, KeyOutcome, KeyPurpose, KeyTask, KeyTaskListener, KeyTaskState, LoginPurpose, TaskFailure, Work,
 };

@@ -10,6 +10,7 @@
 
 mod run;
 mod start;
+pub(crate) mod workflows;
 
 use std::sync::Arc;
 
@@ -17,10 +18,9 @@ pub(crate) use start::{After, DecryptWork, Work};
 
 use crate::PawError;
 use crate::entry::opened::OpenedEntry;
-use crate::key::{Halt, KeyError, TaskProgress};
+use crate::key::{Halt, KeyError};
 use crate::setup::SetupError;
-use crate::setup::keyed::StepFailure;
-use crate::sync::SyncError;
+use crate::sync::{SyncError, TransferProgress};
 use crate::sync::operation::SyncReport;
 use crate::write::held_back::ReencryptReport;
 
@@ -120,12 +120,18 @@ impl From<SetupError> for TaskFailure {
     }
 }
 
-impl From<StepFailure> for TaskFailure {
-    fn from(failure: StepFailure) -> Self {
-        match failure {
-            StepFailure::Key(error) => Self::Key(error),
-            StepFailure::Setup(error) => Self::Setup(error),
-        }
+/// How far the work after the key has got, when it is known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct TaskProgress {
+    pub done: u32,
+    pub total: u32,
+    /// Bytes received so far, for a download.
+    pub bytes: Option<u64>,
+}
+
+impl From<TransferProgress> for TaskProgress {
+    fn from(update: TransferProgress) -> Self {
+        Self { done: update.received_objects, total: update.total_objects, bytes: Some(update.received_bytes) }
     }
 }
 
@@ -160,10 +166,12 @@ pub enum KeyTaskState {
 impl KeyTaskState {
     /// Done, failed or cancelled: nothing changes it any more.
     pub fn is_final(&self) -> bool {
-        matches!(
-            self,
-            Self::Done { .. } | Self::Failed { .. } | Self::SyncFailed { .. } | Self::SetupFailed { .. } | Self::Cancelled
-        )
+        match self {
+            Self::Done { .. } | Self::Failed { .. } | Self::SyncFailed { .. } | Self::SetupFailed { .. } | Self::Cancelled => {
+                true
+            }
+            Self::PlugIn | Self::Pin { .. } | Self::Busy | Self::Touch | Self::Working { .. } => false,
+        }
     }
 
     fn ended(result: Result<KeyOutcome, TaskFailure>) -> Self {

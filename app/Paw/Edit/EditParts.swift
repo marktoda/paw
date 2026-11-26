@@ -132,8 +132,7 @@ extension RecipientLine {
     /// "your key", or "key 9A1C 03F2" by the last 8 hex digits.
     var spokenName: String {
         switch status {
-        case .ready(_, .card, _): return "your key"
-        case .ready(let fingerprint, .certificate, _): return "key \(RecipientLineWords.ending(fingerprint))"
+        case .ready: return "your key"
         default: return "key \(RecipientLineWords.ending(line))"
         }
     }
@@ -141,12 +140,9 @@ extension RecipientLine {
     /// How this line is satisfied, in words.
     var statusWords: String {
         switch status {
-        case .ready(_, .card, _): return "Your key"
-        case .ready: return Device.words("A key saved on this iPhone")
+        case .ready: return "Your key"
         case .missing: return "paw doesn't have this key"
         case .ambiguous: return "Matches more than one saved key"
-        case .expired: return "This key has expired"
-        case .refused(_, _, let reason): return "Can't be used: \(reason)"
         }
     }
 }
@@ -254,7 +250,7 @@ struct RecipientsReviewScreen: View {
     }
 
     private static func isYourKey(_ line: RecipientLine) -> Bool {
-        if case .ready(_, .card, _) = line.status { return true }
+        if case .ready = line.status { return true }
         return false
     }
 

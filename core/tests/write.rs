@@ -23,7 +23,7 @@ use paw_core::sim::copies::{SimClock, SimKeystore};
 use paw_core::sync::ChangeKind;
 use paw_core::sync::queue;
 use paw_core::write::{
-    DraftField, EntryDraft, FolderRecipients, KeySource, Keyring, LineStatus, WriteError, WriteStore,
+    DraftField, EntryDraft, FolderRecipients, Keyring, LineStatus, WriteError, WriteStore,
 };
 use pgp::packet::PublicKey;
 use pgp::types::KeyDetails;
@@ -185,7 +185,7 @@ fn a_folder_whose_gpg_id_names_the_pinned_card_key_can_be_saved_in() {
     assert!(recipients.writable);
     assert_eq!(
         recipients.lines[0].status,
-        LineStatus::Ready { fingerprint: card().fingerprint_hex(), source: KeySource::Card, bound: false }
+        LineStatus::Ready { fingerprint: card().fingerprint_hex(), bound: false }
     );
 
     s.write().save(&new_entry("Work", "gitlab.com", "Copper!lantern7")).unwrap();
@@ -229,17 +229,17 @@ fn a_gpg_id_naming_the_primary_key_needs_the_setup_binding_for_the_card() {
     ));
 
     // Setup, after the test decrypt of an entry for the card succeeded.
-    let bound = s.keyring().bind_card_for_opened_entry(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, &card().fingerprint_hex(), "x", &encrypted("pw\n"), 0).unwrap();
+    let bound = s.keyring().bind_card_for_opened_entry(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, &card().fingerprint_hex(), "x", &encrypted("pw\n")).unwrap();
     assert_eq!(bound, std::slice::from_ref(&primary));
     assert_eq!(
         s.write().folder_recipients("").unwrap().lines[0].status,
-        LineStatus::Ready { fingerprint: card().fingerprint_hex(), source: KeySource::Card, bound: true }
+        LineStatus::Ready { fingerprint: card().fingerprint_hex(), bound: true }
     );
 
     s.write().save(&new_entry("", "x", "pw")).unwrap();
     assert_eq!(s.decrypt("x"), "pw\n");
     // The binding is kept on disk.
-    assert!(matches!(s.keyring().line_status(&primary, 0), LineStatus::Ready { bound: true, .. }));
+    assert!(matches!(s.keyring().line_status(&primary), LineStatus::Ready { bound: true, .. }));
 }
 
 #[test]
@@ -248,7 +248,7 @@ fn a_binding_must_name_a_pinned_key_and_the_card_binding_needs_one_open_line() {
     assert!(matches!(s.keyring().bind(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), "AAAA1111", "00FF"), Err(WriteError::NotPinned { .. })));
     // Two lines no key satisfies: paw cannot tell which is the card's.
     assert!(matches!(
-        s.keyring().bind_card_for_opened_entry(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, &card().fingerprint_hex(), "x", &encrypted("pw\n"), 0),
+        s.keyring().bind_card_for_opened_entry(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, &card().fingerprint_hex(), "x", &encrypted("pw\n")),
         Err(WriteError::MissingRecipients { missing, .. }) if missing.len() == 2
     ));
     // The person picks; then the other line is still missing.

@@ -14,38 +14,29 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
-use crate::key::{Halt, KeyError, KeyPort, KeySession, KeyTouch, TaskProgress};
-use crate::task::{
-    After, DecryptWork, KeyOutcome, KeyPurpose, KeyTask, KeyTaskListener, LoginPurpose, TaskFailure, Work,
-};
 use crate::key::touch_clock::{TouchClock, TouchExpectation};
-use crate::remote::RemoteFailure;
-use crate::setup::{SetupError, SetupFlow, SetupState, SetupWriteReadiness, keyed};
+use crate::key::{KeyPort, KeySession, KeyTouch};
+use crate::locked;
+use crate::remote::{RefusedPath, RemoteFailure};
+use crate::setup::{SetupError, SetupFlow, SetupState, SetupWriteReadiness};
 use crate::sync::address::{StoreAddress, saved_address};
 use crate::sync::hosts::{KnownHosts, is_bundled};
-use crate::sync::operation;
 use crate::sync::queue::{self, QueueItem};
-use crate::write::held_back::{self, HeldBack, OpenFailure, ReencryptCheck};
-use crate::remote::RefusedPath;
-use crate::sync::{IntegrateReport, SyncError, TransferProgress, accept_replaced_remote};
+use crate::sync::{IntegrateReport, SyncError, accept_replaced_remote};
+use crate::task::workflows;
+use crate::task::{KeyTask, KeyTaskListener, LoginPurpose};
+use crate::write::held_back::{self, HeldBack, ReencryptCheck};
 
 /// First-run setup; see [`crate::setup`]. Each call is one step and returns
 /// the state to show next.
 #[derive(uniffi::Object)]
 pub struct Setup {
-    flow: Mutex<SetupFlow>,
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    // Plain values; a panic cannot leave them half written.
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    flow: Arc<Mutex<SetupFlow>>,
 }
 
 impl Setup {
     fn flow(&self) -> MutexGuard<'_, SetupFlow> {
-        // A panic in a step cannot leave the saved state half written: it is
-        // written whole, by rename.
-        lock(&self.flow)
+        locked(&self.flow)
     }
 }
 
@@ -54,7 +45,7 @@ impl Setup {
     #[uniffi::constructor]
     pub fn open(state_dir: String) -> Result<Arc<Self>, SetupError> {
         let flow = SetupFlow::open(&PathBuf::from(state_dir))?;
-        Ok(Arc::new(Self { flow: Mutex::new(flow) }))
+        Ok(Arc::new(Self { flow: Arc::new(Mutex::new(flow)) }))
     }
 
     pub fn state(&self) -> SetupState {
@@ -94,13 +85,7 @@ impl Setup {
     /// then `Done`; read `state` for the next step. A key other than the
     /// one read at "Your key" is refused before the PIN.
     pub fn download_with_key(self: Arc<Self>, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
-        let expected = self.flow().expected_key();
-        let setup = self.clone();
-        let work: Work = Box::new(move |task, signer| {
-            keyed::download(&setup.flow, task, &signer)?;
-            Ok(KeyOutcome::SignedIn)
-        });
-        port.sign_in_then(LoginPurpose::Clone, listener, expected, work)
+        workflows::download(&port, self.flow.clone(), listener)
     }
 
     /// "Check your key" as a key task (`CheckKey`): opens one entry with
@@ -108,22 +93,14 @@ impl Setup {
     /// for saving, accepts the store's recipients, records the key as the
     /// store's enrolled key (and gives it to `port`), and setup is done.
     pub fn test_decrypt_with_key(self: Arc<Self>, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
-        let expected = self.flow().expected_key();
-        let (entry, store) = match keyed::test_entry(&self.flow) {
-            Ok(found) => found,
-            Err(error) => return KeyTask::failed(KeyPurpose::CheckKey { entry: None }, listener, error.into()),
-        };
-        let setup = self.clone();
-        let enrol = port.clone();
-        let opened_entry = entry.clone();
-        let after: After = Box::new(move |session| Ok(keyed::after_check(&setup.flow, &enrol, session, opened_entry)?));
-        port.check_key_then(store, entry, listener, expected, after)
+        workflows::check_key(&port, self.flow.clone(), listener)
     }
 
     /// "I expected this change", on the changed-host-key screen: forgets
     /// the host's pinned key without leaving setup; `check_host` then shows
-    /// the key it presents now for confirmation. Refused (`Failed`) for a
-    /// host whose keys ship with paw, such as github.com.
+    /// the key it presents now for confirmation. Refused with
+    /// `RemoteFailure::HostKeyBundled` for a host whose keys ship with
+    /// paw, such as github.com.
     pub fn forget_host_key(&self) -> Result<SetupState, SetupError> {
         self.flow().forget_host_key()
     }
@@ -150,7 +127,7 @@ pub struct StoreSync {
     state_dir: PathBuf,
     address: StoreAddress,
     /// When the authentication slot last signed, for a cached touch policy.
-    last_login: Mutex<Option<Instant>>,
+    last_login: Arc<Mutex<Option<Instant>>>,
 }
 
 impl StoreSync {
@@ -162,47 +139,17 @@ impl StoreSync {
         KnownHosts::of(&self.state_dir)
     }
 
-    fn remote(&self) -> Result<crate::sync::Remote, SyncError> {
-        self.known_hosts().remote(&self.address)?.ok_or_else(|| {
-            RemoteFailure::NoSavedHostKey { host: self.address.connect_host().to_owned() }.into()
-        })
+    fn with_key(&self, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>, login: LoginPurpose) -> Arc<KeyTask> {
+        let (state_dir, address) = (self.state_dir.clone(), self.address.clone());
+        workflows::sync(&port, listener, login, state_dir, address, self.last_login.clone())
     }
 
     fn clock(&self, policy: KeyTouch) -> TouchClock {
         let mut clock = TouchClock::new(policy);
-        if let Some(at) = *self.last_login.lock().unwrap_or_else(|p| p.into_inner()) {
+        if let Some(at) = *locked(&self.last_login) {
             clock.used_at(at);
         }
         clock
-    }
-
-    fn with_key(
-        self: Arc<Self>,
-        port: Arc<KeyPort>,
-        listener: Arc<dyn KeyTaskListener>,
-        login: LoginPurpose,
-        push: bool,
-    ) -> Arc<KeyTask> {
-        let sync = self.clone();
-        let work: Work = Box::new(move |task, signer| {
-            let remote = sync.remote()?;
-            let stop = || task.cancelled();
-            let mut progress = |update: TransferProgress| task.report_progress(update.into());
-            let (repo, state_dir) = (sync.repo(), sync.state_dir.clone());
-            let holds_back = || held_back::holds_back(&repo, &state_dir);
-            let result: Result<_, TaskFailure> =
-                operation::run_until(&remote, &signer, &repo, &holds_back, push, &stop, Some(&mut progress));
-            if task.cancelled() {
-                return Err(KeyError::Cancelled.into());
-            }
-            let report = result?;
-            if report.signatures > 0 {
-                *lock(&sync.last_login) = Some(Instant::now());
-            }
-            Ok(KeyOutcome::Synced { report })
-        });
-        let expected = port.expected();
-        port.sign_in_then(login, listener, expected, work)
     }
 }
 
@@ -231,7 +178,7 @@ impl StoreSync {
     pub fn open(state_dir: String) -> Result<Arc<Self>, SyncError> {
         let state_dir = PathBuf::from(state_dir);
         let address = saved_address(&state_dir)?;
-        Ok(Arc::new(Self { state_dir, address, last_login: Mutex::new(None) }))
+        Ok(Arc::new(Self { state_dir, address, last_login: Arc::default() }))
     }
 
     pub fn address(&self) -> String {
@@ -287,7 +234,8 @@ impl StoreSync {
 
     /// Settings › Store › Forget server key. The next setup or sync of a
     /// host that is not bundled asks to confirm its key again. A bundled
-    /// host's keys (github.com's, ...) cannot be forgotten: `Failed`.
+    /// host's keys (github.com's, ...) cannot be forgotten:
+    /// `RemoteFailure::HostKeyBundled`.
     pub fn forget_host_key(&self) -> Result<(), SyncError> {
         Ok(self.known_hosts().forget(self.address.connect_host(), self.address.port)?)
     }
@@ -299,21 +247,19 @@ impl StoreSync {
 
     /// "Send" as a key task (sign-in, `Push`): fetch, integrate and push on
     /// one login, with the session's PIN. Ends `Done` with `Synced` and the
-    /// report, or `SyncFailed`. A queue that can't be read fails it at once.
+    /// report, or `SyncFailed`. The sheet counts a queue that can't be read
+    /// as none waiting; the send then says what is wrong with it, or finds
+    /// the remote replaced, which is the way out of a history paw did not
+    /// make.
     pub fn send_with_key(self: Arc<Self>, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
-        match queue::unpushed(&self.repo()) {
-            Ok(items) => self.with_key(port, listener, LoginPurpose::Push { count: items.len() as u32 }, true),
-            Err(error) => {
-                let purpose = KeyPurpose::SignIn { login: LoginPurpose::Push { count: 0 } };
-                KeyTask::failed(purpose, listener, error.into())
-            }
-        }
+        let count = queue::unpushed(&self.repo()).map_or(0, |items| items.len() as u32);
+        self.with_key(port, listener, LoginPurpose::Push { count })
     }
 
     /// Fetch and integrate as a key task (sign-in, `Fetch`), pushing
     /// nothing. Ends as `send_with_key` does.
     pub fn refresh_with_key(self: Arc<Self>, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
-        self.with_key(port, listener, LoginPurpose::Fetch, false)
+        self.with_key(port, listener, LoginPurpose::Fetch)
     }
 
     /// The "not yet pushed" list, newest first.
@@ -349,32 +295,7 @@ impl StoreSync {
     /// changes. Ends `Done` with `Reencrypted` and what it did and left if
     /// it ran to the end; `reencrypt_check` says what is left after a stop.
     pub fn reencrypt_with_key(self: Arc<Self>, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
-        let count = match held_back::reencrypt_check(&self.repo(), &self.state_dir) {
-            Ok(check) => check.ready,
-            Err(error) => return KeyTask::failed(KeyPurpose::Reencrypt { count: 0 }, listener, error.into()),
-        };
-        let sync = self.clone();
-        let work: DecryptWork = Box::new(move |task, opener| {
-            let mut open = |_: &HeldBack, ciphertext: &[u8]| {
-                if task.cancelled() {
-                    return Err(OpenFailure::from(KeyError::Cancelled));
-                }
-                opener(ciphertext).map_err(|halt| match halt {
-                    Halt::Fail(error) => OpenFailure::from(error),
-                    halt => OpenFailure::Stop(halt.into()),
-                })
-            };
-            let mut progress = |done: u32, total: u32| {
-                task.report_progress(TaskProgress { done, total, bytes: None });
-            };
-            let result: Result<_, TaskFailure> =
-                held_back::reencrypt_each(&sync.repo(), &sync.state_dir, &mut open, &mut progress);
-            if task.cancelled() {
-                return Err(KeyError::Cancelled.into());
-            }
-            Ok(KeyOutcome::Reencrypted { report: result? })
-        });
-        port.decrypt_then(KeyPurpose::Reencrypt { count }, listener, work)
+        workflows::reencrypt(&port, listener, self.state_dir.clone())
     }
 
     pub fn discard(&self, id: String) -> Result<Vec<QueueItem>, SyncError> {

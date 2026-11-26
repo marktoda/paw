@@ -29,7 +29,7 @@ pub(crate) use session::{Halt, PinPrompt};
 pub(crate) use signer::authenticate;
 pub(crate) use task::TaskSide;
 pub use session::KeySession;
-pub use signer::SessionSigner;
+pub use signer::{SessionSigner, SshSigner};
 
 /// paw forgets the PIN once it has spent this long in the background
 /// (owner's decision; locking the phone alone does not count).
@@ -114,13 +114,4 @@ pub enum KeyError {
     StoreBusy,
     #[error("cancelled")]
     Cancelled,
-}
-
-/// How far the work after the key has got, when it is known.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
-pub struct TaskProgress {
-    pub done: u32,
-    pub total: u32,
-    /// Bytes received so far, for a download.
-    pub bytes: Option<u64>,
 }

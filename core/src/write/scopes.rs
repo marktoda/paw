@@ -11,17 +11,23 @@
 //! such entries are counted as `unsure`, not listed. So are entries with a
 //! hidden recipient (key ID zero) or a passphrase packet.
 //!
+//! The screen shows what it can read. A `.gpg-id` it cannot read (a link,
+//! a file the disk refuses) is left out, and so are the entries it would
+//! govern, rather than hiding every other folder behind one error: saving
+//! under it says what is wrong. One that is not UTF-8 is shown as far as it
+//! can be read, as the sync report shows it.
+//!
 //! Entry names are returned for the screen only. Nothing here logs them.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 
 use super::WriteError;
-use super::keyring::{KeySource, Keyring, LineStatus};
+use super::keyring::{Keyring, LineStatus};
 use crate::path::folder_of_gpg_id;
 use crate::recipients::{Recipient, entry_recipients};
 use crate::path::GPG_ID;
-use crate::store::gpg_id::{governing_gpg_id, gpg_id_lines, key_digits};
+use crate::store::gpg_id::{governing_gpg_id, key_digits, shown_gpg_id_lines};
 use crate::store::read::{read_entry, read_file};
 use crate::store::tree::StoreTree;
 
@@ -34,8 +40,6 @@ pub struct ScopeKey {
     /// else of the pinned key it resolves to; else `None` (an e-mail
     /// address or a name paw has no key for).
     pub short_id: Option<String>,
-    /// E-mail addresses from the pinned certificate's user IDs, if any.
-    pub emails: Vec<String>,
     /// The line resolves to the key on the plugged-in card that this store
     /// was set up with.
     pub this_key: bool,
@@ -72,15 +76,21 @@ struct Named {
 
 impl Named {
     /// Whether `recipient` is one of these keys: [`Recipient::names`] for a
-    /// fingerprint, the key ID when that is all the line gives.
+    /// fingerprint, the key ID when that is all the line gives (also of a
+    /// packet that names its key by fingerprint, as v6 packets do).
     fn has(&self, recipient: &Recipient) -> bool {
+        let by_key_id = match recipient {
+            Recipient::KeyId { id } => Some(id.as_str()),
+            Recipient::Fingerprint { fingerprint } => crate::recipients::key_id(fingerprint),
+            Recipient::Hidden => None,
+        };
         self.fingerprints.iter().any(|fingerprint| recipient.names(fingerprint))
-            || matches!(recipient, Recipient::KeyId { id } if self.key_ids.contains(id))
+            || by_key_id.is_some_and(|id| self.key_ids.contains(id))
     }
 }
 
 /// Every `.gpg-id` of the store at `root`, top first, with what it says.
-pub fn recipient_scopes(keyring: &Keyring, root: &Path, now: u32) -> Result<Vec<RecipientScope>, WriteError> {
+pub fn recipient_scopes(keyring: &Keyring, root: &Path) -> Result<Vec<RecipientScope>, WriteError> {
     let tree = StoreTree::scan(root)?;
     let mut governed: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut by_folder: BTreeMap<String, String> = BTreeMap::new();
@@ -104,25 +114,20 @@ pub fn recipient_scopes(keyring: &Keyring, root: &Path, now: u32) -> Result<Vec<
 
     let mut scopes = Vec::new();
     for gpg_id in files {
-        // Not in the working copy, or not a file paw reads (a link).
-        // Nor one that is not text.
+        // Not in the working copy, or not one paw can read (see above).
         let Ok(Some(bytes)) = read_file(root, &gpg_id) else { continue };
-        let Ok(lines) = gpg_id_lines(&gpg_id, &bytes) else { continue };
+        let lines = shown_gpg_id_lines(&bytes);
         let mut named = Named::default();
         let mut complete = true;
         let mut keys = Vec::new();
         for line in lines {
-            let status = keyring.line_status(&line, now);
+            let status = keyring.line_status(&line);
             let pinned = match &status {
                 LineStatus::Ready { fingerprint, .. } => keyring.keys().iter().find(|k| k.fingerprint == *fingerprint),
                 _ => None,
             };
             match pinned {
-                Some(key) => {
-                    named.fingerprints.push(key.fingerprint.clone());
-                    named.fingerprints.extend(key.fingerprints.iter().cloned());
-                    named.fingerprints.extend(key.primary.iter().cloned());
-                }
+                Some(key) => named.fingerprints.push(key.fingerprint.clone()),
                 None => {
                     complete = false;
                     named.key_ids.extend(key_id(&line));
@@ -130,14 +135,7 @@ pub fn recipient_scopes(keyring: &Keyring, root: &Path, now: u32) -> Result<Vec<
             }
             named.fingerprints.extend(key_digits(&line).filter(|digits| digits.len() >= 40));
             let short_id = key_id(&line).or_else(|| pinned.and_then(|k| key_id(&k.fingerprint)));
-            let this_key = matches!(status, LineStatus::Ready { source: KeySource::Card, .. });
-            keys.push(ScopeKey {
-                line,
-                short_id,
-                emails: pinned.map(|k| k.emails.clone()).unwrap_or_default(),
-                this_key,
-                status,
-            });
+            keys.push(ScopeKey { line, short_id, this_key: pinned.is_some(), status });
         }
         let entries = governed.remove(&gpg_id).unwrap_or_default();
         let mut other_key_entries = Vec::new();
@@ -187,5 +185,14 @@ mod tests {
         );
         assert_eq!(key_id("you@example.com"), None);
         assert_eq!(key_id("ABCD1234"), None);
+    }
+
+    #[test]
+    fn a_v6_packet_is_for_a_line_that_gives_only_its_key_id() {
+        let fingerprint = format!("1122334455667788{}", "A".repeat(48));
+        let named = Named { fingerprints: Vec::new(), key_ids: ["1122334455667788".to_owned()].into() };
+        assert!(named.has(&Recipient::Fingerprint { fingerprint }));
+        assert!(!named.has(&Recipient::Fingerprint { fingerprint: "B".repeat(64) }));
+        assert!(!named.has(&Recipient::Hidden));
     }
 }

@@ -100,14 +100,12 @@ fn store_lines(state_dir: &Path, out: &mut Vec<String>) {
     let repo = crate::files::layout::repo_dir(state_dir);
     match StoreTree::scan(&repo) {
         Ok(tree) => {
-            let mut folders: Vec<&str> = Vec::new();
-            for entry in tree.entries() {
-                let mut folder = entry.folder.as_str();
-                while !folder.is_empty() {
-                    folders.push(folder);
-                    folder = folder.rsplit_once('/').map_or("", |(parent, _)| parent);
-                }
-            }
+            let mut folders: Vec<&str> = tree
+                .entries()
+                .iter()
+                .flat_map(|entry| crate::path::folder_and_parents(&entry.folder))
+                .filter(|folder| !folder.is_empty())
+                .collect();
             folders.sort_unstable();
             folders.dedup();
             out.push(format!("Passwords: {} in {} folders", tree.entries().len(), folders.len()));

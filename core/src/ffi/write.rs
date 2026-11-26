@@ -21,9 +21,8 @@ pub struct EntryDraft {
 
 impl EntryDraft {
     fn draft(&self) -> MutexGuard<'_, core::EntryDraft> {
-        // Each setter replaces one value whole, so a panic elsewhere cannot
-        // leave it half written.
-        self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        // Each setter replaces one value whole.
+        crate::locked(&self.inner)
     }
 
     fn wrap(draft: core::EntryDraft) -> Arc<Self> {

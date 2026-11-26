@@ -154,7 +154,6 @@ private struct RecipientKeyRow: View {
 
     private var title: String {
         if key.thisKey { return "This key" }
-        if let email = key.emails.first { return email }
         // The whole ID is the line below: no "Key ending …" above it.
         if key.shortId != nil { return "Another key" }
         return key.line
@@ -169,10 +168,6 @@ private struct RecipientKeyRow: View {
             return "paw doesn't have this key. Can't save here."
         case .ambiguous(let fingerprints):
             return Device.words("Matches \(fingerprints.count) keys on this iPhone.")
-        case .expired:
-            return "Expired. Saving here needs a renewed key."
-        case .refused(_, _, let reason):
-            return "Can't be used: \(reason)."
         }
     }
 

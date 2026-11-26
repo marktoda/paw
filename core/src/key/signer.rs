@@ -1,5 +1,6 @@
-//! An [`SshSigner`] that signs through the key session, so that clone,
-//! fetch, push and setup share the PIN the person typed once.
+//! What signs an SSH login ([`SshSigner`]), and the signer that signs
+//! through the key session, so that clone, fetch, push and setup share the
+//! PIN the person typed once.
 //!
 //! No PIN is asked while the server waits: if paw no longer holds one, the
 //! signature fails.
@@ -12,7 +13,16 @@ use super::apdu;
 use super::task::TaskSide;
 use super::touch::{self, TouchWatch};
 use super::KeyError;
-use crate::ssh::{SshPublicKey, SshSigner};
+use crate::ssh::SshPublicKey;
+
+/// Something that can sign an SSH login: the card today, a device key later.
+pub trait SshSigner: Send + Sync {
+    fn public_key(&self) -> &SshPublicKey;
+
+    /// Signs `data` and returns the bare signature (64 bytes for ed25519).
+    /// May block for as long as the key waits for a touch.
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, KeyError>;
+}
 
 pub struct SessionSigner {
     task: Arc<dyn TaskSide>,

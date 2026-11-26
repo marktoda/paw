@@ -5,7 +5,7 @@
 use zeroize::Zeroizing;
 
 use super::session::{Halt, KeySession, PinPrompt};
-use super::{KeyError, TaskProgress};
+use super::KeyError;
 
 /// A running task as the key's own code sees it, whatever it is for.
 pub(crate) trait TaskSide: Send + Sync {
@@ -20,12 +20,6 @@ pub(crate) trait TaskSide: Send + Sync {
     fn show_busy(&self);
     fn show_touch(&self);
     fn show_working(&self);
-    /// The work after the key has got this far: shown as `Working`.
-    /// Nothing once the task has been cancelled or has finished. `false`
-    /// if it has: the work should stop.
-    fn report_progress(&self, progress: TaskProgress) -> bool;
-    /// From here on, cancel is too late. `false` if it already came.
-    fn begin_commit(&self) -> bool;
     /// Waits until `done` says so, or the task is cancelled.
     fn wait_until(&self, done: &mut dyn FnMut() -> bool) -> Result<(), Halt>;
     /// Shows the PIN stage (`last_error` says why it is asked again) and

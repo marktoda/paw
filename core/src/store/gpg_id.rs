@@ -32,14 +32,22 @@ pub(crate) fn key_digits(line: &str) -> Option<String> {
     (!digits.is_empty() && digits.chars().all(|c| c.is_ascii_hexdigit())).then(|| digits.to_ascii_uppercase())
 }
 
-/// A `.gpg-id` that is not UTF-8 is refused, the same way wherever paw reads
-/// one: saving, the recipients screen, the integrate report and accepting.
+/// A `.gpg-id` that is not UTF-8 is refused, the same way wherever paw
+/// decides what to encrypt for: saving, the folder's review screen and
+/// accepting. The screens that only show who can open (the recipients
+/// screen, a sync's report) read it with [`shown_gpg_id_lines`].
 pub(crate) fn gpg_id_text<'b>(file: &str, bytes: &'b [u8]) -> Result<&'b str, PawError> {
     std::str::from_utf8(bytes).map_err(|_| PawError::Store(format!("{file} is not a text file")))
 }
 
 pub(crate) fn gpg_id_lines(file: &str, bytes: &[u8]) -> Result<Vec<String>, PawError> {
     Ok(parse_gpg_id(gpg_id_text(file, bytes)?))
+}
+
+/// The key names of a `.gpg-id` for a screen that only shows them: what is
+/// not UTF-8 reads as U+FFFD.
+pub(crate) fn shown_gpg_id_lines(bytes: &[u8]) -> Vec<String> {
+    parse_gpg_id(&String::from_utf8_lossy(bytes))
 }
 
 /// The recipients for entries in `folder` (`/` separated, empty for the top
