@@ -135,9 +135,9 @@ pub struct HeldBack {
     /// The waiting change, as in [`QueueItem::id`].
     pub id: String,
     pub entry: String,
-    /// The `.gpg-id` that governs the entry now, e.g. `work/.gpg-id`; empty
-    /// if it can't be read.
-    pub gpg_id: String,
+    /// The `.gpg-id` that governs the entry now, e.g. `work/.gpg-id`;
+    /// `None` if it can't be read.
+    pub gpg_id: Option<String>,
     /// Who the waiting ciphertext is encrypted for, as recipients are
     /// described elsewhere ("key ID 0123...").
     pub encrypted_for: Vec<String>,
@@ -184,6 +184,11 @@ fn encrypted_for_exactly(found: &crate::recipients::EntryRecipients, keys: &[pgp
 pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncError> {
     let _reading = StoreLock::for_repo(dir).shared()?;
     let keyring = crate::write::Keyring::open(state_dir)?;
+    // Setup has not recorded who can open the store, so there is nothing to
+    // compare against, and the write path refuses every save until it has.
+    if !keyring.confirmed() {
+        return Ok(Vec::new());
+    }
     let repo = super::guard::open(dir)?;
     let local = waiting(&repo)?;
     let now = crate::write::now_secs();
@@ -200,7 +205,7 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
             .as_ref()
             .map(|f| f.keys.iter().map(crate::recipients::Recipient::describe).collect())
             .unwrap_or_default();
-        let hold = |gpg_id: String, recipients: Vec<String>, list: HeldBackList| HeldBack {
+        let hold = |gpg_id: Option<String>, recipients: Vec<String>, list: HeldBackList| HeldBack {
             id: commit.commit.id().to_string(),
             entry: commit.entry(),
             gpg_id,
@@ -211,17 +216,10 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
         let recipients = match keyring.folder_recipients(dir, folder, now) {
             Ok(recipients) => recipients,
             Err(_) => {
-                held.push(hold(String::new(), Vec::new(), HeldBackList::Unreadable));
+                held.push(hold(None, Vec::new(), HeldBackList::Unreadable));
                 continue;
             }
         };
-        // `confirmed` is one fact about the whole store, not this folder:
-        // setup has not recorded who can open it, so there is nothing to
-        // compare against, and the write path refuses every save until it
-        // has. Anything already found unreadable stays held.
-        if !recipients.confirmed {
-            return Ok(held);
-        }
         let accepted = !recipients.changed;
         let exact = accepted
             && found.as_ref().is_some_and(|found| {
@@ -230,7 +228,7 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
         if !exact {
             let lines = recipients.lines.into_iter().map(|line| line.line).collect();
             let list = if accepted { HeldBackList::Accepted } else { HeldBackList::NotAccepted };
-            held.push(hold(recipients.gpg_id, lines, list));
+            held.push(hold(Some(recipients.gpg_id), lines, list));
         }
     }
     Ok(held)

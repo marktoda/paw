@@ -256,7 +256,7 @@ fn a_waiting_change_is_not_pushed_after_its_recipients_changed() {
     let held = queue::held_back(&w.repo(), w.state.path()).unwrap();
     assert_eq!(held.len(), 1, "{held:?}");
     assert_eq!(held[0].entry, "Work/new");
-    assert_eq!(held[0].gpg_id, ".gpg-id");
+    assert_eq!(held[0].gpg_id.as_deref(), Some(".gpg-id"));
     assert_eq!(held[0].encrypted_for, [format!("key ID {}", &card_fpr[24..])]);
     assert_eq!(held[0].recipients, [card_fpr.clone(), other_fpr.clone()]);
     assert_eq!(held[0].list, queue::HeldBackList::NotAccepted);

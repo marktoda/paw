@@ -1,7 +1,7 @@
 //! Keeping the local copy of the password store in step with the git host.
 //!
 //! This is the whole of paw's use of libgit2: [`clone_with_transfer`], the
-//! fetch, [`integrate`], [`commit`] and the push, plus the unpushed
+//! fetch, the integrate, [`commit`] and the push, plus the unpushed
 //! [`queue`]. The network ones take a [`Connection`], which the caller
 //! opens once and may use for several of them; see `transport` for why
 //! that matters. [`operation`] runs a whole sync on one connection, so one
@@ -27,9 +27,9 @@ use git2::{AutotagOption, Direction, FetchOptions, FileMode, PushOptions, Remote
 
 pub use guard::{RefusedPath, RefusedReason};
 pub use history::{ChangeKind, KeptBoth};
-pub use integrate::{
-    IntegrateReport, Integration, RecipientsChange, Replaced, accept_replaced_remote, integrate,
-};
+pub use integrate::{IntegrateReport, Integration, RecipientsChange, Replaced, accept_replaced_remote};
+#[cfg(feature = "sim")]
+pub use integrate::integrate;
 pub use transport::{ConnectError, Connection, DOWNLOAD_LIMIT, HostKeyPin, PresentedHostKey, Remote, Route, key_type_words, scan_host_key};
 
 use crate::PawError;

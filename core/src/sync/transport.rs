@@ -90,29 +90,46 @@ async fn dial<H: client::Handler + Send + 'static>(
 }
 
 /// Where the TCP connection for `host:port` is opened: there, unless a
-/// simulation plays that host (`sim::remote::SimRoutes`, test builds only).
-/// Host keys are still checked against what `host:port` is pinned to.
+/// simulation plays that host (`sim::remote::SimRoutes`). A device build
+/// has no simulation, so its route is always direct. Host keys are still
+/// checked against what `host:port` is pinned to.
 #[derive(Clone, Default)]
-pub struct Route(Option<Arc<Resolve>>);
+pub struct Route {
+    #[cfg(feature = "sim")]
+    resolve: Option<Arc<Resolve>>,
+}
 
 /// Where to connect instead of `host:port`, if anywhere.
+#[cfg(feature = "sim")]
 type Resolve = dyn Fn(&str, u16) -> Option<(String, u16)> + Send + Sync;
 
 impl Route {
     /// Connections go where `resolve` says, or, given `None`, where they say.
     #[cfg(feature = "sim")]
     pub(crate) fn new(resolve: impl Fn(&str, u16) -> Option<(String, u16)> + Send + Sync + 'static) -> Self {
-        Self(Some(Arc::new(resolve)))
+        Self { resolve: Some(Arc::new(resolve)) }
     }
 
+    #[cfg(feature = "sim")]
     fn address(&self, host: &str, port: u16) -> (String, u16) {
-        self.0.as_ref().and_then(|resolve| resolve(host, port)).unwrap_or_else(|| (host.to_owned(), port))
+        self.resolve.as_ref().and_then(|resolve| resolve(host, port)).unwrap_or_else(|| (host.to_owned(), port))
+    }
+
+    #[cfg(not(feature = "sim"))]
+    fn address(&self, host: &str, port: u16) -> (String, u16) {
+        (host.to_owned(), port)
     }
 }
 
 impl std::fmt::Debug for Route {
+    #[cfg(feature = "sim")]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(if self.0.is_some() { "Route(simulated)" } else { "Route(direct)" })
+        f.write_str(if self.resolve.is_some() { "Route(simulated)" } else { "Route(direct)" })
+    }
+
+    #[cfg(not(feature = "sim"))]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Route(direct)")
     }
 }
 

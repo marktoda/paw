@@ -77,11 +77,14 @@ pub struct Endpoints {
     api: String,
     client_id: String,
     app_slug: String,
-    /// Set only by [`Endpoints::simulated`], so never in a device build.
+    /// Set only by [`Endpoints::simulated`]. A device build has no field
+    /// for it.
+    #[cfg(feature = "sim")]
     simulation: Option<Simulation>,
 }
 
 /// A test build's simulated GitHub.
+#[cfg(feature = "sim")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Simulation {
     /// Its store (`owner/name`) and the SSH address of the simulated host
@@ -97,6 +100,7 @@ impl Endpoints {
             api: API.into(),
             client_id: CLIENT_ID.into(),
             app_slug: APP_SLUG.into(),
+            #[cfg(feature = "sim")]
             simulation: None,
         }
     }
@@ -117,8 +121,16 @@ impl Endpoints {
     }
 
     /// Whether these are a test build's simulated endpoints.
+    #[cfg(feature = "sim")]
     pub(crate) fn is_simulated(&self) -> bool {
         self.simulation.is_some()
+    }
+
+    /// Whether these are a test build's simulated endpoints: never, in a
+    /// device build.
+    #[cfg(not(feature = "sim"))]
+    pub(crate) fn is_simulated(&self) -> bool {
+        false
     }
 
     pub fn web(&self) -> &str {
@@ -150,6 +162,7 @@ impl Endpoints {
     /// The SSH address setup clones `owner/repo` from: GitHub's, except in
     /// a simulation, whose repositories live on a simulated SSH host.
     pub(crate) fn ssh_address(&self, full_name: &str) -> Option<String> {
+        #[cfg(feature = "sim")]
         if let Some((name, address)) = self.simulation.as_ref().and_then(|s| s.store.as_ref())
             && name.eq_ignore_ascii_case(full_name)
         {
