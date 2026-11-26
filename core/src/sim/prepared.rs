@@ -6,73 +6,37 @@
 //! The key tasks run as the app runs them, on a key port of their own, and
 //! the PIN is typed when one asks. The key must need no touch.
 
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
 use super::SimulatedKey;
 use super::copies::SimClock;
 use super::remote::SimRemote;
+use super::tasks::{SimDriver, ending, wait_final};
 use crate::PawError;
 use crate::ffi::sync::{Setup, StoreSync};
 use crate::key::KeyPort;
 use crate::setup::SetupState;
-use crate::task::{KeyTask, KeyTaskListener, KeyTaskState};
+use crate::task::{KeyTask, KeyTaskListener};
 
 /// The longest one key task may take.
 const WITHIN: Duration = Duration::from_secs(60);
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-}
 
 fn failed(what: &str, error: impl std::fmt::Display) -> PawError {
     PawError::Store(format!("{what} failed: {error}."))
 }
 
-/// Wakes [`run`] each time the task's stage changes.
-#[derive(Default)]
-struct Changes {
-    count: Mutex<u64>,
-    changed: Condvar,
-}
-
-impl KeyTaskListener for Changes {
-    fn state_changed(&self, _: KeyTaskState) {
-        *lock(&self.count) += 1;
-        self.changed.notify_all();
-    }
-}
-
-/// Runs the key task `start` makes to its end, typing `pin` when it asks.
+/// Runs the key task `start` makes to its end, typing `pin` when it asks,
+/// and stopping if the key refuses it.
 fn run(what: &str, pin: &str, start: impl FnOnce(Arc<dyn KeyTaskListener>) -> Arc<KeyTask>) -> Result<(), PawError> {
-    let changes = Arc::new(Changes::default());
-    let task = start(changes.clone());
-    let deadline = Instant::now() + WITHIN;
-    loop {
-        let seen = *lock(&changes.count);
-        match task.state() {
-            KeyTaskState::Done { .. } => return Ok(()),
-            KeyTaskState::Pin { last_error: None, .. } => task.supply_pin(pin.as_bytes().to_vec()),
-            KeyTaskState::Pin { last_error: Some(error), .. } => {
-                task.cancel();
-                return Err(failed(what, error));
-            }
-            KeyTaskState::Failed { error } => return Err(failed(what, error)),
-            KeyTaskState::SyncFailed { error } => return Err(failed(what, error)),
-            KeyTaskState::SetupFailed { error } => return Err(failed(what, error)),
-            KeyTaskState::Cancelled => return Err(PawError::Store(format!("{what} was cancelled."))),
-            KeyTaskState::PlugIn | KeyTaskState::Busy | KeyTaskState::Touch | KeyTaskState::Working { .. } => {}
-        }
-        let Some(left) = deadline.checked_duration_since(Instant::now()) else {
-            task.cancel();
-            return Err(PawError::Store(format!("{what} did not finish.")));
-        };
-        let count = lock(&changes.count);
-        if *count == seen {
-            // Bounded, in case a change is reported before the task's state shows it.
-            let _ = changes.changed.wait_timeout(count, left.min(Duration::from_millis(50)));
-        }
-    }
+    let driver = SimDriver::typist_once(pin);
+    let task = start(driver.clone());
+    driver.drive(&task);
+    let Some(end) = wait_final(&task, WITHIN) else {
+        task.cancel();
+        return Err(PawError::Store(format!("{what} did not finish.")));
+    };
+    ending(end).map(drop).map_err(|failure| failed(what, failure))
 }
 
 /// A key port of its own with `key` plugged in, as the app has one.

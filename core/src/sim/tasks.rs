@@ -1,17 +1,156 @@
-//! Key tasks for Rust tests whose work is their own: a git login whose
-//! signer the test uses, and one ciphertext deciphered. Both are the
-//! app's tasks (`sign_in_then`, `decrypt_then`); only the
-//! work after the key differs.
+//! Key tasks for Rust tests and the simulator's prepared stores: a driver
+//! that plays the person at the key sheet ([`SimDriver`]), a git login whose
+//! signer the test uses, and one ciphertext deciphered. The last two are
+//! the app's tasks (`sign_in_then`, `decrypt_then`); only the work after
+//! the key differs.
 
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
+use std::time::{Duration, Instant};
 
 use zeroize::Zeroizing;
 
+use super::SimulatedKey;
 use crate::key::{KeyError, KeyPort, SessionSigner};
-use crate::task::{DecryptWork, KeyOutcome, KeyPurpose, KeyTask, KeyTaskListener, KeyTaskState, LoginPurpose, Work};
 use crate::ssh::{SshPublicKey, SshSigner};
+use crate::task::{
+    DecryptWork, KeyOutcome, KeyPurpose, KeyTask, KeyTaskListener, KeyTaskState, LoginPurpose, TaskFailure, Work,
+};
+
+/// How long a test waits for a stage, or a task to end.
+pub const WAIT: Duration = Duration::from_secs(10);
+
+/// Plays the person at the key sheet: records every stage, types the PIN
+/// at each PIN stage (or gives up once it is refused) and touches the key
+/// when asked, as it is told to.
+#[derive(Default)]
+pub struct SimDriver {
+    states: Mutex<Vec<KeyTaskState>>,
+    changed: Condvar,
+    task: OnceLock<Weak<KeyTask>>,
+    pin: Option<String>,
+    /// Cancels the task when the PIN is asked again, instead of typing it.
+    gives_up: bool,
+    toucher: Option<Arc<SimulatedKey>>,
+}
+
+impl SimDriver {
+    /// Watches only.
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// Types `pin` at the PIN stage and touches `key` at the touch stage.
+    pub fn helpful(pin: &str, key: &Arc<SimulatedKey>) -> Arc<Self> {
+        Arc::new(Self { pin: Some(pin.into()), toucher: Some(key.clone()), ..Self::default() })
+    }
+
+    /// Types `pin` at the PIN stage, but never touches.
+    pub fn typist(pin: &str) -> Arc<Self> {
+        Arc::new(Self { pin: Some(pin.into()), ..Self::default() })
+    }
+
+    /// Types `pin` once: if the key refuses it, cancels the task rather
+    /// than spend another try.
+    pub fn typist_once(pin: &str) -> Arc<Self> {
+        Arc::new(Self { pin: Some(pin.into()), gives_up: true, ..Self::default() })
+    }
+
+    /// Touches `key` when asked, but types nothing.
+    pub fn toucher(key: &Arc<SimulatedKey>) -> Arc<Self> {
+        Arc::new(Self { toucher: Some(key.clone()), ..Self::default() })
+    }
+
+    /// Lets the driver type the PIN, including at a PIN stage the task
+    /// started in (which the listener is not told about).
+    pub fn drive(&self, task: &Arc<KeyTask>) {
+        let _ = self.task.set(Arc::downgrade(task));
+        if let state @ KeyTaskState::Pin { .. } = task.state() {
+            self.answer(task, &state);
+        }
+    }
+
+    /// The PIN stage `state` of `task`: types the PIN, or gives up.
+    fn answer(&self, task: &KeyTask, state: &KeyTaskState) {
+        let Some(pin) = &self.pin else { return };
+        if self.gives_up && matches!(state, KeyTaskState::Pin { last_error: Some(_), .. }) {
+            task.cancel();
+        } else {
+            task.supply_pin(pin.as_bytes().to_vec());
+        }
+    }
+
+    pub fn states(&self) -> Vec<KeyTaskState> {
+        self.states.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    pub fn saw(&self, wanted: impl Fn(&KeyTaskState) -> bool) -> bool {
+        self.states().iter().any(wanted)
+    }
+
+    pub fn count(&self, wanted: impl Fn(&KeyTaskState) -> bool) -> usize {
+        self.states().iter().filter(|s| wanted(s)).count()
+    }
+
+    /// Waits until a stage `wanted` has been reported. Panics after [`WAIT`].
+    pub fn wait_for(&self, wanted: impl Fn(&KeyTaskState) -> bool) {
+        let deadline = Instant::now() + WAIT;
+        let mut states = self.states.lock().unwrap_or_else(|p| p.into_inner());
+        while !states.iter().any(&wanted) {
+            let left = deadline.checked_duration_since(Instant::now()).expect("the stage never came");
+            states = self.changed.wait_timeout(states, left).unwrap_or_else(|p| p.into_inner()).0;
+        }
+    }
+}
+
+impl KeyTaskListener for SimDriver {
+    fn state_changed(&self, state: KeyTaskState) {
+        match &state {
+            KeyTaskState::Pin { .. } => {
+                if let Some(task) = self.task.get().and_then(Weak::upgrade) {
+                    self.answer(&task, &state);
+                }
+            }
+            KeyTaskState::Touch => {
+                if let Some(key) = &self.toucher {
+                    key.touch();
+                }
+            }
+            _ => {}
+        }
+        self.states.lock().unwrap_or_else(|p| p.into_inner()).push(state);
+        self.changed.notify_all();
+    }
+}
+
+/// The task's final stage, once it has one; `None` if it has none within
+/// `within`.
+pub fn wait_final(task: &KeyTask, within: Duration) -> Option<KeyTaskState> {
+    let deadline = Instant::now() + within;
+    loop {
+        let state = task.state();
+        if state.is_final() {
+            return Some(state);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// How `ended`, a final stage, ended: its outcome, or its failure
+/// (`Cancelled` is the key's).
+pub fn ending(ended: KeyTaskState) -> Result<KeyOutcome, TaskFailure> {
+    match ended {
+        KeyTaskState::Done { outcome } => Ok(outcome),
+        KeyTaskState::Failed { error } => Err(error.into()),
+        KeyTaskState::SyncFailed { error } => Err(error.into()),
+        KeyTaskState::SetupFailed { error } => Err(error.into()),
+        KeyTaskState::Cancelled => Err(KeyError::Cancelled.into()),
+        other => panic!("the task has not ended: {other:?}"),
+    }
+}
 
 /// A sign-in task whose signer the test logs in with. The task stays at
 /// `Working` until [`Self::finish`] (or drop), then ends `Done`; a
