@@ -163,7 +163,7 @@ private final class HarnessRun: AutoFillAnswers {
         case .list(let services, let kind):
             model = provider.list(services, kind: kind)
         case .entry(let request):
-            quickType = AutoFillProvider.answerWithoutScreen(request).rawValue
+            quickType = Self.name(AutoFillProvider.answerWithoutScreen(request))
             model = provider.entry(request)
         }
     }
@@ -179,10 +179,20 @@ private final class HarnessRun: AutoFillAnswers {
         readPairingsSoon()
     }
 
-    func cancel(_ reason: AutoFillEnd) {
-        result = "ended \(reason.rawValue)"
+    func cancel(_ reason: ASExtensionError.Code) {
+        result = "ended \(Self.name(reason))"
         model = nil
         readPairings()
+    }
+
+    /// The code's name, as the UI tests read it.
+    private static func name(_ code: ASExtensionError.Code) -> String {
+        switch code {
+        case .userCanceled: "userCanceled"
+        case .userInteractionRequired: "userInteractionRequired"
+        case .credentialIdentityNotFound: "credentialIdentityNotFound"
+        default: "code \(code.rawValue)"
+        }
     }
 
     private static func digest(_ text: String) -> String {

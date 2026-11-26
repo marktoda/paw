@@ -11,13 +11,13 @@ final class AutoFillProviderTests: XCTestCase {
     @MainActor
     private final class Answers: AutoFillAnswers {
         var fills: [AutoFillCredential] = []
-        var ends: [AutoFillEnd] = []
+        var ends: [ASExtensionError.Code] = []
 
         func complete(with credential: AutoFillCredential) {
             fills.append(credential)
         }
 
-        func cancel(_ reason: AutoFillEnd) {
+        func cancel(_ reason: ASExtensionError.Code) {
             ends.append(reason)
         }
     }

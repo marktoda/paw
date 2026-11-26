@@ -29,14 +29,6 @@ enum AutoFillOpening: @unchecked Sendable {
     case unreadable(String)
 }
 
-/// How a request ends without a fill. Mirrors the `ASExtensionError` codes
-/// the extension passes on, without importing AuthenticationServices here.
-enum AutoFillEnd: String, Sendable {
-    case userCanceled
-    case userInteractionRequired
-    case credentialIdentityNotFound
-}
-
 /// Opens the store paw set up, for the extension. Reads only: no `Setup`
 /// (which creates folders), no sync, no GitHub, no network. The files
 /// it writes besides a Face ID copy are `site-pairings.json`, after a

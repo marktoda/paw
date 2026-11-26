@@ -5,7 +5,7 @@ import AuthenticationServices
 @MainActor
 protocol AutoFillAnswers: AnyObject {
     func complete(with credential: AutoFillCredential)
-    func cancel(_ reason: AutoFillEnd)
+    func cancel(_ reason: ASExtensionError.Code)
 }
 
 /// The provider's requests, as iOS makes them, up to their answer: what
@@ -47,7 +47,7 @@ final class AutoFillProvider: AutoFillCompletion {
     /// one, so a fill without one is never possible. Answered without
     /// opening the store, which could wait on paw's lock: a missing entry is
     /// found out on the screen that follows.
-    static func answerWithoutScreen(_ request: ASCredentialRequest) -> AutoFillEnd {
+    static func answerWithoutScreen(_ request: ASCredentialRequest) -> ASExtensionError.Code {
         Self.entry(of: request) == nil ? .credentialIdentityNotFound : .userInteractionRequired
     }
 
@@ -87,7 +87,7 @@ final class AutoFillProvider: AutoFillCompletion {
         answers?.complete(with: credential)
     }
 
-    func end(_ reason: AutoFillEnd) {
+    func end(_ reason: ASExtensionError.Code) {
         guard !answered else { return }
         answered = true
         model = nil

@@ -1,3 +1,4 @@
+import AuthenticationServices
 import Foundation
 import Observation
 
@@ -15,7 +16,7 @@ enum AutoFillRequest: Equatable, Sendable {
 @MainActor
 protocol AutoFillCompletion: AnyObject {
     func fill(_ credential: AutoFillCredential)
-    func end(_ reason: AutoFillEnd)
+    func end(_ reason: ASExtensionError.Code)
 }
 
 /// Why a picked entry asks before it fills.
@@ -496,7 +497,7 @@ final class AutoFillModel {
         _ = try? source.pairings.recordPairing(store: source.store, entry: entry.path, service: pairing.site)
     }
 
-    private func end(_ reason: AutoFillEnd) {
+    private func end(_ reason: ASExtensionError.Code) {
         guard !finished else { return }
         shutDown()
         completion?.end(reason)

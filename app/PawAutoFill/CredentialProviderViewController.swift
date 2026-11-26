@@ -81,13 +81,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         }
     }
 
-    func cancel(_ reason: AutoFillEnd) {
-        let code: ASExtensionError.Code
-        switch reason {
-        case .userCanceled: code = .userCanceled
-        case .userInteractionRequired: code = .userInteractionRequired
-        case .credentialIdentityNotFound: code = .credentialIdentityNotFound
-        }
-        extensionContext.cancelRequest(withError: NSError(domain: ASExtensionErrorDomain, code: code.rawValue))
+    func cancel(_ reason: ASExtensionError.Code) {
+        extensionContext.cancelRequest(withError: NSError(domain: ASExtensionErrorDomain, code: reason.rawValue))
     }
 }
