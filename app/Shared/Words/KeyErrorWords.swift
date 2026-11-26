@@ -61,7 +61,7 @@ struct KeyErrorWords: Equatable {
     /// dropped the PIN without trying it again, so no try was used.
     init(
         pinAskedAgain error: KeyError, entry: String, purpose: Purpose = .open, waiting: String = "",
-        table: WordTable = .app
+        table: WordTable
     ) {
         if case .PinForgotten = error {
             self.init(problem: "Your key asked for its PIN again", nextStep: "Enter it again; no try was used.")
@@ -70,7 +70,7 @@ struct KeyErrorWords: Equatable {
         }
     }
 
-    init(_ error: KeyError, entry: String, purpose: Purpose = .open, waiting: String = "", table: WordTable = .app) {
+    init(_ error: KeyError, entry: String, purpose: Purpose = .open, waiting: String = "", table: WordTable) {
         switch error {
         case .WrongPin(let triesLeft):
             problem = "Wrong PIN"

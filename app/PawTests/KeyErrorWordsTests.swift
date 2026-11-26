@@ -5,40 +5,40 @@ import XCTest
 final class KeyErrorWordsTests: XCTestCase {
     func testAWrongPinCountsTheTriesLeft() {
         XCTAssertEqual(
-            KeyErrorWords(.WrongPin(triesLeft: 2), entry: "github.com"),
+            KeyErrorWords(.WrongPin(triesLeft: 2), entry: "github.com", table: .app),
             KeyErrorWords(problem: "Wrong PIN", nextStep: "2 tries left."))
         XCTAssertEqual(
-            KeyErrorWords(.WrongPin(triesLeft: 1), entry: "github.com").nextStep,
+            KeyErrorWords(.WrongPin(triesLeft: 1), entry: "github.com", table: .app).nextStep,
             "1 try left before the key locks.")
     }
 
     func testAHeldPinTheKeyRefusesAsksForTheCurrentOne() {
-        let words = KeyErrorWords(.HeldPinRejected(triesLeft: 1), entry: "github.com")
+        let words = KeyErrorWords(.HeldPinRejected(triesLeft: 1), entry: "github.com", table: .app)
         XCTAssertEqual(words.problem, "Your key refused the PIN paw was holding")
         XCTAssertEqual(
             words.nextStep, "It may have been changed. Enter the current one. 1 try left before the key locks.")
     }
 
     func testAnotherKeyNamesTheEntryAndCountsTheKeys() {
-        let one = KeyErrorWords(.NotForThisKey(recipients: [.keyId(id: "0123456789ABCDEF")]), entry: "github.com")
+        let one = KeyErrorWords(.NotForThisKey(recipients: [.keyId(id: "0123456789ABCDEF")]), entry: "github.com", table: .app)
         XCTAssertEqual(one.problem, "This key can't open github.com")
         XCTAssertEqual(one.nextStep, "It's encrypted for another key. Open it on a computer that has that key.")
-        let two = KeyErrorWords(.NotForThisKey(recipients: [.keyId(id: "0123456789ABCDEF"), .keyId(id: "FEDCBA9876543210")]), entry: "x")
+        let two = KeyErrorWords(.NotForThisKey(recipients: [.keyId(id: "0123456789ABCDEF"), .keyId(id: "FEDCBA9876543210")]), entry: "x", table: .app)
         XCTAssertEqual(two.nextStep, "It's encrypted for other keys. Open it on a computer that has one of them.")
     }
 
     func testThePinAskedAgainAfterTheKeyForgotItUsedNoTry() {
         XCTAssertEqual(
-            KeyErrorWords(pinAskedAgain: .PinForgotten, entry: "x"),
+            KeyErrorWords(pinAskedAgain: .PinForgotten, entry: "x", table: .app),
             KeyErrorWords(problem: "Your key asked for its PIN again", nextStep: "Enter it again; no try was used."))
         // Any other reason is worded as usual.
         XCTAssertEqual(
-            KeyErrorWords(pinAskedAgain: .PinFormat, entry: "x"),
+            KeyErrorWords(pinAskedAgain: .PinFormat, entry: "x", table: .app),
             KeyErrorWords(problem: "A PIN has 6 to 127 characters", nextStep: "Enter it again; no try was used."))
     }
 
     func testAReaderErrorQuotesTheKey() {
-        let words = KeyErrorWords(.Reader(detail: "6F00"), entry: "x")
+        let words = KeyErrorWords(.Reader(detail: "6F00"), entry: "x", table: .app)
         XCTAssertEqual(words.problem, "Your key gave an error")
         XCTAssertEqual(words.nextStep, "Unplug it, plug it back in and try again. The key said: 6F00.")
     }
@@ -64,7 +64,7 @@ final class SharedWordsTests: XCTestCase {
     func testAnotherKeyThanTheStoresNamesBothKeys() {
         let presented = KeyIdentity(ident: "0006:12345678", decryptionFingerprint: "AAAA0000BBBB1111CCCC2222DDDD3333EEEE4444", authenticationFingerprint: nil)
         let enrolled = KeyIdentity(ident: "0006:87654321", decryptionFingerprint: nil, authenticationFingerprint: nil)
-        let words = KeyErrorWords(.DifferentKey(mismatch: KeyMismatch(enrolled: enrolled, presented: presented)), entry: "x")
+        let words = KeyErrorWords(.DifferentKey(mismatch: KeyMismatch(enrolled: enrolled, presented: presented)), entry: "x", table: .app)
         XCTAssertEqual(words.problem, "This isn't the key this store was set up with")
         XCTAssertEqual(
             words.nextStep,
@@ -82,18 +82,18 @@ final class SharedWordsTests: XCTestCase {
 
     func testAKeyThatCannotBeReadSaysWhyAndWhatToDo() {
         XCTAssertEqual(
-            KeyErrorWords(.failed(KeyError.KeyRemoved)),
+            KeyErrorWords(.failed(KeyError.KeyRemoved), table: .app),
             KeyErrorWords(
                 problem: "paw couldn't read your key",
                 nextStep: "It stopped answering. Try again, or unplug the key and plug it back in."))
-        XCTAssertEqual(KeyErrorWords(.unsupported).problem, "This iPhone can't use USB keys")
+        XCTAssertEqual(KeyErrorWords(.unsupported, table: .app).problem, "This iPhone can't use USB keys")
     }
 
     func testFaceIdNoticesOfferTheKey() {
-        let locked = FaceIdWords.notice(PawError.FaceIdLockedOut, entry: "github.com")
+        let locked = FaceIdWords.notice(PawError.FaceIdLockedOut, entry: "github.com", table: .app)
         XCTAssertEqual(locked.problem, "Face ID is off until you enter your iPhone passcode")
         XCTAssertEqual(locked.nextStep, "Lock and unlock your iPhone, then try again.")
-        let changed = FaceIdWords.notice(PawError.FaceIdChanged, entry: "github.com")
+        let changed = FaceIdWords.notice(PawError.FaceIdChanged, entry: "github.com", table: .app)
         XCTAssertEqual(changed.problem, "Face ID changed, so its saved copies were removed")
         XCTAssertEqual(changed.nextStep, "Open github.com with your key.")
         XCTAssertEqual(describe(PawError.FaceIdNotRecognised), "Face ID didn't recognise you.")

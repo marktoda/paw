@@ -13,7 +13,7 @@ struct WordTable: Sendable {
     /// busy store (`FaceIdWords.notice`).
     let faceIdNotice: @Sendable (Swift.Error, _ entry: String) -> FaceIdNotice
 
-    static let app = WordTable(
+    static let app: WordTable = WordTable(
         differentKey: { mismatch in
             KeyErrorWords(
                 problem: "This isn't the key this store was set up with",
@@ -29,7 +29,7 @@ struct WordTable: Sendable {
             case .Reader(let detail)?:
                 why = "The key said: \(detail)."
             case let error?:
-                why = KeyErrorWords(error, entry: "this password").problem + "."
+                why = KeyErrorWords(error, entry: "this password", table: .app).problem + "."
             case nil:
                 if case .Failed(let message)? = error as? ConnectionError {
                     why = message
