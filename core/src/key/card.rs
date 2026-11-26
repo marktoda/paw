@@ -1,7 +1,7 @@
 //! The card through the openpgp-card library: what a session reads when a
 //! key is plugged in (identity, slots, touch policies, public keys), and the
 //! library's card handle a card job works with. The app supplies only a way
-//! to exchange raw APDUs ([`ApduTransport`]).
+//! to exchange raw APDUs ([`CardConnection`]).
 
 use std::sync::Arc;
 
@@ -16,11 +16,25 @@ use openpgp_card_rpgp::CardSlot;
 use crate::PawError;
 use crate::ssh::SshPublicKey;
 
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum ConnectionError {
+    #[error("{message}")]
+    Failed { message: String },
+}
+
+impl From<uniffi::UnexpectedUniFFICallbackError> for ConnectionError {
+    fn from(e: uniffi::UnexpectedUniFFICallbackError) -> Self {
+        Self::Failed { message: e.reason }
+    }
+}
+
 /// Exchanges one command APDU for one response APDU (including the two
-/// status bytes). On iOS this is backed by the USB-C smart card connection;
-/// in tests by a simulated card.
-pub trait ApduTransport: Send + Sync {
-    fn transmit(&self, apdu: &[u8]) -> Result<Vec<u8>, String>;
+/// status bytes). Implemented in Swift on the USB-C smart card connection,
+/// and by the simulated key.
+#[uniffi::export(with_foreign)]
+pub trait CardConnection: Send + Sync {
+    /// Sends one command APDU and returns the response with its status bytes.
+    fn transmit(&self, apdu: Vec<u8>) -> Result<Vec<u8>, ConnectionError>;
 }
 
 /// What the card says about itself, read without a PIN.
@@ -74,9 +88,9 @@ fn key_touch(tx: &mut Card<Transaction<'_>>, slot: KeyType) -> Result<KeyTouch, 
     })
 }
 
-struct Backend(Arc<dyn ApduTransport>);
+struct Backend(Arc<dyn CardConnection>);
 
-struct Tx(Arc<dyn ApduTransport>);
+struct Tx(Arc<dyn CardConnection>);
 
 impl CardBackend for Backend {
     fn limit_card_caps(&self, card_caps: CardCaps) -> CardCaps {
@@ -93,7 +107,7 @@ impl CardBackend for Backend {
 
 impl CardTransaction for Tx {
     fn transmit(&mut self, cmd: &[u8], _buf_size: usize) -> Result<Vec<u8>, SmartcardError> {
-        self.0.transmit(cmd).map_err(SmartcardError::Error)
+        self.0.transmit(cmd.to_vec()).map_err(|e| SmartcardError::Error(e.to_string()))
     }
 
     fn feature_pinpad_verify(&self) -> bool {
@@ -134,13 +148,13 @@ fn card_err(e: openpgp_card::Error) -> PawError {
 
 /// The library's handle on the card behind `transport`; selects the
 /// OpenPGP application.
-pub(crate) fn open(transport: Arc<dyn ApduTransport>) -> Result<Card<Open>, PawError> {
+pub(crate) fn open(transport: Arc<dyn CardConnection>) -> Result<Card<Open>, PawError> {
     let backend: Box<dyn CardBackend + Send + Sync> = Box::new(Backend(transport));
     Card::<Open>::new(backend).map_err(card_err)
 }
 
 /// Reads the card's identity and key state. Needs no PIN and no touch.
-pub(crate) fn card_info(transport: Arc<dyn ApduTransport>) -> Result<CardInfo, PawError> {
+pub(crate) fn card_info(transport: Arc<dyn CardConnection>) -> Result<CardInfo, PawError> {
     let mut card = open(transport)?;
     let mut tx = card.transaction().map_err(card_err)?;
 
@@ -163,7 +177,7 @@ pub(crate) fn card_info(transport: Arc<dyn ApduTransport>) -> Result<CardInfo, P
 }
 
 /// The public half of the card's decryption key. Needs no PIN.
-pub(crate) fn card_decryption_key(transport: Arc<dyn ApduTransport>) -> Result<pgp::packet::PublicKey, PawError> {
+pub(crate) fn card_decryption_key(transport: Arc<dyn CardConnection>) -> Result<pgp::packet::PublicKey, PawError> {
     let mut card = open(transport)?;
     let mut tx = card.transaction().map_err(card_err)?;
     let slot = CardSlot::init_from_card(&mut tx, KeyType::Decryption, &|| {})
@@ -173,7 +187,7 @@ pub(crate) fn card_decryption_key(transport: Arc<dyn ApduTransport>) -> Result<p
 
 /// Reads the SSH public key of the card's authentication slot. Needs no PIN
 /// and no touch.
-pub(crate) fn card_ssh_public_key(transport: Arc<dyn ApduTransport>) -> Result<SshPublicKey, PawError> {
+pub(crate) fn card_ssh_public_key(transport: Arc<dyn CardConnection>) -> Result<SshPublicKey, PawError> {
     let mut card = open(transport)?;
     let mut tx = card.transaction().map_err(card_err)?;
 

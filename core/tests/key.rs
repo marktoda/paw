@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use key_common::*;
 use paw_core::key::{CACHED_TOUCH_GRACE, KeyError, LoginPurpose, PIN_BACKGROUND_LIMIT};
 use paw_core::task::{KeyOutcome, KeyTaskState};
-use paw_core::key::ApduTransport;
+use paw_core::key::CardConnection;
 use paw_core::sim::SimTouch;
 use paw_core::ssh::SshSigner;
 use ring::signature::{ED25519, UnparsedPublicKey};
@@ -145,7 +145,7 @@ fn pin_changed_elsewhere_drops_the_held_pin_after_one_try() {
 fn fewer_than_three_tries_are_shown_before_input() {
     let rig = rig_unplugged(SimTouch::Off, SimTouch::Off);
     rig.sim.set_pin_tries_left(2);
-    rig.port.attach(rig.sim.clone()).unwrap();
+    rig.port.plugged_in(rig.sim.clone()).unwrap();
 
     let task = open(&rig, ENTRY, &Driver::new());
     assert_eq!(pin_stage(&task.state()), (2, false, None));
@@ -153,7 +153,7 @@ fn fewer_than_three_tries_are_shown_before_input() {
     task.cancel();
 
     let rig = rig_unplugged(SimTouch::Off, SimTouch::Off);
-    rig.port.attach(rig.sim.clone()).unwrap();
+    rig.port.plugged_in(rig.sim.clone()).unwrap();
     let task = open(&rig, ENTRY, &Driver::new());
     assert_eq!(pin_stage(&task.state()), (3, false, None), "three tries: nothing to warn about");
     task.cancel();
@@ -282,8 +282,8 @@ impl HeldDeverify {
     }
 }
 
-impl ApduTransport for HeldDeverify {
-    fn transmit(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
+impl CardConnection for HeldDeverify {
+    fn transmit(&self, apdu: Vec<u8>) -> Result<Vec<u8>, paw_core::key::ConnectionError> {
         if apdu.starts_with(&[0x00, 0x20, 0xFF, 0x82]) {
             self.arrived.store(true, std::sync::atomic::Ordering::SeqCst);
             let mut open = self.gate.lock().unwrap();
@@ -304,7 +304,7 @@ fn forget_pin_returns_at_once_while_the_reader_is_slow_and_deverifies_after() {
         opened: std::sync::Condvar::new(),
         arrived: std::sync::atomic::AtomicBool::new(false),
     });
-    let session = rig.port.attach(held.clone()).unwrap();
+    let session = rig.port.plugged_in(held.clone()).unwrap();
     open_ok(&rig);
     assert!(rig.sim.pin_verified());
 
@@ -333,7 +333,7 @@ fn holds_pin_after_the_background_limit_answers_without_the_card() {
         opened: std::sync::Condvar::new(),
         arrived: std::sync::atomic::AtomicBool::new(false),
     });
-    let session = rig.port.attach(held.clone()).unwrap();
+    let session = rig.port.plugged_in(held.clone()).unwrap();
     open_ok(&rig);
     session.note_backgrounded();
     rig.clock.advance_ms(PIN_BACKGROUND_LIMIT.as_millis() as u64);
@@ -404,7 +404,7 @@ fn removal_mid_touch_fails_as_key_removed_and_drops_the_pin() {
     assert!(rig.port.session().is_none());
 
     rig.sim.plug_in();
-    let session = rig.port.attach(rig.sim.clone()).unwrap();
+    let session = rig.port.plugged_in(rig.sim.clone()).unwrap();
     assert!(!session.holds_pin());
     let task = open(&rig, OTHER_ENTRY, &Driver::new());
     assert!(is_pin(&task.state()), "the PIN is asked again after a re-plug");
@@ -427,7 +427,7 @@ fn a_task_started_with_no_key_waits_at_plug_in_and_goes_on() {
     let task = open(&rig, ENTRY, &driver);
     assert!(matches!(task.state(), KeyTaskState::PlugIn));
 
-    rig.port.attach(rig.sim.clone()).unwrap();
+    rig.port.plugged_in(rig.sim.clone()).unwrap();
     assert_eq!(opened(&finish(&task)).0, SECRET);
     assert!(driver.saw(is_pin));
 }
@@ -449,7 +449,7 @@ fn cancel_at_plug_in() {
     let driver = Driver::helpful(PIN, &rig.sim);
     let task = open(&rig, ENTRY, &driver);
     cancel_now(&task, &driver);
-    rig.port.attach(rig.sim.clone()).unwrap();
+    rig.port.plugged_in(rig.sim.clone()).unwrap();
     assert!(matches!(task.state(), KeyTaskState::Cancelled));
     assert_eq!(rig.sim.verify_attempts(), 0);
 }
@@ -557,7 +557,7 @@ fn an_entry_for_another_key_is_refused_with_no_verify_and_no_decipher() {
     let rig = rig_unplugged(SimTouch::EachUse, SimTouch::EachUse);
     let driver = Driver::helpful(PIN, &rig.sim);
     let task = open(&rig, FOREIGN_ENTRY, &driver);
-    rig.port.attach(rig.sim.clone()).unwrap();
+    rig.port.plugged_in(rig.sim.clone()).unwrap();
     assert!(matches!(failed(&finish(&task)), KeyError::NotForThisKey { .. }));
     assert!(!driver.saw(is_pin));
     assert_eq!(rig.sim.verify_attempts(), 0);
@@ -582,7 +582,7 @@ fn touch_is_shown_only_once_the_command_goes_out() {
     finish(&task);
 
     let rig = rig_unplugged(SimTouch::Off, SimTouch::Off);
-    rig.port.attach(rig.sim.clone()).unwrap();
+    rig.port.plugged_in(rig.sim.clone()).unwrap();
     let driver = Driver::helpful(PIN, &rig.sim);
     finish(&open(&rig, ENTRY, &driver));
     assert!(!driver.saw(is_touch), "a slot without a touch policy never shows Touch");
@@ -593,7 +593,7 @@ fn a_touch_timeout_fails_the_task_and_keeps_the_pin() {
     let mut rig = rig_unplugged(SimTouch::EachUse, SimTouch::EachUse);
     // Past `FAST_REFUSAL`: a quicker refusal is not taken for a timeout.
     rig.sim = sim(SimTouch::EachUse, SimTouch::EachUse, Duration::from_millis(1_100));
-    rig.port.attach(rig.sim.clone()).unwrap();
+    rig.port.plugged_in(rig.sim.clone()).unwrap();
     let driver = Driver::new();
     let task = open(&rig, ENTRY, &driver);
     task.supply_pin(PIN.as_bytes().to_vec());
@@ -741,7 +741,7 @@ fn a_key_with_a_pin_kdf_is_sent_the_derived_pin_and_wastes_no_try() {
         if kdf {
             rig.sim.set_pin_kdf(3);
         }
-        rig.port.attach(rig.sim.clone()).unwrap();
+        rig.port.plugged_in(rig.sim.clone()).unwrap();
 
         open_ok(&rig);
 
@@ -754,7 +754,7 @@ fn a_key_with_a_pin_kdf_is_sent_the_derived_pin_and_wastes_no_try() {
 fn a_key_with_a_pin_kdf_paw_does_not_know_is_refused_before_the_pin() {
     let rig = rig_unplugged(SimTouch::Off, SimTouch::Off);
     rig.sim.set_pin_kdf(7);
-    rig.port.attach(rig.sim.clone()).unwrap();
+    rig.port.plugged_in(rig.sim.clone()).unwrap();
     let driver = Driver::helpful(PIN, &rig.sim);
 
     let task = open(&rig, ENTRY, &driver);
@@ -788,14 +788,14 @@ fn take(counter: &AtomicU32) -> bool {
     counter.load(Ordering::SeqCst) > 0 && counter.fetch_sub(1, Ordering::SeqCst) > 0
 }
 
-impl ApduTransport for LosesPin {
-    fn transmit(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
-        let key_operation = matches!(apdu, [cla, 0x2A, 0x80, 0x86, ..] | [cla, 0x88, ..] if cla & 0x10 == 0);
+impl CardConnection for LosesPin {
+    fn transmit(&self, apdu: Vec<u8>) -> Result<Vec<u8>, paw_core::key::ConnectionError> {
+        let key_operation = matches!(apdu.as_slice(), [cla, 0x2A, 0x80, 0x86, ..] | [cla, 0x88, ..] if cla & 0x10 == 0);
         if key_operation && take(&self.refuse_at_once) {
             return Ok(vec![0x69, 0x82]);
         }
         if key_operation && take(&self.losses) {
-            self.sim.transmit(&[0x00, 0x20, 0xFF, 0x82])?;
+            self.sim.transmit(vec![0x00, 0x20, 0xFF, 0x82])?;
         }
         self.sim.transmit(apdu)
     }
@@ -804,7 +804,7 @@ impl ApduTransport for LosesPin {
 fn rig_losing_pin(decrypt: SimTouch, auth: SimTouch) -> (Rig, Arc<LosesPin>) {
     let rig = rig_unplugged(decrypt, auth);
     let wrapped = LosesPin::new(&rig.sim);
-    rig.port.attach(wrapped.clone()).unwrap();
+    rig.port.plugged_in(wrapped.clone()).unwrap();
     (rig, wrapped)
 }
 

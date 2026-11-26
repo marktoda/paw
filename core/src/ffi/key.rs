@@ -4,9 +4,8 @@
 
 use std::sync::Arc;
 
-use super::{Adapter, CardConnection};
 use crate::copies::Clock;
-use crate::key::{KeyError, KeyPort, KeySession, Uptime};
+use crate::key::{KeyPort, Uptime};
 
 struct ClockUptime(Arc<dyn Clock>);
 
@@ -23,11 +22,5 @@ impl KeyPort {
     #[uniffi::constructor]
     pub fn new(clock: Arc<dyn Clock>) -> Arc<Self> {
         Self::with_uptime(Arc::new(ClockUptime(clock)))
-    }
-
-    /// A key was plugged in. Reads it (no PIN, no touch) and makes its
-    /// session; a task waiting at `PlugIn` goes on.
-    pub fn plugged_in(&self, connection: Arc<dyn CardConnection>) -> Result<Arc<KeySession>, KeyError> {
-        self.attach(Arc::new(Adapter(connection)))
     }
 }

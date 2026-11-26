@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use key_common::*;
-use paw_core::key::{ApduTransport, KeyPort, LoginPurpose};
+use paw_core::key::{CardConnection, KeyPort, LoginPurpose};
 use paw_core::sim::copies::SimClock;
 use paw_core::sim::{SimTouch, SimulatedKey};
 use proptest::prelude::*;
@@ -22,11 +22,11 @@ struct Tampered {
     script: Mutex<std::vec::IntoIter<Option<Vec<u8>>>>,
 }
 
-impl ApduTransport for Tampered {
-    fn transmit(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
+impl CardConnection for Tampered {
+    fn transmit(&self, apdu: Vec<u8>) -> Result<Vec<u8>, paw_core::key::ConnectionError> {
         let real = self.sim.transmit(apdu);
         match self.script.lock().unwrap().next() {
-            Some(Some(answer)) if answer == b"fail" => Err("reader failed".into()),
+            Some(Some(answer)) if answer == b"fail" => Err(paw_core::key::ConnectionError::Failed { message: "reader failed".into() }),
             Some(Some(answer)) => Ok(answer),
             _ => real,
         }
@@ -66,7 +66,7 @@ proptest! {
         let sim = sim(SimTouch::EachUse, SimTouch::Cached, Duration::from_millis(30));
         let card = Arc::new(Tampered { sim: sim.clone(), script: Mutex::new(script.into_iter()) });
         let port = KeyPort::new(SimClock::new(0));
-        if port.attach(card).is_err() {
+        if port.plugged_in(card).is_err() {
             return Ok(());
         }
         for entry in [ENTRY, FOREIGN_ENTRY] {

@@ -16,7 +16,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
 use super::keylog::KeyLog;
-use super::{ApduTransport, KeyError, apdu};
+use super::card::{CardConnection, ConnectionError};
+use super::{KeyError, apdu};
 
 /// Told when a command that may wait for a touch goes out, and when its
 /// answer (or the reader's failure) comes back.
@@ -35,14 +36,14 @@ struct Record {
 }
 
 pub(crate) struct Wire {
-    inner: Arc<dyn ApduTransport>,
+    inner: Arc<dyn CardConnection>,
     record: Mutex<Record>,
     log: Arc<KeyLog>,
 }
 
 impl Wire {
     /// A wire that writes every exchange to `log`.
-    pub(crate) fn logged(inner: Arc<dyn ApduTransport>, log: Arc<KeyLog>) -> Arc<Self> {
+    pub(crate) fn logged(inner: Arc<dyn CardConnection>, log: Arc<KeyLog>) -> Arc<Self> {
         Arc::new(Self { inner, record: Mutex::new(Record::default()), log })
     }
 
@@ -79,7 +80,7 @@ impl Wire {
     /// Sends a command whose answer fits in one response, and splits off
     /// the status word.
     pub(crate) fn send(&self, apdu: &[u8]) -> Result<(Vec<u8>, u16), KeyError> {
-        let mut response = self.transmit(apdu).map_err(|_| KeyError::KeyRemoved)?;
+        let mut response = self.transmit(apdu.to_vec()).map_err(|_| KeyError::KeyRemoved)?;
         let Some(split) = response.len().checked_sub(2) else {
             return Err(KeyError::Reader { detail: "the reader returned no status word".into() });
         };
@@ -89,20 +90,20 @@ impl Wire {
     }
 }
 
-impl ApduTransport for Wire {
-    fn transmit(&self, command: &[u8]) -> Result<Vec<u8>, String> {
+impl CardConnection for Wire {
+    fn transmit(&self, command: Vec<u8>) -> Result<Vec<u8>, ConnectionError> {
         let hook = {
             let record = self.record();
             if record.failed {
-                return Err("the reader failed earlier".into());
+                return Err(ConnectionError::Failed { message: "the reader failed earlier".into() });
             }
-            apdu::waits_for_touch(command).then(|| record.touch_hook.clone()).flatten()
+            apdu::waits_for_touch(&command).then(|| record.touch_hook.clone()).flatten()
         };
         if let Some(hook) = &hook {
             hook.sent();
         }
         let sent = Instant::now();
-        let result = self.inner.transmit(command);
+        let result = self.inner.transmit(command.clone());
         let round_trip = sent.elapsed();
 
         let sw = {
@@ -129,8 +130,8 @@ impl ApduTransport for Wire {
         // After the answer and outside the record's lock. The header only:
         // the fifth byte would be the length of the data, which for a
         // VERIFY is the PIN's.
-        if let [cla, ins, p1, p2, ..] = command {
-            self.log.command([*cla, *ins, *p1, *p2], apdu::has_data(command), sw, round_trip, sent);
+        if let [cla, ins, p1, p2, ..] = command.as_slice() {
+            self.log.command([*cla, *ins, *p1, *p2], apdu::has_data(&command), sw, round_trip, sent);
         }
         // After the log line, so the log reads command, then stage.
         if let Some(hook) = &hook {

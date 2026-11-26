@@ -55,7 +55,7 @@ impl Plugged {
 
 fn plugged_key(key: Arc<SimulatedKey>) -> Plugged {
     let port = KeyPort::new(SimClock::new(1_790_000_000_000));
-    port.attach(key.clone()).unwrap();
+    port.plugged_in(key.clone()).unwrap();
     Plugged { key, port }
 }
 

@@ -35,7 +35,7 @@ mod wire;
 
 use std::time::Duration;
 
-pub use card::{ApduTransport, CardInfo, KeyTouch};
+pub use card::{CardConnection, CardInfo, ConnectionError, KeyTouch};
 pub(crate) use decrypt::MAX_PLAINTEXT_BYTES;
 pub use decrypt::MAX_DECIPHERS;
 pub use enrolment::{KeyIdentity, KeyMismatch};

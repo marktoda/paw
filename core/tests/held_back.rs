@@ -120,7 +120,7 @@ fn world() -> World {
     let state = tempfile::tempdir().unwrap();
     std::fs::write(state.path().join("remote"), format!("{}\n", server.sim.address())).unwrap();
     let port = KeyPort::new(SimClock::new(1_790_000_000_000));
-    port.attach(card.clone()).unwrap();
+    port.plugged_in(card.clone()).unwrap();
     let sync = StoreSync::open(state.path().to_string_lossy().into_owned()).unwrap();
     let w = World { card, other, server, desktop, state, port, sync };
 

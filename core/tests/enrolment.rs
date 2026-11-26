@@ -43,7 +43,7 @@ fn a_different_card_is_refused_before_any_verify() {
     let usual = sim(SimTouch::Off, SimTouch::Off, WAIT);
     let port = enrolled_port(&usual);
     let other = other_key();
-    port.attach(other.clone()).unwrap();
+    port.plugged_in(other.clone()).unwrap();
     assert!(!port.key_matches_enrolment());
     let mismatch = port.key_mismatch().unwrap();
     assert_eq!(mismatch.enrolled, identity(&usual, "12345678"));
@@ -77,7 +77,7 @@ fn a_task_waiting_for_a_key_refuses_the_wrong_one_when_it_is_plugged_in() {
     assert!(matches!(task.state(), KeyTaskState::PlugIn));
 
     let other = other_key();
-    port.attach(other.clone()).unwrap();
+    port.plugged_in(other.clone()).unwrap();
     assert!(matches!(finish(task), KeyTaskState::Failed { error: KeyError::DifferentKey { .. } }));
     assert_eq!(other.verify_attempts() + other.pin_queries(), 0);
 }
@@ -113,7 +113,7 @@ fn a_recorded_key_is_accepted_and_a_port_loading_the_record_refuses_another() {
 
     let port = KeyPort::new(SimClock::new(1_790_000_000_000));
     assert_eq!(port.load_enrolled_key(dir.clone()).unwrap(), Some(identity(&other, "87654321")));
-    port.attach(other.clone()).unwrap();
+    port.plugged_in(other.clone()).unwrap();
     assert!(port.key_matches_enrolment());
 
     // A sign-in on the recorded key asks for the PIN and verifies it.
@@ -126,14 +126,14 @@ fn a_recorded_key_is_accepted_and_a_port_loading_the_record_refuses_another() {
 
     let fresh = KeyPort::new(SimClock::new(1_790_000_000_000));
     fresh.load_enrolled_key(dir).unwrap();
-    fresh.attach(usual.clone()).unwrap();
+    fresh.plugged_in(usual.clone()).unwrap();
     assert!(!fresh.key_matches_enrolment());
 }
 
 #[test]
 fn with_nothing_enrolled_every_card_is_accepted_and_a_damaged_record_is_an_error() {
     let port = KeyPort::new(SimClock::new(1_790_000_000_000));
-    port.attach(other_key()).unwrap();
+    port.plugged_in(other_key()).unwrap();
     assert!(port.key_matches_enrolment());
 
     let state_dir = tempfile::tempdir().unwrap();

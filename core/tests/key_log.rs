@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use key_common::*;
-use paw_core::key::ApduTransport;
+use paw_core::key::CardConnection;
 use paw_core::key::keylog::KEEP_LINES;
 use paw_core::key::{KeyError, clear_key_log, key_log, key_log_text};
 use paw_core::task::KeyTaskState;
@@ -31,13 +31,13 @@ impl Recording {
     }
 }
 
-impl ApduTransport for Recording {
-    fn transmit(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
-        let key_operation = matches!(apdu, [cla, 0x2A, 0x80, 0x86, ..] | [cla, 0x88, ..] if cla & 0x10 == 0);
+impl CardConnection for Recording {
+    fn transmit(&self, apdu: Vec<u8>) -> Result<Vec<u8>, paw_core::key::ConnectionError> {
+        let key_operation = matches!(apdu.as_slice(), [cla, 0x2A, 0x80, 0x86, ..] | [cla, 0x88, ..] if cla & 0x10 == 0);
         if key_operation && self.losses.load(Ordering::SeqCst) > 0 && self.losses.fetch_sub(1, Ordering::SeqCst) > 0 {
-            self.sim.transmit(&[0x00, 0x20, 0xFF, 0x82])?;
+            self.sim.transmit(vec![0x00, 0x20, 0xFF, 0x82])?;
         }
-        let response = self.sim.transmit(apdu)?;
+        let response = self.sim.transmit(apdu.clone())?;
         let mut data = self.data.lock().unwrap();
         if apdu.len() > 5 {
             data.push(apdu[5..].to_vec());
@@ -58,7 +58,7 @@ fn hex(bytes: &[u8]) -> (String, String) {
 fn logged_rig(dir: &std::path::Path, process: &str, decrypt: SimTouch) -> Rig {
     let rig = rig_unplugged(decrypt, SimTouch::Off);
     rig.port.set_key_log(dir.to_string_lossy().into_owned(), process.into());
-    rig.port.attach(rig.sim.clone()).unwrap();
+    rig.port.plugged_in(rig.sim.clone()).unwrap();
     rig
 }
 
@@ -78,7 +78,7 @@ fn a_pin_and_decipher_run_is_logged_with_no_pin_no_data_and_no_names() {
     let rig = rig_unplugged(SimTouch::EachUse, SimTouch::Off);
     rig.port.set_key_log(dir_string(&state), "app".into());
     let recording = Recording::new(&rig.sim);
-    rig.port.attach(recording.clone()).unwrap();
+    rig.port.plugged_in(recording.clone()).unwrap();
 
     open_and_finish(&rig, ENTRY);
 
@@ -134,7 +134,7 @@ fn recorded_rig(state: &tempfile::TempDir, decrypt: SimTouch, kdf: bool) -> (Rig
     }
     rig.port.set_key_log(dir_string(state), "app".into());
     let recording = Recording::new(&rig.sim);
-    rig.port.attach(recording.clone()).unwrap();
+    rig.port.plugged_in(recording.clone()).unwrap();
     (rig, recording)
 }
 
@@ -247,7 +247,7 @@ fn pins_of_different_lengths_give_the_same_log() {
             extended_length: false,
         });
         rig.port.set_key_log(dir_string(&state), "app".into());
-        rig.port.attach(rig.sim.clone()).unwrap();
+        rig.port.plugged_in(rig.sim.clone()).unwrap();
         let driver = Driver::helpful(pin, &rig.sim);
         let task = open(&rig, ENTRY, &driver);
         assert!(matches!(finish(&task), KeyTaskState::Done { .. }));
@@ -393,7 +393,7 @@ fn loading_the_enrolled_key_leaves_the_log_as_it_was_set() {
     rig.port.set_key_log(dir_string(&other), "fill".into());
     rig.port.load_enrolled_key(dir_string(&state)).unwrap();
     assert_eq!(rig.port.key_log_dir(), Some(dir_string(&other)));
-    rig.port.attach(rig.sim.clone()).unwrap();
+    rig.port.plugged_in(rig.sim.clone()).unwrap();
     assert!(other.path().join("key-log.fill").exists());
 }
 

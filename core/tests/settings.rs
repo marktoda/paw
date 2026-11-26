@@ -386,7 +386,7 @@ fn diagnostics_say_what_they_should_and_name_nothing() {
     let clock = SimClock::new(1_795_520_000_000);
     let port = KeyPort::new(clock.clone());
     port.set_key_log(store.state(), "app".into());
-    let session = port.attach(card()).unwrap();
+    let session = port.plugged_in(card()).unwrap();
     let info = session.info();
     let window = store.state.join("window");
     let copies = copies_in(&window, &SimKeystore::new(), &clock);

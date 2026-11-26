@@ -18,7 +18,7 @@ use paw_core::sim::{SimTouch, SimulatedKey};
 fn rig_timing_out(auth: SimTouch, timeout: Duration) -> Rig {
     let mut rig = rig_unplugged(SimTouch::EachUse, auth);
     rig.sim = sim(SimTouch::EachUse, auth, timeout);
-    rig.port.attach(rig.sim.clone()).unwrap();
+    rig.port.plugged_in(rig.sim.clone()).unwrap();
     rig
 }
 

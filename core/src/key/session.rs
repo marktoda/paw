@@ -24,7 +24,7 @@ use super::task::TaskSide;
 use super::wire::Wire;
 use super::{FAST_REFUSAL, KeyError, MAX_PIN_LEN, MIN_PIN_LEN, PIN_BACKGROUND_LIMIT, Uptime};
 use crate::ssh::SshPublicKey;
-use super::card::{self, ApduTransport, CardInfo};
+use super::card::{self, CardConnection, CardInfo};
 use crate::PawError;
 
 /// A user PIN of a plausible length, wiped when dropped. It has no
@@ -135,7 +135,7 @@ impl KeySession {
     /// touch. Every command goes to a key log written to `sink`, if given;
     /// `again` says the port had read a key before.
     pub(crate) fn open(
-        transport: Arc<dyn ApduTransport>,
+        transport: Arc<dyn CardConnection>,
         uptime: Arc<dyn Uptime>,
         sink: Option<Arc<Sink>>,
         again: bool,

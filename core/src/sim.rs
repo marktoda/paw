@@ -29,12 +29,11 @@ use ed25519_dalek::{Signer, SigningKey};
 use sha1::{Digest, Sha1};
 use x25519_dalek::{PublicKey, StaticSecret};
 
-use crate::key::ApduTransport;
 use crate::key::FAST_REFUSAL;
 use crate::key::apdu::{
     self, DECIPHER_P1, DECIPHER_P2, FORGET_P1, GET_DATA, INTERNAL_AUTHENTICATE, PSO, PW1_82, SELECT, VERIFY, VERIFY_P1,
 };
-use crate::ffi::{CardConnection, ConnectionError};
+use crate::key::{CardConnection, ConnectionError};
 
 const CREATED: u32 = 1_780_000_000;
 const OID_CV25519: [u8; 10] = [0x2B, 0x06, 0x01, 0x04, 0x01, 0x97, 0x55, 0x01, 0x05, 0x01];
@@ -453,7 +452,7 @@ impl SimulatedKey {
         vec![self.lock().policies[slot as usize].uif(), 0x20]
     }
 
-    /// [`ApduTransport::transmit`]: fails while unplugged, and when the key
+    /// [`CardConnection::transmit`]: fails while unplugged, and when the key
     /// was unplugged while the command ran.
     fn transmit_checked(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
         let plugged = {
@@ -721,8 +720,3 @@ impl SimulatedKey {
     }
 }
 
-impl ApduTransport for SimulatedKey {
-    fn transmit(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
-        self.transmit_checked(apdu)
-    }
-}

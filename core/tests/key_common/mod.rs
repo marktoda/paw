@@ -113,7 +113,7 @@ pub fn with_packet_repeated(ciphertext: &[u8], copies: usize) -> Vec<u8> {
 
 pub fn rig(decrypt: SimTouch, auth: SimTouch) -> Rig {
     let rig = rig_unplugged(decrypt, auth);
-    rig.port.attach(rig.sim.clone()).unwrap();
+    rig.port.plugged_in(rig.sim.clone()).unwrap();
     rig
 }
 
@@ -243,7 +243,7 @@ pub fn eventually(check: impl Fn() -> bool) -> bool {
 /// A port of its own with `sim` plugged in.
 pub fn port_with(sim: &Arc<SimulatedKey>) -> Arc<KeyPort> {
     let port = KeyPort::new(SimClock::new(1_790_000_000_000));
-    port.attach(sim.clone()).unwrap();
+    port.plugged_in(sim.clone()).unwrap();
     port
 }
 

@@ -51,7 +51,7 @@ fn phone() -> Phone {
     let clock = SimClock::new(1_790_000_000_000);
     let sim = SimulatedKey::new(PIN.into(), true, 5_000);
     let port = KeyPort::new(clock.clone());
-    port.attach(sim.clone()).unwrap();
+    port.plugged_in(sim.clone()).unwrap();
     let key = Arc::new(Plugged { key: sim, port, touches: AtomicU32::new(0) });
     let copies = CopyCache::new(
         window.path().join("window").to_str().unwrap().into(),

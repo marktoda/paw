@@ -3,7 +3,7 @@
 //! The private key never leaves the OpenPGP card (a YubiKey). This crate
 //! parses a `pass` entry, asks the card to unwrap the session key, and does
 //! the symmetric decryption itself. The app supplies only a way to exchange
-//! raw APDUs with the card (see [`key::ApduTransport`]).
+//! raw APDUs with the card (see [`key::CardConnection`]).
 //!
 //! The same card signs the SSH login to the git host ([`ssh`]), which is how
 //! the password store is cloned and pushed ([`sync`]).

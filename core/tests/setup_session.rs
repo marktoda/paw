@@ -214,7 +214,7 @@ fn setup_records_the_key_and_gives_it_to_the_port() {
     assert_eq!(recorded.serial(), "12345678");
     assert!(w.port.key_matches_enrolment());
     // The port now holds out for that key: another one is not it.
-    w.port.attach(other_key()).unwrap();
+    w.port.plugged_in(other_key()).unwrap();
     assert_eq!(w.port.key_mismatch().unwrap().enrolled, recorded);
 }
 
@@ -325,7 +325,7 @@ fn another_key_plugged_in_mid_setup_is_refused_before_the_pin() {
     let w = world();
     to_need_pin(&w);
     let other = other_key();
-    w.port.attach(other.clone()).unwrap();
+    w.port.plugged_in(other.clone()).unwrap();
     let driver = Driver::helpful(PIN, &other);
     let task = w.setup.clone().download_with_key(w.port.clone(), driver.clone());
     let state = finish(&task);
@@ -344,7 +344,7 @@ fn another_key_plugged_in_before_the_test_decrypt_is_refused_before_the_pin() {
     to_need_pin(&w);
     assert!(matches!(download(&w, &Driver::helpful(PIN, &w.sim)), KeyTaskState::Done { .. }));
     let other = other_key();
-    w.port.attach(other.clone()).unwrap();
+    w.port.plugged_in(other.clone()).unwrap();
 
     let driver = Driver::helpful(PIN, &other);
     let task = w.setup.clone().test_decrypt_with_key(w.port.clone(), driver.clone());
@@ -499,7 +499,7 @@ fn a_pin_kdf_paw_does_not_support_stops_setup_at_your_key_before_any_pin() {
             sim.set_pin_kdf(algorithm);
         }
         let port = KeyPort::new(SimClock::new(1_790_000_000_000));
-        let session = port.attach(sim.clone()).unwrap();
+        let session = port.plugged_in(sim.clone()).unwrap();
         let status = session.pin_kdf();
         assert_eq!((status.enabled, status.supported), (enabled, supported), "{algorithm:?}");
         assert_eq!(status.detail.is_some(), !supported);

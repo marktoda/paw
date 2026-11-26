@@ -16,7 +16,7 @@ use super::session::{Halt, KeySession};
 use super::signer::{SessionSigner, authenticate};
 use super::task::{Body, Failure, KeyDone, Running, Stage, StageListener, TaskCore, TaskSide, Workflow};
 use super::{KeyError, KeyPurpose, LoginPurpose};
-use super::ApduTransport;
+use super::CardConnection;
 use super::Uptime;
 use crate::PawError;
 use crate::copies::CopyCache;
@@ -109,27 +109,6 @@ impl KeyPort {
     fn lock(&self) -> MutexGuard<'_, State> {
         // Plain values only.
         self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    /// A key was plugged in: reads it (no PIN, no touch) and makes its
-    /// session, ending any earlier one.
-    pub fn attach(&self, transport: Arc<dyn ApduTransport>) -> Result<Arc<KeySession>, KeyError> {
-        self.unplugged();
-        let sink = self.lock().log.clone();
-        let again = self.plugged.load(Ordering::SeqCst) > 0;
-        let session = KeySession::open(transport, self.uptime.clone(), sink, again)?;
-        let waiting = {
-            let mut state = self.lock();
-            if let Some(old) = state.session.replace(session.clone()) {
-                old.end();
-            }
-            self.plugged.fetch_add(1, Ordering::SeqCst);
-            std::mem::take(&mut state.waiting)
-        };
-        for task in waiting.iter().filter_map(Weak::upgrade) {
-            task.wake();
-        }
-        Ok(session)
     }
 
     /// Waits at `PlugIn` until a key is connected.
@@ -433,6 +412,27 @@ impl KeyPort {
 
 #[uniffi::export]
 impl KeyPort {
+    /// A key was plugged in: reads it (no PIN, no touch) and makes its
+    /// session, ending any earlier one; a task waiting at `PlugIn` goes on.
+    pub fn plugged_in(&self, connection: Arc<dyn CardConnection>) -> Result<Arc<KeySession>, KeyError> {
+        self.unplugged();
+        let sink = self.lock().log.clone();
+        let again = self.plugged.load(Ordering::SeqCst) > 0;
+        let session = KeySession::open(connection, self.uptime.clone(), sink, again)?;
+        let waiting = {
+            let mut state = self.lock();
+            if let Some(old) = state.session.replace(session.clone()) {
+                old.end();
+            }
+            self.plugged.fetch_add(1, Ordering::SeqCst);
+            std::mem::take(&mut state.waiting)
+        };
+        for task in waiting.iter().filter_map(Weak::upgrade) {
+            task.wake();
+        }
+        Ok(session)
+    }
+
     /// The key was unplugged (the reader went away). Ends its session and
     /// drops the PIN; a task using it fails with `KeyRemoved`.
     pub fn unplugged(&self) {
