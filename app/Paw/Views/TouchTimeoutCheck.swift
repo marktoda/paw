@@ -30,7 +30,7 @@ struct TouchTimeoutSection: View {
                 // No key, or another key: the task says so itself, before
                 // any PIN.
                 Button("Check the touch timeout") {
-                    let port = model.keyPort
+                    let port = model.storeSession.keyPort
                     check.start { listener in port.checkTouchTimeout(listener: listener) }
                 }
                 .foregroundStyle(PawColor.label)
