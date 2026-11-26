@@ -232,7 +232,7 @@ struct RefusedRemoteScreen: View {
                                 .font(PawFont.body.monospaced())
                                 .foregroundStyle(PawColor.label)
                                 .textSelection(.enabled)
-                            Text(refused.reason.capitalizedFirst)
+                            Text(refusedWords(refused).capitalizedFirst)
                                 .font(PawFont.footnote)
                                 .foregroundStyle(PawColor.labelSecondary)
                         }

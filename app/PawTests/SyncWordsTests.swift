@@ -64,7 +64,7 @@ final class SyncWordsTests: XCTestCase {
 
         let remote = SyncFailure(
             .RefusedRemote(
-                paths: [RefusedPath(path: "Web/github.com", reason: "a name used twice")],
+                paths: [RefusedPath(path: "Web/github.com", reasons: [.appearsTwice])],
                 message: "the remote contains something paw will not check out: Web/github.com (a name used twice)"),
             during: .refresh, unpushed: 1, host: "h")
         XCTAssertEqual(remote.kind, .refusedRemote)

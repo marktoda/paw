@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 use git2::{AutotagOption, Direction, FetchOptions, FileMode, PushOptions, RemoteCallbacks, Repository};
 
 pub(crate) use guard::Refused;
-pub use guard::RefusedPath;
+pub use guard::{RefusedPath, RefusedReason};
 pub use history::{ChangeKind, KeptBoth};
 pub use integrate::{
     IntegrateReport, Integration, RecipientsChange, Replaced, accept_replaced_remote, integrate,

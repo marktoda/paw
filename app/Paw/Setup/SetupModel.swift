@@ -617,7 +617,7 @@ final class SetupModel {
                 problem = SetupProblem(
                     problem: SyncFailure.refusedRemoteProblem,
                     nextStep: "Rename or remove them on a computer, then try again.",
-                    details: refused.map { "\($0.path): \($0.reason)" },
+                    details: refused.map { "\($0.path): \(refusedWords($0))" },
                     action: .retry, actionTitle: "Try again")
             }
         }

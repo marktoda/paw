@@ -22,7 +22,7 @@ use paw_core::setup::{SetupError, SetupFlow, SetupState};
 use paw_core::sim::{SimTouch, SimulatedKey};
 use paw_core::ssh::SshPublicKey;
 use paw_core::sync::hosts::{self, GITHUB_HOST_KEYS, KnownHosts};
-use paw_core::sync::{Connection, HostKeyPin};
+use paw_core::sync::{Connection, HostKeyPin, RefusedReason};
 use paw_core::write::LineStatus;
 use support::{GitServer, git};
 
@@ -325,7 +325,7 @@ fn a_store_with_a_link_in_it_is_refused_and_says_where() {
     assert!(message.starts_with("the remote contains something paw will not check out"), "{message}");
     let refused = rig.setup.refused_remote();
     assert_eq!(refused.len(), 1, "{refused:?}");
-    assert_eq!((refused[0].path.as_str(), refused[0].reason.as_str()), ("up", "it is a symbolic link"));
+    assert_eq!((refused[0].path.as_str(), &refused[0].reasons[..]), ("up", &[RefusedReason::SymbolicLink][..]));
     assert!(!rig.repo().exists());
     assert!(matches!(rig.setup.state(), SetupState::NeedPin { .. }));
     // A download that succeeds forgets it.

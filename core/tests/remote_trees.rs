@@ -351,7 +351,7 @@ fn a_folder_turned_into_a_link_under_a_waiting_change_is_refused() {
     assert_eq!(message, format!("{REFUSED}: web (it is a symbolic link)"));
     assert_eq!(
         sync::refused_remote(&dir).unwrap(),
-        vec![sync::RefusedPath { path: "web".into(), reason: "it is a symbolic link".into() }]
+        vec![sync::RefusedPath { path: "web".into(), reasons: vec![sync::RefusedReason::SymbolicLink] }]
     );
     assert_eq!(queue::unpushed(&dir).unwrap().len(), 1);
     assert!(dir.join("web").is_dir() && !dir.join("web").is_symlink());
