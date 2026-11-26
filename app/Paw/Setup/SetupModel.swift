@@ -563,7 +563,7 @@ final class SetupModel {
 
     private var entryName: String {
         if case .checkKey(let entry?)? = keyTask.taskPurpose, !entry.isEmpty {
-            return entry.split(separator: "/").last.map(String.init) ?? entry
+            return EntryRef(path: entry).name
         }
         return "your store"
     }

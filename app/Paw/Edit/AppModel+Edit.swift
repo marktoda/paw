@@ -106,16 +106,6 @@ extension AppModel {
 
     /// Every folder in the store, for the folder picker, sorted.
     var allFolders: [String] {
-        var found: [String] = []
-        var pending = [home]
-        while let listing = pending.popLast() {
-            for folder in listing.folders {
-                found.append(folder.path)
-                if let inner = try? store.folder(path: folder.path) {
-                    pending.append(inner)
-                }
-            }
-        }
-        return found.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        store.allFolders().sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 }

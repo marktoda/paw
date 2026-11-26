@@ -33,18 +33,9 @@ enum CredentialIdentities {
     /// offer it on every site under that suffix.
     static func make(from store: PassStore, pairings: SitePairings? = nil) -> [Identity] {
         var identities: [Identity] = []
-        var folders = [store.home()]
-        while let listing = folders.popLast(), identities.count < limit {
-            for entry in listing.entries {
-                if let domain = suggestionDomain(path: entry.path) {
-                    identities.append(Identity(
-                        domain: domain, user: EntrySite.suggestionUser(forPath: entry.path), path: entry.path))
-                }
-            }
-            for folder in listing.folders {
-                if let inner = try? store.folder(path: folder.path) {
-                    folders.append(inner)
-                }
+        for entry in store.allEntries() where identities.count < limit {
+            if let domain = suggestionDomain(path: entry.path) {
+                identities.append(Identity(domain: domain, user: entry.name, path: entry.path))
             }
         }
         var seen = Set(identities.map { "\($0.domain) \($0.path)" })

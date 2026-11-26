@@ -109,7 +109,7 @@ struct HeldBackScreen: View {
 
     private func section(_ item: HeldBack) -> some View {
         let entry = EntryRef(path: item.entry)
-        let folder = item.gpgId.split(separator: "/").dropLast().joined(separator: "/")
+        let folder = gpgIdFolder(path: item.gpgId)
         let place = folder.isEmpty ? "your store" : folder
         return Section {
             detailRow(

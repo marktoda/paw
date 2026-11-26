@@ -99,10 +99,7 @@ struct SyncSummary: Identifiable, Equatable {
         keptBoth = report.keptBoth
         keptLocal = report.keptLocal
         droppedDeletes = report.droppedDeletes
-        recipientsChanged = report.recipientsChanged.map { change in
-            let folder = change.path.split(separator: "/").dropLast().joined(separator: "/")
-            return folder
-        }
+        recipientsChanged = report.recipientsChanged.map { gpgIdFolder(path: $0.path) }
         // Entries the report already explains are said there instead.
         var explained = Set(keptLocal + droppedDeletes)
         for pair in keptBoth {

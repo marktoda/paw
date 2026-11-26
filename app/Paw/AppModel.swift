@@ -240,17 +240,7 @@ final class AppModel {
     }
 
     private func allEntryPaths() -> [String] {
-        var paths: [String] = []
-        var folders = [home]
-        while let listing = folders.popLast() {
-            paths += listing.entries.map(\.path)
-            for folder in listing.folders {
-                if let inner = try? store.folder(path: folder.path) {
-                    folders.append(inner)
-                }
-            }
-        }
-        return paths
+        store.allEntries().map(\.path)
     }
 
     // MARK: Opening
@@ -626,18 +616,12 @@ struct SimulatorControls {
 extension EntryRef {
     /// An entry from its full path, e.g. `web/github.com`.
     init(path: String) {
-        if let slash = path.lastIndex(of: "/") {
-            self.init(
-                path: path, name: String(path[path.index(after: slash)...]),
-                folder: String(path[..<slash]))
-        } else {
-            self.init(path: path, name: path, folder: "")
-        }
+        self = entryRef(path: path)
     }
 
     /// The top-level folder, which picks the tint; `nil` at the top.
     var topFolder: String? {
-        folder.isEmpty ? nil : folder.split(separator: "/").first.map(String.init)
+        topFolderOf(folder: folder)
     }
 }
 

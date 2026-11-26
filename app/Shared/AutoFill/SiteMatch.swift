@@ -29,9 +29,7 @@ import Foundation
 enum SiteMatch {
     /// The entry at `path`, if the store has it.
     static func entry(_ path: String, in store: PassStore) -> EntryRef? {
-        let folder = path.lastIndex(of: "/").map { String(path[..<$0]) } ?? ""
-        let listing = folder.isEmpty ? store.home() : (try? store.folder(path: folder))
-        return listing?.entries.first { $0.path == path }
+        store.entry(path: path)
     }
 }
 
@@ -43,6 +41,6 @@ enum EntrySite {
     /// the user in a `domain/user` layout and the site otherwise (a blank
     /// suggestion looks broken).
     static func suggestionUser(forPath path: String) -> String {
-        path.split(separator: "/").last.map(String.init) ?? path
+        entryRef(path: path).name
     }
 }
