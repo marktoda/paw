@@ -704,7 +704,7 @@ extension SetupModel: KeyTaskOwner {
             self.sheet = nil
             state = setup.state()
             return nil
-        case .failed(.Reader):
+        case .failed(.Reader), .failed(.Internal):
             // The sheet says what the key answered; setup is where it was.
             state = setup.state()
             if sheet.purpose == .download {

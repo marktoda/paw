@@ -126,7 +126,7 @@ struct KeyErrorWords: Equatable {
         case .DecryptFailed:
             problem = "This key couldn't open \(entry)"
             nextStep = "It may be encrypted for another key."
-        case .Reader(let detail):
+        case .Reader(let detail), .Internal(let detail):
             problem = "Your key gave an error"
             nextStep = "Unplug it, plug it back in and try again. The key said: \(detail)."
         case .Cancelled:
