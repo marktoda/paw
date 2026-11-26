@@ -64,6 +64,8 @@ final class LifecycleTests: PawUITestCase {
         tap("settings-lock-now")
         expectGone("settings-done")
         XCTAssertEqual(pasteboardContents(), "", "Lock now clears what paw put on the pasteboard")
+        expectLabel("recent-github.com", contains: "needs your key")
+        expectGone("face-id-github.com")
 
         // Copied again, then 45 seconds pass on the simulated clock.
         openGitHubWithKey()

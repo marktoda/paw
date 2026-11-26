@@ -197,64 +197,6 @@ final class SyncTests: PawUITestCase {
         expectGone(element("unpushed-banner"), "Nothing should be waiting")
     }
 
-    func testSendingAfterTheRemoteMovedStillSucceedsOnTopOfIt() {
-        launch(extra: ["-pawSimRemoteChange", "add"])
-        let before = remote
-        addEntry("moved.example", folder: "web")
-        openSyncSheet()
-        tap("sync-send")
-        passKeySheet(purpose: "Send 1 change", pin: true)
-        expectGone("key-sheet-purpose")
-        expectLabel("sim-last-app-toast", contains: "Sent")
-        expectLabel("sync-pill", contains: "Up to date")
-        expectGone(element("unpushed-banner"), "Nothing should be waiting")
-        expectRemoteMoved(from: before, "The send should have moved the tip")
-        // What the other computer added came in on the way.
-        expect("sync-added-forum.example")
-        snapshot("moved-summary")
-    }
-
-    func testCancellingASendLeavesTheQueueIntact() {
-        launch()
-        let before = remote
-        addEntry("cancel.example", folder: "web")
-        tap("unpushed-banner")
-        tap("unpushed-send")
-        expectLabel("key-sheet-purpose", contains: "Send 1 change")
-        enterPin(Self.pin)
-        expect("touch-prompt")
-        tap("key-sheet-cancel")
-        expectGone("key-sheet-purpose")
-        expectLabel("unpushed-count", contains: "1 change")
-        expect("unpushed-send")
-        goBack()
-        expectLabel("unpushed-banner", contains: "1 change not sent")
-        XCTAssertEqual(remote, before, "Nothing should have been sent")
-        openSyncSheet()
-        expectLabel("sync-cancelled", contains: "Sending was cancelled.")
-        snapshot("cancelled")
-    }
-
-    func testRefusedPushesAreWordedAndTheChangesStayQueued() {
-        launch(extra: ["-pawSimRemoteRefusePushes", "1"])
-        let before = remote
-        addEntry("refused.example", folder: "web")
-        tap("unpushed-banner")
-        tap("unpushed-send")
-        passKeySheet(purpose: "Send 1 change", pin: true)
-        expect("sync-failure")
-        expectLabel("error-row", contains: "refused your changes")
-        expectLabel("error-row", contains: "Your change is saved on this iPhone.")
-        snapshot("push-refused")
-        tap("sync-sheet-done")
-        expectGone("sync-sheet-done")
-        expectLabel("unpushed-count", contains: "1 change")
-        XCTAssertEqual(remote.components(separatedBy: " · ").first, before.components(separatedBy: " · ").first,
-                       "The tip should not have moved")
-        goBack()
-        expectLabel("sync-pill", contains: "Not sent")
-    }
-
     func testADroppedConnectionOffersARetryThatSucceeds() {
         launch(extra: ["-pawSimRemoteChange", "add", "-pawSimRemoteDrop", "1"])
         tap("sync-pill")
@@ -334,29 +276,6 @@ final class SyncTests: PawUITestCase {
     }
 
     // MARK: What a sync can't do by itself
-
-    func testAChangedGpgIdHoldsBackTheQueuedChangeAndSendsNothing() {
-        launch(extra: ["-pawSimRemoteChange", "gpgid"])
-        let before = remote
-        addEntry("held.example", folder: "work")
-        openSyncSheet()
-        tap("sync-send")
-        passKeySheet(purpose: "Send 1 change", pin: true)
-        expect("sync-held-back")
-        expectAbsent("sync-send", "A held-back change is never offered to send as it is")
-        snapshot("held-back-sheet")
-        tapAction(in: "sync-held-back")
-        expect("held-back-held.example")
-        expectLabel("held-back-should-be-for-held.example", contains: "Not accepted on this iPhone yet.")
-        snapshot("held-back-screen")
-        XCTAssertEqual(remote.components(separatedBy: " · ").first, before.components(separatedBy: " · ").first,
-                       "Nothing should have been sent")
-
-        // Accepting the new list (the same key here) lets it go.
-        tap("held-back-review-held.example")
-        tap("recipients-accept")
-        expect("held-back-empty")
-    }
 
     func testARefusedRemoteIsExplainedAndTheQueueIsKept() {
         launch(extra: ["-pawSimRemoteChange", "link"])

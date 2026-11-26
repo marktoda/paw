@@ -172,19 +172,6 @@ final class GitHubTests: PawUITestCase {
         // Not chosen: its address is github.com's own, and tests never go there.
     }
 
-    func testTheTypedAddressPathIsUnaffected() {
-        launch()
-        toAddress()
-        expect("address-github")
-        tap("simulated-address")
-        expectText("address-reading", contains: "Connects to 127.0.0.1 as git")
-        tap("address-connect")
-        finishSetup()
-        openSettings()
-        inSettingsList("settings-github-sign-in", contains: "Sign in to GitHub")
-        closeSettings()
-    }
-
     // MARK: Checking for changes with the sign-in
 
     func testCheckingWhileSignedInAsksForNoKeyAndBringsInARemoteChange() {

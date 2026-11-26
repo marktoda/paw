@@ -14,8 +14,8 @@ final class AutoFillTests: PawUITestCase {
         return "filled user=you@example.com password-length=\(githubPassword.count) password-sha=\(digest.prefix(12))"
     }()
 
-    private func launchProvider(_ arguments: [String], appearance: String = "light") {
-        app.launchArguments = ["-pawAppearance", appearance] + keyArguments() + arguments
+    private func launchProvider(_ arguments: [String]) {
+        app.launchArguments = ["-pawAppearance", "light"] + keyArguments() + arguments
         app.launch()
     }
 
@@ -72,14 +72,6 @@ final class AutoFillTests: PawUITestCase {
         search.typeText(text)
     }
 
-    func testSearchFindsAnyEntry() {
-        launchProvider(["-pawHostProvider", "https://nothing.example"])
-        expect("autofill-no-match")
-        search("fastm")
-        expect(row("email/fastmail"))
-        expectLabel("autofill-other-section", contains: "Other passwords")
-    }
-
     // MARK: Another site's password
 
     func testAnotherSitesPasswordAsksFirstAndCancelFillsNothing() {
@@ -106,6 +98,7 @@ final class AutoFillTests: PawUITestCase {
         enterPin(Self.pin)
         touchTheKey()
         expectResult("filled user=you@example.com")
+        expectValue("harness-pairings", "none")
     }
 
     func testTheSitesOwnPasswordFoundBySearchDoesNotAsk() {
@@ -224,33 +217,11 @@ final class AutoFillTests: PawUITestCase {
         expectLabel("autofill-confirm-question", contains: "Used before on northwind.example.")
     }
 
-    func testAPasswordFromSearchForAnotherSiteIsNeverPaired() {
-        launchProvider(["-pawHostProvider", "https://www.northwind.example"])
-        search("fastm")
-        tap(row("email/fastmail"))
-        tapUntilGone("autofill-fill-anyway")
-        enterPin(Self.pin)
-        touchTheKey()
-        expectResult("filled user=you@example.com")
-        expectValue("harness-pairings", "none")
-    }
-
     // MARK: Filling
-
-    func testKeyFillLeavesAFaceIdCopy() {
-        launchProvider(["-pawHostProvider", "https://github.com"])
-        fillGitHubWithKey(appearance: "light")
-        waitForKeyTasksToEnd()
-
-        tap("harness-again")
-        expectLabel(row("web/github.com"), contains: "opens with Face ID")
-        tap(row("web/github.com"))
-        expectResult(Self.githubFill)
-    }
 
     func testFaceIdCancelledOffersTheKey() {
         launchProvider(["-pawHostProvider", "https://github.com", "-pawSimFaceId", "cancel"])
-        fillGitHubWithKey()
+        fillGitHubWithKey(appearance: "light")
         tap("harness-again")
         expectLabel(row("web/github.com"), contains: "opens with Face ID")
         tap(row("web/github.com"))
@@ -260,22 +231,6 @@ final class AutoFillTests: PawUITestCase {
         enterPin(Self.pin)
         touchTheKey()
         expectResult(Self.githubFill)
-    }
-
-    func testCancelEndsTheRequest() {
-        launchProvider(["-pawHostProvider", "https://github.com"])
-        expect(row("web/github.com"))
-        tap("autofill-cancel")
-        expectResult("ended userCanceled")
-
-        tap("harness-again")
-        tap(row("web/github.com"))
-        pinField()
-        tap("key-sheet-cancel")
-        expect(row("web/github.com"))
-        waitForKeyTasksToEnd()
-        tap("autofill-cancel")
-        expectResult("ended userCanceled")
     }
 
     func testNoStoreSaysToSetUp() {

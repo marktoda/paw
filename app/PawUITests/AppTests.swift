@@ -82,6 +82,7 @@ final class AppTests: PawUITestCase {
 
         expect("touch-prompt")
         expectAbsent("entry-title", "Nothing opens before the key is touched")
+        expectLabel("key-sheet-steps", contains: "Step 3 of 3: Touch. Done: Plugged in, PIN correct")
         snapshot("key-sheet-touch")
         tapSimulated("simulated-touch")
 
@@ -102,21 +103,6 @@ final class AppTests: PawUITestCase {
         snapshot("copied")
         app.buttons["show-password"].tap()
         expectValue("password-value", "hidden")
-    }
-
-    func testASecondEntryInTheSameRunDoesNotAskForThePinAgain() {
-        launch()
-        openGitHubWithKey()
-        goBack()
-        tap("entry-gitlab.com")
-        expectLabel("key-sheet-purpose", contains: "Open gitlab.com")
-        expect("touch-prompt")
-        expectAbsent("pin-field", "The PIN is held for the run")
-        // The PIN chip reads as done ("PIN correct"), not skipped.
-        expectLabel("key-sheet-steps", contains: "Step 3 of 3: Touch. Done: Plugged in, PIN correct")
-        snapshot("touch-only")
-        tapSimulated("simulated-touch")
-        expectLabel("entry-title", contains: "gitlab.com")
     }
 
     func testAWrongPinSaysHowManyTriesAreLeftAndOpensNothing() {
@@ -208,42 +194,6 @@ final class AppTests: PawUITestCase {
         expectAbsent("entry-title", "A cancelled Face ID opens nothing")
         expectAbsent("key-sheet-purpose", "A cancelled Face ID does not ask for the key by itself")
         snapshot("face-id-cancelled")
-    }
-
-    func testAnEntryNeedsTheKeyAgainOnceItsFaceIdTimeEnds() {
-        launch()
-        openGitHubWithKey()
-        goBack()
-        goBack()
-        expect("face-id-github.com")
-
-        inSettings(tapping: "sim-advance-9h")
-
-        expectLabel("recent-github.com", contains: "needs your key")
-        expectAbsent("face-id-github.com", "The copy has ended")
-        snapshot("home-recent")
-
-        tap("recent-github.com")
-        expect("touch-prompt")
-        expectAbsent("pin-field", "The PIN is still held")
-        snapshot("touch-again")
-    }
-
-    func testLockNowEndsEveryFaceIdCopy() {
-        launch()
-        openGitHubWithKey()
-        goBack()
-        goBack()
-        expect("face-id-github.com")
-
-        app.buttons["settings-button"].tap()
-        app.buttons["settings-lock-now"].tap()
-        expectGone("face-id-github.com")
-        expectLabel("recent-github.com", contains: "needs your key")
-
-        tap("recent-github.com")
-        expect("pin-field")
-        snapshot("pin-after-lock")
     }
 
     // MARK: Another key

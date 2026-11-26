@@ -31,19 +31,17 @@ final class AutoFillRestTests: PawUITestCase {
         expectLabel("autofill-confirm-cancel", contains: "Cancel")
     }
 
-    func testAUrlForAnotherSiteWarnsBeforeFillingAndCancelFillsNothing() {
+    func testAUrlForAnotherSiteWarnsAndFillsOnlyOnFillAnyway() {
         openTailspin()
         snapshot("light-url-differs")
         tap("autofill-confirm-cancel")
+        // Still open: a fill would have ended the request.
         expect(row(Self.tailspin))
         waitForKeyTasksToEnd()
-        tap("autofill-cancel")
-        expectLabel("autofill-result", contains: "ended userCanceled")
-    }
 
-    func testFillAnywayAfterTheUrlWarningFillsAndPairsNothing() {
-        openTailspin()
         // Opened again from the Face ID copy the key just kept.
+        tap(row(Self.tailspin))
+        expectLabel("autofill-confirm-question", contains: "Saved for tailspin.test, not tailspin.example")
         tap("autofill-fill-anyway")
         expectLabel("autofill-result", contains: "filled user=you@example.com")
         expectValue("harness-pairings", "none")

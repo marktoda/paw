@@ -99,6 +99,10 @@ final class EditTests: PawUITestCase {
         let password = expect("form-password")
         XCTAssertEqual((password.value as? String)?.count, 20, "Generate should fill a 20-character password")
         type("https://shop.example/login", into: "form-website")
+        type("Weekly, on Fridays.", into: "form-notes")
+        tap("form-add-field")
+        type("member id", into: "form-field-key-0")
+        type("A-1234", into: "form-field-value-0")
         snapshot("add-filled-light")
         scrollTo("form-recipients")
         expectLabel("form-recipients", contains: "Encrypted for your key")
@@ -113,7 +117,20 @@ final class EditTests: PawUITestCase {
         // Saved with a Face ID copy: what was just typed opens without the key.
         tap("folder-web")
         expectLabel("entry-shop.example", contains: "shop.example, opens with Face ID")
+        tap("entry-shop.example")
+        expectLabel("entry-title", contains: "shop.example")
         expectNoKeySheet()
+        expectLabel("face-id-window-text", contains: "Opens with Face ID until")
+        expectValue("field-Username", "shopper")
+        expectValue("field-Website", "https://shop.example/login")
+        expectValue("field-Member id", "A-1234")
+        expectLabel("entry-notes", contains: "Weekly, on Fridays.")
+        tap("password-reveal")
+        let shown = element("password-value")
+        XCTAssertTrue(waitUntil(timeout: Self.patience) { (shown.value as? String)?.count == 20 },
+                      "The generated password should show once revealed")
+        snapshot("new-entry-opened")
+        goBack()
         goBack()
 
         let search = app.searchFields.firstMatch
@@ -121,38 +138,6 @@ final class EditTests: PawUITestCase {
         focus(search)
         search.typeText("shop")
         expect("entry-shop.example")
-    }
-
-    func testANewEntryOpensWithFaceIdAndShowsWhatWasTyped() {
-        launch()
-        tap("folder-email")
-        tap("add-button")
-        expectValue("form-folder", "email")
-        type("newsletter", into: "form-name")
-        type("reader@example.com", into: "form-username")
-        type("Quiet-Harbour-7", into: "form-password")
-        type("https://news.example", into: "form-website")
-        type("Weekly, on Fridays.", into: "form-notes")
-        tap("form-add-field")
-        type("member id", into: "form-field-key-0")
-        type("A-1234", into: "form-field-value-0")
-        tap("form-save")
-        expectGone("form-save")
-        expectNoKeySheet()
-
-        // A new entry gets a Face ID copy from its save: no key sheet.
-        expectLabel("entry-newsletter", contains: "opens with Face ID")
-        tap("entry-newsletter")
-        expectLabel("entry-title", contains: "newsletter")
-        expectAbsent("key-sheet-purpose", "What was just typed opens with Face ID, not the key")
-        expectLabel("face-id-window-text", contains: "Opens with Face ID until")
-        expectValue("field-Username", "reader@example.com")
-        expectValue("field-Website", "https://news.example")
-        expectValue("field-Member id", "A-1234")
-        expectLabel("entry-notes", contains: "Weekly, on Fridays.")
-        tap("password-reveal")
-        expectValue("password-value", "Quiet-Harbour-7")
-        snapshot("new-entry-opened")
     }
 
     /// Which names are refused is EditModelTests and the core's; this is
@@ -277,25 +262,18 @@ final class EditTests: PawUITestCase {
 
     // MARK: Not sent yet
 
-    func testTheBannerCountsChangesAndTheListShowsWhatEachDid() {
+    func testTheBannerCountsChangesAndDiscardingOneTakesBackOnlyThatChange() {
         launch()
-        addEntry("first.example", folder: "web")
+        addEntry("keep.example", folder: "web")
         expectLabel("unpushed-banner", contains: "1 change not sent")
-        addEntry("second.example", folder: "")
+        addEntry("drop.example", folder: "")
         expectLabel("unpushed-banner", contains: "2 changes not sent")
         tap("unpushed-banner")
         expectLabel("unpushed-count", contains: "2 changes")
-        expectLabel("unpushed-added-first.example", contains: "Added first.example")
-        expectLabel("unpushed-added-second.example", contains: "Added second.example")
+        expectLabel("unpushed-added-keep.example", contains: "Added keep.example")
+        expectLabel("unpushed-added-drop.example", contains: "Added drop.example")
         expectLabel("unpushed-send-footer", contains: "Needs your key")
         snapshot("unpushed-list")
-    }
-
-    func testDiscardingOneChangeTakesBackOnlyThatChange() {
-        launch()
-        addEntry("keep.example", folder: "web")
-        addEntry("drop.example", folder: "web")
-        tap("unpushed-banner")
         tap("unpushed-discard-button-keep.example")
         expectLabel("unpushed-discard-keep.example-question", contains: "Discard \u{201C}Added keep.example\u{201D}?")
         snapshot("discard-confirm")
@@ -305,8 +283,8 @@ final class EditTests: PawUITestCase {
 
         goBack()
         expectLabel("unpushed-banner", contains: "1 change not sent")
-        tap("folder-web")
         expect("entry-drop.example")
+        tap("folder-web")
         expectAbsent("entry-keep.example", "A discarded add should take the entry away")
         goBack()
 

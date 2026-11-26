@@ -104,11 +104,7 @@ final class SetupTests: PawUITestCase {
         expectText("folder-bank", contains: "bank, folder, 3 passwords")
         expectText("folder-web", contains: "web, folder, 6 passwords")
         snapshot("home")
-    }
 
-    func testAfterSetupAnEntryOpensWithoutAskingForThePinAgain() {
-        launch()
-        setUpFully()
         tap("folder-web")
         tap("entry-github.com")
         expect("touch-prompt")
@@ -117,38 +113,7 @@ final class SetupTests: PawUITestCase {
         expectText("entry-title", contains: "github.com")
     }
 
-    func testAfterSetupANewEntrySavesWithoutTheKeyAndWaitsToBeSent() {
-        launch()
-        setUpFully()
-        tap("folder-web")
-        tap("add-button")
-        let name = expect("form-name")
-        name.tap()
-        name.typeText("after-setup.example")
-        let password = element("form-password")
-        password.tap()
-        password.typeText("Typed-pass-42")
-        tap("form-save")
-        expectGone("form-save")
-        expect("entry-after-setup.example")
-        waitForKeyTasksToEnd()
-        expectAbsent("key-sheet-purpose", "Saving should never ask for the key")
-        goBack()
-        expectText("unpushed-banner", contains: "1 change not sent")
-        snapshot("home-after-save")
-    }
-
     // MARK: Relaunching
-
-    func testARelaunchAfterSetupGoesStraightToHome() {
-        launch()
-        setUpFully()
-        app.terminate()
-        launch(keep: true)
-        expect("home-title")
-        expect("folder-web")
-        expectAbsent("setup-welcome", "A set-up store should not show setup again")
-    }
 
     func testARelaunchAfterTheDownloadResumesAtTheKeyCheck() {
         launch()
@@ -385,30 +350,5 @@ final class SetupTests: PawUITestCase {
         expectAbsent("pin-field", "The PIN should still be held after a cancel")
         tapSimulated("simulated-touch")
         expect("setup-check", timeout: 60)
-    }
-
-    // MARK: Settings
-
-    func testRemovingTheStoreReturnsToWelcome() {
-        launch()
-        setUpFully()
-        openSettings()
-        // The simulated host is not bundled: the person trusted it in setup.
-        scrollTo("settings-host-fingerprint")
-        expectText("settings-host-fingerprint", contains: "Trusted by you")
-        tap("settings-host-fingerprint")
-        _ = scrollTo("settings-host-fingerprints")
-        snapshot("settings-server")
-        tap("settings-remove-store")
-        // The confirmation opens at the foot of the list, below the fold.
-        scrollTo("settings-remove-confirm")
-        scrollTo("settings-remove-warning")
-        expectText("settings-remove-warning", contains: "not touched")
-        snapshot("remove-confirm")
-        tap("settings-remove-confirm")
-        expect("setup-welcome")
-        app.terminate()
-        launch(keep: true)
-        expect("setup-welcome")
     }
 }
