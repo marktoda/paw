@@ -82,15 +82,25 @@ enum ScreenRequest {
     case show(Route)
     case leave(Route)
     case toast(String)
+    /// A problem said inline at the top of Home.
+    case notice(Notice)
     case settings
+    /// An open entry was edited: the screen shows what was saved.
+    case saved(sessionID: UUID, Saved)
+    /// An open entry was deleted: back to the list it was in.
+    case deleted(sessionID: UUID)
 }
 
-/// The store as paw reads it now, and the one signal that it changed.
-/// Whatever writes or syncs the store announces it here; lists, the
-/// queue, sync, the open form and AutoFill listen.
+/// The store as paw reads it now, what Home lists from it, and the one
+/// signal that it changed. Whatever writes or syncs the store announces it
+/// here; it is read again once, and lists, the queue, sync, the open form
+/// and AutoFill hear the change, whatever else is under way.
 @MainActor @Observable
 final class LiveStore {
     private(set) var store: PassStore
+    /// The top of the store, for Home.
+    private(set) var home: FolderListing
+    private(set) var entryCount: Int
     let repoDir: String
     let changed = Signal<StoreChanged>()
     let opened = Signal<EntryOpened>()
@@ -98,6 +108,16 @@ final class LiveStore {
     init(store: PassStore, repoDir: String) {
         self.store = store
         self.repoDir = repoDir
+        home = store.home()
+        entryCount = Int(store.entryCount())
+    }
+
+    func listing(_ folder: String) -> Result<FolderListing, Error> {
+        Result { try store.folder(path: folder) }
+    }
+
+    func search(_ query: String) -> [SearchHit] {
+        store.search(query: query, limit: 100)
     }
 
     /// Reads the store again if its entries may differ, then tells every
@@ -107,6 +127,8 @@ final class LiveStore {
         if change.rewritesEntries {
             do {
                 store = try PassStore(dir: repoDir)
+                home = store.home()
+                entryCount = Int(store.entryCount())
             } catch {
                 problem = error
             }
@@ -156,18 +178,21 @@ final class StoreSession {
     let copies: CopyCache?
     let clock: Clock
     let keyPort: KeyPort
+    /// What paw put on the pasteboard, ended on `clock`.
+    let clipboard: Clipboard
     /// The key going in and out, and reading it.
     let reader: KeyReader
     /// Debug-only controls for the simulated hardware, `nil` on a device.
     let simulator: SimulatorControls?
-    /// Adding, editing and deleting, and the unpushed queue.
+    /// Adding, editing and deleting; `nil` where the store can't be written.
     let edits: StoreEdits?
-    /// Sending and checking for changes; `nil` without the queue.
+    /// The unpushed queue, sending and checking for changes; `nil` without
+    /// the queue.
     let syncing: SyncModel?
     let gitHub: GitHubAccess?
-    let autoFill: AutoFillUpkeep?
+    let autoFill: AutoFillSuggestions?
     let setUp: SetUpStore?
-    /// Navigation and toasts that sync asks for.
+    /// What the features ask of the screens.
     let requests: Signal<ScreenRequest>
     private var backgroundWatch: NSObjectProtocol?
 
@@ -179,6 +204,7 @@ final class StoreSession {
         copies = parts.copies
         clock = parts.clock
         keyPort = parts.keyPort
+        clipboard = Clipboard(clock: parts.clock)
         simulator = parts.simulator
         gitHub = parts.gitHub
         setUp = parts.setUp
@@ -186,19 +212,24 @@ final class StoreSession {
         self.reader = reader
         let requests = Signal<ScreenRequest>()
         self.requests = requests
-        let edits = parts.writing.map { StoreEdits(writer: $0.writer, sync: $0.sync, stateDir: $0.stateDir, live: live) }
-        self.edits = edits
-        if let edits, let sync = parts.writing?.sync {
+        let syncing: SyncModel?
+        if let sync = parts.writing?.sync {
             syncing = SyncModel(
-                sync: sync, queue: edits, live: live, requests: requests, reader: reader, copies: parts.copies,
-                gitHub: parts.gitHub)
+                sync: sync, live: live, requests: requests, reader: reader, copies: parts.copies, gitHub: parts.gitHub)
         } else {
             syncing = nil
         }
-        autoFill = parts.setUp.map { setUp in
-            AutoFillUpkeep(live: live, codes: OneTimeCodeEntries.open(stateDir: setUp.location.stateDir.path))
+        self.syncing = syncing
+        edits = parts.writing.map { writing in
+            StoreEdits(
+                writer: writing.writer, stateDir: writing.stateDir, queue: syncing?.queue, live: live,
+                copies: parts.copies, requests: requests)
         }
-        Clipboard.useClock(parts.clock)
+        autoFill = parts.setUp.map { setUp in
+            let suggestions = AutoFillSuggestions(stateDir: setUp.location.stateDir.path)
+            suggestions.follow(live)
+            return suggestions
+        }
         #if DEBUG && targetEnvironment(simulator)
         if let simulator = parts.simulator {
             reader.plugsInSimulatedKey = simulator.plugIn

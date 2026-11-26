@@ -16,7 +16,6 @@ struct KeyDiagnosticsView: View {
     @State private var logLines: [KeyLogLine] = []
     @State private var logProblem: String?
     @State private var logCopied = false
-    @Environment(\.gitHubAccess) private var gitHub
     /// What Copy diagnostics put on the pasteboard, shown below it.
     @State private var copiedReport: String?
     @State private var assembling = false
@@ -28,7 +27,7 @@ struct KeyDiagnosticsView: View {
     var body: some View {
         NavigationStack {
             List {
-                if let session = model.keyPort.session() {
+                if let session = model.storeSession.keyPort.session() {
                     let info = session.info()
                     let kdf = session.pinKdf()
                     Section {
@@ -46,7 +45,7 @@ struct KeyDiagnosticsView: View {
                         PawSectionHeader("Plugged in")
                     }
                     Section {
-                        Text(model.keyPort.keyMatchesEnrolment()
+                        Text(model.storeSession.keyPort.keyMatchesEnrolment()
                              ? "The key this store was set up with."
                              : "Not the key this store was set up with.")
                             .font(PawFont.subheadline)
@@ -64,7 +63,7 @@ struct KeyDiagnosticsView: View {
                         if let problem = model.attachProblem {
                             ErrorRow(kind: .error, problem: problem.problem, nextStep: problem.nextStep,
                                      actionTitle: "Try again", actionNeedsKey: true) {
-                                model.reader.read()
+                                model.storeSession.reader.read()
                             }
                         }
                     }
@@ -125,11 +124,11 @@ struct KeyDiagnosticsView: View {
             systemVersion: "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)",
             deviceModel: Self.deviceModel,
             lastSync: syncSummary,
-            lastCheckedMs: model.syncing?.lastChecked.map { Int64($0.timeIntervalSince1970 * 1000) })
-        let stateDir = model.settingsStateDir
-        let port = model.keyPort
-        let github = gitHub?.core
-        let copies = model.copies
+            lastCheckedMs: model.storeSession.syncing?.lastChecked.map { Int64($0.timeIntervalSince1970 * 1000) })
+        let stateDir = model.storeSession.edits?.stateDir
+        let port = model.storeSession.keyPort
+        let github = model.storeSession.gitHub?.core
+        let copies = model.storeSession.copies
         assembling = true
         Task {
             // Reads the store, the queue and the keychain: off the main thread.
@@ -144,8 +143,8 @@ struct KeyDiagnosticsView: View {
 
     /// What the sync pill says now, as one fixed word.
     private var syncSummary: LastSyncState? {
-        guard let edits = model.edits, let syncing = model.syncing else { return nil }
-        switch syncing.pillState(unpushed: edits.unpushed.count) {
+        guard let syncing = model.storeSession.syncing else { return nil }
+        switch syncing.pillState {
         case .working: return .working
         case .upToDate: return .upToDate
         case .needsKey: return .needsKey
@@ -219,7 +218,7 @@ struct KeyDiagnosticsView: View {
     }
 
     private func loadLog() {
-        logLines = model.keyPort.keyLog(utcOffsetSecs: utcOffset)
+        logLines = model.storeSession.keyPort.keyLog(utcOffsetSecs: utcOffset)
     }
 
     private func copyLog() {
@@ -227,7 +226,7 @@ struct KeyDiagnosticsView: View {
         // timings, stages and error names only; never command or response
         // data, the PIN or its length, entry or host names
         // (core/src/key/keylog.rs, checked by core/tests/key_log.rs).
-        Self.copyForDesktop(model.keyPort.keyLogText(utcOffsetSecs: utcOffset))
+        Self.copyForDesktop(model.storeSession.keyPort.keyLogText(utcOffsetSecs: utcOffset))
         logCopied = true
     }
 
@@ -245,7 +244,7 @@ struct KeyDiagnosticsView: View {
 
     private func clearLog() {
         do {
-            try model.keyPort.clearKeyLog()
+            try model.storeSession.keyPort.clearKeyLog()
             logProblem = nil
         } catch {
             logProblem = String(describing: error)

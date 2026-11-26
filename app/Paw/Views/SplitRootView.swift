@@ -19,7 +19,7 @@ struct SplitRootView: View {
     }
 
     private var searchPrompt: String {
-        model.entryCount == 1 ? "Search 1 password" : "Search \(model.entryCount) passwords"
+        searchPrompt(entryCount: model.storeSession.live.entryCount)
     }
 
     var body: some View {
@@ -108,18 +108,19 @@ struct SplitRootView: View {
     /// nothing while a sheet is up.
     private var actions: PawActions {
         let model = model
-        let syncing = model.syncing
+        let syncing = model.storeSession.syncing
+        let edits = model.storeSession.edits
         if model.sheetIsUp {
             return PawActions()
         }
         return PawActions(
             search: { searchFocused = true },
-            add: model.edits == nil ? nil : {
+            add: edits == nil ? nil : {
                 guard !model.sheetIsUp else { return }
-                model.startAdd(folder: model.splitFolder)
+                edits?.startAdd(folder: model.splitFolder)
             },
             check: syncing == nil || syncing?.running != nil ? nil : {
-                guard !model.sheetIsUp, let syncing = model.syncing, syncing.running == nil else { return }
+                guard !model.sheetIsUp, let syncing, syncing.running == nil else { return }
                 syncing.check()
             },
             lock: {

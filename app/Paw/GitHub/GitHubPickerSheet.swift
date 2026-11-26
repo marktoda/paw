@@ -7,27 +7,25 @@ import UniformTypeIdentifiers
 /// to setup, which goes on to the host check as if it had been typed.
 struct GitHubChooseButton: View {
     let model: SetupModel
-    @Environment(\.gitHubAccess) private var gitHub
+    let gitHub: GitHubAccess
     @State private var picker: GitHubPicker?
 
     var body: some View {
-        if let gitHub {
-            Button("Choose from GitHub") {
-                let picker = GitHubPicker(access: gitHub, purpose: .pick(chosen: { address in
-                    self.picker = nil
-                    model.addressText = address
-                    model.addressProblem = nil
-                    model.connectToHost()
-                }))
-                self.picker = picker
-                picker.begin()
-            }
-            .buttonStyle(.pawSecondary)
-            .disabled(model.working != nil)
-            .accessibilityIdentifier("address-github")
-            .sheet(item: $picker) { picker in
-                GitHubPickerSheet(picker: picker)
-            }
+        Button("Choose from GitHub") {
+            let picker = GitHubPicker(access: gitHub, purpose: .pick(chosen: { address in
+                self.picker = nil
+                model.addressText = address
+                model.addressProblem = nil
+                model.connectToHost()
+            }))
+            self.picker = picker
+            picker.begin()
+        }
+        .buttonStyle(.pawSecondary)
+        .disabled(model.working != nil)
+        .accessibilityIdentifier("address-github")
+        .sheet(item: $picker) { picker in
+            GitHubPickerSheet(picker: picker)
         }
     }
 }

@@ -24,7 +24,7 @@ struct SettingsSheet: View {
                         .font(PawFont.footnote)
                         .foregroundStyle(PawColor.labelSecondary)
                 }
-                AutoFillSettingsSection()
+                AutoFillSettingsSection(suggestions: model.storeSession.autoFill)
                 OneTimeCodeSettingsSection(model: model)
                 SitesUsedSettingsSection(model: model)
                 FaceIdSettingsSection(model: model)

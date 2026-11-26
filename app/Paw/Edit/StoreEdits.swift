@@ -27,95 +27,84 @@ struct UndoOffer: Identifiable, Equatable {
     let change: String
 }
 
-/// The write side of the store as the screens use it: the core's writer,
-/// the unpushed queue, and what the edit screens show now. Saving,
-/// deleting and undoing need no key and no network. Each write is
-/// announced on the live store, which every reader of the store follows.
+/// Adding, editing, deleting and undoing: the form, the delete confirm and
+/// the Undo offer, and every write behind them. None needs the key or the
+/// network: encryption uses the public keys pinned at setup, and each
+/// change is one local commit. Each write is announced on the live store;
+/// what the screens should show next is asked through `requests`.
 @MainActor @Observable
 final class StoreEdits {
     let writer: StoreWriter
-    /// The queue lives on the sync object; `nil` if it could not be opened,
-    /// and then the unpushed list says so.
-    let sync: StoreSync?
     /// The core's state directory of the store.
     let stateDir: String
-    @ObservationIgnored private let live: LiveStore
+    /// The unpushed changes, from sync; `nil` if the queue could not be
+    /// opened, and then nothing can be undone.
+    let queue: ChangeQueue?
 
-    /// Newest first.
-    private(set) var unpushed: [QueueItem] = []
-    /// Why the queue could not be read or changed, said on the list.
-    var queueProblem: String?
     /// The add or edit sheet, while it is up.
-    var form: EntryFormPurpose?
+    private(set) var form: EntryFormPurpose?
     /// The open entry whose delete is waiting for its inline confirm.
-    var confirmingDelete: UUID?
-    var undoOffer: UndoOffer?
+    private(set) var confirmingDelete: UUID?
+    private(set) var undoOffer: UndoOffer?
 
-    init(writer: StoreWriter, sync: StoreSync?, stateDir: String, live: LiveStore) {
+    @ObservationIgnored private let live: LiveStore
+    @ObservationIgnored private let copies: CopyCache?
+    @ObservationIgnored private let requests: Signal<ScreenRequest>
+
+    init(writer: StoreWriter, stateDir: String, queue: ChangeQueue?, live: LiveStore, copies: CopyCache?,
+         requests: Signal<ScreenRequest>) {
         self.writer = writer
-        self.sync = sync
         self.stateDir = stateDir
+        self.queue = queue
         self.live = live
-        refreshQueue()
-        live.changed.subscribe(self) { edits, changed in
-            if changed.change.rewritesEntries {
-                edits.refreshQueue()
-            }
-        }
+        self.copies = copies
+        self.requests = requests
     }
 
-    func refreshQueue() {
-        guard let sync else {
-            unpushed = []
-            return
-        }
-        do {
-            unpushed = try sync.unpushed()
-            queueProblem = nil
-        } catch {
-            queueProblem = describe(error)
-        }
+    // MARK: The form
+
+    func startAdd(folder: String) {
+        guard form == nil else { return }
+        form = .add(folder: folder)
     }
 
-    /// "3 changes not sent".
-    var bannerTitle: String {
-        "\(changeCount(unpushed.count)) not sent"
+    func startEdit(_ session: OpenSession, focusName: Bool = false) {
+        guard form == nil else { return }
+        confirmingDelete = nil
+        form = .edit(sessionID: session.id, focusName: focusName)
     }
 
-    // MARK: Writes
+    func formClosed() {
+        form = nil
+    }
 
-    /// Saves the form's entry; `nil` if the form refused or said why not.
-    func save(_ form: EntryFormModel, copies: CopyCache?) -> Saved? {
-        guard let saved = form.save(copies: copies) else { return nil }
+    /// A blank form for "New password", following the store.
+    func addForm(folder: String) -> EntryFormModel {
+        EntryFormModel(adding: folder, writer: writer, folders: allFolders, live: live)
+    }
+
+    /// The form for `session`, filled in. Throws if it was closed.
+    func editForm(_ session: OpenSession, focusName: Bool) throws -> EntryFormModel {
+        try EntryFormModel(editing: session, focusName: focusName, writer: writer, folders: allFolders, live: live)
+    }
+
+    /// Every folder in the store, for the folder picker, sorted.
+    var allFolders: [String] {
+        live.store.allFolders().sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    /// Save in the form. A new entry needs the key to open, like any
+    /// other; an edited one stays on screen with the text just saved.
+    /// `false` if the form refused or said why not.
+    func save(_ form: EntryFormModel) -> Bool {
+        guard let saved = form.save(copies: copies) else { return false }
         let renamed = saved.previous.map { StoreChange.Renamed(from: $0, to: saved.entry) }
         live.announce(.wrote(entries: [saved.previous, saved.entry].compactMap { $0 }, renamed: renamed))
-        return saved
-    }
-
-    func delete(_ entry: String, copies: CopyCache?) throws {
-        _ = try BackgroundTime.run("Delete") { try writer.delete(entry: entry, copies: copies) }
-        live.announce(.wrote(entries: [entry], renamed: nil))
-    }
-
-    /// Takes back the newest change. Nothing without the queue. `task`
-    /// names the time asked of iOS to finish it.
-    func undoLast(task: String = "Undo") throws {
-        guard let sync else { return }
-        let undone = try BackgroundTime.run(task) { try sync.undoLast() }
-        announce(undone)
-    }
-
-    func discard(_ id: String) throws {
-        guard let sync else { return }
-        let discarded = try BackgroundTime.run("Change") { try sync.discard(id: id) }
-        announce(discarded)
-    }
-
-    func discardAll() throws {
-        guard let sync else { return }
-        let entries = unpushed.map(\.entry)
-        try BackgroundTime.run("Change") { try sync.discardAll() }
-        live.announce(.wrote(entries: entries, renamed: nil))
+        if case .edit(let id, _) = form.purpose {
+            requests.send(.saved(sessionID: id, saved))
+        }
+        requests.send(.toast(saved.commits.isEmpty ? "Nothing changed." : "Saved. Not sent yet."))
+        return true
     }
 
     /// "Accept the new list" for `folder`.
@@ -124,7 +113,74 @@ final class StoreEdits {
         live.announce(.recipientsAccepted(folder: folder))
     }
 
-    private func announce(_ changes: [QueueItem]) {
-        live.announce(.wrote(entries: changes.flatMap { [$0.previous, $0.entry].compactMap { $0 } }, renamed: nil))
+    // MARK: Deleting and undoing
+
+    func confirmDelete(_ session: OpenSession) {
+        confirmingDelete = session.id
+    }
+
+    func keepEntry() {
+        confirmingDelete = nil
+    }
+
+    /// Delete after its inline confirm: back to the list, with Undo.
+    func delete(_ session: OpenSession) {
+        confirmingDelete = nil
+        do {
+            _ = try BackgroundTime.run("Delete") { try writer.delete(entry: session.ref.path, copies: copies) }
+        } catch let error as WriteError {
+            let words = editProblem(error, folder: session.ref.folder)
+            requests.send(.notice(Notice(problem: words.problem, nextStep: words.nextStep)))
+            return
+        } catch {
+            requests.send(.notice(Notice(problem: "\(session.ref.name) wasn't deleted.", nextStep: describe(error))))
+            return
+        }
+        live.announce(.wrote(entries: [session.ref.path], renamed: nil))
+        requests.send(.deleted(sessionID: session.id))
+        if let newest = queue?.unpushed.first {
+            undoOffer = UndoOffer(
+                message: "Deleted \(session.ref.name).", entryName: session.ref.name, change: newest.id)
+        }
+    }
+
+    /// Undo on the delete toast: only if that change is still the newest.
+    func undo(_ offer: UndoOffer) {
+        guard let queue else { return }
+        undoOffer = nil
+        guard queue.unpushed.first?.id == offer.change else {
+            requests.send(.toast("Not undone: other changes came after it."))
+            return
+        }
+        if queue.undoLast(task: "Undo") {
+            requests.send(.toast("\(offer.entryName) is back."))
+        }
+    }
+
+    /// The Undo toast's time is up.
+    func undoOfferEnded(_ offer: UndoOffer) {
+        if undoOffer?.id == offer.id {
+            undoOffer = nil
+        }
+    }
+
+    // MARK: The unpushed list
+
+    func undoLastChange() {
+        changeQueue { $0.undoLast(task: "Change") }
+    }
+
+    func discardChange(_ id: String) {
+        changeQueue { $0.discard(id) }
+    }
+
+    func discardAllChanges() {
+        changeQueue { $0.discardAll() }
+    }
+
+    private func changeQueue(_ change: (ChangeQueue) -> Bool) {
+        guard let queue else { return }
+        undoOffer = nil
+        _ = change(queue)
     }
 }

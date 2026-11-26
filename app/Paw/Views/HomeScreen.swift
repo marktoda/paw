@@ -28,8 +28,8 @@ struct HomeScreen: View {
             }
         }
         .environment(\.defaultMinListRowHeight, PawMetrics.tapMin)
-        .pawBottomSearch(text: $query, prompt: searchPrompt, addDisabled: model.edits == nil) {
-            model.startAdd(folder: "")
+        .pawBottomSearch(text: $query, prompt: searchPrompt, addDisabled: model.storeSession.edits == nil) {
+            model.storeSession.edits?.startAdd(folder: "")
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -45,11 +45,11 @@ struct HomeScreen: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        model.startAdd(folder: model.splitFolder)
+                        model.storeSession.edits?.startAdd(folder: model.splitFolder)
                     } label: {
                         Label("Add a password", systemImage: PawSymbol.add)
                     }
-                    .disabled(model.edits == nil)
+                    .disabled(model.storeSession.edits == nil)
                     .accessibilityIdentifier("add-button")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -78,7 +78,7 @@ struct HomeScreen: View {
     }
 
     private var searchPrompt: String {
-        model.entryCount == 1 ? "Search 1 password" : "Search \(model.entryCount) passwords"
+        searchPrompt(entryCount: model.storeSession.live.entryCount)
     }
 
     private var home: some View {
@@ -132,9 +132,9 @@ struct HomeScreen: View {
                     PawSectionHeader("Recent")
                 }
             }
-            if !model.home.folders.isEmpty {
+            if !model.storeSession.live.home.folders.isEmpty {
                 Section {
-                    ForEach(model.home.folders, id: \.path) { folder in
+                    ForEach(model.storeSession.live.home.folders, id: \.path) { folder in
                         FolderRow(name: folder.name, count: Int(folder.entryCount)) {
                             model.show(.folder(folder.path))
                         }
@@ -145,16 +145,16 @@ struct HomeScreen: View {
                     PawSectionHeader("Folders")
                 }
             }
-            if !model.home.entries.isEmpty {
+            if !model.storeSession.live.home.entries.isEmpty {
                 Section {
-                    ForEach(model.home.entries, id: \.path) { entry in
+                    ForEach(model.storeSession.live.home.entries, id: \.path) { entry in
                         EntryRowFor(model: model, entry: entry, subtitle: "")
                     }
                 } header: {
                     PawSectionHeader("Not in a folder")
                 }
             }
-            if model.entryCount == 0 {
+            if model.storeSession.live.entryCount == 0 {
                 Section {
                     EmptyState(
                         symbol: PawSymbol.entry, title: "No passwords yet",
@@ -224,7 +224,7 @@ struct SearchResults: View {
     let query: String
 
     var body: some View {
-        let hits = model.search(query)
+        let hits = model.storeSession.live.search(query)
         if hits.isEmpty {
             EmptyState(
                 symbol: PawSymbol.search,

@@ -2,179 +2,12 @@ import Foundation
 import Observation
 import SwiftUI
 
-/// Screens about sync on the navigation stack (`Route.sync`).
-enum SyncRoute: Hashable {
-    /// Waiting changes paw will not send as they are.
-    case heldBack
-    /// What the git remote holds that paw will not check out.
-    case refusedRemote
-    /// The git remote's history was replaced.
-    case replaced
-    /// "Review who can open this folder", from a held-back change or a
-    /// refresh that changed a `.gpg-id`.
-    case review(folder: String)
-}
-
-/// The sync sheet while it is up: the status page, or a key task's stages.
-/// One sheet for both, so going from one to the other never stacks sheets.
-struct SyncSheet: Identifiable {
-    enum Mode: Equatable {
-        case status
-        /// The key sheet; its stage is `SyncModel.keyTask`'s.
-        case key(kind: SyncKind)
-    }
-
-    let id = UUID()
-    var mode: Mode
-}
-
-/// What the pill on Home says. Worked out from what the core reports:
-/// the queue, the held-back and refused lists, and the last task's result.
-enum SyncPillState: Equatable {
-    case working(String)
-    case upToDate(checked: Date)
-    /// Never checked from this iPhone: the next check needs the key.
-    case needsKey
-    /// Never checked from this iPhone; the GitHub sign-in can check.
-    case notChecked
-    /// Changes wait here. The card under the pill counts them, so the
-    /// pill says only when paw last checked.
-    case notSent(checked: Date?)
-    case offline(checked: Date?)
-    case failed(String)
-    /// Stopped until the person looks: replaced history, a refused remote
-    /// or held-back changes.
-    case paused(String)
-
-    var status: SyncPill.Status {
-        switch self {
-        case .working: .syncing
-        case .upToDate: .synced
-        case .needsKey: .needsKey
-        case .notChecked: .syncing
-        case .notSent: .checked
-        case .offline: .offline
-        case .failed, .paused: .failed
-        }
-    }
-
-    func text(now: Date) -> String {
-        switch self {
-        case .working(let text): text
-        case .upToDate(let checked): "Up to date \u{00B7} checked \(syncAgo(checked, now: now))"
-        case .needsKey: "Updates need your key"
-        case .notChecked: "Not checked yet"
-        case .notSent(let checked?): "Checked \(syncAgo(checked, now: now))"
-        case .notSent(nil): "Not checked yet"
-        case .offline(let checked?): "Offline \u{00B7} last checked \(syncAgo(checked, now: now))"
-        case .offline(nil): "Offline"
-        case .failed(let text), .paused(let text): text
-        }
-    }
-}
-
-/// What a sync brought in, for the dismissible card on Home.
-struct SyncSummary: Identifiable, Equatable {
-    enum Origin: Equatable {
-        case sync
-        /// After taking the git remote's replaced history.
-        case replaced
-    }
-
-    let id = UUID()
-    let origin: Origin
-    var added: [String] = []
-    var changed: [String] = []
-    var removed: [String] = []
-    var keptBoth: [KeptBoth] = []
-    var keptLocal: [String] = []
-    var droppedDeletes: [String] = []
-    /// Folders whose `.gpg-id` changed ("" for the top of the store).
-    var recipientsChanged: [String] = []
-    /// Entries whose Face ID copy ended because their text changed.
-    var endedCopies: [String] = []
-
-    init(origin: Origin, report: IntegrateReport) {
-        self.origin = origin
-        keptBoth = report.keptBoth
-        keptLocal = report.keptLocal
-        droppedDeletes = report.droppedDeletes
-        recipientsChanged = report.recipientsChanged.map { gpgIdFolder(path: $0.path) }
-        // Entries the report already explains are said there instead.
-        var explained = Set(keptLocal + droppedDeletes)
-        for pair in keptBoth {
-            explained.insert(pair.entry)
-            explained.insert(pair.copy)
-        }
-        let sorted = { (paths: [String]) in
-            paths.filter { !explained.contains($0) }.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-        }
-        added = sorted(report.added)
-        changed = sorted(report.changed)
-        removed = sorted(report.removed)
-    }
-
-    var entryCount: Int {
-        added.count + changed.count + removed.count
-    }
-
-    /// Something in it asks for a decision: two versions of one password,
-    /// a delete that didn't happen, a changed list of keys.
-    var needsALook: Bool {
-        !(keptBoth.isEmpty && keptLocal.isEmpty && droppedDeletes.isEmpty && recipientsChanged.isEmpty)
-    }
-
-    var isEmpty: Bool {
-        entryCount == 0 && keptBoth.isEmpty && keptLocal.isEmpty && droppedDeletes.isEmpty
-            && recipientsChanged.isEmpty
-    }
-
-    var title: String {
-        let count = entryCount
-        if count > 0 {
-            if origin == .replaced {
-                return count == 1 ? "1 password updated from the new store" : "\(count) passwords updated from the new store"
-            }
-            return count == 1 ? "1 password changed on your other devices" : "\(count) passwords changed on your other devices"
-        }
-        if let pair = keptBoth.first {
-            return "Two versions of \(EntryRef(path: pair.entry).name) were kept"
-        }
-        if !keptLocal.isEmpty || !droppedDeletes.isEmpty {
-            return "Both sides changed the same password"
-        }
-        if let folder = recipientsChanged.first {
-            return whoCanOpenChanged(folder)
-        }
-        return "Your store was updated"
-    }
-}
-
-/// When paw last found the store as the server has it, by a check with
-/// the key or the sign-in, in the foreground or the background. Kept per
-/// store in the app's own defaults, which can be read while the iPhone is
-/// locked.
-enum LastChecked {
-    static func read(repoDir: String) -> Date? {
-        let seen = UserDefaults.standard.double(forKey: key(repoDir))
-        return seen > 0 ? Date(timeIntervalSince1970: seen) : nil
-    }
-
-    static func record(_ date: Date, repoDir: String) {
-        UserDefaults.standard.set(date.timeIntervalSince1970, forKey: key(repoDir))
-    }
-
-    private static func key(_ repoDir: String) -> String {
-        "pawSyncLastChecked:\(repoDir)"
-    }
-}
-
-/// Sending and checking for changes: the pill, the sync sheet and the
-/// screens after a sync. The core does the sync, in its own thread, on one
-/// card-signed login; this keeps what the screens show. It never starts the
-/// network or the card without a tap, but for one rule: what a background
-/// check left for the person is brought up with the sign-in when paw comes
-/// forward (`checkWhatTheBackgroundLeft`). The PIN goes from the sheet's
+/// The unpushed queue, sending and checking for changes: the pill, the
+/// sync sheet and the screens after a sync. The core does the sync, in its
+/// own thread, on one card-signed login; this keeps what the screens show.
+/// It never starts the network or the card without a tap, but for one
+/// rule: what a background check left for the person is brought up with
+/// the sign-in when paw comes forward (`checkWhatTheBackgroundLeft`). The PIN goes from the sheet's
 /// field straight to the core task. What it brings in is announced on the
 /// live store; what the screens should show next is asked through
 /// `requests`.
@@ -182,11 +15,20 @@ enum LastChecked {
 final class SyncModel {
     let sync: StoreSync
     let address: String
+    /// The changes saved here and not sent yet.
+    let queue: ChangeQueue
 
     var sheet: SyncSheet?
     /// The key sheet's task: a send, a check or a re-encrypt.
     let keyTask: KeyTaskDriver
-    private(set) var running: SyncKind?
+    /// A send, check or re-encrypt under way. What is held back or refused
+    /// is read again whenever the store changes, and once more when it
+    /// ends, however it ended.
+    private(set) var running: SyncKind? {
+        didSet {
+            if running == nil, oldValue != nil { recomputeLocal() }
+        }
+    }
     private(set) var progress: TaskProgress?
     private(set) var lastChecked: Date?
     private(set) var failure: SyncFailure?
@@ -201,7 +43,11 @@ final class SyncModel {
     private(set) var reencryptLeft: [String: LeftReason] = [:]
     var summary: SyncSummary?
     /// Taking a replaced history is under way, or why it failed.
-    private(set) var accepting = false
+    private(set) var accepting = false {
+        didSet {
+            if !accepting, oldValue { recomputeLocal() }
+        }
+    }
     var acceptProblem: String?
     /// The GitHub sign-in, which checks for changes without the key when
     /// it is for this store's repository.
@@ -211,8 +57,6 @@ final class SyncModel {
     /// The last background check (`BackgroundRefresh`), for the status page.
     private(set) var backgroundRun: BackgroundRun?
 
-    /// The unpushed queue.
-    @ObservationIgnored private let queue: StoreEdits
     @ObservationIgnored private let live: LiveStore
     @ObservationIgnored private let requests: Signal<ScreenRequest>
     @ObservationIgnored private let reader: KeyReader
@@ -229,10 +73,10 @@ final class SyncModel {
     @ObservationIgnored private var doneNeedsLook = false
     private let workQueue = DispatchQueue(label: "paw-sync", qos: .userInitiated)
 
-    init(sync: StoreSync, queue: StoreEdits, live: LiveStore, requests: Signal<ScreenRequest>, reader: KeyReader,
-         copies: CopyCache?, gitHub: GitHubAccess?) {
+    init(sync: StoreSync, live: LiveStore, requests: Signal<ScreenRequest>, reader: KeyReader, copies: CopyCache?,
+         gitHub: GitHubAccess?) {
         self.sync = sync
-        self.queue = queue
+        queue = ChangeQueue(sync: sync, live: live)
         self.live = live
         self.requests = requests
         self.reader = reader
@@ -262,7 +106,7 @@ final class SyncModel {
 
     // MARK: What the pill says
 
-    func pillState(unpushed: Int) -> SyncPillState {
+    var pillState: SyncPillState {
         if let running {
             return .working(workingText(running, unpushed: unpushed))
         }
@@ -293,7 +137,7 @@ final class SyncModel {
     /// A tap on the pill: the status sheet, or with the disc, straight to
     /// the key sheet that updates the store (design.md 2.3).
     func pillTapped() {
-        let state = pillState(unpushed: unpushed)
+        let state = pillState
         if state == .needsKey || state == .notChecked {
             check()
         } else {
@@ -303,26 +147,27 @@ final class SyncModel {
 
     func showStatus() {
         guard sheet == nil else { return }
-        recomputeLocal()
         sheet = SyncSheet(mode: .status)
     }
 
     /// Whether "Send" is offered: never for a change that is held back, and
     /// not while the remote needs looking at first.
-    func canSend(unpushed: Int) -> Bool {
+    var canSend: Bool {
         unpushed > 0 && heldBack.isEmpty && replaced == nil && refused.isEmpty
     }
 
     /// The local state again, without the network or the key.
-    func recomputeLocal() {
-        guard running == nil, !accepting else { return }
-        heldBack = (try? sync.heldBack()) ?? []
-        refused = (try? sync.refusedRemote()) ?? []
+    private func recomputeLocal() {
+        // A list that can't be read now keeps what was read last, never
+        // "nothing": the core checks both again before it sends.
+        if let found = try? sync.heldBack() { heldBack = found }
+        if let found = try? sync.refusedRemote() { refused = found }
         recomputeReencrypt()
     }
 
     /// `reencryptReady` and `reencryptLeft` from the core, without the key.
     private func recomputeReencrypt() {
+        // Unreadable: nothing is offered to re-encrypt until it can be read.
         let check: ReencryptCheck? = heldBack.isEmpty ? nil : (try? sync.reencryptCheck())
         reencryptReady = Int(check?.ready ?? 0)
         let held = Set(heldBack.map(\.entry))
@@ -450,7 +295,6 @@ final class SyncModel {
         SimRemotePanel.shared.syncFailed()
         #endif
         failure = SyncFailure(error, during: kind, unpushed: unpushed, host: host)
-        recomputeLocal()
         sheet?.mode = .status
     }
 
@@ -477,14 +321,14 @@ final class SyncModel {
         lastChecked = now
         LastChecked.record(now, repoDir: live.repoDir)
         var needsLook = false
+        var waiting = false
         if let report {
             switch report.state {
             case .remoteReplaced(let found):
                 replaced = found
                 needsLook = true
             case .waiting:
-                heldBack = (try? sync.heldBack()) ?? []
-                needsLook = kind == .send && !heldBack.isEmpty
+                waiting = true
             case .upToDate:
                 replaced = nil
                 if kind == .send, report.pushed > 0 {
@@ -493,11 +337,10 @@ final class SyncModel {
             }
         }
         live.announce(.synced(report?.integration, replaced: false))
-        refused = (try? sync.refusedRemote()) ?? []
         #if DEBUG && targetEnvironment(simulator)
         SimRemotePanel.shared.refresh()
         #endif
-        return needsLook
+        return needsLook || (waiting && kind == .send && !heldBack.isEmpty)
     }
 
     /// A re-encrypt that ran to the end (its end is announced with every
@@ -518,16 +361,18 @@ final class SyncModel {
     /// what background checks brought in shows in the lists, and what they
     /// left for the person comes up as a check from the pill would.
     func cameForward() {
-        backgroundRun = BackgroundRefresh.lastRun()
+        let run = BackgroundRefresh.lastRun()
+        // A check that ran fetched, even if it brought nothing in: what
+        // is refused or held back may differ.
+        let ranSince = run != backgroundRun
+        backgroundRun = run
         if let seen = LastChecked.read(repoDir: live.repoDir) {
             lastChecked = seen
         }
         guard running == nil, !accepting else { return }
         let pending = BackgroundRefresh.takePending()
-        if pending.changed {
+        if pending.changed || ranSince {
             live.announce(.synced(nil, replaced: false))
-        } else {
-            recomputeLocal()
         }
         if pending.needsLook {
             checkWhatTheBackgroundLeft()
@@ -573,10 +418,10 @@ final class SyncModel {
         running = .refresh
         progress = nil
         keyPathNote = nil
-        let signIn = SignInCheck(core: gitHub.core)
+        let core = gitHub.core
         let time = BackgroundTime.begin("Sync")
         workQueue.async { [weak self] in
-            let checked = Handoff(value: signIn.run())
+            let checked = Handoff(value: Result { try core.refreshStore() })
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     time.end()
@@ -592,7 +437,6 @@ final class SyncModel {
         switch result {
         case .success(let report):
             if absorb(report, kind: .refresh) {
-                recomputeLocal()
                 if sheet == nil {
                     sheet = SyncSheet(mode: .status)
                 } else {
@@ -610,7 +454,6 @@ final class SyncModel {
             } else {
                 failure = SyncFailure.signInCheckFailed(error, unpushed: unpushed)
             }
-            recomputeLocal()
         }
     }
 

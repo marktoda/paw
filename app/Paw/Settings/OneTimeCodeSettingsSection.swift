@@ -15,7 +15,7 @@ struct OneTimeCodeSettingsSection: View {
     @State private var problem: String?
 
     var body: some View {
-        if let stateDir = model.settingsStateDir {
+        if let stateDir = model.storeSession.edits?.stateDir {
             let codes = OneTimeCodeEntries.open(stateDir: stateDir)
             Section {
                 Toggle(isOn: binding(codes)) {

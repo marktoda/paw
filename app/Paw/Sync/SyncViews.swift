@@ -1,12 +1,5 @@
 import SwiftUI
 
-extension StoreEdits {
-    /// "Send 2 changes", the key sheet's title for a send.
-    var sendTitle: String {
-        "Send \(changeCount(unpushed.count))"
-    }
-}
-
 /// A button title after the gold disc: this tap asks for the key.
 struct KeyActionLabel: View {
     let title: String
@@ -33,9 +26,9 @@ struct HomeSyncPill: View {
     let model: AppModel
 
     var body: some View {
-        if let edits = model.edits, let syncing = model.syncing {
+        if let syncing = model.storeSession.syncing {
             TimelineView(.periodic(from: .now, by: 30)) { context in
-                let state = syncing.pillState(unpushed: edits.unpushed.count)
+                let state = syncing.pillState
                 let text = state.text(now: context.date)
                 Button {
                     syncing.pillTapped()
@@ -60,7 +53,7 @@ struct SyncSummarySection: View {
     private static let shown = 5
 
     var body: some View {
-        if let syncing = model.syncing, let summary = syncing.summary {
+        if let syncing = model.storeSession.syncing, let summary = syncing.summary {
             Section {
                 HStack(alignment: .firstTextBaseline, spacing: PawMetrics.Spacing.m) {
                     // A tick only when everything simply arrived. Two
@@ -213,7 +206,7 @@ struct SyncSendSection: View {
     let model: AppModel
 
     var body: some View {
-        if let edits = model.edits, let syncing = model.syncing, !edits.unpushed.isEmpty {
+        if let syncing = model.storeSession.syncing, !syncing.queue.unpushed.isEmpty {
             Section {
                 if !syncing.heldBack.isEmpty {
                     ErrorRow(
@@ -239,11 +232,11 @@ struct SyncSendSection: View {
                         .listRowInsets(EdgeInsets())
                         .listRowBackground(Color.clear)
                     }
-                } else if syncing.canSend(unpushed: edits.unpushed.count) {
+                } else if syncing.canSend {
                     Button {
                         syncing.start(.send)
                     } label: {
-                        KeyActionLabel(edits.sendTitle)
+                        KeyActionLabel(syncing.queue.sendTitle)
                     }
                     .buttonStyle(.pawPrimary)
                     .disabled(syncing.running != nil)
@@ -277,7 +270,7 @@ private struct SyncModifier: ViewModifier {
     let model: AppModel
 
     private var syncing: SyncModel? {
-        model.syncing
+        model.storeSession.syncing
     }
 
     private var sheet: Binding<SyncSheet?> {
@@ -340,7 +333,7 @@ private struct SyncSheetHost: View {
     private func purpose(_ kind: SyncKind) -> String {
         switch kind {
         case .send:
-            return model.edits?.sendTitle ?? "Send your changes"
+            return syncing.queue.sendTitle
         case .refresh:
             return "Update your store"
         case .reencrypt:
@@ -356,7 +349,7 @@ private struct SyncSheetHost: View {
     /// key whose touch is cached and was touched in the last 15 seconds
     /// signs without one.
     private var touchNote: String? {
-        guard let policy = model.keyPort.session()?.info().authenticationTouch else { return nil }
+        guard let policy = model.storeSession.keyPort.session()?.info().authenticationTouch else { return nil }
         switch syncing.sync.touchExpectation(policy: policy) {
         case .notNeeded, .needed: return nil
         case .mayBeNeeded: return "If it isn't blinking, no touch is needed."
@@ -371,7 +364,7 @@ private struct SyncStatusSheet: View {
     let syncing: SyncModel
 
     private var unpushed: Int {
-        model.edits?.unpushed.count ?? 0
+        syncing.queue.unpushed.count
     }
 
     /// The last background run: its result, with its time only when that
@@ -555,7 +548,7 @@ private struct SyncStatusSheet: View {
     /// Send (or Re-encrypt, while changes are held back) and Check, each
     /// with the gold disc: that says they need the key.
     private var actions: some View {
-        let canSend = syncing.canSend(unpushed: unpushed)
+        let canSend = syncing.canSend
         let canReencrypt = !syncing.heldBack.isEmpty && syncing.reencryptReady > 0
         return VStack(spacing: PawMetrics.Spacing.s) {
             if canReencrypt {
@@ -568,11 +561,11 @@ private struct SyncStatusSheet: View {
                 .disabled(syncing.running != nil)
                 .accessibilityIdentifier("sync-reencrypt")
             }
-            if canSend, let edits = model.edits {
+            if canSend {
                 Button {
                     syncing.start(.send)
                 } label: {
-                    KeyActionLabel(edits.sendTitle)
+                    KeyActionLabel(syncing.queue.sendTitle)
                 }
                 .buttonStyle(.pawPrimary)
                 .accessibilityIdentifier("sync-send")

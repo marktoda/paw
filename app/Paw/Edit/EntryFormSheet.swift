@@ -16,7 +16,7 @@ struct EntryFormSheet: View {
         NavigationStack {
             Group {
                 if let form {
-                    EntryFormView(model: model, edits: edits, form: form)
+                    EntryFormView(edits: edits, form: form)
                 } else if let openProblem {
                     List {
                         ErrorRow(kind: .error, problem: "Can't edit this now", nextStep: openProblem)
@@ -24,7 +24,7 @@ struct EntryFormSheet: View {
                     }
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("Close") { edits.form = nil }
+                            Button("Close") { edits.formClosed() }
                                 .padShortcut(.cancelAction)
                                 .accessibilityIdentifier("form-cancel")
                         }
@@ -48,17 +48,14 @@ struct EntryFormSheet: View {
         guard form == nil else { return }
         switch purpose {
         case .add(let folder):
-            form = EntryFormModel(
-                adding: folder, writer: edits.writer, folders: model.allFolders, live: model.storeSession.live)
+            form = edits.addForm(folder: folder)
         case .edit(let id, let focusName):
             guard let session = model.session(id) else {
                 openProblem = "It was closed. Open it again, then tap Edit."
                 return
             }
             do {
-                form = try EntryFormModel(
-                    editing: session, focusName: focusName, writer: edits.writer, folders: model.allFolders,
-                    live: model.storeSession.live)
+                form = try edits.editForm(session, focusName: focusName)
             } catch let error as WriteError {
                 openProblem = editProblem(error, folder: session.ref.folder).nextStep
             } catch {
@@ -74,7 +71,6 @@ private enum FormFocus: Hashable {
 }
 
 private struct EntryFormView: View {
-    let model: AppModel
     let edits: StoreEdits
     @Bindable var form: EntryFormModel
 
@@ -125,7 +121,6 @@ private struct EntryFormView: View {
             .navigationDestination(isPresented: $reviewing) {
                 RecipientsReviewScreen(edits: edits, folder: form.effectiveFolder) {
                     reviewing = false
-                    form.recipientsAccepted()
                 }
             }
             .onChange(of: form.confirmingDiscard) {
@@ -443,13 +438,13 @@ private struct EntryFormView: View {
 
     private func close() {
         focus = nil
-        edits.form = nil
+        edits.formClosed()
     }
 
     private func save() {
         focus = nil
-        guard model.save(form) else { return }
-        edits.form = nil
+        guard edits.save(form) else { return }
+        edits.formClosed()
     }
 }
 

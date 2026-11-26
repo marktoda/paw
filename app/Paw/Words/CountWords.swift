@@ -15,3 +15,13 @@ func removeStoreWarning(unpushed: Int) -> String {
     }
     return text
 }
+
+/// "1 password", "3 passwords".
+func passwordCount(_ count: Int) -> String {
+    count == 1 ? "1 password" : "\(count) passwords"
+}
+
+/// The search field's prompt on Home: "Search 3 passwords".
+func searchPrompt(entryCount: Int) -> String {
+    "Search \(passwordCount(entryCount))"
+}

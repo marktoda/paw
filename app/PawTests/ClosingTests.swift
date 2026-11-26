@@ -99,7 +99,7 @@ final class ClosingTests: XCTestCase {
         let session = try XCTUnwrap(model.session(id))
 
         model.lockEntry(session)
-        XCTAssertEqual(model.toast, "Locked. gitlab.com needs your key again.")
+        XCTAssertEqual(model.toast?.text, "Locked. gitlab.com needs your key again.")
         XCTAssertNil(model.liveCopy("web/gitlab.com"))
         XCTAssertNotNil(model.liveCopy("web/github.com"))
         XCTAssertEqual(model.rowAccess("web/gitlab.com"), .needsKey)

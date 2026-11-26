@@ -9,9 +9,9 @@ import XCTest
 final class EntryFormStoreTests: XCTestCase {
     func testTypingReadsNothingFromTheStoreAndATypedFolderIsReadOnce() async throws {
         let fixture = try Fixture(writable: true)
-        let edits = try XCTUnwrap(fixture.model.edits)
+        let edits = try XCTUnwrap(fixture.model.storeSession.edits)
         let writer = CountingWriter(edits.writer)
-        let folders = fixture.model.allFolders
+        let folders = edits.allFolders
         let form = EntryFormModel(adding: "", writer: writer, folders: folders, live: fixture.model.storeSession.live)
 
         await waitFor("the folders' keys") { form.folderOpenable.count == folders.count }
@@ -44,10 +44,8 @@ final class EntryFormStoreTests: XCTestCase {
 
     func testSaveWaitsForANewFolderAndKeepsItsAnswerWhenTheStoreIsReadAgain() async throws {
         let fixture = try Fixture(writable: true)
-        let edits = try XCTUnwrap(fixture.model.edits)
-        let form = EntryFormModel(
-            adding: "web", writer: edits.writer, folders: fixture.model.allFolders,
-            live: fixture.model.storeSession.live)
+        let edits = try XCTUnwrap(fixture.model.storeSession.edits)
+        let form = edits.addForm(folder: "web")
         form.binding(\.name, field: "name").wrappedValue = "new.example"
         form.binding(\.password, field: "password").wrappedValue = "Typed-pass-42"
         await waitFor("who can open web") { form.folderWritable != nil }

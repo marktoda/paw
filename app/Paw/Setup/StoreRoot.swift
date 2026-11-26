@@ -55,7 +55,7 @@ final class StoreRootModel {
         // The app's half of the key log; the AutoFill extension starts its
         // own in the same state directory.
         keyPort.setKeyLog(stateDir: location.stateDir.path, process: "app")
-        gitHub = GitHubRefresh.access(stateDir: location.stateDir)
+        gitHub = GitHubSignInSource.access(stateDir: location.stateDir)
         route()
         // The model lives as long as the app, so the observer is never removed.
         NotificationCenter.default.addObserver(
@@ -240,7 +240,6 @@ enum StoreWipe {
             problems.keychain = error
         }
         CredentialIdentities.clear()
-        Clipboard.clearIfOurs()
         LegacyStore.remove(then: legacyLeft)
         guard let location else { return problems }
         // Gone with the folder below too; cleared first in case that fails.
@@ -357,7 +356,7 @@ private struct StoreRootContent: View {
         Group {
             switch root.phase {
             case .setup(let model):
-                SetupFlowView(model: model)
+                SetupFlowView(model: model, gitHub: root.gitHub)
             case .home(let model):
                 RootView(model: model)
             case .failed(let detail, let unpushed, let busy):
@@ -368,7 +367,6 @@ private struct StoreRootContent: View {
                 WaitingForUnlockView()
             }
         }
-        .environment(\.gitHubAccess, root.gitHub)
         #if DEBUG && targetEnvironment(simulator)
         .background(alignment: .topLeading) {
             // For the UI tests: what is left of a store after it was removed.

@@ -8,7 +8,7 @@ struct KeySheetHost: View {
         KeyTaskSheet(
             driver: model.keyTask,
             purpose: "Open \(model.keyRequest?.entry.name ?? "")",
-            note: model.copies?.copiesEnabled() == true
+            note: model.storeSession.copies?.copiesEnabled() == true
                 ? "Then it opens with Face ID for \(FaceIdOpener.windowSecs / 3600) hours." : nil,
             comingSoon: model.keyRequest?.differentKey == true ? "Replace key (coming)" : nil,
             onCancel: { model.cancelKeyTask() })

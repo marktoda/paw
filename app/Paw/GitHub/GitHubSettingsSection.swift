@@ -5,7 +5,7 @@ import SwiftUI
 /// the store paw set up (`address`, `nil` for a fixture).
 struct GitHubSettingsSection: View {
     let address: String?
-    @Environment(\.gitHubAccess) private var gitHub
+    let gitHub: GitHubAccess?
     @Environment(\.openURL) private var openURL
     @State private var picker: GitHubPicker?
     @State private var confirming = false

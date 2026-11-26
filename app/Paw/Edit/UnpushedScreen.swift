@@ -6,10 +6,10 @@ struct UnpushedSection: View {
     let model: AppModel
 
     var body: some View {
-        if let edits = model.edits, !edits.unpushed.isEmpty {
+        if let queue = model.storeSession.syncing?.queue, !queue.unpushed.isEmpty {
             Section {
                 UnpushedBanner(
-                    reason: .waiting, title: edits.bannerTitle,
+                    reason: .waiting, title: queue.bannerTitle,
                     detail: "Saved on this iPhone."
                 ) {
                     model.show(.unpushed)
@@ -30,10 +30,11 @@ struct UnpushedScreen: View {
     @State private var confirming: String?
 
     var body: some View {
-        let edits = model.edits
-        let items = edits?.unpushed ?? []
+        let edits = model.storeSession.edits
+        let queue = model.storeSession.syncing?.queue
+        let items = queue?.unpushed ?? []
         List {
-            if let problem = edits?.queueProblem {
+            if let problem = queue?.problem {
                 Section {
                     ErrorRow(kind: .error, problem: "That didn't work", nextStep: problem)
                         .pawListRow()
@@ -50,7 +51,7 @@ struct UnpushedScreen: View {
                 Section {
                     Button("Undo last change") {
                         confirming = nil
-                        model.undoLastChange()
+                        edits?.undoLastChange()
                     }
                     .buttonStyle(.pawSecondary)
                     .accessibilityIdentifier("unpushed-undo-last")
@@ -67,7 +68,7 @@ struct UnpushedScreen: View {
                                 identifier: "unpushed-discard-\(Self.name(item.entry))",
                                 onConfirm: {
                                     confirming = nil
-                                    model.discardChange(item.id)
+                                    edits?.discardChange(item.id)
                                 },
                                 onCancel: { confirming = nil })
                                 .pawListRow()
@@ -76,7 +77,7 @@ struct UnpushedScreen: View {
                         }
                     }
                 } header: {
-                    PawSectionHeader(items.count == 1 ? "1 change" : "\(items.count) changes, newest first")
+                    PawSectionHeader(items.count == 1 ? changeCount(1) : "\(changeCount(items.count)), newest first")
                         .accessibilityIdentifier("unpushed-count")
                 }
                 Section {
@@ -87,7 +88,7 @@ struct UnpushedScreen: View {
                             confirmTitle: "Discard all", cancelTitle: "Keep them", identifier: "unpushed-discard-all",
                             onConfirm: {
                                 confirming = nil
-                                model.discardAllChanges()
+                                edits?.discardAllChanges()
                             },
                             onCancel: { confirming = nil })
                             .pawListRow()
@@ -107,7 +108,6 @@ struct UnpushedScreen: View {
         .environment(\.defaultMinListRowHeight, PawMetrics.tapMin)
         .navigationTitle("Not sent yet")
         .navigationBarTitleDisplayMode(.large)
-        .onAppear { edits?.refreshQueue() }
     }
 
     static func name(_ path: String) -> String {

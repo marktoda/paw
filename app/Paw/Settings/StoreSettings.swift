@@ -11,12 +11,12 @@ struct StoreSettingsSections: View {
 
     /// The set-up store's address; `nil` for a fixture.
     private var setUpAddress: String? {
-        model.storeSession.setUp == nil ? nil : (model.edits?.sync?.address() ?? "")
+        model.storeSession.setUp == nil ? nil : (model.storeSession.syncing?.address ?? "")
     }
 
     var body: some View {
         if model.storeSession.setUp != nil {
-            if model.copies == nil {
+            if model.storeSession.copies == nil {
                 Section {
                     Text(Device.words("Not available on this iPhone. Every password needs your key."))
                         .font(PawFont.footnote)
@@ -28,7 +28,7 @@ struct StoreSettingsSections: View {
             }
         }
         storeSection
-        GitHubSettingsSection(address: setUpAddress)
+        GitHubSettingsSection(address: setUpAddress, gitHub: model.storeSession.gitHub)
         Section {
             Button {
                 showsDiagnostics = true
@@ -60,11 +60,11 @@ struct StoreSettingsSections: View {
 
     /// Address, the server key, and who can open the passwords.
     @ViewBuilder private var storeSection: some View {
-        let sync = model.edits?.sync
-        let writer = model.edits?.writer
-        if model.storeSession.setUp != nil || sync != nil || writer != nil {
+        let syncing = model.storeSession.syncing
+        let writer = model.storeSession.edits?.writer
+        if model.storeSession.setUp != nil || syncing != nil || writer != nil {
             Section {
-                if let address = setUpAddress ?? sync?.address() {
+                if let address = setUpAddress ?? syncing?.address {
                     LabeledContent {
                         Text(address)
                             .font(PawFont.footnote.monospaced())
@@ -77,8 +77,8 @@ struct StoreSettingsSections: View {
                     }
                     .accessibilityIdentifier("settings-address")
                 }
-                if let sync {
-                    ServerIdentityRows(sync: sync)
+                if let syncing {
+                    ServerIdentityRows(sync: syncing.sync)
                 }
                 if let writer {
                     NavigationLink {
@@ -128,7 +128,7 @@ struct RemoveStoreSection: View {
 
     /// What Remove deletes, and the changes it would lose as they are now.
     var warning: String {
-        removeStoreWarning(unpushed: model.edits?.unpushed.count ?? 0)
+        removeStoreWarning(unpushed: model.storeSession.syncing?.queue.unsentCount ?? 0)
     }
 
     private func remove(_ setUp: SetUpStore) {
@@ -195,6 +195,8 @@ private struct ServerIdentityRows: View {
         .accessibilityValue(expanded ? "Server key shown" : "")
         .accessibilityHint(expanded ? "" : "Shows the server key")
         .accessibilityIdentifier("settings-host-fingerprint")
+        // Said in the row's problem if the pinned keys can't be read.
+        .task { reload() }
         if expanded {
             if !pinned.isEmpty {
                 VStack(alignment: .leading, spacing: PawMetrics.Spacing.s) {
@@ -290,7 +292,11 @@ private struct ServerIdentityRows: View {
     }
 
     private func reload() {
-        keys = try? sync.serverKeys()
+        do {
+            keys = try sync.serverKeys()
+        } catch {
+            problem = ("Couldn't read the server key", describe(error))
+        }
     }
 
     private func forget(host: String, pinned: [ServerKey]) {

@@ -11,7 +11,7 @@ struct FaceIdSettingsSection: View {
     @State private var problem: String?
 
     var body: some View {
-        if let copies = model.copies {
+        if let copies = model.storeSession.copies {
             Section {
                 Toggle(isOn: binding(copies)) {
                     Text(Device.words("Open with Face ID"))

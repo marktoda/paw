@@ -79,7 +79,7 @@ private struct RecipientScopeSection: View {
     }
 
     private var footer: String {
-        var text = scope.entryCount == 1 ? "1 password." : "\(scope.entryCount) passwords."
+        var text = "\(passwordCount(Int(scope.entryCount)))."
         if scope.unsureEntries == 1 {
             text += " 1 may be for another key."
         } else if scope.unsureEntries > 1 {

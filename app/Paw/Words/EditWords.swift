@@ -8,29 +8,6 @@ struct EditProblem: Equatable {
     var reviewFolder: String? = nil
 }
 
-/// A queue or host-key change that failed, in one sentence. The core
-/// decides what went wrong; this only words it.
-extension SyncError: WordedError {
-    var sentence: String {
-        switch self {
-        case .UncommittedChanges(let paths):
-            "The store has changes paw didn't make: \(paths.joined(separator: ", "))."
-        case .Failed(let message):
-            capitalised(message) + "."
-        case .Remote(let failure):
-            capitalised(remoteDetail(failure)) + "."
-        case .StoreBusy:
-            capitalised(storeBusyText) + "."
-        case .BeingSent, .NotWaiting, .QueueKeptChanging:
-            capitalised(SyncFailure.queueDetail(self) ?? "") + "."
-        case .Cancelled:
-            "Stopped."
-        case .NotPawHistory:
-            String(describing: self)
-        }
-    }
-}
-
 /// A refused write in one sentence: `editProblem`'s first line.
 extension WriteError: WordedError {
     var sentence: String {

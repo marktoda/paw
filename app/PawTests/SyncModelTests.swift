@@ -6,7 +6,7 @@ import XCTest
 @MainActor
 final class SyncModelTests: XCTestCase {
     private func syncModel(_ fixture: Fixture, file: StaticString = #filePath, line: UInt = #line) throws -> SyncModel {
-        try XCTUnwrap(fixture.model.syncing, "The fixture store should sync", file: file, line: line)
+        try XCTUnwrap(fixture.model.storeSession.syncing, "The fixture store should sync", file: file, line: line)
     }
 
     /// The sheet asks for the PIN and gets it.
@@ -28,11 +28,11 @@ final class SyncModelTests: XCTestCase {
     func testThePillBeforeAnyCheckAndWithAChangeWaiting() async throws {
         let fixture = try Fixture(writable: true)
         let sync = try syncModel(fixture)
-        XCTAssertEqual(sync.pillState(unpushed: 0), .needsKey)
-        XCTAssertFalse(sync.canSend(unpushed: 0))
+        XCTAssertEqual(sync.pillState, .needsKey)
+        XCTAssertFalse(sync.canSend)
         try await fixture.add("waiting.example", folder: "web")
-        XCTAssertEqual(sync.pillState(unpushed: 1), .notSent(checked: nil))
-        XCTAssertTrue(sync.canSend(unpushed: 1))
+        XCTAssertEqual(sync.pillState, .notSent(checked: nil))
+        XCTAssertTrue(sync.canSend)
 
         // With a change waiting the pill shows the status page; with none
         // and no check yet, it goes straight to the key.
@@ -47,29 +47,28 @@ final class SyncModelTests: XCTestCase {
         guard case .key(.refresh)? = sync.sheet?.mode else {
             return XCTFail("The pill should start a check with the key, the sheet is \(String(describing: sync.sheet?.mode))")
         }
-        XCTAssertEqual(sync.pillState(unpushed: 0), .working("Checking for changes\u{2026}"))
+        XCTAssertEqual(sync.pillState, .working("Checking for changes\u{2026}"))
         sync.cancelSheet()
         XCTAssertNil(sync.sheet)
         XCTAssertEqual(sync.failure?.problem, "Checking was cancelled.")
-        XCTAssertEqual(sync.pillState(unpushed: 0), .needsKey, "A cancel leaves the pill as it was")
+        XCTAssertEqual(sync.pillState, .needsKey, "A cancel leaves the pill as it was")
     }
 
     func testSendingAsksForThePinOnceEmptiesTheQueueAndASecondSendAsksForNoPin() async throws {
         let fixture = try Fixture(writable: true)
         let model = fixture.model
         let sync = try syncModel(fixture)
-        let edits = try XCTUnwrap(model.edits)
         try await fixture.add("sent.example", folder: "web")
 
         sync.start(.send)
         await passPin(sync)
         await waitForTheEnd(sync)
         XCTAssertNil(sync.failure)
-        XCTAssertEqual(model.toast, "Sent")
-        await waitFor("the queue to empty") { edits.unpushed.isEmpty }
+        XCTAssertEqual(model.toast?.text, "Sent")
+        await waitFor("the queue to empty") { sync.queue.unpushed.isEmpty }
         XCTAssertNotNil(sync.lastChecked)
-        guard case .upToDate = sync.pillState(unpushed: 0) else {
-            return XCTFail("The pill should say up to date, it is \(sync.pillState(unpushed: 0))")
+        guard case .upToDate = sync.pillState else {
+            return XCTFail("The pill should say up to date, it is \(sync.pillState)")
         }
 
         // A second send in the same run: the PIN is still held.
@@ -79,10 +78,10 @@ final class SyncModelTests: XCTestCase {
         var askedForPin = false
         await waitFor("the second send to end", timeout: 30) {
             if case .pin? = sync.keyStage { askedForPin = true }
-            return sync.running == nil && model.toast == "Sent"
+            return sync.running == nil && model.toast?.text == "Sent"
         }
         XCTAssertFalse(askedForPin, "The PIN is held for the run")
-        await waitFor("the queue to empty") { edits.unpushed.isEmpty }
+        await waitFor("the queue to empty") { sync.queue.unpushed.isEmpty }
     }
 
     func testCancellingASendLeavesTheQueueIntact() async throws {
@@ -96,8 +95,8 @@ final class SyncModelTests: XCTestCase {
         XCTAssertNil(sync.sheet)
         XCTAssertEqual(sync.failure?.kind, .cancelled)
         XCTAssertEqual(sync.failure?.problem, "Sending was cancelled.")
-        XCTAssertEqual(model.edits?.unpushed.count, 1)
-        XCTAssertEqual(sync.pillState(unpushed: 1), .notSent(checked: nil))
+        XCTAssertEqual(model.storeSession.syncing?.queue.unpushed.count, 1)
+        XCTAssertEqual(sync.pillState, .notSent(checked: nil))
     }
 
     func testRefusedPushesAreWordedAndTheChangesStayQueued() async throws {
@@ -116,8 +115,8 @@ final class SyncModelTests: XCTestCase {
         XCTAssertTrue(failure.problem.hasSuffix("refused your changes"), failure.problem)
         XCTAssertTrue(failure.nextStep.contains("Your change is saved on this iPhone."), failure.nextStep)
         XCTAssertEqual(sync.sheet?.mode, .status, "The sheet turns into the status page")
-        XCTAssertEqual(model.edits?.unpushed.count, 1)
-        XCTAssertEqual(sync.pillState(unpushed: 1), .failed("Not sent \u{00B7} refused"))
+        XCTAssertEqual(model.storeSession.syncing?.queue.unpushed.count, 1)
+        XCTAssertEqual(sync.pillState, .failed("Not sent \u{00B7} refused"))
     }
 
     func testCheckingNamesWhatAnotherComputerAdded() async throws {
@@ -132,7 +131,7 @@ final class SyncModelTests: XCTestCase {
         XCTAssertNil(sync.failure)
         XCTAssertEqual(sync.summary?.added, ["web/forum.example"])
         XCTAssertEqual(sync.summary?.title, "1 password changed on your other devices")
-        let web = try model.listing("web").get().entries.map(\.path)
+        let web = try model.storeSession.live.listing("web").get().entries.map(\.path)
         XCTAssertTrue(web.contains("web/forum.example"), "The list reads the store again")
     }
 }

@@ -1,44 +1,6 @@
 import Foundation
 
-/// Sending local changes, checking the git remote for new ones, or
-/// encrypting held-back changes again for their folder's new list (no
-/// network).
-enum SyncKind: Equatable {
-    case send
-    case refresh
-    case reencrypt
-}
-
-/// Why the last send or check stopped, in words: what happened, what is
-/// safe, what to do (design.md 2.1 rule 5). The core decides what went
-/// wrong; this only words it.
-struct SyncFailure: Equatable {
-    enum Kind: Equatable {
-        /// No network, or the host can't be reached. Not an error to scold.
-        case offline
-        case hostKeyChanged
-        case keyNotAccepted
-        /// A rule on the server refused the update.
-        case pushRefused
-        case repositoryGone
-        case remoteKeptMoving
-        /// The remote holds something paw will not check out.
-        case refusedRemote
-        /// Cancel in the key sheet. Said quietly; the pill does not change.
-        case cancelled
-        case other
-    }
-
-    let kind: Kind
-    /// What was being done, for "Try again".
-    let during: SyncKind
-    let problem: String
-    let nextStep: String
-    /// Raw text from the host or the library, under "Details".
-    var details: [String] = []
-    /// A few words for the pill.
-    let pill: String
-
+extension SyncFailure {
     /// "Your 2 changes are saved on this iPhone." Nothing when none wait:
     /// there is then nothing to reassure about.
     static func waiting(_ unpushed: Int) -> String {
@@ -71,7 +33,6 @@ struct SyncFailure: Equatable {
         }
         return SyncFailure(kind: .cancelled, during: kind, problem: problem, nextStep: "", pill: "")
     }
-
 }
 
 extension SyncFailure {
@@ -308,4 +269,77 @@ func syncAgo(_ date: Date, now: Date = Date()) -> String {
         return "on \(date.formatted(.dateTime.weekday(.abbreviated)))"
     }
     return "on \(date.formatted(.dateTime.day().month(.abbreviated)))"
+}
+
+/// A queue or host-key change that failed, in one sentence. The core
+/// decides what went wrong; this only words it.
+extension SyncError: WordedError {
+    var sentence: String {
+        switch self {
+        case .UncommittedChanges(let paths):
+            "The store has changes paw didn't make: \(paths.joined(separator: ", "))."
+        case .Failed(let message):
+            capitalised(message) + "."
+        case .Remote(let failure):
+            capitalised(remoteDetail(failure)) + "."
+        case .StoreBusy:
+            capitalised(storeBusyText) + "."
+        case .BeingSent, .NotWaiting, .QueueKeptChanging:
+            capitalised(SyncFailure.queueDetail(self) ?? "") + "."
+        case .Cancelled:
+            "Stopped."
+        case .NotPawHistory:
+            String(describing: self)
+        }
+    }
+}
+
+extension SyncPillState {
+    func text(now: Date) -> String {
+        switch self {
+        case .working(let text): text
+        case .upToDate(let checked): "Up to date \u{00B7} checked \(syncAgo(checked, now: now))"
+        case .needsKey: "Updates need your key"
+        case .notChecked: "Not checked yet"
+        case .notSent(let checked?): "Checked \(syncAgo(checked, now: now))"
+        case .notSent(nil): "Not checked yet"
+        case .offline(let checked?): "Offline \u{00B7} last checked \(syncAgo(checked, now: now))"
+        case .offline(nil): "Offline"
+        case .failed(let text), .paused(let text): text
+        }
+    }
+}
+
+extension SyncSummary {
+    var title: String {
+        let count = entryCount
+        if count > 0 {
+            if origin == .replaced {
+                return "\(passwordCount(count)) updated from the new store"
+            }
+            return "\(passwordCount(count)) changed on your other devices"
+        }
+        if let pair = keptBoth.first {
+            return "Two versions of \(EntryRef(path: pair.entry).name) were kept"
+        }
+        if !keptLocal.isEmpty || !droppedDeletes.isEmpty {
+            return "Both sides changed the same password"
+        }
+        if let folder = recipientsChanged.first {
+            return whoCanOpenChanged(folder)
+        }
+        return "Your store was updated"
+    }
+}
+
+extension ChangeQueue {
+    /// "3 changes not sent".
+    var bannerTitle: String {
+        "\(changeCount(unpushed.count)) not sent"
+    }
+
+    /// "Send 2 changes", the key sheet's title for a send.
+    var sendTitle: String {
+        "Send \(changeCount(unpushed.count))"
+    }
 }

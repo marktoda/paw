@@ -315,29 +315,33 @@ struct ActionToast: View {
     }
 }
 
-/// The add and edit sheet, the Undo toast and, in the simulator, a record
-/// of the last toast for UI tests. Apply once, at the root.
+/// The add and edit sheet and the Undo toast. Apply once, at the root.
 private struct EditingModifier: ViewModifier {
     let model: AppModel
-    @State private var lastToast: String?
+
+    private var edits: StoreEdits? {
+        model.storeSession.edits
+    }
 
     private var formBinding: Binding<EntryFormPurpose?> {
         Binding(
-            get: { model.edits?.form },
-            set: { model.edits?.form = $0 })
+            get: { edits?.form },
+            set: { purpose in
+                if purpose == nil { edits?.formClosed() }
+            })
     }
 
     func body(content: Content) -> some View {
         content
             .sheet(item: formBinding) { purpose in
-                if let edits = model.edits {
+                if let edits {
                     EntryFormSheet(model: model, edits: edits, purpose: purpose)
                 }
             }
             .overlay(alignment: .bottom) {
-                if let offer = model.edits?.undoOffer {
+                if let edits, let offer = edits.undoOffer {
                     ActionToast(message: offer.message, actionTitle: "Undo") {
-                        model.undo(offer)
+                        edits.undo(offer)
                     }
                     .padding(.horizontal, PawMetrics.Spacing.l)
                     .padding(.bottom, 72)
@@ -345,28 +349,13 @@ private struct EditingModifier: ViewModifier {
                     .task(id: offer.id) {
                         AccessibilityNotification.Announcement("\(offer.message) Undo is available.").post()
                         try? await Task.sleep(for: .seconds(8))
-                        if !Task.isCancelled, model.edits?.undoOffer?.id == offer.id {
-                            model.edits?.undoOffer = nil
+                        if !Task.isCancelled {
+                            edits.undoOfferEnded(offer)
                         }
                     }
                 }
             }
-            .animation(.easeOut(duration: 0.2), value: model.edits?.undoOffer)
-            .onChange(of: model.toast) {
-                if let toast = model.toast { lastToast = toast }
-            }
-            #if DEBUG && targetEnvironment(simulator)
-            .background(alignment: .topLeading) {
-                // The toast is not focusable, by design; UI tests read it here.
-                if let lastToast {
-                    Text(lastToast)
-                        .font(.caption2)
-                        .frame(width: 1, height: 1)
-                        .opacity(0.02)
-                        .accessibilityIdentifier("sim-last-app-toast")
-                }
-            }
-            #endif
+            .animation(.easeOut(duration: 0.2), value: edits?.undoOffer)
     }
 }
 
@@ -380,11 +369,11 @@ extension View {
     func addEntryButton(_ model: AppModel, folder: String) -> some View {
         toolbar {
             // In the split view the sidebar's Add is the one Add.
-            if model.edits != nil, !model.usesSplitView {
+            if let edits = model.storeSession.edits, !model.usesSplitView {
                 ToolbarSpacer(.flexible, placement: .bottomBar)
                 ToolbarItem(placement: .bottomBar) {
                     Button {
-                        model.startAdd(folder: folder)
+                        edits.startAdd(folder: folder)
                     } label: {
                         Label("Add a password", systemImage: PawSymbol.add)
                     }
