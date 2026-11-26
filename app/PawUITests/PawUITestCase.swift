@@ -180,8 +180,16 @@ class PawUITestCase: XCTestCase {
     // MARK: Moving
 
     /// Scrolls until the element can be tapped and is not under the keyboard.
+    /// `screen` is an element of the screen it is on: right after a tap
+    /// that brings that screen up, it is waited for first, so that no swipe
+    /// lands on the screen underneath (or pulls the new sheet shut) while
+    /// the new one is still coming.
     @discardableResult
-    func scrollTo(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
+    func scrollTo(_ identifier: String, on screen: String? = nil,
+                  file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
+        if let screen {
+            expect(screen, file: file, line: line)
+        }
         let found = element(identifier)
         // A list builds its rows lazily: one far down doesn't exist until
         // scrolled to. Give it a moment to appear, then go looking. Each
@@ -193,20 +201,23 @@ class PawUITestCase: XCTestCase {
         // the middle never seen. For the first, come back up slowly at once.
         // For the second, go on to the foot of the list first (six swipes
         // reach it in every screen; a row near the foot must not be given
-        // up on early, and coming back up from the top pulls a sheet shut),
-        // then come back up slowly, a screen at a time.
+        // up on early), then come back up slowly, a screen at a time. Never
+        // a swipe down before a swipe up: on a list at its top, that pulls
+        // a sheet shut.
         var flungPast = false
+        var swipedUp = false
         var swipes = 0
         while !(exists && found.isHittable && !underKeyboard(found)) && swipes < 12 {
             // A coasting list can drop a lazy row between two looks: read
             // its frame from a snapshot, which says "gone" instead of failing.
-            if exists, let top = (try? found.snapshot())?.frame.maxY, top < app.frame.height * 0.2 {
+            if swipedUp && exists, let top = (try? found.snapshot())?.frame.maxY, top < app.frame.height * 0.2 {
                 flungPast = false
                 app.swipeDown()
-            } else if !exists && (flungPast || swipes >= 6) {
+            } else if swipedUp && !exists && (flungPast || swipes >= 6) {
                 app.swipeDown(velocity: .slow)
             } else {
                 flungPast = exists
+                swipedUp = true
                 app.swipeUp()
             }
             swipes += 1
@@ -250,8 +261,8 @@ class PawUITestCase: XCTestCase {
         return keyboard.exists && found.frame.maxY > keyboard.frame.minY
     }
 
-    func tap(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {
-        scrollTo(identifier, file: file, line: line).tap()
+    func tap(_ identifier: String, on screen: String? = nil, file: StaticString = #filePath, line: UInt = #line) {
+        scrollTo(identifier, on: screen, file: file, line: line).tap()
     }
 
     /// Taps a button that takes its own screen away, again if the screen
@@ -259,8 +270,9 @@ class PawUITestCase: XCTestCase {
     /// (a search's keyboard leaving) can be lost, and the button is then
     /// still there. A second tap can't do twice what one did: the button is
     /// gone once the first counts.
-    func tapUntilGone(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {
-        let found = scrollTo(identifier, file: file, line: line)
+    func tapUntilGone(_ identifier: String, on screen: String? = nil,
+                      file: StaticString = #filePath, line: UInt = #line) {
+        let found = scrollTo(identifier, on: screen, file: file, line: line)
         for _ in 0..<3 {
             found.tap()
             if waitUntil(timeout: 5, { !found.exists }) { return }
@@ -462,5 +474,6 @@ class PawUITestCase: XCTestCase {
         }
         touchTheKey()
         expectLabel("entry-title", contains: "github.com")
+        expectGone("key-sheet-purpose")
     }
 }

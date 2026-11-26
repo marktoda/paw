@@ -16,8 +16,9 @@ final class SyncTests: PawUITestCase {
     /// As everywhere, and clear of the sync sheet's Send and Check, which
     /// stay pinned under its list: a row scrolled beneath them would give
     /// them its tap.
-    override func tap(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {
-        let found = scrollTo(identifier, file: file, line: line)
+    override func tap(_ identifier: String, on screen: String? = nil,
+                      file: StaticString = #filePath, line: UInt = #line) {
+        let found = scrollTo(identifier, on: screen, file: file, line: line)
         var swipes = 0
         while swipes < 4 && underSyncActions(found, identifier) {
             app.swipeUp()

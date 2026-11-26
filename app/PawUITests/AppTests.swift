@@ -30,7 +30,7 @@ final class AppTests: PawUITestCase {
     func testOpeningAFolderShowsItsSubfoldersAndEntries() {
         launch()
         tap("folder-work")
-        XCTAssertTrue(app.navigationBars["work"].waitForExistence(timeout: 10), "The title should be the folder name")
+        XCTAssertTrue(waitToExist(app.navigationBars["work"], timeout: Self.patience), "The title should be the folder name")
         expectLabel("entry-Jira", contains: "Jira, needs your key")
         expect("entry-payroll")
         expect("entry-vpn")
@@ -51,8 +51,8 @@ final class AppTests: PawUITestCase {
         for appearance in ["light", "dark"] {
             launch(appearance: appearance)
             let field = app.searchFields.firstMatch
-            XCTAssertTrue(field.waitForExistence(timeout: 10), "Home should have a search field")
-            field.tap()
+            XCTAssertTrue(waitToExist(field, timeout: Self.patience), "Home should have a search field")
+            focus(field)
             field.typeText("ycombinator")
             expectLabel("search-count", contains: "1 match")
             expectLabel("entry-news.ycombinator.com", contains: "news.ycombinator.com, web")
@@ -60,7 +60,7 @@ final class AppTests: PawUITestCase {
 
             field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 11) + "zzqx")
             let empty = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "zzqx")).firstMatch
-            XCTAssertTrue(empty.waitForExistence(timeout: 10), "No results should say what was searched for")
+            XCTAssertTrue(waitToExist(empty, timeout: Self.patience), "No results should say what was searched for")
             XCTAssertTrue(empty.label.contains("No password or folder called"), empty.label)
             snapshot("no-results-\(appearance)")
 
@@ -83,7 +83,7 @@ final class AppTests: PawUITestCase {
             if appearance == "light" { snapshot("key-sheet-pin") }
             enterPin(Self.pin, send: false)
             expectEnabled("pin-continue", true)
-            app.buttons["pin-continue"].tap()
+            tapUntilGone("pin-continue")
 
             expect("touch-prompt")
             expectAbsent("entry-title", "Nothing opens before the key is touched")

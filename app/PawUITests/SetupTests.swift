@@ -251,7 +251,7 @@ final class SetupTests: PawUITestCase {
         toAddress()
         tap("simulated-address")
         tap("address-connect")
-        tap("host-trust")
+        tap("host-trust", on: "setup-confirm-host")
         expect("setup-key-not-accepted")
         expectText("ssh-public-key", contains: "ssh-ed25519")
         expect("copy-ssh-key")

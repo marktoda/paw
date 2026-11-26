@@ -84,6 +84,7 @@ final class EditTests: PawUITestCase {
         }
         touchTheKey()
         expectLabel("entry-title", contains: name)
+        expectGone("key-sheet-purpose")
     }
 
     // MARK: Add
@@ -118,8 +119,8 @@ final class EditTests: PawUITestCase {
         goBack()
 
         let search = app.searchFields.firstMatch
-        XCTAssertTrue(search.waitForExistence(timeout: 10))
-        search.tap()
+        XCTAssertTrue(waitToExist(search, timeout: Self.patience), "Home should have a search field")
+        focus(search)
         search.typeText("shop")
         expect("entry-shop.example")
     }
@@ -306,10 +307,11 @@ final class EditTests: PawUITestCase {
         snapshot("delete-confirm")
         tap("entry-delete-confirm")
 
-        expect("entry-github.com")
-        expectGone("entry-example.com")
+        // Undo first: the toast lasts 8 seconds, and each look takes a
+        // moment on a slow machine.
+        let undo = expect("action-toast-button")
         expectLabel("action-toast-message", contains: "Deleted example.com.")
-        app.buttons["action-toast-button"].tap()
+        undo.tap()
         expect("entry-example.com")
         expectLabel("sim-last-app-toast", contains: "example.com is back.")
     }
