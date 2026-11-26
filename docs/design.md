@@ -505,50 +505,34 @@ Remove confirmation: "This deletes the downloaded store, Face ID copies and this
 
 ### 3.1 Crates and modules
 
-One crate. The simulated hardware is the `sim/` module behind the default `sim` cargo feature; a Release device build is made with `--no-default-features`, and `scripts/check-no-sim.sh` proves the simulated key's constant secret is not in it (5.5). The tree below is the plan the crate grew from; `core/src` is the truth.
+One crate. The simulated hardware is the `sim/` module behind the default `sim` cargo feature; a Release device build is made with `--no-default-features`, and `scripts/check-no-sim.sh` proves the simulated key's constant secret is not in it (5.5).
 
 ```
-core/            paw-core (device and simulator)
+core/                 paw-core
   src/
-    error.rs        PawError and sub-errors; present() -> ErrorPresentation
-    platform.rs     foreign traits: CardReader, CardConnection, DeviceKeystore, Clock
-    model/
-      path.rs       EntryPath, FolderPath (validated, NFC-normalised, no "..", no leading ".")
-      entry.rs      EntryDoc: lossless parse/serialise
-      generate.rs   generate(): fixed-policy password
-    store/
-      layout.rs     container paths; file-protection intent per path
-      tree.rs       StoreTree: walk the working tree
-      recipients.rs .gpg-id resolution, pins, Keyring, Resolution, certificate import
-      index.rs      NameIndex: search and service matching; index.bin; associations
-      recents.rs    per-process append logs, merged by the app
-    crypto/
-      openpgp.rs    the only file importing `pgp`: recipient key IDs, decrypt via a card slot, SEIPD v1 encrypt, certificate parsing
-    card/
-      trace.rs      ApduRecord { ins, sw, elapsed }; the recording CardTransaction wrapper
-      status.rs     trace + phase -> CardError
-      openpgp.rs    CardSession: info, verify, verify-status, de-verify, decipher, internal_authenticate, public keys, KDF check
-      actor.rs      CardActor: the one thread that touches the connection
-    unlock/
-      session.rs    KeySession: plug-in session, zeroising PIN
-      attempt.rs    UnlockAttempt: the card half of a key operation
-      task.rs       KeyTask (now key/task.rs): what the sheet's driver follows; Cancel marks it cancelled at once
-    window/
-      seal.rs       sealed-copy format (AEAD with AAD)
-      cache.rs      CopyCache: add, open, check, sweep, end_all
-    sync/
-      repo.rs       git library wrapper: open, tip, tree edit, commit, checkout, log
-      queue.rs      PendingChange derived from commits ahead of origin
-      replay.rs     replay onto a new tip; keep-both; re-encrypt parking
-      connector.rs  Connector trait
-      ssh.rs        russh Connector; SshSigner impls; known hosts; key query
-      push.rs       send-pack (only if gix; see 3.10)
-      op.rs         SyncOp: one network operation with progress and cancel
-      engine.rs     SyncEngine state machine
-    autofill.rs     plan(row, reach) -> AutofillPlan
-    setup.rs        SetupFlow, SetupStep
-    ffi/            PawCore, Store, OpenEntry, EntryDraft, KeyTask, SyncHandle, AutofillCore
-  src/sim/        feature `sim` (default on): SimulatedKey, SimKeystore, SimClock, SimRemote, the fixture store
+    key/              the card: APDUs, PIN and KDF, session, KeyPort, KeyTask (task.rs), touch, key log
+    copies/           Face ID copies: sealed format, folder, keystore and clock seams
+    store/            reading the store: tree, search, service matching, .gpg-id, pairings, codes
+    write/            drafts, keyring, held-back changes, writes
+    sync/             git: address, known hosts, transport, queue, integrate, history
+    setup/            setup steps, with the key
+    github/           GitHub sign-in and repositories
+    files/            the state directory's files
+    entry/, entry.rs  an entry's text and an opened entry
+    ffi/              UniFFI exports
+    sim/, sim.rs      feature `sim`: simulated key, keystore, clock, git host, fixture store
+    bin/              uniffi-bindgen
+  tests/
+app/
+  Shared/             compiled into the app and the AutoFill extension
+    KeyTaskDriver.swift, KeyReader.swift, KeyConnection.swift
+    AutoFill/ Design/ Platform/ Store/ Words/
+    Simulator/        DEBUG simulator builds only
+  Paw/                the app: AppModel, StoreSession, Views/ Setup/ Sync/ Edit/ Settings/ GitHub/ AutoFill/ Design/ Words/
+    Debug/ Gallery/ Simulator/   DEBUG builds only
+  PawAutoFill/        the extension's entry point
+  Generated/          UniFFI bindings (generated)
+  PawTests/ PawUITests/
 ```
 
 Import rules:
