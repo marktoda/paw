@@ -6,12 +6,14 @@ development certificate, and one provisioning profile per target.
 Safe to run again: it reuses what already exists, and re-creates the profiles
 so they include every registered device.
 
-Reads .env (see .env.example). Run with:
-  uv run --with pyjwt --with cryptography scripts/apple-setup.py
+The targets, their bundle identifiers and their capabilities come from the
+entitlements in app/project.yml. Reads .env (see .env.example). Run with:
+  uv run --with pyjwt --with cryptography --with pyyaml scripts/apple-setup.py
 """
-import base64, json, os, pathlib, sys, time, urllib.error, urllib.request
+import base64, json, os, pathlib, plistlib, sys, time, urllib.error, urllib.request
 
 import jwt
+import yaml
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -29,11 +31,28 @@ SIGNING = pathlib.Path(os.environ["PAW_SIGNING_DIR"])
 SIGNING.mkdir(parents=True, exist_ok=True)
 SIGNING.chmod(0o700)
 
-# Target name -> (bundle identifier, capabilities)
-TARGETS = {
-    "Paw": ("com.marktoda.paw", ["AUTOFILL_CREDENTIAL_PROVIDER"]),
-    "PawAutoFill": ("com.marktoda.paw.autofill", ["AUTOFILL_CREDENTIAL_PROVIDER"]),
+CAPABILITY = {
+    "com.apple.developer.authentication-services.autofill-credential-provider": "AUTOFILL_CREDENTIAL_PROVIDER",
+    "com.apple.security.application-groups": "APP_GROUPS",
 }
+GROUPS = "com.apple.security.application-groups"
+
+
+def targets():
+    """Target name -> (bundle identifier, entitlements), for what installs on a device."""
+    project = yaml.safe_load((ROOT / "app/project.yml").read_text())
+    out = {}
+    for name, t in project["targets"].items():
+        if t["type"] in ("application", "app-extension"):
+            entitlements = t["entitlements"]["properties"]
+            unknown = set(entitlements) - set(CAPABILITY)
+            if unknown:
+                sys.exit(f"apple-setup.py does not know the capability for {', '.join(sorted(unknown))}")
+            out[name] = (t["settings"]["base"]["PRODUCT_BUNDLE_IDENTIFIER"], entitlements)
+    return out
+
+
+TARGETS = targets()
 DEVICES = {name: os.environ[var] for name, var in
            [("iPhone", "IPHONE_UDID"), ("iPad", "IPAD_UDID")] if os.environ.get(var)}
 
@@ -73,7 +92,7 @@ def bundle_ids():
     existing = {b["attributes"]["identifier"]: b["id"]
                 for b in api("GET", "/v1/bundleIds?limit=200")["data"]}
     out = {}
-    for target, (identifier, capabilities) in TARGETS.items():
+    for target, (identifier, entitlements) in TARGETS.items():
         if identifier not in existing:
             created = api("POST", "/v1/bundleIds", {"data": {"type": "bundleIds", "attributes": {
                 "identifier": identifier, "name": f"paw {target}", "platform": "IOS"}}})
@@ -82,7 +101,7 @@ def bundle_ids():
         bid = existing[identifier]
         have = {c["attributes"]["capabilityType"] for c in
                 api("GET", f"/v1/bundleIds/{bid}/bundleIdCapabilities")["data"]}
-        for capability in capabilities:
+        for capability in (CAPABILITY[e] for e in entitlements):
             if capability not in have:
                 api("POST", "/v1/bundleIdCapabilities", {"data": {
                     "type": "bundleIdCapabilities",
@@ -118,6 +137,7 @@ def certificate():
 
 def profiles(bundles, cert_id, device_ids):
     existing = api("GET", "/v1/profiles?limit=200")["data"]
+    missing_groups = []
     for target, bid in bundles.items():
         name = f"paw {target} development"
         for p in existing:
@@ -130,8 +150,24 @@ def profiles(bundles, cert_id, device_ids):
                 "certificates": {"data": [{"type": "certificates", "id": cert_id}]},
                 "devices": {"data": [{"type": "devices", "id": d} for d in device_ids]}}}})
         attrs = created["data"]["attributes"]
-        (SIGNING / f"{target}.mobileprovision").write_bytes(base64.b64decode(attrs["profileContent"]))
+        content = base64.b64decode(attrs["profileContent"])
+        (SIGNING / f"{target}.mobileprovision").write_bytes(content)
         print(f"profile for {target}: {attrs['uuid']}, expires {attrs['expirationDate'][:10]}")
+        # The App Store Connect API can switch App Groups on for an app ID but
+        # cannot create a group or assign one to it.
+        start, end = content.index(b"<?xml"), content.index(b"</plist>") + len(b"</plist>")
+        granted = plistlib.loads(content[start:end])["Entitlements"].get(GROUPS, [])
+        identifier, entitlements = TARGETS[target]
+        for group in entitlements.get(GROUPS, []):
+            if group not in granted:
+                missing_groups.append((group, identifier))
+    if missing_groups:
+        print("\nThe profiles lack App Groups. At developer.apple.com, Certificates, Identifiers"
+              " & Profiles:\n  Identifiers, App Groups: register each group below if it is not there;"
+              "\n  Identifiers, each app ID below: App Groups, Configure, tick the group.")
+        for group, identifier in missing_groups:
+            print(f"  {group} on {identifier}")
+        sys.exit("Then run this script again, to make the profiles anew.")
 
 
 if __name__ == "__main__":

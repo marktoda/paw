@@ -1,0 +1,12 @@
+name: Generate the Xcode project
+description: Installs XcodeGen, packs app/build/core into the xcframework and generates app/Paw.xcodeproj (scripts/make-xcframework.sh).
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        HOMEBREW_NO_AUTO_UPDATE: "1"
+        HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      run: |
+        brew install xcodegen || { sleep 30; brew install xcodegen; }
+        scripts/make-xcframework.sh

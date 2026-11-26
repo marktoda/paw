@@ -30,8 +30,8 @@ info = plistlib.load(open(sys.argv[1], "rb"))
 print("build", info.get("PawCommit", "?"), info.get("PawConfiguration", "a build from before the stamp"))' "$app/Info.plist"
 
 # The team ID and full entitlements come from the provisioning profiles.
-entitlements() { # profile, extra keys as python dict literal
-  python3 -I - "$1" "$2" <<'PY'
+entitlements() {
+  python3 -I - "$1" <<'PY'
 import plistlib, sys
 raw = open(sys.argv[1], "rb").read()
 start, end = raw.index(b"<?xml"), raw.index(b"</plist>") + len(b"</plist>")
@@ -40,15 +40,11 @@ wanted = dict(granted)
 # The profile grants a wildcard keychain group; the signature must name one.
 wanted["keychain-access-groups"] = [granted["application-identifier"]] + [
     g for g in granted["keychain-access-groups"] if "*" not in g]  # keeps com.apple.token
-wanted.update(eval(sys.argv[2]))
 sys.stdout.buffer.write(plistlib.dumps(wanted))
 PY
 }
-# com.apple.security.smartcard is macOS-only: iOS refuses to install a build
-# that claims it, and reaches the key over USB-C without it.
-extra='{}'
-entitlements "$PAW_SIGNING_DIR/Paw.mobileprovision" "$extra" > "$work/Paw.ent"
-entitlements "$PAW_SIGNING_DIR/PawAutoFill.mobileprovision" "$extra" > "$work/PawAutoFill.ent"
+entitlements "$PAW_SIGNING_DIR/Paw.mobileprovision" > "$work/Paw.ent"
+entitlements "$PAW_SIGNING_DIR/PawAutoFill.mobileprovision" > "$work/PawAutoFill.ent"
 cp "$PAW_SIGNING_DIR/Paw.mobileprovision" "$app/embedded.mobileprovision"
 cp "$PAW_SIGNING_DIR/PawAutoFill.mobileprovision" "$app/$appex/embedded.mobileprovision"
 
