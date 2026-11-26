@@ -24,7 +24,8 @@ use paw_core::ffi::sync::StoreSync;
 use paw_core::ffi::sync::Setup;
 use paw_core::task::{KeyOutcome, KeyTaskState};
 use paw_core::github::{Endpoints, GitHubAccount, RepositoryList, SignInState, TokenVault, VaultError};
-use paw_core::lock::{STORE_LOCK_FILE, StoreLock};
+use paw_core::lock::StoreLock;
+use paw_core::files::layout::STORE_LOCK;
 use paw_core::setup::SetupState;
 use paw_core::sim::github::{SimGitHub, SimPollClock};
 use paw_core::sim::remote::SimRemote;
@@ -173,7 +174,7 @@ impl World {
     }
 
     fn repo(&self) -> PathBuf {
-        self.state().join("repo")
+        self.state().join(paw_core::files::layout::REPO)
     }
 
     fn writer(&self) -> WriteStore {
@@ -648,7 +649,7 @@ fn git_lock_files_left_by_a_killed_process_are_removed_under_the_lock() {
     assert!(w.local_has("lock/after-a-crash") && w.local_has("remote/after"));
     w.assert_consistent();
     // paw's own lock file is not git's and stays.
-    assert!(w.state().join(STORE_LOCK_FILE).exists());
+    assert!(w.state().join(STORE_LOCK).exists());
 }
 
 // --- other processes -----------------------------------------------------------------------------

@@ -77,12 +77,12 @@ fn store_with(files: &[(&str, &[u8])]) -> Store {
     git(&seed, &["commit", "--quiet", "-m", "The store."]);
     git(&seed, &["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
     let state = root.path().join("state");
-    let repo = state.join("repo");
+    let repo = state.join(paw_core::files::layout::REPO);
     git(root.path(), &["clone", "--quiet", bare.to_str().unwrap(), repo.to_str().unwrap()]);
     let mut keyring = Keyring::open(&state).unwrap();
     keyring.pin_card_key(&keyring.lock().exclusive().unwrap(), &card().decryption_key().unwrap()).unwrap();
     keyring.accept_all_recipients_at_setup(&keyring.lock().exclusive().unwrap(), &repo).unwrap();
-    std::fs::write(state.join("setup"), "step=done\n").unwrap();
+    std::fs::write(state.join(paw_core::files::layout::SETUP), format!("{}\n", paw_core::files::layout::SETUP_DONE)).unwrap();
     Store { _root: root, state }
 }
 
@@ -455,7 +455,7 @@ fn diagnostics_say_what_they_should_and_name_nothing() {
 fn the_simulator_seeds_sites_used_from_the_fixture() {
     // What `-pawSimPairings 1` records in Settings › Sites used.
     let dir = tempfile::tempdir().unwrap();
-    let repo = dir.path().join("repo");
+    let repo = dir.path().join(paw_core::files::layout::REPO);
     paw_core::sim::fixture::write_fixture_store(repo.to_string_lossy().into_owned()).unwrap();
     let store = paw_core::store::PassStore::open(repo.to_string_lossy().into_owned()).unwrap();
     let pairings = SitePairings::open(dir.path().to_string_lossy().into_owned());

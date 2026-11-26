@@ -180,7 +180,7 @@ fn after_setup_a_new_entry_saves_with_no_further_step() {
     let state = finish(&task);
     let KeyTaskState::Done { outcome: KeyOutcome::Synced { report } } = state else { panic!("{state:?}") };
     assert_eq!(report.pushed, 1);
-    assert_eq!(w.server.sim.tip(), Some(support::git(&w.dir.path().join("repo"), &["rev-parse", "HEAD"])));
+    assert_eq!(w.server.sim.tip(), Some(support::git(&w.dir.path().join(paw_core::files::layout::REPO), &["rev-parse", "HEAD"])));
     assert_eq!(w.sim.verify_attempts(), 1);
 }
 
@@ -246,7 +246,7 @@ fn a_cancelled_download_goes_back_to_the_pin_step_and_starts_over_without_a_new_
     task.join();
 
     assert!(matches!(w.setup.state(), SetupState::NeedPin { .. }));
-    assert!(!w.dir.path().join("repo").exists());
+    assert!(!w.dir.path().join(paw_core::files::layout::REPO).exists());
     let again = Driver::helpful(PIN, &w.sim);
     assert!(matches!(download(&w, &again), KeyTaskState::Done { .. }));
     assert!(!again.saw(is_pin));
@@ -310,7 +310,7 @@ fn a_connection_dropped_mid_clone_fails_cleanly_and_the_next_try_works() {
     let state = download(&w, &driver);
     assert!(matches!(state, KeyTaskState::SetupFailed { .. }), "{state:?}");
     assert!(matches!(w.setup.state(), SetupState::NeedPin { .. }));
-    assert!(!w.dir.path().join("repo").exists());
+    assert!(!w.dir.path().join(paw_core::files::layout::REPO).exists());
 
     w.server.sim.set_drop_mid_clone(false);
     let again = Driver::helpful(PIN, &w.sim);
@@ -392,7 +392,7 @@ fn a_repository_the_key_cannot_see_is_told_apart_from_a_refused_key() {
     );
     assert_eq!(w.server.logins(), 1);
     assert!(matches!(w.setup.state(), SetupState::NeedPin { .. }));
-    assert!(!w.dir.path().join("repo").exists());
+    assert!(!w.dir.path().join(paw_core::files::layout::REPO).exists());
 
     // Access granted: the next try goes through and the message is gone.
     w.server.sim.set_repository_not_found(false);
@@ -412,7 +412,7 @@ fn an_empty_repository_sends_the_task_path_back_to_the_address_with_the_reason()
     assert!(matches!(state, KeyTaskState::SetupFailed { error: SetupError::EmptyRepository }), "{state:?}");
     assert!(matches!(w.setup.state(), SetupState::Address { .. }), "{:?}", w.setup.state());
     assert_eq!(w.setup.last_remote_message().unwrap().reason, RemoteReason::EmptyRepository);
-    assert!(!w.dir.path().join("repo").exists());
+    assert!(!w.dir.path().join(paw_core::files::layout::REPO).exists());
     let relaunched = Setup::open(w.dir.path().to_string_lossy().into_owned()).unwrap();
     assert!(matches!(relaunched.state(), SetupState::Address { .. }));
     assert_eq!(relaunched.last_remote_message(), w.setup.last_remote_message());
@@ -433,7 +433,7 @@ fn an_empty_repository_sends_the_task_path_back_to_the_address_with_the_reason()
     assert!(matches!(relaunched.state(), SetupState::TestDecrypt { .. }));
     let reopened = Setup::open(w.dir.path().to_string_lossy().into_owned()).unwrap();
     assert_eq!(reopened.last_remote_message(), None);
-    assert!(!std::fs::read_to_string(w.dir.path().join("setup")).unwrap().contains("problem="));
+    assert!(!std::fs::read_to_string(w.dir.path().join(paw_core::files::layout::SETUP)).unwrap().contains("problem="));
 }
 
 #[test]
@@ -468,7 +468,7 @@ fn a_bundled_hosts_key_cannot_be_forgotten() {
         // (paw itself refuses to).
         assert!(known.add(host, port, &support::some_other_host_key()).is_err());
         let line = format!("{host} {port} {}\n", support::some_other_host_key());
-        std::fs::write(w.dir.path().join("known_hosts"), line).unwrap();
+        std::fs::write(w.dir.path().join(paw_core::files::layout::KNOWN_HOSTS), line).unwrap();
 
         let error = w.setup.forget_host_key().unwrap_err();
 

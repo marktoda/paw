@@ -75,7 +75,7 @@ impl World {
     }
 
     fn repo(&self) -> PathBuf {
-        self.dir.path().join("repo")
+        self.dir.path().join(paw_core::files::layout::REPO)
     }
 
     fn sign_in(&self) {
@@ -197,13 +197,13 @@ fn ssh_twin(w: &World) -> tempfile::TempDir {
     let remote = w.remote.remote().unwrap();
     let signer = signer_with(&w.key, PIN);
     let connection = sync::Connection::open(&remote, &signer).unwrap();
-    steps::clone(&connection, &remote, &twin.path().join("repo")).unwrap();
+    steps::clone(&connection, &remote, &twin.path().join(paw_core::files::layout::REPO)).unwrap();
     twin
 }
 
 fn ssh_refresh(w: &World, twin: &Path) -> Result<operation::SyncReport, SyncError> {
     let signer = signer_with(&w.key, PIN);
-    steps::sync(&w.remote.remote().unwrap(), &signer, &twin.join("repo"), twin, false).map_err(key_common::sync_failure)
+    steps::sync(&w.remote.remote().unwrap(), &signer, &twin.join(paw_core::files::layout::REPO), twin, false).map_err(key_common::sync_failure)
 }
 
 // --- the device flow ------------------------------------------------------------
@@ -630,7 +630,7 @@ fn a_hostile_tree_fetched_over_https_is_refused_exactly_as_over_ssh() {
     assert!(matches!((&over_https, &over_ssh), (SyncError::RefusedRemote { .. }, SyncError::RefusedRemote { .. })));
     assert_eq!(over_https.to_string(), over_ssh.to_string());
     assert!(over_https.to_string().starts_with("the remote contains something paw will not check out"), "{over_https}");
-    assert_eq!(sync::refused_remote(&w.repo()).unwrap(), sync::refused_remote(&twin.path().join("repo")).unwrap());
+    assert_eq!(sync::refused_remote(&w.repo()).unwrap(), sync::refused_remote(&twin.path().join(paw_core::files::layout::REPO)).unwrap());
     assert_eq!(w.head(), head);
     assert!(!w.repo().join("escape").exists());
     w.assert_consistent();
@@ -713,7 +713,7 @@ fn local_changes_are_replayed_onto_a_background_fetch() {
 fn a_background_refresh_still_brings_in_the_remote_when_the_recipients_file_is_unreadable() {
     let w = world();
     w.set_up();
-    std::fs::write(w.state_dir().join("recipients"), [0xff, 0xfe, 0xfd]).unwrap();
+    std::fs::write(w.state_dir().join(paw_core::files::layout::RECIPIENTS), [0xff, 0xfe, 0xfd]).unwrap();
     w.remote.commit_file(NEW_ENTRY.into(), b"x".to_vec(), "Add.".into()).unwrap();
 
     let report = w.account.background_refresh(secs(25));

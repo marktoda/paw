@@ -21,7 +21,6 @@ use crate::PawError;
 use crate::files::values::{self, Values};
 
 /// The file in the state directory. Public data only.
-const FILE: &str = crate::files::layout::ENROLLED_KEY;
 const TEMP_PREFIX: &str = ".enrolled-key.tmp-";
 
 /// Who a key is, as read without a PIN. Nothing in it is secret.
@@ -142,14 +141,14 @@ pub fn save_enrolment(state_dir: &Path, identity: &KeyIdentity) -> Result<(), Pa
     {
         return Err(PawError::Store("not a key identity".into()));
     }
-    values::write(&state_dir.join(FILE), TEMP_PREFIX, identity.pairs()).map_err(|e| io("save", e))
+    values::write(&state_dir.join(crate::files::layout::ENROLLED_KEY), TEMP_PREFIX, identity.pairs()).map_err(|e| io("save", e))
 }
 
 /// The key the store in `state_dir` was set up with, if setup recorded one.
 /// A record that cannot be read is an error, not "none": treating it as
 /// none would send the PIN to any card.
 pub fn load_enrolment(state_dir: &Path) -> Result<Option<KeyIdentity>, PawError> {
-    match values::read(&state_dir.join(FILE)).map_err(|e| io("read", e))? {
+    match values::read(&state_dir.join(crate::files::layout::ENROLLED_KEY)).map_err(|e| io("read", e))? {
         Some(found) => KeyIdentity::from_values(&found)
             .map(Some)
             .ok_or_else(|| PawError::Store("the enrolled key record is damaged".into())),

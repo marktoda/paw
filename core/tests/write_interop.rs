@@ -126,7 +126,7 @@ impl Store {
     fn new(gpg_id: &str) -> Self {
         let root = tempfile::tempdir().unwrap();
         let state = root.path().join("state");
-        let repo = state.join("repo");
+        let repo = state.join(paw_core::files::layout::REPO);
         std::fs::create_dir_all(&repo).unwrap();
         git(&repo, &["init", "--quiet", "--initial-branch=main"]);
         std::fs::write(repo.join(".gpg-id"), gpg_id).unwrap();

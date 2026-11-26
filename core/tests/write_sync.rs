@@ -45,7 +45,7 @@ struct World {
 
 impl World {
     fn repo(&self) -> std::path::PathBuf {
-        self.state.path().join("repo")
+        self.state.path().join(paw_core::files::layout::REPO)
     }
 
     fn write(&self) -> WriteStore {

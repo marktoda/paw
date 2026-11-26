@@ -18,7 +18,7 @@
 //! Off until the person turns it on (Settings › AutoFill, "Suggest
 //! one-time codes"): which entries have a code is learned from decrypted
 //! text, and this is the one such fact paw keeps outside a sealed copy
-//! (design 5.6 rule 6). The switch is the marker [`ON_MARKER`] beside the
+//! (design 5.6 rule 6). The switch is the marker [`crate::files::layout::ONE_TIME_CODES_ON`] beside the
 //! file, so the app and the extension read the same answer. While off
 //! nothing is written or read, and turning it off deletes the file.
 
@@ -30,19 +30,15 @@ use super::PassStore;
 use crate::files::list::{ListFile, ListKind, MAX_PATH_BYTES};
 use crate::PawError;
 
-/// The file, in the state directory.
-pub const FILE: &str = crate::files::layout::ONE_TIME_CODES;
-/// Present while the person has the list on.
-pub const ON_MARKER: &str = crate::files::layout::ONE_TIME_CODES_ON;
 /// The most entries kept.
 pub const MAX_ENTRIES: usize = 1000;
 
 static LIST: ListKind = ListKind {
-    file: FILE,
+    file: crate::files::layout::ONE_TIME_CODES,
     key: "entries",
     temp_prefix: ".one-time-codes.tmp-",
     max_items: MAX_ENTRIES,
-    on_marker: Some(ON_MARKER),
+    on_marker: Some(crate::files::layout::ONE_TIME_CODES_ON),
     writing: Mutex::new(()),
 };
 
@@ -208,9 +204,9 @@ mod tests {
         assert!(!codes.enabled());
         assert!(!codes.note("web/github.com".into(), opened(WITH_CODE).makes_one_time_codes()).unwrap());
         assert!(!codes.note("web/github.com".into(), true).unwrap());
-        assert!(!d.path().join(FILE).exists(), "nothing is written while off");
+        assert!(!d.path().join(crate::files::layout::ONE_TIME_CODES).exists(), "nothing is written while off");
         // A file left by a write that raced an off is not read.
-        std::fs::write(d.path().join(FILE), br#"{"version":1,"entries":["a"]}"#).unwrap();
+        std::fs::write(d.path().join(crate::files::layout::ONE_TIME_CODES), br#"{"version":1,"entries":["a"]}"#).unwrap();
         assert!(codes.file.load().is_empty());
     }
 
@@ -223,9 +219,9 @@ mod tests {
         assert_eq!(codes.file.load(), ["a"]);
         codes.set_enabled(false).unwrap();
         assert!(!codes.enabled());
-        assert!(!d.path().join(FILE).exists());
-        assert!(!d.path().join(ON_MARKER).exists());
-        std::fs::write(d.path().join(FILE), br#"{"version":1,"entries":["stale"]}"#).unwrap();
+        assert!(!d.path().join(crate::files::layout::ONE_TIME_CODES).exists());
+        assert!(!d.path().join(crate::files::layout::ONE_TIME_CODES_ON).exists());
+        std::fs::write(d.path().join(crate::files::layout::ONE_TIME_CODES), br#"{"version":1,"entries":["stale"]}"#).unwrap();
         codes.set_enabled(true).unwrap();
         assert!(codes.file.load().is_empty(), "on starts empty");
         codes.set_enabled(false).unwrap();
@@ -256,7 +252,7 @@ mod tests {
         assert!(!codes.note("web/gitlab.com".into(), opened(b"pw\nlogin: you\n").makes_one_time_codes()).unwrap());
         assert!(!codes.note("web/broken.com".into(), opened(BROKEN_CODE).makes_one_time_codes()).unwrap());
         assert_eq!(codes.file.load(), ["web/github.com"]);
-        let text = std::fs::read_to_string(d.path().join(FILE)).unwrap();
+        let text = std::fs::read_to_string(d.path().join(crate::files::layout::ONE_TIME_CODES)).unwrap();
         assert!(!text.contains("JBSW") && !text.contains("otpauth") && !text.contains("pw"), "{text}");
     }
 
@@ -276,7 +272,7 @@ mod tests {
         let entry = opened(WITH_CODE);
         entry.close();
         assert!(!codes.note("a".into(), entry.makes_one_time_codes()).unwrap());
-        assert!(!d.path().join(FILE).exists());
+        assert!(!d.path().join(crate::files::layout::ONE_TIME_CODES).exists());
     }
 
     #[test]

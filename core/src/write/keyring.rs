@@ -58,7 +58,6 @@ use crate::store::read::read_file;
 use crate::files::{MAX_FILE_BYTES, read_bounded, write_atomic};
 use crate::lock::{Exclusive, StoreLock};
 
-const FILE: &str = crate::files::layout::RECIPIENTS;
 const HEADER: &str = "# paw pinned recipients, version 1";
 const TEMP_PREFIX: &str = ".recipients.tmp-";
 
@@ -392,7 +391,7 @@ impl Keyring {
     /// The keyring of the store whose state directory is `state_dir`.
     /// Empty if nothing has been pinned yet.
     pub fn open(state_dir: &Path) -> Result<Self, WriteError> {
-        let file = state_dir.join(FILE);
+        let file = state_dir.join(crate::files::layout::RECIPIENTS);
         let bytes = read_bounded(&file, MAX_FILE_BYTES).map_err(|e| failed("read", e))?.unwrap_or_default();
         let text = String::from_utf8(bytes).map_err(|e| failed("read", e))?;
         let mut keyring = Self { file, keys: Vec::new(), bindings: Vec::new(), accepted: None };

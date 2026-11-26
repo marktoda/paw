@@ -25,15 +25,13 @@ use super::service::{MatchKind, NamePairing, host_of, match_site, names_site, re
 use crate::files::list::{ListFile, ListItem, ListKind, MAX_PATH_BYTES};
 use crate::PawError;
 
-/// The file, in the state directory.
-pub const FILE: &str = crate::files::layout::SITE_PAIRINGS;
 /// The most entries kept.
 pub const MAX_ENTRIES: usize = 300;
 /// The most sites kept per entry.
 pub const MAX_SITES: usize = 4;
 
 static LIST: ListKind = ListKind {
-    file: FILE,
+    file: crate::files::layout::SITE_PAIRINGS,
     key: "pairings",
     temp_prefix: ".site-pairings.tmp-",
     max_items: MAX_ENTRIES,

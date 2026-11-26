@@ -173,7 +173,7 @@ fn assert_refusal_names(message: &str, path: &str, what: &str) {
 
 /// What is in the state directory, apart from paw's lock files.
 fn beside(state: &Path) -> Vec<String> {
-    let locks = [paw_core::lock::STORE_LOCK_FILE];
+    let locks = [paw_core::files::layout::STORE_LOCK];
     let mut names: Vec<String> = std::fs::read_dir(state)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
@@ -190,7 +190,7 @@ fn a_clone_of_a_hostile_tree_checks_out_nothing() {
         let server = server(&card);
         host_commit(&server, &store(extra));
         let state = tempfile::tempdir().unwrap();
-        let dir = state.path().join("repo");
+        let dir = state.path().join(paw_core::files::layout::REPO);
 
         let result = steps::clone(&connect(&server, &card), &server.remote(), &dir);
 
@@ -199,7 +199,7 @@ fn a_clone_of_a_hostile_tree_checks_out_nothing() {
         };
         assert_refusal_names(&message, path, what);
         assert_eq!(files(&dir), BTreeSet::new(), "{what}: something was checked out");
-        assert_eq!(beside(state.path()), ["repo"], "{what}: wrote beside the store");
+        assert_eq!(beside(state.path()), [paw_core::files::layout::REPO], "{what}: wrote beside the store");
     }
 }
 
@@ -210,7 +210,7 @@ fn integrate_after(card: &Arc<SimulatedKey>, what: &str, extra: Vec<(&'static st
     let server = server(card);
     host_commit(&server, &store(Vec::new()));
     let state = tempfile::tempdir().unwrap();
-    let dir = state.path().join("repo");
+    let dir = state.path().join(paw_core::files::layout::REPO);
     let connection = connect(&server, card);
     steps::clone(&connection, &server.remote(), &dir).unwrap();
     if queued {
@@ -233,7 +233,7 @@ fn integrate_after(card: &Arc<SimulatedKey>, what: &str, extra: Vec<(&'static st
     assert_eq!(files(&dir), before, "{what}: the working copy changed");
     assert_eq!(git(&dir, &["status", "--porcelain"]), "", "{what}");
     assert_eq!(queue::unpushed(&dir).unwrap(), queue, "{what}: the queue changed");
-    assert_eq!(beside(state.path()), ["repo"], "{what}: wrote beside the store");
+    assert_eq!(beside(state.path()), [paw_core::files::layout::REPO], "{what}: wrote beside the store");
     // The app can say what was refused, from what was fetched.
     let refused = sync::refused_remote(&dir).unwrap();
     assert!(!refused.is_empty(), "{what}");
@@ -328,7 +328,7 @@ fn a_folder_turned_into_a_link_under_a_waiting_change_is_refused() {
     let server = server(&card);
     host_commit(&server, &store(Vec::new()));
     let state = tempfile::tempdir().unwrap();
-    let dir = state.path().join("repo");
+    let dir = state.path().join(paw_core::files::layout::REPO);
     let connection = connect(&server, &card);
     steps::clone(&connection, &server.remote(), &dir).unwrap();
     sync::commit(&dir, "web/new.gpg", b"mine", "Add given password for web/new to store.", &author()).unwrap();
@@ -426,7 +426,7 @@ fn a_pull_cannot_write_beside_the_store_on_a_casefold_file_system() {
     std::fs::remove_file(probe).unwrap();
 
     let state = base.join("state");
-    let dir = state.join("repo");
+    let dir = state.join(paw_core::files::layout::REPO);
     std::fs::create_dir_all(&dir).unwrap();
     // A copy made before paw refused links: the link is on disk already.
     let repo = Repository::init(&dir).unwrap();
@@ -456,7 +456,7 @@ fn a_pull_cannot_write_beside_the_store_on_a_casefold_file_system() {
 
     let result = sync::integrate(&dir);
 
-    assert!(!state.join("recipients").exists(), "a pull wrote outside the store: {result:?}");
+    assert!(!state.join(paw_core::files::layout::RECIPIENTS).exists(), "a pull wrote outside the store: {result:?}");
     let Err(error @ SyncError::RefusedRemote { .. }) = result else { panic!("{result:?}") };
     let message = error.to_string();
     assert!(message.starts_with(REFUSED), "{message}");
@@ -480,7 +480,7 @@ fn a_pull_cannot_write_beside_the_store_on_a_casefold_file_system() {
     let Err(error @ SyncError::RefusedRemote { .. }) = result else { panic!("{result:?}") };
     let message = error.to_string();
     assert!(message.contains("same name as"), "{message}");
-    assert!(!state.join("recipients").exists());
+    assert!(!state.join(paw_core::files::layout::RECIPIENTS).exists());
 }
 
 #[test]
@@ -493,7 +493,7 @@ fn a_clone_on_a_casefold_file_system_writes_no_link() {
     let server = server(&card);
     host_commit(&server, &store(vec![("caf\u{e9}", Link(".."))]));
     let state = Path::new(&base).join("state");
-    let dir = state.join("repo");
+    let dir = state.join(paw_core::files::layout::REPO);
 
     let result = steps::clone(&connect(&server, &card), &server.remote(), &dir);
 

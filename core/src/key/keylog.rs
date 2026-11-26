@@ -41,7 +41,6 @@ pub const RING: usize = 120;
 /// grows past this many bytes (about 400 lines).
 const TRIM_AT_BYTES: u64 = 40 * 1024;
 pub const KEEP_LINES: usize = 200;
-const PREFIX: &str = crate::files::layout::KEY_LOG_PREFIX;
 
 fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
@@ -78,7 +77,7 @@ impl Sink {
     }
 
     fn path(&self) -> PathBuf {
-        self.dir.join(format!("{PREFIX}{}", self.process))
+        self.dir.join(format!("{}{}", crate::files::layout::KEY_LOG_PREFIX, self.process))
     }
 
     /// Appends one line. A failure loses the line and nothing else: the log
@@ -111,7 +110,7 @@ impl Sink {
         let text = read_text(path)?;
         let lines: Vec<&str> = text.lines().collect();
         let kept = &lines[lines.len().saturating_sub(KEEP_LINES)..];
-        let temp_prefix = format!(".{PREFIX}{}.tmp-", self.process);
+        let temp_prefix = format!(".{}{}.tmp-", crate::files::layout::KEY_LOG_PREFIX, self.process);
         let text: String = kept.iter().map(|l| format!("{l}\n")).collect();
         crate::files::write_atomic(path, &temp_prefix, text.as_bytes())
     }
@@ -308,7 +307,7 @@ fn log_files(dir: &Path) -> Vec<(String, PathBuf)> {
         .filter_map(Result::ok)
         .filter_map(|entry| {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let process = name.strip_prefix(PREFIX)?;
+            let process = name.strip_prefix(crate::files::layout::KEY_LOG_PREFIX)?;
             (!process.is_empty() && !process.contains('.')).then(|| (process.to_string(), entry.path()))
         })
         .collect();
@@ -366,7 +365,7 @@ pub fn clear_key_log(state_dir: String) -> Result<(), PawError> {
     let dir = Path::new(&state_dir);
     let Ok(entries) = std::fs::read_dir(dir) else { return Ok(()) };
     for entry in entries.filter_map(Result::ok) {
-        if entry.file_name().to_string_lossy().starts_with(PREFIX) {
+        if entry.file_name().to_string_lossy().starts_with(crate::files::layout::KEY_LOG_PREFIX) {
             match std::fs::remove_file(entry.path()) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}

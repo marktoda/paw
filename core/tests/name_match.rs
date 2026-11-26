@@ -6,7 +6,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use paw_core::store::PassStore;
-use paw_core::store::pairings::{FILE, MAX_ENTRIES, MAX_SITES, PairedSite, Pairing, PairingFile, SitePairings};
+use paw_core::files::layout::SITE_PAIRINGS;
+use paw_core::store::pairings::{MAX_ENTRIES, MAX_SITES, PairedSite, Pairing, PairingFile, SitePairings};
 use paw_core::store::service::{MatchKind, NamePairing, match_site, name_key, site_name};
 use paw_core::store::tree::EntryRef;
 
@@ -275,7 +276,7 @@ fn a_name_match_is_paired_unpaired_or_paired_elsewhere() {
 /// A state directory with a store checked out in `repo`.
 fn state_with(paths: &[&str]) -> (tempfile::TempDir, Arc<PassStore>, Arc<SitePairings>) {
     let dir = tempfile::tempdir().unwrap();
-    let repo = dir.path().join("repo");
+    let repo = dir.path().join(paw_core::files::layout::REPO);
     for path in paths {
         let file = repo.join(format!("{path}.gpg"));
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -311,7 +312,7 @@ fn only_a_name_match_for_the_site_is_ever_paired() {
     assert!(!record("github", "https://github.io"));
     assert!(!record("github", "https://alice.github.io"));
     assert_eq!(pairings.pairings(), vec![pairing("bank/bankofamerica", &["bankofamerica.com"])]);
-    assert!(dir.path().join(FILE).is_file());
+    assert!(dir.path().join(SITE_PAIRINGS).is_file());
     assert!(temps(dir.path()).is_empty());
 
     // The match now says paired, and a lookalike says where it was used.
@@ -376,7 +377,7 @@ fn entries_no_longer_in_the_store_are_dropped_on_the_next_record() {
 #[test]
 fn a_corrupt_file_is_ignored_and_rewritten() {
     let (dir, store, pairings) = state_with(&["alaskaair"]);
-    let path = dir.path().join(FILE);
+    let path = dir.path().join(SITE_PAIRINGS);
     for junk in [
         &b"not json"[..],
         b"{\"version\":2,\"pairings\":[{\"entry\":\"alaskaair\",\"sites\":[\"alaskaair.com\"]}]}",
@@ -428,7 +429,7 @@ fn writes_are_atomic_and_threads_lose_nothing() {
         let path = path.clone();
         std::thread::spawn(move || {
             for _ in 0..400 {
-                let bytes = std::fs::read(path.join(FILE)).unwrap_or_default();
+                let bytes = std::fs::read(path.join(SITE_PAIRINGS)).unwrap_or_default();
                 // Never a half-written file: empty (not there yet) or whole JSON.
                 assert!(bytes.is_empty() || serde_json::from_slice::<serde_json::Value>(&bytes).is_ok());
             }
@@ -442,7 +443,7 @@ fn writes_are_atomic_and_threads_lose_nothing() {
     assert_eq!(kept.len(), 80);
     // No temporary file is left behind.
     assert!(temps(&path).is_empty());
-    let mode = std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(path.join(FILE)).unwrap().permissions());
+    let mode = std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(path.join(SITE_PAIRINGS)).unwrap().permissions());
     assert_eq!(mode & 0o777, 0o600);
 }
 
@@ -469,7 +470,7 @@ fn clearing_forgets_one_entry_or_everything() {
     assert_eq!(pairings.pairings(), vec![pairing("alaskaair", &["alaskaair.com"])]);
     pairings.clear_pairings(None).unwrap();
     assert!(pairings.pairings().is_empty());
-    assert!(!dir.path().join(FILE).exists());
+    assert!(!dir.path().join(SITE_PAIRINGS).exists());
     // Clearing nothing is fine.
     pairings.clear_pairings(None).unwrap();
 }

@@ -16,20 +16,20 @@
 
 use std::path::{Path, PathBuf};
 
-pub(crate) const REPO: &str = "repo";
-pub(crate) const SETUP: &str = "setup";
+pub const REPO: &str = "repo";
+pub const SETUP: &str = "setup";
 /// The first line of [`SETUP`] once setup has finished.
-pub(crate) const SETUP_DONE: &str = "step=done";
-pub(crate) const KNOWN_HOSTS: &str = "known_hosts";
-pub(crate) const REMOTE: &str = "remote";
-pub(crate) const GITHUB_LINK: &str = "github";
-pub(crate) const ENROLLED_KEY: &str = "enrolled-key";
-pub(crate) const RECIPIENTS: &str = "recipients";
-pub(crate) const SITE_PAIRINGS: &str = "site-pairings.json";
-pub(crate) const ONE_TIME_CODES: &str = "one-time-codes.json";
-pub(crate) const ONE_TIME_CODES_ON: &str = "one-time-codes-on";
-pub(crate) const KEY_LOG_PREFIX: &str = "key-log.";
-pub(crate) const STORE_LOCK: &str = "store.lock";
+pub const SETUP_DONE: &str = "step=done";
+pub const KNOWN_HOSTS: &str = "known_hosts";
+pub const REMOTE: &str = "remote";
+pub const GITHUB_LINK: &str = "github";
+pub const ENROLLED_KEY: &str = "enrolled-key";
+pub const RECIPIENTS: &str = "recipients";
+pub const SITE_PAIRINGS: &str = "site-pairings.json";
+pub const ONE_TIME_CODES: &str = "one-time-codes.json";
+pub const ONE_TIME_CODES_ON: &str = "one-time-codes-on";
+pub const KEY_LOG_PREFIX: &str = "key-log.";
+pub const STORE_LOCK: &str = "store.lock";
 
 /// Where the store of `state_dir` is checked out.
 pub fn repo_dir(state_dir: &Path) -> PathBuf {

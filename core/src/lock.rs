@@ -13,7 +13,7 @@
 //!   store's canonical directory, so threads queue (a waiting writer goes
 //!   before new readers).
 //! - **Between processes**, an advisory `flock` on a lock file
-//!   ([`STORE_LOCK_FILE`] in the state directory), taken with the standard
+//!   ([`crate::files::layout::STORE_LOCK`] in the state directory), taken with the standard
 //!   library's `File::try_lock`/`try_lock_shared` (Rust 1.89): no new crate
 //!   and no C. The kernel drops it when its holder dies, so a killed
 //!   extension never leaves the store locked.
@@ -61,7 +61,6 @@ use std::time::{Duration, Instant};
 use crate::PawError;
 
 /// The store lock's file, in the state directory: paw's only file lock.
-pub const STORE_LOCK_FILE: &str = crate::files::layout::STORE_LOCK;
 
 /// What every error type's `StoreBusy` says.
 pub const STORE_BUSY: &str =
@@ -140,7 +139,7 @@ impl StoreLock {
     }
 
     fn store(&self) -> Lock {
-        Lock { key: self.root.join("#store"), file: self.files.as_ref().map(|dir| dir.join(STORE_LOCK_FILE)) }
+        Lock { key: self.root.join("#store"), file: self.files.as_ref().map(|dir| dir.join(crate::files::layout::STORE_LOCK)) }
     }
 
     /// A lock between this process's threads only.
@@ -565,7 +564,7 @@ mod tests {
         let held = StoreLock::for_repo(dir.path()).exclusive().unwrap();
         assert!(stale.iter().all(|p| !p.exists()));
         assert!(kept.iter().all(|p| p.exists()));
-        assert!(git.join(GIT_LOCK_DIR).join(STORE_LOCK_FILE).exists());
+        assert!(git.join(GIT_LOCK_DIR).join(crate::files::layout::STORE_LOCK).exists());
         drop(held);
     }
 
@@ -599,6 +598,6 @@ mod tests {
         assert!(!held.covers(elsewhere.path()));
         let other = StoreLock::for_repo(elsewhere.path()).exclusive().unwrap();
         assert!(other.covers(elsewhere.path()));
-        assert!(elsewhere.path().join(".git/paw").join(STORE_LOCK_FILE).exists());
+        assert!(elsewhere.path().join(".git/paw").join(crate::files::layout::STORE_LOCK).exists());
     }
 }

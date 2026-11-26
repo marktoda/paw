@@ -92,7 +92,7 @@ impl Rig {
     }
 
     fn repo(&self) -> std::path::PathBuf {
-        self.dir.path().join("repo")
+        self.dir.path().join(paw_core::files::layout::REPO)
     }
 
     /// At `CheckHost`: the key read from its session, the address set.
@@ -194,7 +194,7 @@ fn setup_reads_the_key_checks_the_host_downloads_and_opens_one_entry() {
     assert_eq!(sim.pin_tries_left(), 3);
 
     // Nothing secret is saved.
-    let saved = std::fs::read_to_string(rig.dir.path().join("setup")).unwrap();
+    let saved = std::fs::read_to_string(rig.dir.path().join(paw_core::files::layout::SETUP)).unwrap();
     let fields: Vec<(&str, &str)> = saved.lines().filter_map(|line| line.split_once('=')).collect();
     let names: Vec<&str> = fields.iter().map(|(name, _)| *name).collect();
     assert_eq!(
@@ -202,7 +202,7 @@ fn setup_reads_the_key_checks_the_host_downloads_and_opens_one_entry() {
         ["step", "ident", "ssh_public_key", "decryption_fingerprint", "authentication_touch", "decryption_touch", "address", "opened"]
     );
     assert!(fields.iter().all(|(_, value)| *value != PIN), "{saved}");
-    assert!(saved.contains("step=done"), "{saved}");
+    assert!(saved.contains(paw_core::files::layout::SETUP_DONE), "{saved}");
     // Sync can find the store.
     assert_eq!(paw_core::sync::address::saved_address(rig.dir.path()).unwrap().display(), address(&server));
 }
@@ -237,7 +237,7 @@ fn a_wrong_fingerprint_does_not_pin_the_host() {
     let error = rig.setup.confirm_host("SHA256:not-what-was-shown".into()).unwrap_err();
 
     assert!(matches!(error, SetupError::HostKeyNotConfirmed { .. }), "{error:?}");
-    assert!(!rig.dir.path().join("known_hosts").exists());
+    assert!(!rig.dir.path().join(paw_core::files::layout::KNOWN_HOSTS).exists());
     assert!(matches!(rig.setup.state(), SetupState::ConfirmHost { .. }));
 }
 
@@ -414,7 +414,7 @@ fn setup_resumes_after_a_kill_at_every_step() {
     // Killed in the middle of the download (the state file and the
     // half-made copy as a kill leaves them): the copy is removed on
     // relaunch.
-    let file = dir.join("setup");
+    let file = dir.join(paw_core::files::layout::SETUP);
     let saved = std::fs::read_to_string(&file).unwrap();
     let cloning: String = saved
         .lines()
@@ -455,7 +455,7 @@ fn a_store_that_went_missing_after_the_download_is_downloaded_again() {
 #[test]
 fn an_unreadable_state_file_starts_setup_over() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("setup"), "step=done\n").unwrap();
+    std::fs::write(dir.path().join(paw_core::files::layout::SETUP), format!("{}\n", paw_core::files::layout::SETUP_DONE)).unwrap();
 
     assert_eq!(relaunch(dir.path()), SetupState::ReadKey);
 }

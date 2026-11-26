@@ -139,6 +139,6 @@ fn with_nothing_enrolled_every_card_is_accepted_and_a_damaged_record_is_an_error
     let state_dir = tempfile::tempdir().unwrap();
     let dir = state_dir.path().to_string_lossy().into_owned();
     assert_eq!(port.load_enrolled_key(dir.clone()).unwrap(), None);
-    std::fs::write(state_dir.path().join("enrolled-key"), "ident=0006:1\ndecryption_fingerprint=not hex\n").unwrap();
+    std::fs::write(state_dir.path().join(paw_core::files::layout::ENROLLED_KEY), "ident=0006:1\ndecryption_fingerprint=not hex\n").unwrap();
     assert!(port.load_enrolled_key(dir).is_err());
 }

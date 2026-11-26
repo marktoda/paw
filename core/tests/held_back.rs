@@ -43,7 +43,7 @@ struct World {
 
 impl World {
     fn repo(&self) -> std::path::PathBuf {
-        self.state.path().join("repo")
+        self.state.path().join(paw_core::files::layout::REPO)
     }
 
     fn signer(&self) -> key_common::KeySigner {
@@ -118,7 +118,7 @@ fn world() -> World {
     let server = GitServer::start(&[card.ssh_public_key()]);
     let desktop = server.desktop();
     let state = tempfile::tempdir().unwrap();
-    std::fs::write(state.path().join("remote"), format!("{}\n", server.sim.address())).unwrap();
+    std::fs::write(state.path().join(paw_core::files::layout::REMOTE), format!("{}\n", server.sim.address())).unwrap();
     let port = KeyPort::new(SimClock::new(1_790_000_000_000));
     port.plugged_in(card.clone()).unwrap();
     let sync = StoreSync::open(state.path().to_string_lossy().into_owned()).unwrap();

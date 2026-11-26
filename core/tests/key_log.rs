@@ -303,13 +303,13 @@ fn a_process_file_is_cut_back_to_its_last_lines() {
     for _ in 0..60 {
         open_and_finish(&rig, OTHER_ENTRY);
     }
-    let file = state.path().join("key-log.app");
+    let file = state.path().join(format!("{}app", paw_core::files::layout::KEY_LOG_PREFIX));
     let size = std::fs::metadata(&file).unwrap().len();
     assert!(size <= 41 * 1024, "{size} bytes");
     let lines = key_log(dir_string(&state), 0);
     assert!(lines.len() >= KEEP_LINES && lines.len() < 2 * KEEP_LINES + 100, "{} lines", lines.len());
     assert!(lines.last().unwrap().text.contains("stage Done"));
-    assert!(!state.path().join("key-log.app.tmp").exists());
+    assert!(!state.path().join(format!("{}app.tmp", paw_core::files::layout::KEY_LOG_PREFIX)).exists());
 }
 
 #[test]
@@ -323,8 +323,8 @@ fn two_processes_write_their_own_files_and_merge_by_time() {
         open_and_finish(&fill, OTHER_ENTRY);
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    assert!(state.path().join("key-log.app").exists());
-    assert!(state.path().join("key-log.fill").exists());
+    assert!(state.path().join(format!("{}app", paw_core::files::layout::KEY_LOG_PREFIX)).exists());
+    assert!(state.path().join(format!("{}fill", paw_core::files::layout::KEY_LOG_PREFIX)).exists());
 
     let lines = key_log(dir_string(&state), 0);
     assert!(
@@ -338,7 +338,7 @@ fn two_processes_write_their_own_files_and_merge_by_time() {
     // Within a process, the file's order is kept.
     let app_lines: Vec<String> =
         lines.iter().filter(|l| l.process == "app").map(|l| l.text.clone()).collect();
-    let app_file = std::fs::read_to_string(state.path().join("key-log.app")).unwrap();
+    let app_file = std::fs::read_to_string(state.path().join(format!("{}app", paw_core::files::layout::KEY_LOG_PREFIX))).unwrap();
     let in_file: Vec<String> =
         app_file.lines().map(|l| l.split_once('\t').unwrap().1.to_string()).collect();
     assert_eq!(app_lines, in_file);
@@ -354,12 +354,12 @@ fn clear_removes_every_process_file() {
     let fill = logged_rig(state.path(), "fill", SimTouch::Off);
     open_and_finish(&app, ENTRY);
     open_and_finish(&fill, ENTRY);
-    std::fs::write(state.path().join("enrolled-key"), "other state").unwrap();
+    std::fs::write(state.path().join(paw_core::files::layout::ENROLLED_KEY), "other state").unwrap();
 
     clear_key_log(dir_string(&state)).unwrap();
 
     assert!(key_log(dir_string(&state), 0).is_empty());
-    assert!(state.path().join("enrolled-key").exists(), "only the log is cleared");
+    assert!(state.path().join(paw_core::files::layout::ENROLLED_KEY).exists(), "only the log is cleared");
     // It goes on from there.
     open_and_finish(&app, ENTRY);
     assert!(!key_log(dir_string(&state), 0).is_empty());
@@ -372,7 +372,7 @@ fn removing_the_store_removes_the_log_and_the_log_never_makes_the_folder_again()
     std::fs::create_dir(&state).unwrap();
     let rig = logged_rig(&state, "app", SimTouch::Off);
     open_and_finish(&rig, ENTRY);
-    assert!(state.join("key-log.app").exists());
+    assert!(state.join(format!("{}app", paw_core::files::layout::KEY_LOG_PREFIX)).exists());
 
     // What "Remove store from this iPhone" does: the state folder goes.
     std::fs::remove_dir_all(&state).unwrap();
@@ -394,7 +394,7 @@ fn loading_the_enrolled_key_leaves_the_log_as_it_was_set() {
     rig.port.load_enrolled_key(dir_string(&state)).unwrap();
     assert_eq!(rig.port.key_log_dir(), Some(dir_string(&other)));
     rig.port.plugged_in(rig.sim.clone()).unwrap();
-    assert!(other.path().join("key-log.fill").exists());
+    assert!(other.path().join(format!("{}fill", paw_core::files::layout::KEY_LOG_PREFIX)).exists());
 }
 
 #[test]

@@ -120,7 +120,7 @@ fn store_with(gpg_id: &str, files: &[(&str, &[u8])]) -> Store {
     git(&seed, &["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
 
     let state = root.path().join("state");
-    let repo = state.join("repo");
+    let repo = state.join(paw_core::files::layout::REPO);
     git(root.path(), &["clone", "--quiet", bare.to_str().unwrap(), repo.to_str().unwrap()]);
     let mut keyring = Keyring::open(&state).unwrap();
     keyring.pin_card_key(&keyring.lock().exclusive().unwrap(), &card_key()).unwrap();
@@ -416,7 +416,7 @@ fn a_gpg_id_a_pull_removes_stops_saving_in_that_subtree_until_accepted() {
 #[test]
 fn nothing_is_saved_before_setup_accepts_who_can_open_the_store() {
     let s = store();
-    std::fs::remove_file(s.state.join("recipients")).unwrap();
+    std::fs::remove_file(s.state.join(paw_core::files::layout::RECIPIENTS)).unwrap();
     s.keyring().pin_card_key(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &card_key()).unwrap();
     let head = s.head();
     assert!(matches!(s.write().save(&new_entry("Work", "a", "pw")).unwrap_err(), WriteError::RecipientsNotConfirmed));
@@ -470,7 +470,7 @@ fn a_subkey_the_primary_key_does_not_vouch_for_satisfies_no_line() {
     let info = paw_core::write::cert::evaluate(&certificate, 2_000_000_000).unwrap();
     assert_eq!(info.fingerprints, [primary_fpr.clone(), card().fingerprint_hex()]);
     let s = store_with(&format!("{forged_fpr}\n{}\n", &unbound_fpr[24..]), &[]);
-    std::fs::remove_file(s.state.join("recipients")).unwrap();
+    std::fs::remove_file(s.state.join(paw_core::files::layout::RECIPIENTS)).unwrap();
     let mut keyring = s.keyring();
     keyring.pin_certificate(&keyring.lock().exclusive().unwrap(), &info).unwrap();
     keyring.accept_all_recipients_at_setup(&keyring.lock().exclusive().unwrap(), &s.repo).unwrap();
@@ -1102,7 +1102,7 @@ fn one_time_code_marks_follow_saves_renames_and_deletes() {
     draft.set_password("pw".into());
     draft.set_one_time_code("JBSWY3DPEHPK3PXP".into());
     writer(&s).save(draft, None, 0).unwrap();
-    assert!(!s.state.join(paw_core::store::codes::FILE).exists());
+    assert!(!s.state.join(paw_core::files::layout::ONE_TIME_CODES).exists());
     writer(&s).delete("Work/Off".into(), None).unwrap();
     codes.set_enabled(true).unwrap();
 
