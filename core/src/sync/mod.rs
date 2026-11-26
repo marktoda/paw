@@ -28,7 +28,7 @@ pub use history::{ChangeKind, KeptBoth};
 pub use integrate::{IntegrateReport, Integration, RecipientsChange, Replaced, accept_replaced_remote};
 #[cfg(feature = "sim")]
 pub use integrate::integrate;
-pub use transport::{ConnectError, Connection, DOWNLOAD_LIMIT, HostKeyPin, PresentedHostKey, Remote, Route, key_type_words, scan_host_key};
+pub use transport::{ConnectError, Connection, DOWNLOAD_LIMIT, HostKeyPin, PresentedHostKey, Remote, key_type_words, scan_host_key};
 
 use crate::PawError;
 use crate::fault::Fault;

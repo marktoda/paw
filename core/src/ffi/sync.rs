@@ -21,7 +21,6 @@ use crate::task::{App, KeyOutcome, KeyTask, KeyTaskListener, TaskFailure, relay}
 use crate::key::touch_clock::{TouchClock, TouchExpectation};
 use crate::remote::RemoteFailure;
 use crate::setup::{SetupError, SetupFlow, SetupState, SetupWriteReadiness, keyed};
-use crate::sync::Route;
 use crate::sync::address::{StoreAddress, saved_address};
 use crate::sync::hosts::{KnownHosts, is_bundled};
 use crate::sync::operation;
@@ -46,21 +45,6 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Setup {
-    /// The setup kept in `state_dir`, connecting through `routes` (a
-    /// simulation playing a host).
-    #[cfg(feature = "sim")]
-    pub fn open_routed(state_dir: String, routes: &crate::sim::remote::SimRoutes) -> Result<Arc<Self>, SetupError> {
-        let setup = Self::open(state_dir)?;
-        setup.set_route(routes.route());
-        Ok(setup)
-    }
-
-    /// Connections go where `route` says.
-    #[cfg(feature = "sim")]
-    fn set_route(&self, route: Route) {
-        self.flow().set_route(route);
-    }
-
     fn flow(&self) -> MutexGuard<'_, SetupFlow> {
         // A panic in a step cannot leave the saved state half written: it is
         // written whole, by rename.
@@ -298,7 +282,7 @@ impl StoreSync {
     /// to compare before [`Self::trust_server_key`]. Network only.
     pub fn check_server_key(&self) -> Result<ServerKey, SyncError> {
         let host = self.address.connect_host();
-        let presented = crate::sync::scan_host_key(host, self.address.port, &Route::default())?;
+        let presented = crate::sync::scan_host_key(host, self.address.port)?;
         Ok(ServerKey {
             key_type: crate::sync::key_type_words(&presented.algorithm()),
             fingerprint: presented.fingerprint(),
@@ -311,7 +295,7 @@ impl StoreSync {
     /// host that already has a saved key (forget it first).
     pub fn trust_server_key(&self, fingerprint: String) -> Result<(), SyncError> {
         let (host, port) = (self.address.connect_host(), self.address.port);
-        let scan = || crate::sync::scan_host_key(host, port, &Route::default());
+        let scan = || crate::sync::scan_host_key(host, port);
         if !self.known_hosts().trust(host, port, scan, &fingerprint)? {
             return Err(RemoteFailure::HostKeyNotConfirmed { host: host.to_owned() }.into());
         }

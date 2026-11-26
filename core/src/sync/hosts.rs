@@ -251,7 +251,6 @@ impl KnownHosts {
             user: address.user.clone(),
             path: address.path.clone(),
             host_key,
-            route: Default::default(),
         }))
     }
 

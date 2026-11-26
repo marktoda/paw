@@ -228,43 +228,6 @@ async fn bind(port: u16) -> Result<tokio::net::TcpListener, PawError> {
     }
 }
 
-/// Where setup's connections go: to this machine's port instead of
-/// `host:port`, for each host a test sends elsewhere, for testing what paw
-/// does when a well-known host (github.com) is unreachable or presents
-/// another key, without the network. Host keys are still checked against
-/// what `host:port` is pinned to. Rust only.
-#[derive(Clone, Default)]
-pub struct SimRoutes(Arc<Mutex<Vec<Redirect>>>);
-
-/// `(host, port)` and the local port connections to it go to.
-type Redirect = ((String, u16), u16);
-
-impl SimRoutes {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Connections to `host:port` go to this machine's port `to` from now
-    /// on, or, with `None`, where they say again.
-    pub fn redirect(&self, host: &str, port: u16, to: Option<u16>) {
-        let mut routes = self.0.lock().unwrap_or_else(|p| p.into_inner());
-        routes.retain(|((h, p), _)| !(h.eq_ignore_ascii_case(host) && *p == port));
-        if let Some(to) = to {
-            routes.push(((host.to_owned(), port), to));
-        }
-    }
-
-    /// Where connections go, as these routes say.
-    pub(crate) fn route(&self) -> crate::sync::Route {
-        let routes = self.0.clone();
-        crate::sync::Route::new(move |host, port| {
-            let routes = routes.lock().unwrap_or_else(|p| p.into_inner());
-            let found = routes.iter().find(|((h, p), _)| h.eq_ignore_ascii_case(host) && *p == port);
-            found.map(|(_, to)| ("127.0.0.1".to_owned(), *to))
-        })
-    }
-}
-
 fn fixture_options(key: &SimulatedKey) -> SimRemoteOptions {
     SimRemoteOptions {
         authorised: vec![SshPublicKey::ed25519(&key.authentication_public_key()).authorized_key()],
@@ -398,7 +361,6 @@ impl SimRemote {
             user: USER.into(),
             path: REPO.into(),
             host_key: HostKeyPin::parse(&ed25519_host_key())?,
-            route: Default::default(),
         })
     }
 

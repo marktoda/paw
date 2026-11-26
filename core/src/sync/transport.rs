@@ -71,11 +71,10 @@ async fn dial<H: client::Handler + Send + 'static>(
     config: Arc<client::Config>,
     host: &str,
     port: u16,
-    route: &Route,
     handler: H,
 ) -> Result<client::Handle<H>, Dial<H::Error>> {
     let attempt = async {
-        let stream = tokio::net::TcpStream::connect(route.address(host, port))
+        let stream = tokio::net::TcpStream::connect((host, port))
             .await
             .map_err(|e| Dial::NoConnection(e.to_string()))?;
         if config.nodelay {
@@ -86,50 +85,6 @@ async fn dial<H: client::Handler + Send + 'static>(
     match tokio::time::timeout(CONNECT_TIMEOUT, attempt).await {
         Err(_) => Err(Dial::NoConnection("timed out".into())),
         Ok(dialled) => dialled,
-    }
-}
-
-/// Where the TCP connection for `host:port` is opened: there, unless a
-/// simulation plays that host (`sim::remote::SimRoutes`). A device build
-/// has no simulation, so its route is always direct. Host keys are still
-/// checked against what `host:port` is pinned to.
-#[derive(Clone, Default)]
-pub struct Route {
-    #[cfg(feature = "sim")]
-    resolve: Option<Arc<Resolve>>,
-}
-
-/// Where to connect instead of `host:port`, if anywhere.
-#[cfg(feature = "sim")]
-type Resolve = dyn Fn(&str, u16) -> Option<(String, u16)> + Send + Sync;
-
-impl Route {
-    /// Connections go where `resolve` says, or, given `None`, where they say.
-    #[cfg(feature = "sim")]
-    pub(crate) fn new(resolve: impl Fn(&str, u16) -> Option<(String, u16)> + Send + Sync + 'static) -> Self {
-        Self { resolve: Some(Arc::new(resolve)) }
-    }
-
-    #[cfg(feature = "sim")]
-    fn address(&self, host: &str, port: u16) -> (String, u16) {
-        self.resolve.as_ref().and_then(|resolve| resolve(host, port)).unwrap_or_else(|| (host.to_owned(), port))
-    }
-
-    #[cfg(not(feature = "sim"))]
-    fn address(&self, host: &str, port: u16) -> (String, u16) {
-        (host.to_owned(), port)
-    }
-}
-
-impl std::fmt::Debug for Route {
-    #[cfg(feature = "sim")]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(if self.resolve.is_some() { "Route(simulated)" } else { "Route(direct)" })
-    }
-
-    #[cfg(not(feature = "sim"))]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Route(direct)")
     }
 }
 
@@ -256,7 +211,6 @@ pub struct Remote {
     /// e.g. `owner/repo.git` for GitHub.
     pub path: String,
     pub host_key: HostKeyPin,
-    pub route: Route,
 }
 
 impl Remote {
@@ -412,7 +366,7 @@ async fn handshake(remote: &Remote) -> Result<client::Handle<PinnedHost>, Fault>
 
     let refused = Arc::new(Mutex::new(None));
     let handler = PinnedHost { pin, refused: refused.clone() };
-    match dial(Arc::new(config), &remote.host, remote.port, &remote.route, handler).await {
+    match dial(Arc::new(config), &remote.host, remote.port, handler).await {
         Err(Dial::NoConnection(why)) => Err(no_connection(&remote.host, remote.port, &why)),
         Err(Dial::Ssh(e)) => Err(match refused.lock().unwrap().take() {
             Some(presented) => RemoteFailure::HostKeyChanged {
@@ -431,7 +385,7 @@ async fn handshake(remote: &Remote) -> Result<client::Handle<PinnedHost>, Fault>
 /// Connects to `host` and returns the host key it presents, without
 /// accepting it or sending anything else. For a host that is not pinned
 /// yet: the key is shown to the person, and pinned only once confirmed.
-pub fn scan_host_key(host: &str, port: u16, route: &Route) -> Result<PresentedHostKey, Fault> {
+pub fn scan_host_key(host: &str, port: u16) -> Result<PresentedHostKey, Fault> {
     let runtime = runtime(host)?;
     let presented = Arc::new(Mutex::new(None));
     let handler = RecordHost { presented: presented.clone() };
@@ -439,7 +393,7 @@ pub fn scan_host_key(host: &str, port: u16, route: &Route) -> Result<PresentedHo
         inactivity_timeout: Some(INACTIVITY_TIMEOUT),
         ..Default::default()
     };
-    let outcome = runtime.block_on(dial(Arc::new(config), host, port, route, handler));
+    let outcome = runtime.block_on(dial(Arc::new(config), host, port, handler));
     let error = match outcome {
         Err(Dial::NoConnection(why)) => no_connection(host, port, &why),
         // The handler refuses every key, so the handshake cannot succeed.
@@ -821,7 +775,26 @@ impl Drop for ServiceStream {
 
 #[cfg(test)]
 mod tests {
-    use super::says_repository_missing;
+    use super::{no_connection, says_repository_missing};
+    use crate::fault::Fault;
+    use crate::remote::{PortFallback, RemoteFailure};
+
+    /// What a failed connection to `host:port` offers instead.
+    fn offered(host: &str, port: u16) -> Option<PortFallback> {
+        match no_connection(host, port, "connection refused") {
+            Fault::Remote { failure: RemoteFailure::NoConnection { fallback, .. } } => fallback,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn only_github_on_port_22_offers_port_443() {
+        let to_443 = PortFallback { from_host: "github.com".into(), from_port: 22, host: "ssh.github.com".into(), port: 443 };
+        assert_eq!(offered("github.com", 22), Some(to_443));
+        for (host, port) in [("github.com", 2222), ("ssh.github.com", 443), ("gitlab.com", 22), ("127.0.0.1", 22)] {
+            assert_eq!(offered(host, port), None, "{host}:{port}");
+        }
+    }
 
     #[test]
     fn hosts_wordings_of_a_missing_repository_are_recognised() {

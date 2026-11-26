@@ -306,7 +306,6 @@ pub struct SetupFlow {
     unconfirmed: Option<PresentedHostKey>,
     authentication: TouchClock,
     decryption: TouchClock,
-    route: sync::Route,
 }
 
 fn remove_dir(path: &Path, _held: &crate::lock::Exclusive) -> Result<(), SetupError> {
@@ -335,7 +334,6 @@ impl SetupFlow {
             decryption: touch(|k| k.decryption_touch),
             saved,
             unconfirmed: None,
-            route: sync::Route::default(),
         };
         let repo = flow.repo_dir();
         let cloned = repo.join(".git").is_dir() && repo.join(".gpg-id").is_file();
@@ -522,7 +520,7 @@ impl SetupFlow {
         match self.known_hosts().pin(&host, address.port)? {
             Some(_) => self.ask_host(),
             None => {
-                self.unconfirmed = Some(sync::scan_host_key(&host, address.port, &self.route)?);
+                self.unconfirmed = Some(sync::scan_host_key(&host, address.port)?);
                 Ok(self.state())
             }
         }
@@ -558,15 +556,7 @@ impl SetupFlow {
     fn remote(&self) -> Result<sync::Remote, SetupError> {
         let address = self.address()?;
         let remote = self.known_hosts().remote(&address)?;
-        let mut remote = remote.ok_or_else(|| SetupError::WrongStep { message: "the host has not been checked".into() })?;
-        remote.route = self.route.clone();
-        Ok(remote)
-    }
-
-    /// Connections go where `route` says (a simulation playing a host).
-    #[cfg(feature = "sim")]
-    pub(crate) fn set_route(&mut self, route: sync::Route) {
-        self.route = route;
+        remote.ok_or_else(|| SetupError::WrongStep { message: "the host has not been checked".into() })
     }
 
     /// Switches the store's address to the other way in to its host
