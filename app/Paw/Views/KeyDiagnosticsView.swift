@@ -214,26 +214,20 @@ struct KeyDiagnosticsView: View {
         }
     }
 
-    private var logDir: String? {
-        model.keyPort.keyLogDir()
-    }
-
     private var utcOffset: Int32 {
         Int32(TimeZone.current.secondsFromGMT())
     }
 
     private func loadLog() {
-        guard let logDir else { return }
-        logLines = keyLog(stateDir: logDir, utcOffsetSecs: utcOffset)
+        logLines = model.keyPort.keyLog(utcOffsetSecs: utcOffset)
     }
 
     private func copyLog() {
-        guard let logDir else { return }
         // The key log holds no secrets: instruction bytes, status words,
         // timings, stages and error names only; never command or response
         // data, the PIN or its length, entry or host names
         // (core/src/key/keylog.rs, checked by core/tests/key_log.rs).
-        Self.copyForDesktop(keyLogText(stateDir: logDir, utcOffsetSecs: utcOffset))
+        Self.copyForDesktop(model.keyPort.keyLogText(utcOffsetSecs: utcOffset))
         logCopied = true
     }
 
@@ -250,9 +244,8 @@ struct KeyDiagnosticsView: View {
     }
 
     private func clearLog() {
-        guard let logDir else { return }
         do {
-            try clearKeyLog(stateDir: logDir)
+            try model.keyPort.clearKeyLog()
             logProblem = nil
         } catch {
             logProblem = String(describing: error)
