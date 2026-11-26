@@ -53,7 +53,7 @@ struct SetupFlowView: View {
         #if DEBUG && targetEnvironment(simulator)
         .modifier(SimSetupHostWatch(model: model))
         .background(alignment: .topLeading) {
-            KeyTasksSignal { model.keyTask.pendingTasks }
+            KeyTasksSignal(keys: model.reader.simulated) { model.keyTask.pendingTasks }
         }
         #endif
         .privacyCover()
@@ -177,7 +177,7 @@ private struct PlugInScreen: View {
     private var simulatorActions: [SimulatorAction] {
         if !model.keyPresent {
             return [SimulatorAction(title: "plug in the key", identifier: "simulated-plug-in") {
-                SimulatedKeyHolder.shared.plugIn()
+                model.reader.simulated?.plugIn()
             }]
         }
         if model.problem != nil {
@@ -688,7 +688,7 @@ private struct SetupKeySheet: View {
             onCancel: { model.cancelSheet() })
             #if DEBUG && targetEnvironment(simulator)
             .background(alignment: .topLeading) {
-                KeyTasksSignal { model.keyTask.pendingTasks }
+                KeyTasksSignal(keys: model.reader.simulated) { model.keyTask.pendingTasks }
             }
             #endif
             .keySheetPresentation(model.keyTask.stage)

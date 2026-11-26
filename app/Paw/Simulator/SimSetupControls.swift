@@ -54,7 +54,7 @@ struct SimTouchLeftWaiting: ViewModifier {
     private var timeOut: SimulatorAction {
         SimulatorAction(title: "time out the key's touch", identifier: "simulated-time-out-touch") {
             waiting = false
-            SimulatedKeyHolder.shared.key.timeOutTouch()
+            model.reader.simulated?.key.timeOutTouch()
         }
     }
 }

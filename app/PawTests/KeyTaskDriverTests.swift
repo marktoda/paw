@@ -295,7 +295,7 @@ final class KeyTaskDriverTests: XCTestCase {
         let key = fixture.key
         let dropouts = Dropouts()
         let port = KeyPort(clock: fixture.clock.asClock())
-        let reader = KeyReader(port: port, source: SimulatedKeyConnector(connect: {
+        let reader = KeyReader(port: port, source: SimulatedKeyConnector(key: key, connection: {
             DroppingConnection(key: key.asConnection(), dropouts: dropouts)
         }))
         reader.watch()

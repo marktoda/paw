@@ -38,7 +38,7 @@ struct GalleryApp: View {
     @MainActor
     private static func prepare(_ page: GalleryPage) async throws -> AppModel {
         let key = SimulatedKey(pin: FixtureSession.pin, touchRequired: false, touchTimeoutMs: 15_000)
-        let hardware = FixtureSession.OwnHardware(connect: { key.asConnection() })
+        let hardware = FixtureSession.OwnHardware(key: key)
         let model = AppModel(session: try FixtureSession(on: hardware.platform, writable: true).session)
         if page == .entry {
             try await FixtureSession.open("bank/first-example-bank", in: model)

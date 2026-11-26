@@ -78,6 +78,8 @@ struct AutoFillHarnessRoot: View {
 /// key fill leaves a copy the next run fills from.
 private final class HarnessWorld: @unchecked Sendable {
     let opening: AutoFillOpening
+    /// The key the store in `opening` is read with.
+    let keys: SimulatedKeyConnector
     /// What `opening` reads: the key port, to read whether a PIN is held,
     /// and the site pairings and code list, to show what was recorded.
     private(set) var source: AutoFillSource?
@@ -104,6 +106,8 @@ private final class HarnessWorld: @unchecked Sendable {
     }
 
     init() {
+        let keys = SimulatedKeyConnector.launched
+        self.keys = keys
         if LaunchArgument.hostProviderStore.string == "none" {
             opening = .noStore
             return
@@ -119,7 +123,7 @@ private final class HarnessWorld: @unchecked Sendable {
             let simClock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000))
             // Copies, as the app keeps in the simulator; the extension keeps none there.
             let platform = Platform.simulated(
-                .fill, keys: .launched, clock: simClock.asClock(), keystore: SimulatedKeystoreHolder.keystore.asKeystore())
+                .fill, keys: keys, clock: simClock.asClock(), keystore: SimulatedKeystoreHolder.keystore.asKeystore())
             let source = try AutoFillSource.open(at: location, on: platform)
             if LaunchArgument.simOneTimeCodes.bool {
                 try source.codes.setEnabled(enabled: true)
@@ -151,6 +155,10 @@ private final class HarnessRun: AutoFillAnswers {
         self.world = world
         provider = AutoFillProvider(open: { world.open() })
         provider.answers = self
+    }
+
+    var keys: SimulatedKeyConnector {
+        world.keys
     }
 
     func run() {
@@ -237,7 +245,7 @@ private struct AutoFillHarnessView: View {
             if let model = run.model {
                 AutoFillRootView(model: model)
                     .overlay(alignment: .topLeading) {
-                        KeyTasksSignal { model.keyTask.pendingTasks }
+                        KeyTasksSignal(keys: run.keys) { model.keyTask.pendingTasks }
                     }
                     .overlay(alignment: .topTrailing) {
                         // `-pawHarnessDismiss 1`: stands in for a swipe down.
@@ -263,7 +271,7 @@ private struct AutoFillHarnessView: View {
                         .font(PawFont.footnote.monospaced())
                         .accessibilityValue(run.codes)
                         .accessibilityIdentifier("harness-codes")
-                    Button("Touch the simulated key") { SimulatedKeyHolder.shared.key.touch() }
+                    Button("Touch the simulated key") { run.keys.key.touch() }
                         .buttonStyle(.pawSecondary)
                         .accessibilityIdentifier("harness-touch-key")
                     Button("Run again") { run.run() }
@@ -275,7 +283,7 @@ private struct AutoFillHarnessView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .background(PawColor.bg.ignoresSafeArea())
                 .overlay(alignment: .topLeading) {
-                    KeyTasksSignal { 0 }
+                    KeyTasksSignal(keys: run.keys) { 0 }
                 }
             }
         }

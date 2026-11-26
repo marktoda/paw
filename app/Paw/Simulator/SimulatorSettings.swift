@@ -30,17 +30,17 @@ struct SimulatorSettingsSection: View {
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-advance-9h")
             // A touch that comes after the sheet was closed.
-            Button("Touch the simulated key") { SimulatedKeyHolder.shared.key.touch() }
+            Button("Touch the simulated key") { keys?.key.touch() }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-touch-key")
-            Button("Let the key answer when read") { SimulatedKeyHolder.shared.stopAttachFailures() }
+            Button("Let the key answer when read") { keys?.stopAttachFailures() }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-key-answers")
-            Button("Let the next open finish after Cancel") { SimulatedKeyConnector.launched.finishesNextAfterCancel = true }
+            Button("Let the next open finish after Cancel") { keys?.finishesNextAfterCancel = true }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-late-cancel-next")
             // Ends a touch wait the sheet let go of, as the key's timeout would.
-            Button("Time out the key's touch") { SimulatedKeyHolder.shared.key.timeOutTouch() }
+            Button("Time out the key's touch") { keys?.key.timeOutTouch() }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-time-out-touch")
             // What the system says just before the iPhone locks.
@@ -68,6 +68,10 @@ struct SimulatorSettingsSection: View {
                     .accessibilityValue(protection)
                     .accessibilityIdentifier("sim-file-protection")
             }
+    }
+
+    private var keys: SimulatedKeyConnector? {
+        model.storeSession.reader.simulated
     }
 
     private func advanceClock(hours: Int64) {

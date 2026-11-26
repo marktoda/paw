@@ -114,7 +114,7 @@ final class AutoFillProviderTests: XCTestCase {
         let key = SimulatedKey(pin: Fixture.pin, touchRequired: false, touchTimeoutMs: 15_000)
         let clock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000)).asClock()
         let platform = Platform.simulated(
-            .fill, keys: SimulatedKeyConnector(connect: { key.asConnection() }), clock: clock, keystore: nil)
+            .fill, keys: SimulatedKeyConnector(key: key), clock: clock, keystore: nil)
         let source = try AutoFillSource.open(at: location, on: platform)
         let answers = Answers()
         let provider = makeProvider(.ready(source), answering: answers)

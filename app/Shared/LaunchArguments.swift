@@ -38,8 +38,8 @@ extension DebugLaunchArgument {
     }
 }
 
-/// The simulated key's launch arguments (`SimulatedKeyHolder`), read in the
-/// simulator by the app and the AutoFill extension alike.
+/// The simulated key's launch arguments (`SimulatedKeyConnector.launched`),
+/// read in the simulator by the app and the AutoFill extension alike.
 enum KeyLaunchArgument: String, CaseIterable, DebugLaunchArgument {
     /// Word: its PIN (default 123456).
     case simPin = "pawSimPin"

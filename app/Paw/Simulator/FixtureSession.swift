@@ -28,9 +28,9 @@ struct FixtureSession {
 
     let session: StoreSession
 
-    /// Simulated hardware of a caller's own: a key read through `connect`,
-    /// always in, and a clock and a keystore of its own, answering as
-    /// `faceId`.
+    /// Simulated hardware of a caller's own: `key`, always in, whose first
+    /// `failingReads` reads fail, and a clock and a keystore of its own,
+    /// answering as `faceId`.
     struct OwnHardware {
         let platform: Platform
         let keys: SimulatedKeyConnector
@@ -38,8 +38,8 @@ struct FixtureSession {
         let keystore: SimKeystore
 
         @MainActor
-        init(connect: @escaping @Sendable () throws -> CardConnection, faceId: SimFaceId = .match) {
-            keys = SimulatedKeyConnector(connect: connect)
+        init(key: SimulatedKey, failingReads: Int = 0, faceId: SimFaceId = .match) {
+            keys = SimulatedKeyConnector(key: key, attachFailures: failingReads)
             clock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000))
             keystore = SimKeystore()
             keystore.setFaceId(answer: faceId)

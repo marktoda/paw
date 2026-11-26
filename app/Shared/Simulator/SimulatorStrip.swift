@@ -23,7 +23,7 @@ extension View {
     }
 }
 
-/// The key sheet's stand-ins for the key, by its stage.
+/// The key sheet's stand-ins for the key its driver reads, by its stage.
 struct SimulatedKeyControls: ViewModifier {
     let driver: KeyTaskDriver
 
@@ -32,23 +32,24 @@ struct SimulatedKeyControls: ViewModifier {
     }
 
     private var actions: [SimulatorAction] {
+        guard let keys = driver.reader?.simulated else { return [] }
         switch driver.stage {
         case .touch:
             return [
                 SimulatorAction(title: "touch the key", identifier: "simulated-touch") {
-                    SimulatedKeyHolder.shared.key.touch()
+                    keys.key.touch()
                 },
                 SimulatorAction(title: "time out the touch", identifier: "simulated-touch-timeout") {
-                    SimulatedKeyHolder.shared.key.timeOutTouch()
+                    keys.key.timeOutTouch()
                 },
             ]
         case .plugIn:
             return [SimulatorAction(title: "plug in the key", identifier: "simulated-plug-in") {
-                SimulatedKeyHolder.shared.plugIn()
+                keys.plugIn()
             }]
         case .failed where driver.readProblem != nil:
             return [SimulatorAction(title: "let the key answer again", identifier: "simulated-key-answers") {
-                SimulatedKeyHolder.shared.stopAttachFailures()
+                keys.stopAttachFailures()
             }]
         default:
             return []

@@ -16,31 +16,22 @@ final class Fixture {
     static let githubPassword = "tidal-Quartz-88-ferns"
 
     let key: SimulatedKey
-    /// The key as the platform has it, for "finish the next open after
-    /// Cancel".
+    /// The key as the platform has it: "finish the next open after
+    /// Cancel", and "let the key answer" after reads that failed.
     let keys: SimulatedKeyConnector
     let clock: SimClock
     let keystore: SimKeystore
-    /// Reads of the key that fail before one answers.
-    let reads: FailingReads
     let model: AppModel
     let touchRequired: Bool
 
     init(touch: Bool = false, failingReads: Int = 0, writable: Bool = false) throws {
         let key = SimulatedKey(pin: Self.pin, touchRequired: touch, touchTimeoutMs: 15_000)
-        let reads = FailingReads(failingReads)
-        let hardware = FixtureSession.OwnHardware(connect: {
-            if reads.take() {
-                throw ConnectionError.Failed(message: "The key didn't answer while it was being read.")
-            }
-            return key.asConnection()
-        })
+        let hardware = FixtureSession.OwnHardware(key: key, failingReads: failingReads)
         let fixture = try FixtureSession(on: hardware.platform, writable: writable)
         self.key = key
         keys = hardware.keys
         clock = hardware.clock
         keystore = hardware.keystore
-        self.reads = reads
         model = AppModel(session: fixture.session)
         touchRequired = touch
     }
@@ -121,31 +112,6 @@ final class Fixture {
     /// it knows who can open the folder. Needs a `writable` fixture.
     func add(_ name: String, folder: String) async throws {
         try await FixtureSession.add(name, folder: folder, in: model)
-    }
-}
-
-/// The first `count` reads of the key fail, as `-pawSimAttachFails` has it
-/// for the UI tests, until `stop`.
-final class FailingReads: @unchecked Sendable {
-    private let lock = NSLock()
-    private var left: Int
-
-    init(_ count: Int) {
-        left = count
-    }
-
-    func take() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard left > 0 else { return false }
-        left -= 1
-        return true
-    }
-
-    func stop() {
-        lock.lock()
-        left = 0
-        lock.unlock()
     }
 }
 

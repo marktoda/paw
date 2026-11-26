@@ -41,14 +41,14 @@ final class SimulatedHostHolder: @unchecked Sendable {
 
     private init() {
         do {
-            let host = try SimRemote.start(key: SimulatedKeyHolder.shared.key)
+            let host = try SimRemote.start(key: SimulatedKeyConnector.launched.key)
             switch SetupLaunch.remoteMode {
             case "refuseKey": host.setRefuseKey(refuse: true)
             case "dropMidClone": host.setDropMidClone(drop: true)
             case "repositoryNotFound": host.setRepositoryNotFound(notFound: true)
             default: break
             }
-            SimRemoteHandle.shared.register(host, key: SimulatedKeyHolder.shared.key)
+            SimRemoteHandle.shared.register(host, key: SimulatedKeyConnector.launched.key)
             problem = nil
         } catch {
             problem = describe(error)
