@@ -359,6 +359,9 @@ impl SetupFlow {
         self.go(Step::NeedPin).map(drop)
     }
 
+    /// 0 for a store that cannot be read: the count is only shown, and the
+    /// step after it (the key check, or opening the store) says what is
+    /// wrong.
     fn entry_count(&self) -> u32 {
         PassStore::open(self.repo_dir().to_string_lossy().into_owned())
             .map(|store| store.entry_count())
