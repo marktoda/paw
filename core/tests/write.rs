@@ -25,9 +25,8 @@ use paw_core::sync::queue;
 use paw_core::write::{
     DraftField, EntryDraft, FolderRecipients, KeySource, Keyring, LineStatus, WriteError, WriteStore,
 };
-use pgp::composed::{KeyType, SecretKeyParamsBuilder, SignedPublicKey, SignedPublicSubKey};
-use pgp::packet::{KeyFlags, PubKeyInner, PublicKey, PublicSubkey};
-use pgp::types::{KeyDetails, Password};
+use pgp::packet::PublicKey;
+use pgp::types::KeyDetails;
 use key_common::{PIN, decrypt_text};
 use support::{git, move_entry};
 
@@ -156,38 +155,6 @@ fn open(s: &Store, entry: &str) -> EntryDraft {
     EntryDraft::edit(entry, doc, content_id(&s.file(entry)))
 }
 
-/// A certificate for the simulated card: a fresh primary key that binds the
-/// card's decryption key as its encryption subkey, as the owner's real key
-/// does. Returns it and its primary fingerprint.
-fn card_certificate() -> (SignedPublicKey, String) {
-    let mut rng = rand::thread_rng();
-    let primary = SecretKeyParamsBuilder::default()
-        .key_type(KeyType::Ed25519Legacy)
-        .can_certify(true)
-        .can_sign(true)
-        .primary_user_id("Simulated Card <card@example.com>".into())
-        .build()
-        .unwrap()
-        .generate(&mut rng)
-        .unwrap();
-    let mut certificate = primary.to_public_key();
-    let on_card = card_key();
-    let subkey = PublicSubkey::from_inner(
-        PubKeyInner::new(on_card.version(), on_card.algorithm(), on_card.created_at(), None, on_card.public_params().clone())
-            .unwrap(),
-    )
-    .unwrap();
-    let mut flags = KeyFlags::default();
-    flags.set_encrypt_comms(true);
-    flags.set_encrypt_storage(true);
-    let binding = subkey
-        .sign(&mut rng, &primary.primary_key, &certificate.primary_key, &Password::empty(), flags, None)
-        .unwrap();
-    certificate.public_subkeys.push(SignedPublicSubKey::new(subkey, vec![binding]));
-    let fpr = hex(certificate.primary_key.fingerprint().as_bytes());
-    (certificate, fpr)
-}
-
 /// Every file under `dir`, with its path.
 fn all_files(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     let mut found = Vec::new();
@@ -250,7 +217,8 @@ fn saving_is_refused_naming_every_recipient_without_a_key() {
 
 #[test]
 fn a_gpg_id_naming_the_primary_key_needs_the_setup_binding_for_the_card() {
-    let (_certificate, primary) = card_certificate();
+    // The primary key of the certificate the card's key is a subkey of.
+    let primary = "0123456789ABCDEF0123456789ABCDEF01234567".to_owned();
     let s = store_with(&format!("{primary}\n"), &[]);
 
     // The card exposes only its encryption subkey; nothing on the phone
@@ -289,50 +257,6 @@ fn a_binding_must_name_a_pinned_key_and_the_card_binding_needs_one_open_line() {
         s.write().save(&new_entry("", "x", "pw")).unwrap_err(),
         WriteError::MissingRecipients { missing, .. } if missing == ["BBBB2222"]
     ));
-}
-
-#[test]
-fn a_certificate_binds_lines_by_fingerprint_key_id_or_email() {
-    let (certificate, primary) = card_certificate();
-    let info = paw_core::write::cert::evaluate(&certificate, u32::MAX / 2).unwrap();
-    let subkey = card().fingerprint_hex();
-    assert_eq!(info.encryption.as_ref().unwrap().fingerprint, subkey);
-    assert_eq!(info.emails, ["card@example.com"]);
-
-    for line in [
-        primary.clone(),
-        primary.to_lowercase(),
-        format!("0x{}", &primary[24..]),
-        subkey.clone(),
-        format!("{}!", &subkey[24..]),
-        "card@example.com".into(),
-        "<Card@Example.com>".into(),
-        "Simulated Card <card@example.com>".into(),
-    ] {
-        assert!(paw_core::write::keyring::certificate_named_by(&info, &line), "{line}");
-    }
-    for line in [&primary[32..], "card@example", "Simulated Card", "other@example.com"] {
-        assert!(!paw_core::write::keyring::certificate_named_by(&info, line), "{line}");
-    }
-}
-
-#[test]
-fn two_pinned_keys_matching_one_line_are_ambiguous_until_bound() {
-    let s = store_with("card@example.com\n", &[]);
-    let mut keyring = s.keyring();
-    let (one, _) = card_certificate();
-    keyring.pin_certificate(&keyring.lock().exclusive().unwrap(), &paw_core::write::cert::evaluate(&one, 2_000_000_000).unwrap()).unwrap();
-    // A second key for the same address: any key the simulated fixture has.
-    let other = paw_core::sim::fixture::other_key().unwrap();
-    let other_fpr = hex(other.fingerprint().as_bytes());
-    let mut info = paw_core::write::cert::evaluate(&one, 2_000_000_000).unwrap();
-    info.encryption.as_mut().unwrap().fingerprint = other_fpr.clone();
-    info.encryption.as_mut().unwrap().key = other;
-    keyring.pin_certificate(&keyring.lock().exclusive().unwrap(), &info).unwrap();
-
-    assert!(matches!(keyring.line_status("card@example.com", 0), LineStatus::Ambiguous { fingerprints } if fingerprints.len() == 2));
-    keyring.bind(&keyring.lock().exclusive().unwrap(), "card@example.com", &other_fpr).unwrap();
-    assert!(matches!(keyring.line_status("card@example.com", 0), LineStatus::Ready { fingerprint, bound: true, .. } if fingerprint == other_fpr));
 }
 
 #[test]
@@ -428,82 +352,6 @@ fn nothing_is_saved_before_setup_accepts_who_can_open_the_store() {
 
     s.keyring().accept_all_recipients_at_setup(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo).unwrap();
     s.write().save(&new_entry("Work", "a", "pw")).unwrap();
-}
-
-#[test]
-fn a_subkey_the_primary_key_does_not_vouch_for_satisfies_no_line() {
-    let mut rng = rand::thread_rng();
-    let (mut certificate, primary_fpr) = card_certificate();
-    let mut key = |name: &str| {
-        SecretKeyParamsBuilder::default()
-            .key_type(KeyType::Ed25519Legacy)
-            .can_certify(true)
-            .primary_user_id(format!("{name} <{}@example.com>", name.to_lowercase()))
-            .build()
-            .unwrap()
-            .generate(&mut rng)
-            .unwrap()
-    };
-    let stranger = key("Mallory");
-    let loose = key("Loose").to_public_key();
-    let stranger_public = stranger.to_public_key();
-    let foreign = |key: &PublicKey| {
-        PublicSubkey::from_inner(
-            PubKeyInner::new(key.version(), key.algorithm(), key.created_at(), None, key.public_params().clone()).unwrap(),
-        )
-        .unwrap()
-    };
-    let mut flags = KeyFlags::default();
-    flags.set_encrypt_comms(true);
-    flags.set_encrypt_storage(true);
-    // One subkey bound by someone else's primary key, one with no binding.
-    let forged = foreign(&stranger_public.primary_key);
-    let forged_binding = forged
-        .sign(&mut rng, &stranger.primary_key, &stranger_public.primary_key, &Password::empty(), flags, None)
-        .unwrap();
-    let forged_fpr = hex(forged.fingerprint().as_bytes());
-    certificate.public_subkeys.push(SignedPublicSubKey { key: forged, signatures: vec![forged_binding] });
-    let unbound = foreign(&loose.primary_key);
-    let unbound_fpr = hex(unbound.fingerprint().as_bytes());
-    certificate.public_subkeys.push(SignedPublicSubKey { key: unbound, signatures: Vec::new() });
-
-    let info = paw_core::write::cert::evaluate(&certificate, 2_000_000_000).unwrap();
-    assert_eq!(info.fingerprints, [primary_fpr.clone(), card().fingerprint_hex()]);
-    let s = store_with(&format!("{forged_fpr}\n{}\n", &unbound_fpr[24..]), &[]);
-    std::fs::remove_file(s.state.join(paw_core::files::layout::RECIPIENTS)).unwrap();
-    let mut keyring = s.keyring();
-    keyring.pin_certificate(&keyring.lock().exclusive().unwrap(), &info).unwrap();
-    keyring.accept_all_recipients_at_setup(&keyring.lock().exclusive().unwrap(), &s.repo).unwrap();
-
-    for line in [forged_fpr.as_str(), &unbound_fpr[24..]] {
-        assert!(
-            matches!(keyring.line_status(line, 0), LineStatus::Refused { reason, .. } if reason.contains("does not vouch")),
-            "{line}"
-        );
-    }
-    let error = s.write().save(&new_entry("", "a", "pw")).unwrap_err();
-    assert!(
-        matches!(&error, WriteError::MissingRecipients { missing, .. }
-            if missing.len() == 2 && missing.iter().all(|m| m.contains("does not vouch"))),
-        "{error:?}"
-    );
-}
-
-#[test]
-fn a_key_that_has_expired_since_it_was_pinned_is_not_used() {
-    let s = store_with("card@example.com\n", &[]);
-    let (certificate, _) = card_certificate();
-    let mut info = paw_core::write::cert::evaluate(&certificate, 2_000_000_000).unwrap();
-    info.encryption.as_mut().unwrap().expires = Some(1_000);
-    let mut keyring = s.keyring();
-    keyring.pin_certificate(&keyring.lock().exclusive().unwrap(), &info).unwrap();
-
-    assert!(matches!(keyring.line_status("card@example.com", 999), LineStatus::Ready { .. }));
-    assert!(matches!(keyring.line_status("card@example.com", 1_000), LineStatus::Expired { .. }));
-    assert!(matches!(
-        keyring.resolve(&s.repo, "", 5_000).unwrap_err(),
-        WriteError::MissingRecipients { missing, .. } if missing == ["card@example.com (its key has expired)"]
-    ));
 }
 
 // --- add -------------------------------------------------------------------
@@ -709,20 +557,13 @@ fn a_rename_onto_a_taken_name_is_refused() {
 }
 
 /// A store whose `Shared` folder is also encrypted for the fixture's other
-/// key, pinned here as an imported certificate would be.
+/// key, pinned here too.
 fn store_with_shared_folder() -> (Store, String) {
     let s = store();
     let other = paw_core::sim::fixture::other_key().unwrap();
     let other_fpr = hex(other.fingerprint().as_bytes());
     s.desktop("Shared/.gpg-id", format!("{}\n{other_fpr}\n", card().fingerprint_hex()).as_bytes());
-    let (certificate, _) = card_certificate();
-    let mut info = paw_core::write::cert::evaluate(&certificate, 2_000_000_000).unwrap();
-    info.encryption.as_mut().unwrap().fingerprint = other_fpr.clone();
-    info.encryption.as_mut().unwrap().key = other;
-    info.primary = other_fpr.clone();
-    info.fingerprints = vec![other_fpr.clone()];
-    info.emails.clear();
-    s.keyring().pin_certificate(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &info).unwrap();
+    s.keyring().pin_card_key(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &other).unwrap();
     // The folder arrived after setup: the person has seen and accepted it.
     s.keyring().accept_recipients(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, "Shared").unwrap();
     (s, other_fpr)

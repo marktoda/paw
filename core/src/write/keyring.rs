@@ -3,9 +3,10 @@
 //! `.gpg-id` names recipients by fingerprint, key ID or e-mail address,
 //! but encrypting needs their public keys, and the repository is not a
 //! trusted place to get them from. So the keys live here, in the store's
-//! state directory (not in the git repository), and only get here two
-//! ways: the card's own decryption key, pinned at setup, and certificates
-//! the person imports (see [`super::cert`] for what is checked).
+//! state directory (not in the git repository). The only way in is the
+//! card's own decryption key, pinned at setup; the file also has room for
+//! keys taken from a certificate (`certificate` keys, with their primary
+//! key, user IDs, expiry and refused subkeys), which nothing adds yet.
 //!
 //! A `.gpg-id` line is satisfied by:
 //! 1. a binding: an explicit record that this line means this pinned key.
@@ -50,11 +51,9 @@ use pgp::packet::{Packet, PacketParser, PacketTrait, PublicKey};
 use sha2::{Digest, Sha256};
 
 use super::WriteError;
-use super::cert::{CertificateInfo, email_in, fingerprint_of};
-use crate::recipients::{hex, key_id};
+use crate::recipients::{fingerprint_of, hex, key_id};
 use crate::path::{folder_and_parents, folder_of, folder_of_gpg_id, gpg_id_in, governing};
 use crate::store::gpg_id::{governing_gpg_id, key_digits, parse_gpg_id};
-use crate::store::read::read_file;
 use crate::files::{MAX_FILE_BYTES, read_bounded, write_atomic};
 use crate::lock::{Exclusive, StoreLock};
 
@@ -151,26 +150,23 @@ fn spec(line: &str) -> Spec {
     Spec::Other
 }
 
-impl PinnedKey {
-    /// The key paw would pin for the certificate `info`: its chosen
-    /// encryption key.
-    fn of_certificate(info: &CertificateInfo) -> Result<Self, WriteError> {
-        let choice = info.encryption.as_ref().map_err(|why| WriteError::NoEncryptionKey {
-            fingerprint: info.primary.clone(),
-            reason: why.clone(),
-        })?;
-        Ok(Self {
-            fingerprint: choice.fingerprint.clone(),
-            source: KeySource::Certificate,
-            primary: Some(info.primary.clone()),
-            fingerprints: info.fingerprints.clone(),
-            refused: info.others.clone(),
-            emails: info.emails.clone(),
-            expires: choice.expires,
-            key: choice.key.clone(),
-        })
-    }
+/// The e-mail address in a user ID or a `.gpg-id` line: inside `<...>` if
+/// there is such a part, else the whole text if it looks like an address.
+/// Lower case.
+fn email_in(user_id: &str) -> Option<String> {
+    let candidate = match (user_id.rfind('<'), user_id.rfind('>')) {
+        (Some(open), Some(close)) if open < close => &user_id[open + 1..close],
+        _ => user_id,
+    };
+    let candidate = candidate.trim();
+    let plausible = candidate.split('@').count() == 2
+        && !candidate.starts_with('@')
+        && !candidate.ends_with('@')
+        && !candidate.chars().any(|c| c.is_whitespace() || c.is_control() || c == ',' || c == '<' || c == '>');
+    plausible.then(|| candidate.to_lowercase())
+}
 
+impl PinnedKey {
     fn all_fingerprints(&self) -> impl Iterator<Item = &str> {
         std::iter::once(self.fingerprint.as_str()).chain(self.fingerprints.iter().map(String::as_str))
     }
@@ -277,57 +273,6 @@ fn all_gpg_ids(root: &Path) -> Result<Vec<(String, Vec<u8>)>, WriteError> {
 /// hidden folders, e.g. `.gpg-id` and `archive/.gpg-id`.
 pub(crate) fn gpg_id_paths(root: &Path) -> Result<Vec<String>, WriteError> {
     Ok(all_gpg_ids(root)?.into_iter().map(|(path, _)| path).collect())
-}
-
-/// Every key line of every `.gpg-id` committed in the store at `root`, as
-/// it is in the working copy: sorted, each once. A store with nothing
-/// committed yet has none; a `.gpg-id` that can't be read is an error, as
-/// in [`crate::store::gpg_id::recipients_for`].
-fn all_gpg_id_lines(root: &Path) -> Result<Vec<String>, WriteError> {
-    let unborn = git2::Repository::open(root).and_then(|repo| repo.head().map(drop));
-    if unborn.is_err_and(|e| e.code() == git2::ErrorCode::UnbornBranch) {
-        return Ok(Vec::new());
-    }
-    let mut lines = Vec::new();
-    for path in gpg_id_paths(root)? {
-        let Some(bytes) = read_file(root, &path)? else { continue };
-        let text = String::from_utf8(bytes).map_err(|_| crate::PawError::Store(format!("{path} is not a text file")))?;
-        lines.extend(parse_gpg_id(&text));
-    }
-    lines.sort();
-    lines.dedup();
-    Ok(lines)
-}
-
-/// A public certificate, as the import screen shows it.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct CertificateSummary {
-    pub primary_fingerprint: String,
-    pub user_ids: Vec<String>,
-    /// The key paw would encrypt to; `None` if there is none usable.
-    pub encryption_fingerprint: Option<String>,
-    /// When that key expires, seconds since 1970.
-    pub expires: Option<i64>,
-    /// Why there is no usable key.
-    pub problem: Option<String>,
-    /// The `.gpg-id` lines of this store it satisfies.
-    pub satisfies: Vec<String>,
-}
-
-/// How each certificate in `infos` stands with the store at `root`.
-pub fn certificate_summaries(root: &Path, infos: &[CertificateInfo]) -> Result<Vec<CertificateSummary>, WriteError> {
-    let lines = all_gpg_id_lines(root)?;
-    Ok(infos
-        .iter()
-        .map(|info| CertificateSummary {
-            primary_fingerprint: info.primary.clone(),
-            user_ids: info.user_ids.clone(),
-            encryption_fingerprint: info.encryption.as_ref().ok().map(|c| c.fingerprint.clone()),
-            expires: info.encryption.as_ref().ok().and_then(|c| c.expires).map(i64::from),
-            problem: info.encryption.as_ref().err().cloned(),
-            satisfies: lines.iter().filter(|line| certificate_named_by(info, line)).cloned().collect(),
-        })
-        .collect())
 }
 
 /// The pinned keys, bindings and `.gpg-id` pins of one store.
@@ -516,11 +461,6 @@ impl Keyring {
             expires: None,
             key: key.clone(),
         })
-    }
-
-    /// Pins the encryption key chosen from an imported certificate.
-    pub fn pin_certificate(&mut self, held: &Exclusive, info: &CertificateInfo) -> Result<String, WriteError> {
-        self.pin(held, PinnedKey::of_certificate(info)?)
     }
 
     /// Records that the `.gpg-id` line `line` is satisfied by the pinned key
@@ -763,47 +703,5 @@ impl Keyring {
             }
             _ => Err(WriteError::MissingRecipients { gpg_id: recipients.gpg_id, missing: open }),
         }
-    }
-}
-
-/// Whether `line` names the certificate `info` by itself (its primary or
-/// chosen encryption key's fingerprint or long key ID, or an e-mail
-/// address), as it would once pinned.
-pub fn certificate_named_by(info: &CertificateInfo, line: &str) -> bool {
-    PinnedKey::of_certificate(info).is_ok_and(|key| key.named_by(line))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::all_gpg_id_lines;
-
-    fn commit(repo: &git2::Repository, files: &[(&str, &str)]) {
-        let mut index = repo.index().unwrap();
-        for (path, text) in files {
-            let file = repo.workdir().unwrap().join(path);
-            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-            std::fs::write(&file, text).unwrap();
-            index.add_path(std::path::Path::new(path)).unwrap();
-        }
-        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
-        let who = git2::Signature::now("t", "t@example.com").unwrap();
-        repo.commit(Some("HEAD"), &who, &who, "files", &tree, &[]).unwrap();
-    }
-
-    #[test]
-    fn a_store_with_nothing_committed_has_no_lines() {
-        let dir = tempfile::tempdir().unwrap();
-        git2::Repository::init(dir.path()).unwrap();
-        assert!(all_gpg_id_lines(dir.path()).unwrap().is_empty());
-    }
-
-    #[test]
-    fn a_gpg_id_that_cannot_be_read_is_an_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let repo = git2::Repository::init(dir.path()).unwrap();
-        commit(&repo, &[(".gpg-id", "AAAA1111\n"), ("work/.gpg-id", "BBBB2222\n")]);
-        std::fs::remove_file(dir.path().join("work/.gpg-id")).unwrap();
-        std::os::unix::fs::symlink("../.gpg-id", dir.path().join("work/.gpg-id")).unwrap();
-        assert!(all_gpg_id_lines(dir.path()).is_err());
     }
 }

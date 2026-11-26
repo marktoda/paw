@@ -13,7 +13,6 @@
 //!
 //! [`EntryDoc`]: crate::entry::EntryDoc
 
-pub mod cert;
 pub mod draft;
 pub mod held_back;
 pub mod keyring;
@@ -57,12 +56,6 @@ pub enum WriteError {
     /// would lose that change.
     #[error("{entry} changed since you opened it; open it again to edit it")]
     ChangedSinceOpened { entry: String },
-    /// A certificate could not be read or used.
-    #[error("{message}")]
-    Certificate { message: String },
-    /// The certificate has no key that may encrypt now.
-    #[error("the key {fingerprint} can't be used to encrypt: {reason}")]
-    NoEncryptionKey { fingerprint: String, reason: String },
     /// A binding names a key that is not pinned.
     #[error("there is no saved key {fingerprint}")]
     NotPinned { fingerprint: String },

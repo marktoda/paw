@@ -741,7 +741,7 @@ impl SetupFlow {
         // The key about to be trusted for every future save must be the very
         // key whose fingerprint the card reported, not merely one handed in
         // alongside it.
-        if !crate::write::cert::fingerprint_of(card_key)
+        if !crate::recipients::fingerprint_of(card_key)
             .eq_ignore_ascii_case(&summary.decryption_fingerprint)
         {
             return Err(SetupError::UnusableKey { reason: UnusableKeyReason::CardKeyMismatch });
