@@ -75,7 +75,7 @@ extension AppModel {
             try edits.undoLast()
             toast = "\(offer.entryName) is back."
         } catch {
-            edits.queueProblem = describeEditError(error)
+            edits.queueProblem = describe(error)
         }
     }
 
@@ -100,7 +100,7 @@ extension AppModel {
             try change(edits)
             edits.queueProblem = nil
         } catch {
-            edits.queueProblem = describeEditError(error)
+            edits.queueProblem = describe(error)
         }
     }
 

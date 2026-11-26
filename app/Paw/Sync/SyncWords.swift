@@ -49,9 +49,11 @@ struct SyncFailure: Equatable {
         }
     }
 
-    /// Sentences in a row, leaving out the empty ones.
-    static func sentences(_ parts: String...) -> String {
-        parts.filter { !$0.isEmpty }.joined(separator: " ")
+    /// The remote holds names paw won't check out.
+    static let refusedRemoteProblem = "Your store has names paw can't download"
+
+    static func refusedRemoteNextStep(unpushed: Int) -> String {
+        sentences("Rename them on a computer.", waiting(unpushed))
     }
 
     static func cancelled(during kind: SyncKind, unpushed: Int) -> SyncFailure {
@@ -80,7 +82,7 @@ extension SyncFailure {
         case .Network(let message):
             self.kind = .offline
             problem = "Can't reach \(host)"
-            nextStep = Self.sentences("Check your connection.", waiting)
+            nextStep = sentences("Check your connection.", waiting)
             details = [message]
             pill = "Offline"
         case .HostKeyChanged(let host, let expected, let presented):
@@ -93,12 +95,12 @@ extension SyncFailure {
         case .KeyRejected:
             self.kind = .keyNotAccepted
             problem = "\(host) didn't accept this key"
-            nextStep = Self.sentences("Check its SSH key is on your account there.", waiting)
+            nextStep = sentences("Check its SSH key is on your account there.", waiting)
             pill = "\(notDone) \u{00B7} key not accepted"
         case .RemoteKeptMoving:
             self.kind = .remoteKeptMoving
             problem = "The store kept changing while paw was sending"
-            nextStep = Self.sentences("Try again in a moment.", waiting)
+            nextStep = sentences("Try again in a moment.", waiting)
             pill = "\(notDone) \u{00B7} try again"
         case .NotPawHistory(let commit, let reason):
             self.kind = .other
@@ -114,19 +116,19 @@ extension SyncFailure {
             pill = "Sync stopped"
         case .RefusedRemote:
             self.kind = .refusedRemote
-            problem = "Your store has names paw can't download"
-            nextStep = Self.sentences("Rename them on a computer.", waiting)
+            problem = Self.refusedRemoteProblem
+            nextStep = Self.refusedRemoteNextStep(unpushed: unpushed)
             pill = "Sync paused \u{00B7} Review"
         case .PushRefused(let message):
             self.kind = .pushRefused
             problem = "\(host) refused your changes"
-            nextStep = Self.sentences(waiting, "Details say why.")
+            nextStep = sentences(waiting, "Details say why.")
             details = [message]
             pill = "Not sent \u{00B7} refused"
         case .RepositoryMissing(let message):
             self.kind = .repositoryGone
             problem = "\(host) can't find your store"
-            nextStep = Self.sentences("It may have been renamed, deleted or made private.", waiting)
+            nextStep = sentences("It may have been renamed, deleted or made private.", waiting)
             details = [message]
             pill = "\(notDone) \u{00B7} store not found"
         case .Cancelled:
@@ -138,13 +140,19 @@ extension SyncFailure {
         case .StoreBusy:
             self.kind = .other
             problem = Self.couldNot(kind)
-            nextStep = Self.sentences("Try again.", waiting)
+            nextStep = sentences("Try again.", waiting)
             details = [storeBusyText]
+            pill = notDone
+        case .HostKeyBundled(let bundled):
+            self.kind = .other
+            problem = Self.couldNot(kind)
+            nextStep = sentences("Try again.", waiting)
+            details = [hostKeyBundled(bundled)]
             pill = notDone
         case .Failed(let message):
             self.kind = .other
             problem = Self.couldNot(kind)
-            nextStep = Self.sentences("Try again.", waiting)
+            nextStep = sentences("Try again.", waiting)
             details = [message]
             pill = notDone
         }
@@ -168,29 +176,26 @@ extension SyncFailure {
         }
     }
 
-    /// Whether that step asks for the key (the disc on the button).
+    /// Whether that step asks for the key (the disc on the button): Try
+    /// again does.
     var actionNeedsKey: Bool {
-        actionTitle == "Try again"
+        switch kind {
+        case .hostKeyChanged, .refusedRemote, .cancelled: false
+        default: true
+        }
     }
 }
 
-/// How the key sheet words a key failure during a sync: the shared words
-/// (`KeyErrorWords`), and that the waiting changes are still here.
-func syncKeyWords(_ error: KeyError, during kind: SyncKind, unpushed: Int) -> KeyErrorWords {
+/// What the key sheet's words name during a sync: the store, and that the
+/// waiting changes are still here when the key stops.
+func syncKeyWords(during kind: SyncKind, unpushed: Int) -> KeyErrorWords.Context {
     let purpose: KeyErrorWords.Purpose = switch kind {
     case .send: .send
     case .refresh: .check
     case .reencrypt: .open
     }
-    let words = KeyErrorWords(error, entry: "your store", purpose: purpose)
-    switch error {
-    case .TouchTimeout, .KeyRemoved:
-        return KeyErrorWords(
-            problem: words.problem,
-            nextStep: SyncFailure.sentences(words.nextStep, kind == .refresh ? "" : SyncFailure.waiting(unpushed)))
-    default:
-        return words
-    }
+    return KeyErrorWords.Context(
+        entry: "your store", purpose: purpose, waiting: kind == .refresh ? "" : SyncFailure.waiting(unpushed))
 }
 
 /// Why a held-back change can't be re-encrypted, in a few words; `nil`
@@ -212,7 +217,39 @@ func reencryptWords(_ reason: LeftReason) -> String? {
 
 /// "Re-encrypt 3 changes", the button and the key sheet's title.
 func reencryptTitle(_ count: Int) -> String {
-    count == 1 ? "Re-encrypt 1 change" : "Re-encrypt \(count) changes"
+    "Re-encrypt \(changeCount(count))"
+}
+
+extension BackgroundRun.Outcome {
+    /// How the last background check went, as the status page says it.
+    var words: String {
+        let words = switch self {
+        case .locked: "iPhone was locked"
+        case .noStore: "No store yet"
+        case .notSignedIn: "Not signed in to GitHub"
+        case .notLinked: "No store chosen"
+        case .upToDate: "Up to date"
+        case .broughtIn: "Brought in changes"
+        case .paused: "Paused"
+        case .signedOut: "GitHub sign-in ended"
+        case .offline: "Couldn't reach GitHub"
+        case .outOfTime: "Ran out of time"
+        case .busy: "Store was busy"
+        case .failed: "Failed"
+        }
+        return Device.words(words)
+    }
+}
+
+extension SyncKind {
+    /// "Sending 2 changes…", "Checking for changes…", "Re-encrypting…".
+    func working(unpushed: Int) -> String {
+        switch self {
+        case .send: "Sending \(changeCount(unpushed))\u{2026}"
+        case .refresh: "Checking for changes\u{2026}"
+        case .reencrypt: "Re-encrypting\u{2026}"
+        }
+    }
 }
 
 /// "just now", "2 min ago", "at 14:02", "on Mon", "on 3 Nov".

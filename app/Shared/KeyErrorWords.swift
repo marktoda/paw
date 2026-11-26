@@ -1,9 +1,10 @@
 import Foundation
 
-/// What the key sheet says about a `KeyError`: what happened, then what to
-/// do next. Every case is worded here and nowhere else (design.md 2.3 and
-/// 2.11). `entry` is the name of the entry being opened; `purpose` says
-/// what the key was for, so "nothing was opened" fits a download too.
+/// What the key sheet says about a `KeyError`, and about a key that could
+/// not be read: what happened, then what to do next. Every workflow that
+/// uses the key (opening, AutoFill, setup, sync, the touch check) words
+/// them here (design.md 2.3 and 2.11); what differs between workflows is a
+/// `Context` value, never a sentence of its own.
 struct KeyErrorWords: Equatable {
     /// What the key was being used for.
     enum Purpose {
@@ -20,6 +21,24 @@ struct KeyErrorWords: Equatable {
         }
     }
 
+    /// What changes the words between workflows.
+    struct Context: Equatable {
+        /// What the key was opening: an entry's name, "your store".
+        var entry: String
+        var purpose: Purpose = .open
+        /// Said after the key stopped (unplugged, not touched) when work is
+        /// still waiting, such as a sync's unsent changes; "" for none.
+        var waiting: String = ""
+
+        /// `error` in this workflow's words; `pinAskedAgain` when the PIN
+        /// stage is shown again because of it.
+        func words(_ error: KeyError, pinAskedAgain: Bool = false) -> KeyErrorWords {
+            pinAskedAgain
+                ? KeyErrorWords(pinAskedAgain: error, entry: entry, purpose: purpose, waiting: waiting)
+                : KeyErrorWords(error, entry: entry, purpose: purpose, waiting: waiting)
+        }
+    }
+
     let problem: String
     let nextStep: String
 
@@ -32,15 +51,15 @@ struct KeyErrorWords: Equatable {
     /// (any but a wrong PIN, which has its own stage). `PinForgotten` there
     /// means the key lost the PIN's verification during the task: paw
     /// dropped the PIN without trying it again, so no try was used.
-    init(pinAskedAgain error: KeyError, entry: String, purpose: Purpose = .open) {
+    init(pinAskedAgain error: KeyError, entry: String, purpose: Purpose = .open, waiting: String = "") {
         if case .PinForgotten = error {
             self.init(problem: "Your key asked for its PIN again", nextStep: "Enter it again; no try was used.")
         } else {
-            self.init(error, entry: entry, purpose: purpose)
+            self.init(error, entry: entry, purpose: purpose, waiting: waiting)
         }
     }
 
-    init(_ error: KeyError, entry: String, purpose: Purpose = .open) {
+    init(_ error: KeyError, entry: String, purpose: Purpose = .open, waiting: String = "") {
         switch error {
         case .WrongPin(let triesLeft):
             problem = "Wrong PIN"
@@ -62,18 +81,19 @@ struct KeyErrorWords: Equatable {
             nextStep = "Try again and enter it."
         case .TouchTimeout:
             problem = "Your key wasn't touched in time"
-            nextStep = "Try again and touch the gold part while it blinks."
+            nextStep = sentences("Try again and touch the gold part while it blinks.", waiting)
         case .KeyRemoved:
             problem = "Your key was unplugged"
-            nextStep = "Plug it back in and try again."
+            nextStep = sentences("Plug it back in and try again.", waiting)
         case .NotForThisKey(let recipients):
             problem = "This key can't open \(entry)"
             nextStep = recipients.count == 1
                 ? "It's encrypted for another key. Open it on a computer that has that key."
                 : "It's encrypted for other keys. Open it on a computer that has one of them."
-        case .DifferentKey:
-            problem = "This key can't open \(entry)"
-            nextStep = "It's encrypted for another key. Open it on a computer that has that key."
+        case .DifferentKey(let mismatch):
+            problem = "This isn't the key this store was set up with"
+            nextStep = "This key: \(Self.spoken(mismatch.presented)). The store's key: \(Self.spoken(mismatch.enrolled)). "
+                + "Plug that one in and try again. No PIN try was used."
         case .NoDecryptionKey:
             problem = "This key has no decryption key"
             nextStep = "paw needs a key with an OpenPGP decryption key. Try another key."
@@ -96,5 +116,49 @@ struct KeyErrorWords: Equatable {
             problem = "Cancelled"
             nextStep = purpose.nothingHappened
         }
+    }
+
+    /// "paw couldn't read your key", then why and what to do: the Plug in
+    /// stage after a failed read, in every workflow.
+    init(_ problem: KeyReadProblem) {
+        let error: Error
+        switch problem {
+        case .unsupported:
+            self.init(
+                problem: "This iPhone can't use USB keys",
+                nextStep: "paw needs an iPhone with USB-C and smart card support.")
+            return
+        case .failed(let failure):
+            error = failure
+        }
+        let why: String
+        switch error as? KeyError {
+        case .KeyRemoved?:
+            why = "It stopped answering."
+        case .Reader(let detail)?:
+            why = "The key said: \(detail)."
+        case let error?:
+            why = KeyErrorWords(error, entry: "this password").problem + "."
+        case nil:
+            if case .Failed(let message)? = error as? ConnectionError {
+                why = message
+            } else {
+                why = describe(error)
+            }
+        }
+        self.init(problem: "paw couldn't read your key", nextStep: "\(why) Try again, or unplug the key and plug it back in.")
+    }
+
+    /// AutoFill's key sheet when the store was busy. The app's sheet says
+    /// it as `KeyError.StoreBusy` above.
+    static let storeBusyInAutoFill = KeyErrorWords(problem: "The store is busy", nextStep: "Try again in a moment.")
+
+    /// "serial 12 345 678, ending 2C11 41DE".
+    private static func spoken(_ key: KeyIdentity) -> String {
+        var words = "serial \(spokenSerial(key.ident))"
+        if let fingerprint = key.decryptionFingerprint {
+            words += ", ending \(fingerprintEnding(fingerprint))"
+        }
+        return words
     }
 }

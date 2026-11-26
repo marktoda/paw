@@ -385,22 +385,8 @@ final class AutoFillModel {
         if isStoreBusy(error) {
             return AutoFillNotice(problem: "The store is busy", nextStep: "Tap \(entry.name) again.")
         }
-        switch error as? PawError {
-        case .FaceIdCancelled?:
-            return AutoFillNotice(problem: Device.words("Face ID was cancelled"), nextStep: "Tap \(entry.name) to try again.",
-                                  keyEntry: entry)
-        case .FaceIdNotRecognised?:
-            return AutoFillNotice(problem: Device.words("Face ID didn't recognise you"), nextStep: "Tap \(entry.name) to try again.",
-                                  keyEntry: entry)
-        case .FaceIdLockedOut?:
-            return AutoFillNotice(problem: Device.words("Face ID is locked"),
-                                  nextStep: Device.words("Lock and unlock your iPhone, then try again."),
-                                  keyEntry: entry)
-        case .FaceIdChanged?:
-            return AutoFillNotice(problem: Device.words("Face ID changed on this iPhone"), nextStep: "", keyEntry: entry)
-        default:
-            return AutoFillNotice(problem: Device.words("Face ID") + " didn't open \(entry.name)", nextStep: "", keyEntry: entry)
-        }
+        let words = FaceIdWords.notice(error, entry: entry.name)
+        return AutoFillNotice(problem: words.problem, nextStep: words.nextStep, keyEntry: entry)
     }
 
     // MARK: The key
@@ -551,24 +537,12 @@ final class AutoFillModel {
 }
 
 extension AutoFillModel: KeyTaskOwner {
-    func keyWords(_ error: KeyError, pinAskedAgain: Bool) -> KeyErrorWords {
-        let name = keyEntry?.name ?? ""
-        return pinAskedAgain ? KeyErrorWords(pinAskedAgain: error, entry: name) : KeyErrorWords(error, entry: name)
+    var keyWords: KeyErrorWords.Context {
+        KeyErrorWords.Context(entry: keyEntry?.name ?? "")
     }
 
     func workingStage(_ progress: TaskProgress?) -> KeySheetStage {
         .working(message: "Opening \(keyEntry?.name ?? "")\u{2026}", progress: nil)
-    }
-
-    func attachWords(_ problem: KeyReadProblem) -> KeyErrorWords {
-        switch problem {
-        case .unsupported:
-            KeyErrorWords(
-                problem: "This iPhone can't use USB keys",
-                nextStep: "paw needs an iPhone with USB-C and smart card support.")
-        case .failed:
-            KeyErrorWords(problem: "paw couldn't read your key", nextStep: "Unplug it, plug it back in, then try again.")
-        }
     }
 
     func keyTaskEnded(_ end: KeyTaskEnd) -> KeySheetStage? {
@@ -588,10 +562,9 @@ extension AutoFillModel: KeyTaskOwner {
                 fill(opened, entry: entry)
             }
             return .done
-        case .failed(.DifferentKey):
-            return .failed(problem: "This isn't your store's key", nextStep: "Plug in the key you set paw up with.")
         case .failed(.StoreBusy):
-            return .failed(problem: "The store is busy", nextStep: "Try again in a moment.")
+            let words = KeyErrorWords.storeBusyInAutoFill
+            return .failed(problem: words.problem, nextStep: words.nextStep)
         // An open never syncs or sets up.
         case .cancelled, .syncFailed, .setupFailed:
             return nil

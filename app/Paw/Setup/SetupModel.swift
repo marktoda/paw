@@ -96,11 +96,6 @@ private struct SetupAttachFailure: Error {
     let error: Error
 }
 
-/// The key's PIN KDF is one paw cannot follow: refused before any PIN.
-private struct SetupUnsupportedPinKdf: Error {
-    let detail: String?
-}
-
 /// Drives the core's `Setup` for the setup screens. The core decides every
 /// step; this keeps what the screens need besides: which of a step's two
 /// screens is up, the problem to show, and the key sheet. The PIN goes
@@ -203,10 +198,10 @@ final class SetupModel {
         reader.unsupported
     }
 
-    /// Why the key in could not be read (its session not opened), for the
-    /// Plug in screen and its "Try again".
-    var attachProblem: String? {
-        reader.failure.map(Self.attachWords)
+    /// Why the key in could not be read (its session not opened), or that
+    /// this iPhone can't read one, for the Plug in screen.
+    var attachProblem: KeyErrorWords? {
+        reader.problem.map { KeyErrorWords($0) }
     }
 
     /// A key came in: on Plug in, reading it is the step; elsewhere (a
@@ -218,18 +213,6 @@ final class SetupModel {
         } else {
             reader.readIfNeeded()
         }
-    }
-
-    /// What went wrong opening the key's session, as a sentence or two.
-    private static func attachWords(_ error: Error) -> String {
-        if let error = error as? KeyError {
-            let words = KeyErrorWords(error, entry: "your store", purpose: .check)
-            return "\(words.problem). \(words.nextStep)"
-        }
-        if let error = error as? ConnectionError, case .Failed(let message) = error {
-            return sentence(message)
-        }
-        return describe(error)
     }
 
     /// "Try again" under the attach problem on Plug in.
@@ -333,20 +316,8 @@ final class SetupModel {
                 } catch {
                     throw SetupAttachFailure(error: error)
                 }
-                // Refused before any PIN: paw could not send this key its PIN.
-                let kdf = session.pinKdf()
-                guard kdf.supported else {
-                    throw SetupUnsupportedPinKdf(detail: kdf.detail)
-                }
                 let info = session.info()
-                do {
-                    return (try setup.readKeyFromSession(session: session), info.authenticationFingerprint)
-                } catch SetupError.UnusableKey {
-                    // Worded by what the key lacks, as the key sheet words it.
-                    if info.decryptionFingerprint == nil { throw KeyError.NoDecryptionKey }
-                    if info.authenticationFingerprint == nil { throw KeyError.NoAuthenticationKey }
-                    throw SetupError.UnusableKey(message: "it can't be used for setup")
-                }
+                return (try setup.readKeyFromSession(session: session), info.authenticationFingerprint)
             }
             let handoff = Handoff(value: result)
             DispatchQueue.main.async { [weak self] in
@@ -367,16 +338,6 @@ final class SetupModel {
         case .failure(let failure as SetupAttachFailure):
             state = setup.state()
             reader.readFailed(failure.error)
-        case .failure(let refusal as SetupUnsupportedPinKdf):
-            state = setup.state()
-            problem = SetupProblem(
-                problem: "paw doesn't support this key's PIN setting yet",
-                nextStep: "It has KDF turned on. No PIN try was used.",
-                details: refusal.detail.map { [$0] } ?? [])
-        case .failure(let error as KeyError):
-            state = setup.state()
-            let words = KeyErrorWords(error, entry: "your store", purpose: .check)
-            problem = SetupProblem(problem: words.problem, nextStep: words.nextStep)
         case .failure(let error):
             state = setup.state()
             show(error, during: .readingKey)
@@ -517,7 +478,7 @@ final class SetupModel {
         }
     }
 
-    private enum Moment {
+    enum Moment {
         case readingKey, checkingHost, downloading, checkingKey, goingBack, forgettingHostKey
     }
 
@@ -654,7 +615,7 @@ final class SetupModel {
                 show(error, during: purpose == .download ? .downloading : .checkingKey)
             } else {
                 problem = SetupProblem(
-                    problem: "Your store has names paw can't download",
+                    problem: SyncFailure.refusedRemoteProblem,
                     nextStep: "Rename or remove them on a computer, then try again.",
                     details: refused.map { "\($0.path): \($0.reason)" },
                     action: .retry, actionTitle: "Try again")
@@ -677,7 +638,7 @@ final class SetupModel {
         // What the host said picks the words for a few failures that share
         // a case, "no store at that address" in particular.
         if [.checkingHost, .downloading, .forgettingHostKey].contains(moment),
-           let remote = setup.lastRemoteMessage(), let words = Self.remoteWords(remote) {
+           let remote = setup.lastRemoteMessage(), let words = SetupWords.remoteWords(remote) {
             problem = words
             return
         }
@@ -688,158 +649,26 @@ final class SetupModel {
             notAccepted = KeyNotAccepted(host: host, publicKey: publicKey)
         case .HostKeyChanged(let host, let expected, let presented):
             let bundled = (try? readStoreAddress(text: addressSet))?.hostKeyBundled ?? false
-            problem = Self.hostKeyChanged(host: host, expected: expected, presented: presented, bundled: bundled)
+            problem = SetupWords.hostKeyChanged(host: host, expected: expected, presented: presented, bundled: bundled)
         case .HostUnreachable:
-            var words = Self.words(error, during: moment)
-            if let fallback = setup.portFallback() {
-                words.offer = SetupProblem.Offer(
-                    text: "Port \(fallback.fromPort) seems blocked. Try \(fallback.host) on port \(fallback.port)?",
-                    title: "Try port \(fallback.port)", identifier: "use-port-fallback", action: .usePortFallback)
-            }
+            var words = SetupWords.words(error, during: moment)
+            words.offer = setup.portFallback().map(SetupWords.portFallbackOffer)
             problem = words
+        case .HostKeyBundled(let host) where moment == .forgettingHostKey:
+            problem = SetupWords.hostKeyKept(hostKeyBundled(host))
         case .Failed(let message) where moment == .forgettingHostKey:
-            // A host whose keys ship with paw: its key is never forgotten.
-            problem = SetupProblem(
-                problem: "paw kept this server's key", nextStep: Self.sentence(message),
-                action: .startOver, actionTitle: "Start setup again")
+            problem = SetupWords.hostKeyKept(message)
         case .StoreBusy where moment == .forgettingHostKey:
-            problem = SetupProblem(
-                problem: "paw kept this server's key", nextStep: Self.sentence(storeBusyText),
-                action: .startOver, actionTitle: "Start setup again")
+            problem = SetupWords.hostKeyKept(storeBusyText)
         default:
-            problem = Self.words(error, during: moment)
+            problem = SetupWords.words(error, during: moment)
         }
-    }
-
-    /// The words for what the last host check or download found, when it
-    /// has words of its own.
-    private static func remoteWords(_ remote: RemoteMessage) -> SetupProblem? {
-        switch remote.reason {
-        case .repositoryNotFound:
-            let repository = remote.repository.isEmpty ? "that repository" : remote.repository
-            let host = remote.host.isEmpty ? "The server" : remote.host
-            return SetupProblem(
-                problem: "No store at that address",
-                nextStep: "\(host) says \(repository) doesn't exist, or this key can't see it. Check the address "
-                    + "and your account's access.",
-                details: remote.said.map { ["\(host) said: \($0)"] } ?? [],
-                action: .retry, actionTitle: "Try again")
-        case .emptyRepository:
-            return words(.EmptyRepository, during: .downloading)
-        case .notAPassStore:
-            return words(.NotAPassStore, during: .downloading)
-        case .keyNotAccepted, .unreachable, .hostKeyChanged, .other:
-            return nil
-        }
-    }
-
-    /// A pinned host presented another key. For a host paw has no keys of
-    /// its own for, the person may say they expected it.
-    private static func hostKeyChanged(host: String, expected: [String], presented: String,
-                                       bundled: Bool) -> SetupProblem {
-        let warning = "This can mean someone is intercepting the connection. Nothing was sent."
-        let advice: String
-        if bundled {
-            advice = "\(host)'s real keys are built into paw, so this isn't \(host). Try another network."
-        } else {
-            advice = "If the server's admin confirms the change, tap I expected this change."
-        }
-        var words = SetupProblem(
-            problem: "\(host)'s identity changed",
-            nextStep: "\(warning) \(advice)",
-            details: expected.map { "Expected \($0)" } + ["It presented \(presented)"],
-            action: .startOver, actionTitle: "Start setup again")
-        if !bundled {
-            words.offer = SetupProblem.Offer(
-                title: "I expected this change", identifier: "host-key-expected", action: .forgetHostKey)
-        }
-        return words
-    }
-
-    /// The failure table of design.md 2.4, S3 and S4.
-    private static func words(_ error: SetupError, during moment: Moment) -> SetupProblem {
-        let downloading = moment == .downloading
-        switch error {
-        case .HostUnreachable(let host, let detail):
-            if downloading {
-                return SetupProblem(
-                    problem: "The download was interrupted",
-                    nextStep: "Nothing was kept. Check your connection and try again.",
-                    details: [detail], action: .retry, actionTitle: "Try again")
-            }
-            return SetupProblem(
-                problem: "Can't reach \(host)", nextStep: "Check your connection and try again.",
-                details: [detail], action: .retry, actionTitle: "Try again")
-        case .HostKeyChanged(let host, let expected, let presented):
-            // `show` knows whether the host's keys ship with paw; without
-            // that, nothing is offered but starting again.
-            return hostKeyChanged(host: host, expected: expected, presented: presented, bundled: true)
-        case .HostKeyNotConfirmed(let host):
-            return SetupProblem(
-                problem: "That isn't the fingerprint \(host) showed", nextStep: "Go back and connect again.")
-        case .EmptyRepository:
-            return SetupProblem(
-                problem: "That store is empty",
-                nextStep: "Add a password to it on a computer, then try again.",
-                action: .retry, actionTitle: "Try again")
-        case .NotAPassStore:
-            return SetupProblem(
-                problem: "That isn't a pass store",
-                nextStep: "Nothing there says which key it is encrypted for. Check the address.",
-                details: ["No .gpg-id file at the top of the repository"])
-        case .KeyCannotOpenStore:
-            return SetupProblem(
-                problem: "This key can't open this store",
-                nextStep: "Its passwords are encrypted for another key. Plug that key in and try again.",
-                action: .retry, actionTitle: "Try again")
-        case .CannotOpenEntry(let entry, let detail):
-            return SetupProblem(
-                problem: "Your key couldn't open \(entry)",
-                nextStep: "The store is downloaded. Try again; if it keeps failing, that file may be damaged.",
-                details: [detail], action: .retry, actionTitle: "Try again")
-        case .UnusableKey(let message):
-            return SetupProblem(
-                problem: "This key can't be used", nextStep: sentence(message))
-        case .WrongStep(let message):
-            return SetupProblem(
-                problem: "Setup got out of step", nextStep: "Go back one step and try again.",
-                details: [message])
-        case .Failed, .StoreBusy:
-            let message = if case .Failed(let message) = error { message } else { storeBusyText }
-            if downloading {
-                return SetupProblem(
-                    problem: "The download didn't finish",
-                    nextStep: "Nothing was kept. Try again, or check the address and your account's access.",
-                    details: [message], action: .retry, actionTitle: "Try again")
-            }
-            return SetupProblem(
-                problem: "That didn't work", nextStep: "Try again.", details: [message],
-                action: .retry, actionTitle: "Try again")
-        case .BadAddress(let message):
-            return SetupProblem(problem: "Check the address", nextStep: message)
-        case .KeyNotAccepted(let host, _):
-            return SetupProblem(
-                problem: "\(host) doesn't know this key yet", nextStep: "Add its SSH key to your account there.")
-        }
-    }
-
-    /// "it has no decryption key" as a sentence.
-    private static func sentence(_ text: String) -> String {
-        guard let first = text.first else { return text }
-        let capitalised = first.uppercased() + text.dropFirst()
-        return capitalised.hasSuffix(".") ? capitalised : capitalised + "."
     }
 }
 
 extension SetupModel: KeyTaskOwner {
-    private var wordsPurpose: KeyErrorWords.Purpose {
-        sheet?.purpose == .download ? .download : .check
-    }
-
-    func keyWords(_ error: KeyError, pinAskedAgain: Bool) -> KeyErrorWords {
-        pinAskedAgain
-            ? KeyErrorWords(pinAskedAgain: error, entry: entryName, purpose: wordsPurpose)
-            : KeyErrorWords(error, entry: entryName, purpose: wordsPurpose)
+    var keyWords: KeyErrorWords.Context {
+        KeyErrorWords.Context(entry: entryName, purpose: sheet?.purpose == .download ? .download : .check)
     }
 
     func workingStage(_ progress: TaskProgress?) -> KeySheetStage {
@@ -848,17 +677,6 @@ extension SetupModel: KeyTaskOwner {
         let transfer = purpose == .download ? setup.transferProgress() : nil
         let line = transfer.flatMap(Self.transferLine) ?? progress.map(Self.progressLine)
         return .working(message: workingMessage(purpose, started: progress != nil || transfer != nil), progress: line)
-    }
-
-    func attachWords(_ problem: KeyReadProblem) -> KeyErrorWords {
-        switch problem {
-        case .unsupported:
-            return KeyErrorWords(
-                problem: "This iPhone can't use USB keys",
-                nextStep: "paw needs an iPhone that can read a YubiKey over USB-C.")
-        case .failed(let error):
-            return KeyErrorWords(problem: "paw couldn't read your key", nextStep: Self.attachWords(error))
-        }
     }
 
     func keyStageShown(_ stage: KeySheetStage) {

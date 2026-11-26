@@ -40,7 +40,7 @@ struct RecipientsScreen: View {
             scopes = found
             problem = nil
         case .failure(let error):
-            problem = describeEditError(error)
+            problem = describe(error)
         }
     }
 }

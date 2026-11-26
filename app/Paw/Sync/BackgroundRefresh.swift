@@ -12,24 +12,6 @@ struct BackgroundRun: Equatable {
         case locked, noStore, notSignedIn, notLinked, upToDate, broughtIn, paused, signedOut, offline, outOfTime,
              busy, failed
 
-        /// As Sync says it, in the iPhone's words.
-        var words: String {
-            switch self {
-            case .locked: "iPhone was locked"
-            case .noStore: "No store yet"
-            case .notSignedIn: "Not signed in to GitHub"
-            case .notLinked: "No store chosen"
-            case .upToDate: "Up to date"
-            case .broughtIn: "Brought in changes"
-            case .paused: "Paused"
-            case .signedOut: "GitHub sign-in ended"
-            case .offline: "Couldn't reach GitHub"
-            case .outOfTime: "Ran out of time"
-            case .busy: "Store was busy"
-            case .failed: "Failed"
-            }
-        }
-
         /// Ended as it should (for `setTaskCompleted`).
         var success: Bool {
             switch self {

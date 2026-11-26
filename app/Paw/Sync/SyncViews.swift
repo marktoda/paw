@@ -3,7 +3,7 @@ import SwiftUI
 extension StoreEdits {
     /// "Send 2 changes", the key sheet's title for a send.
     var sendTitle: String {
-        unpushed.count == 1 ? "Send 1 change" : "Send \(unpushed.count) changes"
+        "Send \(changeCount(unpushed.count))"
     }
 }
 
@@ -169,9 +169,8 @@ struct SyncSummarySection: View {
     }
 
     private func recipientsRow(_ folder: String) -> some View {
-        let place = folder.isEmpty ? "your store" : folder
         return ErrorRow(
-            kind: .warning, problem: "Who can open \(place) changed",
+            kind: .warning, problem: whoCanOpenChanged(folder),
             nextStep: "Review the new list before saving there.",
             actionTitle: "Review"
         ) {
@@ -219,9 +218,7 @@ struct SyncSendSection: View {
                 if !syncing.heldBack.isEmpty {
                     ErrorRow(
                         kind: .warning,
-                        problem: syncing.heldBack.count == 1
-                            ? "1 change can't be sent yet"
-                            : "\(syncing.heldBack.count) changes can't be sent yet",
+                        problem: "\(changeCount(syncing.heldBack.count)) can't be sent yet",
                         nextStep: "Who can open the folder changed after you saved.",
                         actionTitle: "Review"
                     ) {
@@ -386,8 +383,7 @@ private struct SyncStatusSheet: View {
     private func backgroundValue(now: Date) -> String {
         guard let run = syncing.backgroundRun else { return "Not yet" }
         let when = syncAgo(run.at, now: now)
-        // Kept in the iPhone's words; said in this device's.
-        let result = Device.words(run.outcome.words)
+        let result = run.outcome.words
         if let checked = syncing.lastChecked, syncAgo(checked, now: now) == when {
             return result
         }
@@ -441,7 +437,7 @@ private struct SyncStatusSheet: View {
                             syncing.go(to: .unpushed)
                         } label: {
                             LabeledContent {
-                                Text(unpushed == 1 ? "1 change" : "\(unpushed) changes")
+                                Text(changeCount(unpushed))
                                     .foregroundStyle(PawColor.labelSecondary)
                             } label: {
                                 Text("Not sent yet")
@@ -526,8 +522,8 @@ private struct SyncStatusSheet: View {
         if !syncing.refused.isEmpty {
             Section {
                 ErrorRow(
-                    kind: .warning, problem: "Your store has names paw can't download",
-                    nextStep: SyncFailure.sentences("Rename them on a computer.", SyncFailure.waiting(unpushed)),
+                    kind: .warning, problem: SyncFailure.refusedRemoteProblem,
+                    nextStep: SyncFailure.refusedRemoteNextStep(unpushed: unpushed),
                     actionTitle: "Show names"
                 ) {
                     syncing.go(to: .sync(.refusedRemote))
@@ -540,8 +536,7 @@ private struct SyncStatusSheet: View {
             Section {
                 ErrorRow(
                     kind: .warning,
-                    problem: syncing.heldBack.count == 1
-                        ? "1 change wasn't sent" : "\(syncing.heldBack.count) changes weren't sent",
+                    problem: "\(changeCount(syncing.heldBack.count)) \(syncing.heldBack.count == 1 ? "wasn't" : "weren't") sent",
                     nextStep: "Who can open the folder changed after you saved.",
                     actionTitle: "Review"
                 ) {

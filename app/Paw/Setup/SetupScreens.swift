@@ -144,12 +144,8 @@ private struct PlugInScreen: View {
             if let working = model.working, !working.isEmpty {
                 SetupWorkingLine(text: working)
             }
-            if model.noSmartCards {
-                ErrorRow(
-                    kind: .error, problem: Device.words("This iPhone can't use USB keys"),
-                    nextStep: Device.words("paw needs an iPhone that can read a YubiKey over USB-C."), isBanner: true)
-            } else if let attachProblem = model.attachProblem {
-                ErrorRow(kind: .error, problem: "paw couldn't read your key", nextStep: attachProblem, isBanner: true)
+            if let attachProblem = model.attachProblem {
+                ErrorRow(kind: .error, problem: attachProblem.problem, nextStep: attachProblem.nextStep, isBanner: true)
             }
             if let problem = model.problem {
                 SetupProblemView(problem: problem, act: { model.performProblemAction() }, offer: { model.performOffer() })
@@ -255,7 +251,7 @@ private struct YourKeyScreen: View {
         if touches.contains(.off) {
             found.append(Warning(
                 problem: "This key works without a touch",
-                nextStep: Device.words("Anyone with this iPhone, your key and its PIN could read everything.")))
+                nextStep: "Anyone with this iPhone, your key and its PIN could read everything."))
         }
         if touches.contains(.cached) {
             found.append(Warning(

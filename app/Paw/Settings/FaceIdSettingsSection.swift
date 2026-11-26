@@ -19,7 +19,7 @@ struct FaceIdSettingsSection: View {
                 }
                 .accessibilityIdentifier("settings-face-id")
                 if let problem {
-                    ErrorRow(kind: .error, problem: Device.words("Face ID wasn't changed"), nextStep: Device.words(problem))
+                    ErrorRow(kind: .error, problem: "Face ID wasn't changed", nextStep: problem)
                 }
             } header: {
                 PawSectionHeader(Device.biometrics)

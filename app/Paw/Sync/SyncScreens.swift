@@ -212,8 +212,8 @@ struct RefusedRemoteScreen: View {
         List {
             Section {
                 SyncIntro(
-                    headline: "Your store has names paw can't download",
-                    text: SyncFailure.sentences(
+                    headline: SyncFailure.refusedRemoteProblem,
+                    text: sentences(
                         "Rename or remove them on a computer. Sync is paused until then.",
                         SyncFailure.waiting(unpushed)))
             }
@@ -279,7 +279,7 @@ struct ReplacedScreen: View {
     }
 
     private var changes: String {
-        unpushed == 1 ? "1 change" : "\(unpushed) changes"
+        changeCount(unpushed)
     }
 
     var body: some View {

@@ -82,7 +82,7 @@ struct UnpushedScreen: View {
                 Section {
                     if confirming == "all" {
                         InlineConfirmRow(
-                            question: items.count == 1 ? "Discard 1 change?" : "Discard \(items.count) changes?",
+                            question: "Discard \(changeCount(items.count))?",
                             detail: "The store goes back to how it was last downloaded.",
                             confirmTitle: "Discard all", cancelTitle: "Keep them", identifier: "unpushed-discard-all",
                             onConfirm: {

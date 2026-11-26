@@ -73,13 +73,13 @@ final class StoreEdits {
             unpushed = try sync.unpushed()
             queueProblem = nil
         } catch {
-            queueProblem = describeEditError(error)
+            queueProblem = describe(error)
         }
     }
 
     /// "3 changes not sent".
     var bannerTitle: String {
-        unpushed.count == 1 ? "1 change not sent" : "\(unpushed.count) changes not sent"
+        "\(changeCount(unpushed.count)) not sent"
     }
 
     // MARK: Writes
@@ -126,89 +126,5 @@ final class StoreEdits {
 
     private func announce(_ changes: [QueueItem]) {
         live.announce(.wrote(entries: changes.flatMap { [$0.previous, $0.entry].compactMap { $0 } }, renamed: nil))
-    }
-}
-
-/// A write or queue failure in words: what happened, then what to do.
-struct EditProblem: Equatable {
-    let problem: String
-    let nextStep: String
-    /// "Review who can open this folder" applies.
-    var reviewFolder: String? = nil
-}
-
-/// The core's write and queue errors as sentences. The core decides what
-/// went wrong; this only words it.
-func describeEditError(_ error: Error) -> String {
-    switch error {
-    case let error as SyncError:
-        switch error {
-        case .UncommittedChanges(let paths):
-            return "The store has changes paw didn't make: \(paths.joined(separator: ", "))."
-        case .Failed(let message), .RefusedRemote(_, let message), .PushRefused(let message),
-             .RepositoryMissing(let message):
-            return message.prefix(1).uppercased() + message.dropFirst() + "."
-        case .StoreBusy:
-            return storeBusyText.prefix(1).uppercased() + storeBusyText.dropFirst() + "."
-        case .Cancelled:
-            return "Stopped."
-        default:
-            return String(describing: error)
-        }
-    case let error as WriteError:
-        let problem = editProblem(error, folder: "").problem
-        return problem.hasSuffix(".") ? problem : problem + "."
-    default:
-        return describe(error)
-    }
-}
-
-/// How a refused save, delete or rename reads, with the step that fixes it.
-func editProblem(_ error: WriteError, folder: String) -> EditProblem {
-    let place = folder.isEmpty ? "the top of your store" : folder
-    switch error {
-    case .MissingRecipients(_, let missing):
-        let count = missing.count == 1 ? "a key" : "\(missing.count) keys"
-        return EditProblem(
-            problem: "Can't save in \(place)",
-            nextStep: "It's also encrypted for \(count) paw doesn't have. Pick another folder.")
-    case .RecipientsChanged:
-        return EditProblem(
-            problem: "Who can open \(place) changed",
-            nextStep: "Review the new list before saving here.", reviewFolder: folder)
-    case .RecipientsNotConfirmed:
-        return EditProblem(
-            problem: "paw hasn't confirmed who can open this store",
-            nextStep: "Finish setting up the store, then save again.")
-    case .NeedsOpenEntry(let entry):
-        return EditProblem(
-            problem: "Open \(EntryRef(path: entry).name) before moving it",
-            nextStep: "That folder uses other keys. Open it with your key, then move it from Edit.")
-    case .NoSuchEntry(let entry):
-        return EditProblem(
-            problem: "\(EntryRef(path: entry).name) isn't in the store any more",
-            nextStep: "It may have been deleted on another device.")
-    case .AlreadyExists(let entry):
-        return EditProblem(
-            problem: "There's already a password called '\(EntryRef(path: entry).name)'",
-            nextStep: "Pick another name.")
-    case .ChangedSinceOpened(let entry):
-        return EditProblem(
-            problem: "\(EntryRef(path: entry).name) changed since you opened it",
-            nextStep: "Nothing was saved. Close this, open it again and redo your change.")
-    case .Invalid(let problems):
-        return EditProblem(
-            problem: problems.first?.message ?? "Something here can't be saved",
-            nextStep: "Fix it, then save.")
-    case .Policy(let message):
-        return EditProblem(problem: "That password can't be generated", nextStep: message)
-    case .Failed(let message), .Certificate(let message):
-        return EditProblem(problem: "Couldn't save this", nextStep: "Nothing was changed. Details: \(message)")
-    case .StoreBusy:
-        return EditProblem(problem: "Couldn't save this", nextStep: "Nothing was changed. Details: \(storeBusyText)")
-    case .NoEncryptionKey(_, let reason):
-        return EditProblem(problem: "A key for this folder can't encrypt", nextStep: reason)
-    case .NotPinned:
-        return EditProblem(problem: Device.words("A key for this folder isn't saved on this iPhone"), nextStep: "Nothing was changed.")
     }
 }

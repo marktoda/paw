@@ -507,9 +507,9 @@ private struct StoreProblemView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: PawMetrics.Spacing.l) {
                 ErrorRow(
-                    kind: .error, problem: Device.words("Couldn't open the store on this iPhone"),
+                    kind: .error, problem: "Couldn't open the store on this iPhone",
                     nextStep: ProtectedData.mayBeLocked(detail)
-                        ? Device.words("Unlock your iPhone, then try again.")
+                        ? "Unlock your iPhone, then try again."
                         : "Try again, or set it up again from your server.",
                     isBanner: true)
                 if !detail.isEmpty {
@@ -559,13 +559,6 @@ private struct StoreProblemView: View {
     }
 
     private var warning: String {
-        var text = Device.words("Deletes the store, its Face ID copies and your key's record from this iPhone. ")
-            + "The store on the server is not touched."
-        if unpushed == 1 {
-            text += " 1 change not sent yet will be lost."
-        } else if unpushed > 1 {
-            text += " \(unpushed) changes not sent yet will be lost."
-        }
-        return text
+        removeStoreWarning(unpushed: unpushed)
     }
 }

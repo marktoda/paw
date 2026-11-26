@@ -10,11 +10,11 @@ final class SyncWordsTests: XCTestCase {
         XCTAssertEqual(SyncFailure.waiting(0), "")
         XCTAssertEqual(SyncFailure.waiting(1), "Your change is saved on this iPhone.")
         XCTAssertEqual(SyncFailure.waiting(3), "Your 3 changes are saved on this iPhone.")
-        XCTAssertEqual(SyncFailure.sentences("Try again.", "", "Later."), "Try again. Later.")
+        XCTAssertEqual(sentences("Try again.", "", "Later."), "Try again. Later.")
     }
 
     func testNoNetworkIsOfflineNotAnError() {
-        let failure = SyncFailure(.Network(message: "timed out"), during: .send, unpushed: 1, host: "github.com")
+        let failure = SyncFailure(.Network(detail: "timed out"), during: .send, unpushed: 1, host: "github.com")
         XCTAssertEqual(failure.kind, .offline)
         XCTAssertEqual(failure.problem, "Can't reach github.com")
         XCTAssertEqual(failure.nextStep, "Check your connection. Your change is saved on this iPhone.")
@@ -50,7 +50,7 @@ final class SyncWordsTests: XCTestCase {
 
     func testARefusedPushAMissingStoreAndARefusedRemoteHaveTheirOwnWords() {
         let refused = SyncFailure(
-            .PushRefused(message: "The host refused the push: protected branch"), during: .send, unpushed: 2, host: "h")
+            .PushRefused(detail: "The host refused the push: protected branch"), during: .send, unpushed: 2, host: "h")
         XCTAssertEqual(refused.kind, .pushRefused)
         XCTAssertEqual(refused.problem, "h refused your changes")
         XCTAssertEqual(refused.nextStep, "Your 2 changes are saved on this iPhone. Details say why.")
@@ -58,7 +58,7 @@ final class SyncWordsTests: XCTestCase {
         XCTAssertEqual(refused.details, ["The host refused the push: protected branch"])
 
         let gone = SyncFailure(
-            .RepositoryMissing(message: "Repository not found"), during: .send, unpushed: 0, host: "h")
+            .RepositoryMissing(detail: "Repository not found"), during: .send, unpushed: 0, host: "h")
         XCTAssertEqual(gone.kind, .repositoryGone)
         XCTAssertEqual(gone.pill, "Not sent \u{00B7} store not found")
 

@@ -82,7 +82,7 @@ struct RecipientsFooter: View {
             } else if recipients.changed {
                 ErrorRow(
                     kind: .warning,
-                    problem: "Who can open \(place) changed",
+                    problem: whoCanOpenChanged(folder),
                     nextStep: "Review the new list before saving here.",
                     actionTitle: "Review", action: onReview)
             } else if !recipients.lines.allSatisfy(\.isReady) {
@@ -150,11 +150,9 @@ extension RecipientLine {
         }
     }
 
+    /// A line too short to be a fingerprint is said as it is.
     static func tail(_ hex: String) -> String {
-        let clean = hex.filter(\.isHexDigit).uppercased()
-        guard clean.count >= 8 else { return hex }
-        let last = String(clean.suffix(8))
-        return "\(last.prefix(4)) \(last.suffix(4))"
+        hex.filter(\.isHexDigit).count >= 8 ? fingerprintEnding(hex) : hex
     }
 }
 

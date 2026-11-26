@@ -212,38 +212,7 @@ final class AppModel {
     /// Why the key could not be read the last time paw tried, as the
     /// sheet's Plug in stage says it. `nil` once a read works.
     var attachProblem: KeyErrorWords? {
-        reader.problem.map(Self.readProblemWords)
-    }
-
-    /// "paw couldn't read your key", then why and what to do.
-    static func readProblemWords(_ problem: KeyReadProblem) -> KeyErrorWords {
-        let error: Error
-        switch problem {
-        case .unsupported:
-            return KeyErrorWords(
-                problem: "This iPhone can't use USB keys",
-                nextStep: "paw needs an iPhone with USB-C and smart card support.")
-        case .failed(let failure):
-            error = failure
-        }
-        let why: String
-        switch error as? KeyError {
-        case .KeyRemoved?:
-            why = "It stopped answering."
-        case .Reader(let detail)?:
-            why = "The key said: \(detail)."
-        case let error?:
-            why = KeyErrorWords(error, entry: "this password").problem + "."
-        case nil:
-            if case .Failed(let message)? = error as? ConnectionError {
-                why = message
-            } else {
-                why = describe(error)
-            }
-        }
-        return KeyErrorWords(
-            problem: "paw couldn't read your key",
-            nextStep: "\(why) Try again, or unplug the key and plug it back in.")
+        reader.problem.map { KeyErrorWords($0) }
     }
 
     /// A key was read: asks the core which entries it can open. Only the
@@ -346,19 +315,6 @@ final class AppModel {
         show(.anotherKey(entry.path))
     }
 
-    /// "This key: serial 12 345 678, ends 77B0 9F3A. ..."
-    private static func mismatchWords(_ mismatch: KeyMismatch) -> String {
-        func describeKey(_ key: KeyIdentity) -> String {
-            var words = "serial \(spokenSerial(key.ident))"
-            if let fingerprint = key.decryptionFingerprint {
-                words += ", ending \(fingerprintEnding(fingerprint))"
-            }
-            return words
-        }
-        return "This key: \(describeKey(mismatch.presented)). The store's key: \(describeKey(mismatch.enrolled)). "
-            + "Plug that one in and try again. No PIN try was used."
-    }
-
     /// Opens from the entry's Face ID copy, with no key sheet. Falls back
     /// to the key when the copy has ended.
     private func openWithFaceId(_ entry: EntryRef) {
@@ -382,34 +338,8 @@ final class AppModel {
         case .success(.needsKey):
             openWithKey(entry)
         case .failure(let error):
-            notice = Self.faceIdNotice(error, entry: entry)
-        }
-    }
-
-    private static func faceIdNotice(_ error: Error, entry: EntryRef) -> Notice {
-        switch error as? PawError {
-        case .FaceIdCancelled:
-            return Notice(
-                problem: "Face ID was cancelled",
-                nextStep: "Tap \(entry.name) to try again.", keyEntry: entry)
-        case .FaceIdNotRecognised:
-            return Notice(
-                problem: "Face ID didn't recognise you",
-                nextStep: "Tap \(entry.name) to try again.", keyEntry: entry)
-        case .FaceIdLockedOut:
-            return Notice(
-                problem: "Face ID is off until you enter your iPhone passcode",
-                nextStep: "Lock and unlock your iPhone, then try again.", keyEntry: entry)
-        case .FaceIdNotSetUp:
-            return Notice(
-                problem: "Face ID isn't set up on this iPhone",
-                nextStep: "Open \(entry.name) with your key.", keyEntry: entry)
-        case .FaceIdChanged:
-            return Notice(
-                problem: "Face ID changed, so its saved copies were removed",
-                nextStep: "Open \(entry.name) with your key.", keyEntry: entry)
-        default:
-            return Notice(problem: describe(error), nextStep: "Open \(entry.name) with your key.", keyEntry: entry)
+            let words = FaceIdWords.notice(error, entry: entry.name)
+            notice = Notice(problem: words.problem, nextStep: words.nextStep, keyEntry: entry)
         }
     }
 
@@ -601,19 +531,14 @@ final class AppModel {
 }
 
 extension AppModel: KeyTaskOwner {
-    func keyWords(_ error: KeyError, pinAskedAgain: Bool) -> KeyErrorWords {
-        let name = keyRequest?.entry.name ?? ""
-        return pinAskedAgain ? KeyErrorWords(pinAskedAgain: error, entry: name) : KeyErrorWords(error, entry: name)
+    var keyWords: KeyErrorWords.Context {
+        KeyErrorWords.Context(entry: keyRequest?.entry.name ?? "")
     }
 
     func workingStage(_ progress: TaskProgress?) -> KeySheetStage {
         .working(
             message: "Opening \(keyRequest?.entry.name ?? "")\u{2026}",
             progress: progress.map { "\($0.done) of \($0.total)" })
-    }
-
-    func attachWords(_ problem: KeyReadProblem) -> KeyErrorWords {
-        Self.readProblemWords(problem)
     }
 
     func keyTaskEnded(_ end: KeyTaskEnd) -> KeySheetStage? {
@@ -625,13 +550,11 @@ extension AppModel: KeyTaskOwner {
         case .done(let outcome):
             opened(outcome, entry: request.entry)
             return .done
-        case .failed(.DifferentKey(let mismatch)):
+        case .failed(.DifferentKey):
             // Not this entry's problem: the key is not the store's.
             request.differentKey = true
             keyRequest = request
-            return .failed(
-                problem: "This isn't the key this store was set up with",
-                nextStep: Self.mismatchWords(mismatch))
+            return standardStage(end.result)
         case .failed(.NotForThisKey):
             keyRequest = nil
             showAnotherKey(request.entry)

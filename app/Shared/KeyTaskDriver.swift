@@ -63,17 +63,15 @@ struct KeyTaskEnd {
     let generation: Int
 }
 
-/// What differs between the workflows that run key tasks: the words on the
-/// sheet, and what happens when a task ends.
+/// What differs between the workflows that run key tasks: what the sheet's
+/// words name, and what happens when a task ends.
 @MainActor
 protocol KeyTaskOwner: AnyObject {
-    /// What the sheet says about `error`: on the failed stage, and on the
-    /// PIN stage when the PIN is asked again because of it.
-    func keyWords(_ error: KeyError, pinAskedAgain: Bool) -> KeyErrorWords
+    /// What the sheet's key errors name and are for, on the failed stage
+    /// and on the PIN stage when the PIN is asked again.
+    var keyWords: KeyErrorWords.Context { get }
     /// The Working stage for the task's progress.
     func workingStage(_ progress: TaskProgress?) -> KeySheetStage
-    /// "paw couldn't read your key", for the Plug in stage.
-    func attachWords(_ problem: KeyReadProblem) -> KeyErrorWords
     /// The task the sheet follows ended; called once for each such task.
     /// Returns what the sheet shows now, or `nil` when the owner closed it.
     func keyTaskEnded(_ end: KeyTaskEnd) -> KeySheetStage?
@@ -107,7 +105,7 @@ extension KeyTaskOwner {
         case .failed(.PinBlocked):
             return .locked
         case .failed(let error):
-            let words = keyWords(error, pinAskedAgain: false)
+            let words = keyWords.words(error)
             return .failed(problem: words.problem, nextStep: words.nextStep)
         case .syncFailed, .setupFailed, .cancelled:
             return nil
@@ -183,8 +181,8 @@ final class KeyTaskDriver {
 
     /// What the key sheet shows.
     var stage: KeySheetStage {
-        if case .plugIn = mapped, let problem = reader?.problem, let owner {
-            let words = owner.attachWords(problem)
+        if case .plugIn = mapped, let problem = reader?.problem {
+            let words = KeyErrorWords(problem)
             return .failed(problem: words.problem, nextStep: words.nextStep)
         }
         return mapped
@@ -385,7 +383,7 @@ final class KeyTaskDriver {
             case .WrongPin(let left)?:
                 return .wrongPin(triesLeft: Int(left))
             case let error?:
-                let words = owner?.keyWords(error, pinAskedAgain: true) ?? KeyErrorWords(pinAskedAgain: error, entry: "")
+                let words = (owner?.keyWords ?? KeyErrorWords.Context(entry: "")).words(error, pinAskedAgain: true)
                 return .pinAgain(triesLeft: tries, problem: words.problem, nextStep: words.nextStep)
             }
         case .busy:

@@ -128,15 +128,7 @@ struct RemoveStoreSection: View {
 
     /// What Remove deletes, and the changes it would lose as they are now.
     var warning: String {
-        let unpushed = model.edits?.unpushed.count ?? 0
-        var text = Device.words("Deletes the store, its Face ID copies and your key's record from this iPhone. ")
-            + "The store on the server is not touched."
-        if unpushed == 1 {
-            text += " 1 change not sent yet will be lost."
-        } else if unpushed > 1 {
-            text += " \(unpushed) changes not sent yet will be lost."
-        }
-        return text
+        removeStoreWarning(unpushed: model.edits?.unpushed.count ?? 0)
     }
 
     private func remove(_ setUp: SetUpStore) {
@@ -308,7 +300,7 @@ private struct ServerIdentityRows: View {
             ForgottenServerKeys.byHost[host, default: []].formUnion(pinned.map(\.fingerprint))
             problem = nil
         } catch {
-            problem = ("The server key wasn't forgotten", describeEditError(error))
+            problem = ("The server key wasn't forgotten", describe(error))
         }
         reload()
     }
@@ -328,7 +320,7 @@ private struct ServerIdentityRows: View {
             case .success(let key):
                 presented = key
             case .failure(let error):
-                problem = ("Couldn't reach the server", describeEditError(error))
+                problem = ("Couldn't reach the server", describe(error))
             }
         }
     }
@@ -342,7 +334,7 @@ private struct ServerIdentityRows: View {
             presented = nil
             confirmingDifferent = false
             if case .failure(let error) = result {
-                problem = ("The server key wasn't trusted", describeEditError(error))
+                problem = ("The server key wasn't trusted", describe(error))
             } else {
                 ForgottenServerKeys.byHost[host] = nil
                 problem = nil

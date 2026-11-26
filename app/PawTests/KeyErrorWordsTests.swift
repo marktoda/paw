@@ -60,15 +60,49 @@ final class KeyErrorWordsTests: XCTestCase {
 
     func testASyncSaysTheWaitingChangesAreKeptWhenTheKeyStops() {
         XCTAssertEqual(
-            syncKeyWords(.TouchTimeout, during: .send, unpushed: 2).nextStep,
+            syncKeyWords(during: .send, unpushed: 2).words(.TouchTimeout).nextStep,
             "Try again and touch the gold part while it blinks. Your 2 changes are saved on this iPhone.")
         XCTAssertEqual(
-            syncKeyWords(.KeyRemoved, during: .send, unpushed: 1).nextStep,
+            syncKeyWords(during: .send, unpushed: 1).words(.KeyRemoved).nextStep,
             "Plug it back in and try again. Your change is saved on this iPhone.")
         // A check has nothing waiting to reassure about.
         XCTAssertEqual(
-            syncKeyWords(.TouchTimeout, during: .refresh, unpushed: 2).nextStep,
+            syncKeyWords(during: .refresh, unpushed: 2).words(.TouchTimeout).nextStep,
             "Try again and touch the gold part while it blinks.")
-        XCTAssertEqual(syncKeyWords(.Cancelled, during: .send, unpushed: 2).nextStep, "Nothing was sent.")
+        XCTAssertEqual(syncKeyWords(during: .send, unpushed: 2).words(.Cancelled).nextStep, "Nothing was sent.")
+    }
+}
+
+/// Words every workflow shares: the key that is not the store's, a key
+/// that can't be read, and a Face ID open that failed.
+final class SharedWordsTests: XCTestCase {
+    func testAnotherKeyThanTheStoresNamesBothKeys() {
+        let presented = KeyIdentity(ident: "0006:12345678", decryptionFingerprint: "AAAA0000BBBB1111CCCC2222DDDD3333EEEE4444", authenticationFingerprint: nil)
+        let enrolled = KeyIdentity(ident: "0006:87654321", decryptionFingerprint: nil, authenticationFingerprint: nil)
+        let words = KeyErrorWords(.DifferentKey(mismatch: KeyMismatch(enrolled: enrolled, presented: presented)), entry: "x")
+        XCTAssertEqual(words.problem, "This isn't the key this store was set up with")
+        XCTAssertEqual(
+            words.nextStep,
+            "This key: serial 12 345 678, ending EEEE 4444. The store's key: serial 87 654 321. "
+                + "Plug that one in and try again. No PIN try was used.")
+    }
+
+    func testAKeyThatCannotBeReadSaysWhyAndWhatToDo() {
+        XCTAssertEqual(
+            KeyErrorWords(.failed(KeyError.KeyRemoved)),
+            KeyErrorWords(
+                problem: "paw couldn't read your key",
+                nextStep: "It stopped answering. Try again, or unplug the key and plug it back in."))
+        XCTAssertEqual(KeyErrorWords(.unsupported).problem, "This iPhone can't use USB keys")
+    }
+
+    func testFaceIdNoticesOfferTheKey() {
+        let locked = FaceIdWords.notice(PawError.FaceIdLockedOut, entry: "github.com")
+        XCTAssertEqual(locked.problem, "Face ID is off until you enter your iPhone passcode")
+        XCTAssertEqual(locked.nextStep, "Lock and unlock your iPhone, then try again.")
+        let changed = FaceIdWords.notice(PawError.FaceIdChanged, entry: "github.com")
+        XCTAssertEqual(changed.problem, "Face ID changed, so its saved copies were removed")
+        XCTAssertEqual(changed.nextStep, "Open github.com with your key.")
+        XCTAssertEqual(describe(PawError.FaceIdNotRecognised), "Face ID didn't recognise you.")
     }
 }

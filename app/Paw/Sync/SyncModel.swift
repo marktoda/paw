@@ -147,7 +147,7 @@ struct SyncSummary: Identifiable, Equatable {
             return "Both sides changed the same password"
         }
         if let folder = recipientsChanged.first {
-            return "Who can open \(folder.isEmpty ? "your store" : folder) changed"
+            return whoCanOpenChanged(folder)
         }
         return "Your store was updated"
     }
@@ -278,7 +278,7 @@ final class SyncModel {
             return .paused("Sync paused \u{00B7} Review")
         }
         if !heldBack.isEmpty {
-            return .paused(heldBack.count == 1 ? "1 change held back \u{00B7} Review" : "\(heldBack.count) changes held back \u{00B7} Review")
+            return .paused("\(changeCount(heldBack.count)) held back \u{00B7} Review")
         }
         if let failure, failure.kind != .cancelled {
             return failure.kind == .offline ? .offline(checked: lastChecked) : .failed(failure.pill)
@@ -293,12 +293,7 @@ final class SyncModel {
     }
 
     private func workingText(_ kind: SyncKind, unpushed: Int) -> String {
-        let base: String
-        switch kind {
-        case .send: base = unpushed == 1 ? "Sending 1 change\u{2026}" : "Sending \(unpushed) changes\u{2026}"
-        case .refresh: base = "Checking for changes\u{2026}"
-        case .reencrypt: base = "Re-encrypting\u{2026}"
-        }
+        let base = kind.working(unpushed: unpushed)
         guard let progress, progress.total > 0 else { return base }
         return "\(base) \(progress.done) of \(progress.total)"
     }
@@ -445,18 +440,10 @@ final class SyncModel {
     }
 
     private func workingMessage(_ kind: SyncKind, unpushed: Int) -> String {
-        if kind == .reencrypt {
-            return "Re-encrypting\u{2026}"
-        }
-        if !signedIn, progress == nil {
+        if kind != .reencrypt, !signedIn, progress == nil {
             return "Connecting to \(host)\u{2026}"
         }
-        switch kind {
-        case .send:
-            return unpushed == 1 ? "Sending 1 change\u{2026}" : "Sending \(unpushed) changes\u{2026}"
-        case .refresh, .reencrypt:
-            return "Checking for changes\u{2026}"
-        }
+        return kind.working(unpushed: unpushed)
     }
 
     private static func progressLine(_ progress: TaskProgress) -> String {
@@ -627,13 +614,8 @@ final class SyncModel {
                 keyPathNote = "Your GitHub sign-in ended, so this check uses your key."
                 return
             }
-            if let error = error as? SyncError {
-                failure = SyncFailure(error, during: .refresh, unpushed: unpushed, host: "github.com")
-            } else {
-                failure = SyncFailure(
-                    kind: .other, during: .refresh, problem: "paw couldn't check for changes.",
-                    nextStep: SyncFailure.waiting(unpushed), details: [describe(error)], pill: "Check failed")
-            }
+            let syncError = error as? SyncError ?? SyncError.Failed(message: describe(error))
+            failure = SyncFailure(syncError, during: .refresh, unpushed: unpushed, host: "github.com")
             recomputeLocal()
         }
     }
@@ -696,7 +678,7 @@ final class SyncModel {
             requests.send(.leave(.sync(.replaced)))
             requests.send(.toast(keepChanges ? "Using the new store. Your changes are kept." : "Using the new store."))
         case .failure(let error):
-            acceptProblem = (error as? SyncError).map { describeEditError($0) } ?? describe(error)
+            acceptProblem = describe(error)
         }
     }
 
@@ -754,8 +736,8 @@ extension SyncModel: KeyTaskOwner {
         return .refresh
     }
 
-    func keyWords(_ error: KeyError, pinAskedAgain: Bool) -> KeyErrorWords {
-        syncKeyWords(error, during: keyKind, unpushed: unpushed)
+    var keyWords: KeyErrorWords.Context {
+        syncKeyWords(during: keyKind, unpushed: unpushed)
     }
 
     func workingStage(_ progress: TaskProgress?) -> KeySheetStage {
@@ -767,10 +749,6 @@ extension SyncModel: KeyTaskOwner {
         }
         self.progress = progress
         return .working(message: workingMessage(kind, unpushed: unpushed), progress: progress.map(Self.progressLine))
-    }
-
-    func attachWords(_ problem: KeyReadProblem) -> KeyErrorWords {
-        AppModel.readProblemWords(problem)
     }
 
     /// A send, check or re-encrypt starts, or starts again on Try again.

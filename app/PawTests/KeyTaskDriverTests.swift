@@ -13,16 +13,10 @@ final class KeyTaskDriverTests: XCTestCase {
         var lateEnds: [KeyTaskEnd] = []
         var doneShownCount = 0
 
-        func keyWords(_ error: KeyError, pinAskedAgain: Bool) -> KeyErrorWords {
-            pinAskedAgain ? KeyErrorWords(pinAskedAgain: error, entry: "github.com") : KeyErrorWords(error, entry: "github.com")
-        }
+        let keyWords = KeyErrorWords.Context(entry: "github.com")
 
         func workingStage(_ progress: TaskProgress?) -> KeySheetStage {
             .working(message: "Opening github.com\u{2026}", progress: nil)
-        }
-
-        func attachWords(_ problem: KeyReadProblem) -> KeyErrorWords {
-            KeyErrorWords(problem: "paw couldn't read your key", nextStep: "Try again.")
         }
 
         func keyTaskEnded(_ end: KeyTaskEnd) -> KeySheetStage? {
@@ -231,7 +225,9 @@ final class KeyTaskDriverTests: XCTestCase {
         reader.watch(startsUnplugged: false)
         let driver = KeyTaskDriver(reader: reader)
         driver.owner = owner
-        let couldNotRead = KeySheetStage.failed(problem: "paw couldn't read your key", nextStep: "Try again.")
+        let couldNotRead = KeySheetStage.failed(
+            problem: "paw couldn't read your key",
+            nextStep: "The key didn't answer while it was being read. Try again, or unplug the key and plug it back in.")
 
         driver.start { listener in port.checkTouchTimeout(listener: listener) }
         await waitForStage(driver, couldNotRead)
