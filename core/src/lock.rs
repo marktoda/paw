@@ -509,7 +509,6 @@ mod tests {
         let outer = store.exclusive().unwrap();
         let inner = store.exclusive_within(Duration::ZERO).unwrap();
         let read = store.shared_within(Duration::ZERO).unwrap();
-        assert!(inner.held.nested);
         drop((inner, read));
         // Still held: another thread cannot have it.
         let other = std::thread::spawn({

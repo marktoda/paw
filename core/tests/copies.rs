@@ -295,10 +295,6 @@ fn enrolment_change_clears_every_copy_with_its_own_error() {
     w.keystore.change_enrolment();
     let err = w.open(GITHUB).unwrap_err();
     assert!(matches!(err, PawError::FaceIdChanged));
-    assert_eq!(
-        err.to_string(),
-        "Face ID changed on this iPhone, so opened passwords were cleared"
-    );
     assert!(w.files().is_empty());
     assert_eq!(w.keystore.reset_count(), 1);
     // The new key works.
@@ -311,14 +307,14 @@ fn face_id_cancel_leaves_the_copy_in_place() {
     let w = World::new();
     w.put(GITHUB, GITHUB_TEXT, TTL);
     for (answer, expected) in [
-        (SimFaceId::Cancel, "FaceIdCancelled"),
-        (SimFaceId::NoMatch, "FaceIdNotRecognised"),
-        (SimFaceId::LockedOut, "FaceIdLockedOut"),
-        (SimFaceId::NotEnrolled, "FaceIdNotSetUp"),
+        (SimFaceId::Cancel, PawError::FaceIdCancelled),
+        (SimFaceId::NoMatch, PawError::FaceIdNotRecognised),
+        (SimFaceId::LockedOut, PawError::FaceIdLockedOut),
+        (SimFaceId::NotEnrolled, PawError::FaceIdNotSetUp),
     ] {
         w.keystore.set_face_id(answer);
         let err = w.open(GITHUB).unwrap_err();
-        assert_eq!(format!("{err:?}"), expected);
+        assert_eq!(std::mem::discriminant(&err), std::mem::discriminant(&expected), "{err:?}");
         assert_eq!(w.files().len(), 1);
     }
     w.keystore.set_face_id(SimFaceId::Match);

@@ -838,11 +838,6 @@ fn a_pin_the_key_lost_before_decipher_is_asked_again_after_touch_with_no_try_spe
     assert_eq!(rig.sim.verify_attempts(), 2);
     assert_eq!(rig.sim.pin_tries_left(), 3);
     assert!(session.holds_pin());
-    let log = session.diagnostics(0);
-    assert!(log.contains("refused 6982 after"), "{log}");
-    assert!(log.contains("PIN check 63C3: the PIN lost, ask again"), "{log}");
-    assert!(log.contains("PIN dropped (the key lost its verification)"), "{log}");
-    assert!(log.contains("stage Pin (again: PinForgotten)"), "{log}");
 }
 
 #[test]

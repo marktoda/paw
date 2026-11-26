@@ -304,16 +304,18 @@ fn bundled_server_keys_are_typed_and_cannot_be_forgotten() {
     let keys = sync.server_keys().unwrap();
     assert_eq!(keys.host, "github.com");
     assert!(keys.bundled);
-    let shown: Vec<(&str, &str)> = keys.keys.iter().map(|k| (k.key_type.as_str(), k.fingerprint.as_str())).collect();
-    assert_eq!(
-        shown,
-        vec![
-            ("Ed25519", "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"),
-            ("ECDSA P-256", "SHA256:p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM"),
-            ("RSA", "SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s"),
-        ]
+    let shown: Vec<(String, String)> = keys.keys.iter().map(|k| (k.key_type.clone(), k.fingerprint.clone())).collect();
+    assert_eq!(shown, paw_core::sync::hosts::bundled("github.com", 22).unwrap().described());
+    let error = sync.forget_host_key().unwrap_err();
+    assert!(
+        matches!(
+            error,
+            paw_core::sync::SyncError::Fault {
+                fault: paw_core::fault::Fault::Remote { failure: paw_core::remote::RemoteFailure::HostKeyBundled { .. } }
+            }
+        ),
+        "{error:?}"
     );
-    assert!(sync.forget_host_key().is_err());
     assert_eq!(sync.server_keys().unwrap().keys.len(), 3);
 }
 

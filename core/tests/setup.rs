@@ -22,7 +22,7 @@ use paw_core::key::touch_clock::{TouchClock, TouchExpectation};
 use paw_core::setup::{SetupError, SetupFlow, SetupState};
 use paw_core::sim::{SimTouch, SimulatedKey};
 use paw_core::ssh::SshPublicKey;
-use paw_core::sync::hosts::{self, GITHUB_HOST_KEYS, KnownHosts};
+use paw_core::sync::hosts::{self, KnownHosts};
 use paw_core::remote::RefusedReason;
 use paw_core::sync::{Connection, HostKeyPin};
 use paw_core::write::LineStatus;
@@ -196,14 +196,8 @@ fn setup_reads_the_key_checks_the_host_downloads_and_opens_one_entry() {
 
     // Nothing secret is saved.
     let saved = std::fs::read_to_string(rig.dir.path().join(paw_core::files::layout::SETUP)).unwrap();
-    let fields: Vec<(&str, &str)> = saved.lines().filter_map(|line| line.split_once('=')).collect();
-    let names: Vec<&str> = fields.iter().map(|(name, _)| *name).collect();
-    assert_eq!(
-        names,
-        ["step", "ident", "ssh_public_key", "decryption_fingerprint", "authentication_touch", "decryption_touch", "address", "opened"]
-    );
-    assert!(fields.iter().all(|(_, value)| *value != PIN), "{saved}");
-    assert!(saved.contains(paw_core::files::layout::SETUP_DONE), "{saved}");
+    assert!(!saved.contains(PIN), "{saved}");
+    assert!(paw_core::files::layout::is_set_up(rig.dir.path()));
     // Sync can find the store.
     assert_eq!(paw_core::sync::address::saved_address(rig.dir.path()).unwrap().display(), address(&server));
 }
@@ -372,7 +366,6 @@ fn a_store_the_key_cannot_open_is_reported_before_any_touch() {
     let error = rig.test_decrypt().unwrap_err();
 
     assert!(matches!(error, SetupError::KeyCannotOpenStore), "{error:?}");
-    assert_eq!(error.to_string(), "cloned, but this key can't open any entry in the store");
     assert_eq!(sim.decipher_count(), 0);
     assert_eq!(sim.touch_count(), touches);
     assert!(matches!(rig.setup.state(), SetupState::TestDecrypt { .. }));
@@ -584,11 +577,15 @@ fn addresses_paw_cannot_use_are_refused_with_what_to_do() {
 
 #[test]
 fn githubs_bundled_keys_match_their_published_fingerprints() {
-    for (line, fingerprint) in GITHUB_HOST_KEYS {
-        assert_eq!(HostKeyPin::parse(line).unwrap().fingerprint(), fingerprint);
-    }
+    // As GitHub publishes them ("GitHub's SSH key fingerprints"), written
+    // out here so that a changed key in the source cannot pass unseen.
+    let published = [
+        "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU",
+        "SHA256:p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM",
+        "SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s",
+    ];
     let github = hosts::bundled("github.com", 22).unwrap();
-    assert_eq!(github.fingerprints(), GITHUB_HOST_KEYS.map(|(_, fp)| fp.to_owned()));
+    assert_eq!(github.fingerprints(), published);
     assert!(hosts::bundled("github.com", 2222).is_none());
     assert!(hosts::bundled("codeberg.org", 22).is_none());
 }

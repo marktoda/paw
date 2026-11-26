@@ -217,7 +217,8 @@ fn a_host_with_the_wrong_key_is_refused_before_login() {
 
 #[test]
 fn an_untouched_key_fails_the_login() {
-    let card = card();
+    // Longer than a quick refusal: the key really waited for a touch.
+    let card = SimulatedKey::new(PIN.into(), true, 1_200);
     let server = GitServer::start(&[authorised_line(&card)]);
     // The PIN is typed, the touch never comes.
     let port = port_with(&card);
@@ -226,7 +227,7 @@ fn an_untouched_key_fails_the_login() {
 
     let error = key_refusal(Connection::open(&server.remote(), &signer));
 
-    assert!(matches!(error, KeyError::Reader { .. }), "{error:?}");
+    assert_eq!(error, KeyError::TouchTimeout);
     assert_eq!(server.logins(), 0);
 }
 
