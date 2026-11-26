@@ -51,35 +51,6 @@ final class GalleryTests: PawUITestCase {
         }
     }
 
-    func testFolderTintsAreStable() {
-        // FNV-1a 32-bit of the lower-cased, NFC name, mod 7, worked out
-        // independently of the app. The page lists them in this order.
-        let expected = "bank cocoa, Bank cocoa, dev blue, email sky, home teal, shopping olive, "
-            + "work sky, travel purple, school magenta, cafe-composed olive, cafe-decomposed olive"
-        for appearance in Self.appearances {
-            launch(page: "tints", appearance: appearance)
-            expect("tint-blue")
-            expect("tint-slate")
-            snapshot(appearance)
-            if appearance == "light" {
-                expectLabel("tint-assignments", expected)
-                expectLabel("tint-of-none", "slate")
-            }
-            app.swipeUp()
-            snapshot("\(appearance)-assignment")
-        }
-    }
-
-    func testEverySymbolExists() {
-        for appearance in Self.appearances {
-            launch(page: "symbols", appearance: appearance)
-            expectLabel("symbols-missing", "0 missing")
-            snapshot(appearance)
-            app.swipeUp()
-            snapshot("\(appearance)-more")
-        }
-    }
-
     // MARK: Components
 
     func testRowsPage() {

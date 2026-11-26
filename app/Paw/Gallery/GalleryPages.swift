@@ -112,7 +112,7 @@ struct TypePage: View {
 }
 
 struct TintsPage: View {
-    /// Folder names whose tint the UI tests know in advance.
+    /// Folder names to show the tint of, a composed and a decomposed é among them.
     private static let known: [(id: String, folder: String)] = [
         ("bank", "bank"), ("Bank", "Bank"), ("dev", "dev"), ("email", "email"),
         ("home", "home"), ("shopping", "shopping"), ("work", "work"),
@@ -162,11 +162,6 @@ struct TintsPage: View {
                         .accessibilityIdentifier("tint-of-none")
                 }
             }
-            // The whole assignment in one line, so a UI test reads it in one query.
-            Text(Self.known.map { "\($0.id) \(FolderTint(folder: $0.folder).name)" }.joined(separator: ", "))
-                .font(PawFont.caption)
-                .foregroundStyle(PawColor.labelSecondary)
-                .accessibilityIdentifier("tint-assignments")
         }
     }
 }

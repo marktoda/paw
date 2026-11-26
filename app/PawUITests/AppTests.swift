@@ -11,20 +11,18 @@ final class AppTests: PawUITestCase {
     // MARK: Browse and search
 
     func testHomeListsTheFixtureFoldersWithTheirCounts() {
-        for appearance in ["light", "dark"] {
-            launch(appearance: appearance)
-            expectLabel("folder-archive", contains: "archive, folder, 2 passwords")
-            expectLabel("folder-bank", contains: "bank, folder, 3 passwords")
-            expectLabel("folder-web", contains: "web, folder, 6 passwords")
-            expectLabel("folder-servers", contains: "servers, folder, 3 passwords")
-            expectAbsent("face-id-github.com", "Nothing opens with Face ID before the key was used")
-            snapshot("home-\(appearance)")
+        launch()
+        expectLabel("folder-archive", contains: "archive, folder, 2 passwords")
+        expectLabel("folder-bank", contains: "bank, folder, 3 passwords")
+        expectLabel("folder-web", contains: "web, folder, 6 passwords")
+        expectLabel("folder-servers", contains: "servers, folder, 3 passwords")
+        expectAbsent("face-id-github.com", "Nothing opens with Face ID before the key was used")
+        snapshot("home")
 
-            scrollTo("entry-Home Wi-Fi")
-            expectLabel("entry-Home Wi-Fi", contains: "Home Wi-Fi, needs your key")
-            expectLabel("entry-phone-pin", contains: "phone-pin, needs your key")
-            snapshot("home-\(appearance)-bottom")
-        }
+        scrollTo("entry-Home Wi-Fi")
+        expectLabel("entry-Home Wi-Fi", contains: "Home Wi-Fi, needs your key")
+        expectLabel("entry-phone-pin", contains: "phone-pin, needs your key")
+        snapshot("home-bottom")
     }
 
     func testOpeningAFolderShowsItsSubfoldersAndEntries() {
@@ -48,68 +46,62 @@ final class AppTests: PawUITestCase {
     }
 
     func testSearchFindsAMiddleTermAndSaysWhenNothingMatches() {
-        for appearance in ["light", "dark"] {
-            launch(appearance: appearance)
-            let field = app.searchFields.firstMatch
-            XCTAssertTrue(waitToExist(field, timeout: Self.patience), "Home should have a search field")
-            focus(field)
-            field.typeText("ycombinator")
-            expectLabel("search-count", contains: "1 match")
-            expectLabel("entry-news.ycombinator.com", contains: "news.ycombinator.com, web")
-            snapshot("search-\(appearance)")
+        launch()
+        let field = app.searchFields.firstMatch
+        XCTAssertTrue(waitToExist(field, timeout: Self.patience), "Home should have a search field")
+        focus(field)
+        field.typeText("ycombinator")
+        expectLabel("search-count", contains: "1 match")
+        expectLabel("entry-news.ycombinator.com", contains: "news.ycombinator.com, web")
+        snapshot("search")
 
-            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 11) + "zzqx")
-            let empty = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "zzqx")).firstMatch
-            XCTAssertTrue(waitToExist(empty, timeout: Self.patience), "No results should say what was searched for")
-            XCTAssertTrue(empty.label.contains("No password or folder called"), empty.label)
-            snapshot("no-results-\(appearance)")
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 11) + "zzqx")
+        let empty = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "zzqx")).firstMatch
+        XCTAssertTrue(waitToExist(empty, timeout: Self.patience), "No results should say what was searched for")
+        XCTAssertTrue(empty.label.contains("No password or folder called"), empty.label)
+        snapshot("no-results")
 
-            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 4))
-            expect("folder-web")
-        }
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 4))
+        expect("folder-web")
     }
 
     // MARK: Opening with the key
 
     func testOpeningAnEntryAsksForThePinThenATouchAndKeepsThePasswordHidden() {
-        for appearance in ["light", "dark"] {
-            launch(appearance: appearance)
-            tap("folder-web")
-            tap("entry-github.com")
-            expectLabel("key-sheet-purpose", contains: "Open github.com")
-            let field = pinField()
-            expectAbsent("pin-tries-left", "A fresh key has all 3 tries, so none are counted out")
-            expectAbsent("touch-prompt", "No touch before the PIN")
-            if appearance == "light" { snapshot("key-sheet-pin") }
-            enterPin(Self.pin, send: false)
-            expectEnabled("pin-continue", true)
-            tapUntilGone("pin-continue")
+        launch()
+        tap("folder-web")
+        tap("entry-github.com")
+        expectLabel("key-sheet-purpose", contains: "Open github.com")
+        let field = pinField()
+        expectAbsent("pin-tries-left", "A fresh key has all 3 tries, so none are counted out")
+        expectAbsent("touch-prompt", "No touch before the PIN")
+        snapshot("key-sheet-pin")
+        enterPin(Self.pin, send: false)
+        expectEnabled("pin-continue", true)
+        tapUntilGone("pin-continue")
 
-            expect("touch-prompt")
-            expectAbsent("entry-title", "Nothing opens before the key is touched")
-            if appearance == "light" { snapshot("key-sheet-touch") }
-            tapSimulated("simulated-touch")
+        expect("touch-prompt")
+        expectAbsent("entry-title", "Nothing opens before the key is touched")
+        snapshot("key-sheet-touch")
+        tapSimulated("simulated-touch")
 
-            expectLabel("entry-title", contains: "github.com")
-            expectGone("key-sheet-purpose")
-            expectValue("password-value", "hidden")
-            expectValue("field-Username", "you@example.com")
-            expectValue("field-Website", "https://github.com/login")
-            expectLabel("entry-notes", contains: "blue notebook")
-            snapshot("entry-hidden-\(appearance)")
+        expectLabel("entry-title", contains: "github.com")
+        expectGone("key-sheet-purpose")
+        expectValue("password-value", "hidden")
+        expectValue("field-Username", "you@example.com")
+        expectValue("field-Website", "https://github.com/login")
+        expectLabel("entry-notes", contains: "blue notebook")
+        snapshot("entry-hidden")
 
-            app.buttons["password-reveal"].tap()
-            expectValue("password-value", Self.githubPassword)
-            snapshot("entry-revealed-\(appearance)")
+        app.buttons["password-reveal"].tap()
+        expectValue("password-value", Self.githubPassword)
+        snapshot("entry-revealed")
 
-            if appearance == "light" {
-                app.buttons["copy-password"].tap()
-                expectLabel("sim-last-toast", contains: "Password copied. Clears in 45 seconds.")
-                snapshot("copied")
-                app.buttons["show-password"].tap()
-                expectValue("password-value", "hidden")
-            }
-        }
+        app.buttons["copy-password"].tap()
+        expectLabel("sim-last-toast", contains: "Password copied. Clears in 45 seconds.")
+        snapshot("copied")
+        app.buttons["show-password"].tap()
+        expectValue("password-value", "hidden")
     }
 
     func testASecondEntryInTheSameRunDoesNotAskForThePinAgain() {

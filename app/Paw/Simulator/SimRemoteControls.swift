@@ -18,11 +18,12 @@ import SwiftUI
 ///   `web/`): the simulated host cannot commit a real link yet;
 /// - `rewrite`: the history is replaced (force-pushed). At launch this only
 ///   prepares: the store is set up one commit past the fixture, so a fresh
-///   fixture history no longer contains what paw saw. Apply it by hand.
+///   fixture history no longer contains what paw saw. Apply it by hand;
+/// - `hostKey`: the host presents another host key from now on.
 /// `-pawSimRemoteRefusePushes 1` refuses every branch update, and
 /// `-pawSimRemoteDrop 1` cuts the next connection off half way.
 enum SimRemoteChange: String, CaseIterable, Identifiable {
-    case add, edit, conflict, delete, gpgid, link, rewrite, secondKey
+    case add, edit, conflict, delete, gpgid, link, rewrite, secondKey, hostKey
 
     var id: String { rawValue }
 
@@ -41,6 +42,7 @@ enum SimRemoteChange: String, CaseIterable, Identifiable {
         case .link: "Add a name paw won't check out"
         case .rewrite: "Replace the history"
         case .secondKey: "Give work/ a second key"
+        case .hostKey: "Present another host key"
         }
     }
 }
@@ -138,6 +140,10 @@ final class SimRemoteHandle: @unchecked Sendable {
             _ = try host.commitFile(
                 path: "work/.gpg-id", contents: Data(lines.utf8), message: "Give work a second key.")
             return "work/ has a second key."
+        case .hostKey:
+            guard let host else { return "No simulated host." }
+            host.setChangedHostKey(changed: true)
+            return "Presenting another host key."
         }
     }
 
@@ -170,10 +176,6 @@ final class SimRemoteHandle: @unchecked Sendable {
         if wasDropping {
             host?.setDropMidClone(drop: false)
         }
-    }
-
-    func setChangedHostKey(_ changed: Bool) {
-        host?.setChangedHostKey(changed: changed)
     }
 
     /// "tip 1a2b3c4 · 3 logins", for the debug element UI tests read.
@@ -286,11 +288,6 @@ final class SimRemotePanel {
         SimRemoteHandle.shared.dropNextConnection()
         status = "The next connection drops half way."
     }
-
-    func setChangedHostKey(_ changed: Bool) {
-        SimRemoteHandle.shared.setChangedHostKey(changed)
-        status = changed ? "Presenting another host key." : "Presenting the usual host key."
-    }
 }
 
 /// The simulated host follows sync as its screens show it: the launch's
@@ -376,9 +373,6 @@ struct SimRemoteSection: View {
             Button("Drop the next connection") { panel.dropNextConnection() }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-remote-drop")
-            Button("Present another host key") { panel.setChangedHostKey(true) }
-                .foregroundStyle(PawColor.label)
-                .accessibilityIdentifier("sim-remote-host-key")
     }
 }
 #endif

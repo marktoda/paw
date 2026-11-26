@@ -42,42 +42,20 @@ final class PolishThreeTests: PawUITestCase {
 
     // MARK: Settings
 
-    /// Forget, then Check, when the server now presents another key: paw
-    /// says it differs from the one forgotten, and trusting it takes a
-    /// second, deliberate step.
+    /// The server's keys in Settings; Forget, then Check, when the server
+    /// now presents another key: paw says it differs from the one
+    /// forgotten, and trusting it takes a second, deliberate step.
     func testAServerKeyThatChangedAfterForgetIsFlaggedAndTrustedOnlyOnConfirm() {
-        launchFixture()
-        // The simulated host presents another key from now on.
-        // The pill first checks with the key; once up to date it opens the sheet.
-        tap("sync-pill")
-        enterPin(Self.pin)
-        let touch = element("touch-prompt")
-        let purpose = element("key-sheet-purpose")
-        _ = waitUntil(timeout: 45) { touch.exists || !purpose.exists }
-        if touch.exists { tapSimulated("simulated-touch") }
-        expectGone("key-sheet-purpose")
-        expectLabel("sync-pill", contains: "Up to date")
-        tap("sync-pill")
-        expect("sync-sheet-done")
-        let row = scrollTo("sim-controls")
-        for _ in 0..<3 where (row.value as? String) != "shown" {
-            row.tap()
-            if waitUntil(timeout: 2, { (row.value as? String) == "shown" }) { break }
-        }
-        let control = scrollTo("sim-remote-host-key")
-        let actions = app.buttons.matching(
-            NSPredicate(format: "identifier == %@ OR identifier == %@", "sync-send", "sync-check"))
-        var swipes = 0
-        while swipes < 4, actions.count > 0, control.frame.maxY > actions.firstMatch.frame.minY {
-            app.swipeUp()
-            swipes += 1
-        }
-        control.tap()
-        tap("sync-sheet-done")
-        expectGone("sync-sheet-done")
-
+        launchFixture(extra: ["-pawSimRemoteChange", "hostKey"])
         openSettings()
+        // The simulated host is not one whose keys ship with paw.
+        expectText("settings-host-fingerprint", contains: "Trusted by you")
         tap("settings-host-fingerprint")
+        scrollTo("settings-host-fingerprints")
+        expectLabel("settings-host-key", contains: "Ed25519")
+        expectLabel("settings-host-key", contains: "SHA256:")
+        snapshot("server-keys")
+
         tap("settings-forget-host-key")
         tap("settings-forget-host-confirm")
         expectText("settings-host-fingerprint", contains: "Not trusted yet")

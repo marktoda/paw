@@ -170,7 +170,8 @@ final class SyncTests: PawUITestCase {
 
     // MARK: Sending
 
-    func testSendingAsksForThePinOnceEmptiesTheListAndMovesTheRemoteAndASecondSendAsksForNoPin() {
+    /// That a second send asks for no PIN is SyncModelTests.
+    func testSendingAsksForThePinEmptiesTheListAndMovesTheRemote() {
         launch()
         expectLabel("sync-pill", contains: "Updates need your key")
         snapshot("pill-needs-key-light")
@@ -193,18 +194,6 @@ final class SyncTests: PawUITestCase {
         expectLabel("sync-pill", contains: "Up to date")
         expectRemoteMoved(from: before, "The simulated host's tip should have moved")
         snapshot("pill-up-to-date-light")
-
-        // A second send in the same run: the PIN is still held.
-        addEntry("again.example", folder: "web")
-        openSyncSheet()
-        expect("sync-send")
-        snapshot("sync-sheet-light")
-        let middle = remote
-        tap("sync-send")
-        passKeySheet(purpose: "Send 1 change", pin: false)
-        expectGone("key-sheet-purpose")
-        expectLabel("sync-pill", contains: "Up to date")
-        expectRemoteMoved(from: middle, "The second send should have moved the tip again")
         expectGone(element("unpushed-banner"), "Nothing should be waiting")
     }
 

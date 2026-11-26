@@ -1,9 +1,9 @@
 import XCTest
 
 /// Settings beyond Lock now and Remove: who can open the store, Face ID on
-/// and off, sites used, the server's keys and Copy diagnostics. All on the
-/// fixture store with the simulated key; the rules behind them are tested
-/// in the core (core/tests/settings.rs).
+/// and off, sites used and Copy diagnostics (the server's keys are in
+/// PolishThreeTests). All on the fixture store with the simulated key; the
+/// rules behind them are tested in the core (core/tests/settings.rs).
 final class SettingsRestTests: PawUITestCase {
     func testWhoCanOpenListsEachListOfKeys() {
         launchFixture()
@@ -65,30 +65,6 @@ final class SettingsRestTests: PawUITestCase {
         tap("sites-used-clear-all")
         tap("sites-used-clear-confirm")
         expect("sites-used-empty")
-    }
-
-    func testServerKeyCanBeForgottenAndTrustedAgain() {
-        launchFixture()
-        openSettings()
-        // The simulated host is not one whose keys ship with paw.
-        expectText("settings-host-fingerprint", contains: "Trusted by you")
-        tap("settings-host-fingerprint")
-        // The rows below the fold don't exist until scrolled to.
-        _ = scrollTo("settings-host-fingerprints")
-        expectLabel("settings-host-key", contains: "Ed25519")
-        expectLabel("settings-host-key", contains: "SHA256:")
-        snapshot("server-keys")
-
-        _ = scrollTo("settings-forget-host-key")
-        tap("settings-forget-host-key")
-        tap("settings-forget-host-confirm")
-        expectText("settings-host-fingerprint", contains: "Not trusted yet")
-        _ = scrollTo("settings-check-host")
-        tap("settings-check-host")
-        expectLabel("settings-presented-key", contains: "SHA256:")
-        _ = scrollTo("settings-trust-host")
-        tap("settings-trust-host")
-        expectText("settings-host-fingerprint", contains: "Trusted by you")
     }
 
     func testCopyDiagnosticsNamesNothing() {

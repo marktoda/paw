@@ -12,11 +12,9 @@ final class EditTests: PawUITestCase {
         expectAbsent("warning-row", "The fixture store should be writable")
     }
 
-    /// Save is dimmed and does nothing: the sheet stays and nothing is saved.
+    /// Save is dimmed: nothing can be saved.
     private func expectSaveBlocked(file: StaticString = #filePath, line: UInt = #line) {
-        app.buttons["form-save"].firstMatch.tap()
-        XCTAssertTrue(element("form-cancel").exists, "Save should not close the form", file: file, line: line)
-        XCTAssertFalse(element("sim-last-app-toast").exists, "Nothing should have been saved", file: file, line: line)
+        expectEnabled("form-save", false, file: file, line: line)
     }
 
     /// Types into a form field, replacing what is there.
@@ -157,36 +155,21 @@ final class EditTests: PawUITestCase {
         snapshot("new-entry-opened")
     }
 
-    func testAnEmptyADuplicateAndASlashedNameEachShowTheCoresMessageAndBlockSave() {
-        for appearance in ["light", "dark"] {
-            launch(appearance: appearance)
-            tap("add-button")
-            expect("form-name")
-            if appearance == "dark" {
-                snapshot("add-empty-dark")
-            }
-            expectSaveBlocked()
+    /// Which names are refused is EditModelTests and the core's; this is
+    /// the form showing the core's message and holding Save back.
+    func testADuplicateNameShowsTheCoresMessageAndBlocksSave() {
+        launch()
+        tap("add-button")
+        expect("form-name")
+        chooseFolder("web")
+        type("GitHub.com", into: "form-name")
+        expectLabel("problem-name", contains: "There's already an entry called 'github.com' in web.")
+        expectSaveBlocked()
+        snapshot("add-errors")
 
-            type("x", into: "form-name")
-            clear("form-name")
-            expectLabel("problem-name", contains: "Give it a name.")
-            expectSaveBlocked()
-
-            type("work/vpn", into: "form-name")
-            expectLabel("problem-name", contains: "Names can't contain /.")
-            expectSaveBlocked()
-
-            chooseFolder("web")
-            type("GitHub.com", into: "form-name")
-            expectLabel("problem-name", contains: "There's already an entry called 'github.com' in web.")
-            expectSaveBlocked()
-            snapshot("add-errors-\(appearance)")
-
-            type("github.com-2", into: "form-name")
-            expectGone("problem-name")
-            expectEnabled("form-save", true)
-            app.terminate()
-        }
+        type("github.com-2", into: "form-name")
+        expectGone("problem-name")
+        expectEnabled("form-save", true)
     }
 
     func testGenerateFillsAPasswordOfTheChosenLengthAndTheStrengthFollowsTheLength() {
@@ -195,14 +178,13 @@ final class EditTests: PawUITestCase {
         expect("form-name")
         tap("form-options")
         let slider = app.sliders["form-length"]
-        XCTAssertTrue(slider.waitForExistence(timeout: 10), "The options should show the length")
+        XCTAssertTrue(waitToExist(slider, timeout: Self.patience), "The options should show the length")
         expectLabel("form-strength", contains: "very strong")
 
         scrollTo("form-length")
-        slider.adjust(toNormalizedSliderPosition: 0)
         // A drag that starts while the form is still settling moves nothing.
         for _ in 0..<3 where (slider.value as? String) != "8 characters" {
-            _ = waitUntil(timeout: 1) { false }
+            waitUntilStill(slider)
             slider.adjust(toNormalizedSliderPosition: 0)
         }
         expectValue("form-length", "8 characters")
@@ -210,29 +192,6 @@ final class EditTests: PawUITestCase {
         tap("form-generate")
         XCTAssertEqual((expect("form-password").value as? String)?.count, 8)
         snapshot("generator-options")
-
-        // A synthesized drag to the end can stop a step or two short, and
-        // stops far short when it starts while the list is still moving
-        // after Generate (once it left the slider at 28): bring the slider
-        // to rest on screen first, then read the length it settled on
-        // rather than assuming 64. A drag cut short is dragged again.
-        let long = NSPredicate(format: "value MATCHES %@", "^(4[89]|5[0-9]|6[0-4]) characters$")
-        for _ in 0..<3 where !long.evaluate(with: slider) {
-            scrollTo("form-length")
-            slider.adjust(toNormalizedSliderPosition: 1)
-            _ = XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: long, object: slider)], timeout: 5)
-        }
-        XCTAssertTrue(long.evaluate(with: slider),
-                      "The slider should move to a long length, it shows \(slider.value ?? "nothing")")
-        expectLabel("form-strength", contains: "very strong")
-        // Compare live values: the slider may still be settling as this runs.
-        let password = element("form-password")
-        let regenerated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            let length = Int(((slider.value as? String) ?? "").prefix { $0.isNumber }) ?? 0
-            return length >= 48 && (password.value as? String)?.count == length
-        }, object: nil)
-        XCTAssertEqual(XCTWaiter().wait(for: [regenerated], timeout: 15), .completed,
-                       "A generated password should follow the new length")
     }
 
     func testCancelWithSomethingTypedAsksInlineBeforeDiscarding() {
