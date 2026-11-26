@@ -9,7 +9,8 @@ use std::path::Path;
 use git2::{Oid, Repository};
 
 use super::history::{ChangeKind, PawCommit, Replay, ensure_clean, move_branch, paw_commits};
-use super::{SyncError, check_not_being_sent, current_branch, git_err, refs};
+use super::{SyncError, check_not_being_sent, current_branch, git_err};
+use crate::files::refs;
 use crate::lock::{Exclusive, StoreLock};
 
 /// One unpushed change.

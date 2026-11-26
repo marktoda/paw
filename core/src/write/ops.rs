@@ -27,7 +27,8 @@ use super::draft::{EntryDraft, collision, folder_problems, name_problems};
 use super::keyring::{FolderRecipients, Keyring};
 use super::{WriteError, author, encrypt, now_secs};
 use crate::PawError;
-use crate::copies::{CopyCache, content_id};
+use crate::copies::CopyCache;
+use crate::files::content_id;
 use crate::entry::EntryDoc;
 use crate::entry::opened::OpenedEntry;
 use crate::store::codes::CodeFile;
@@ -65,7 +66,7 @@ pub struct Saved {
     pub entry: String,
     /// Where it was, if the write moved it.
     pub previous: Option<String>,
-    /// The content id of its file now ([`crate::copies::content_id`]).
+    /// The content id of its file now ([`crate::files::content_id`]).
     pub content_id: Vec<u8>,
     /// The commits made, oldest first: none if nothing changed.
     pub commits: Vec<String>,
@@ -135,7 +136,7 @@ fn check_path(entry: &str) -> Result<(), WriteError> {
 impl WriteStore {
     /// The store set up in `state_dir` (checked out in its `repo/`).
     pub fn open(state_dir: &Path) -> Self {
-        Self::new(state_dir, &crate::layout::repo_dir(state_dir))
+        Self::new(state_dir, &crate::files::layout::repo_dir(state_dir))
     }
 
     /// A store checked out at `repo` with its state in `state_dir`.
@@ -264,7 +265,7 @@ impl WriteStore {
         let doc = draft.build().map_err(|problems| WriteError::Invalid { problems })?;
         let target = draft.path();
         let folder = folder_of(&target);
-        let author = author(&self.state_dir);
+        let author = author();
         let keyring = self.keyring()?;
         let now = now_secs();
 
@@ -346,7 +347,7 @@ impl WriteStore {
             let held = self.exclusive()?;
             self.current(entry)?;
             let message = format!("Remove {entry} from store.");
-            commit_edits(&held, &self.repo, &[TreeEdit::Remove { path: &file(entry) }], &message, &author(&self.state_dir))?
+            commit_edits(&held, &self.repo, &[TreeEdit::Remove { path: &file(entry) }], &message, &author())?
         };
         let mut follow_ups = FollowUps::default();
         self.forget_copy(entry, &mut follow_ups);
@@ -420,7 +421,7 @@ impl WriteStore {
             (true, Some(_)) => Some(self.keyring()?.resolve(&self.repo, to_folder, now_secs())?),
         };
         let reencrypt = open.zip(keys.as_deref());
-        let (commit, ciphertext) = self.move_commit(held, from, to, reencrypt, &author(&self.state_dir))?;
+        let (commit, ciphertext) = self.move_commit(held, from, to, reencrypt, &author())?;
         Ok((content_id(ciphertext.as_deref().unwrap_or(current)), commit))
     }
 }

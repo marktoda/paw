@@ -61,7 +61,7 @@ use std::time::{Duration, Instant};
 use crate::PawError;
 
 /// The store lock's file, in the state directory: paw's only file lock.
-pub const STORE_LOCK_FILE: &str = crate::layout::STORE_LOCK;
+pub const STORE_LOCK_FILE: &str = crate::files::layout::STORE_LOCK;
 
 /// What every error type's `StoreBusy` says.
 pub const STORE_BUSY: &str =
@@ -144,13 +144,13 @@ impl StoreLock {
     pub fn for_state_dir(state_dir: &Path) -> Self {
         let _ = std::fs::create_dir_all(state_dir);
         let root = canonical(state_dir);
-        Self { files: Some(root.clone()), repo: crate::layout::repo_dir(&root), root }
+        Self { files: Some(root.clone()), repo: crate::files::layout::repo_dir(&root), root }
     }
 
     /// The lock of the store checked out at `repo`: its state directory's
     /// if `repo` is `<state>/repo`, else the repository's own.
     pub fn for_repo(repo: &Path) -> Self {
-        if let Some(state_dir) = crate::layout::state_dir_of(repo) {
+        if let Some(state_dir) = crate::files::layout::state_dir_of(repo) {
             return Self::for_state_dir(state_dir);
         }
         let root = canonical(repo);
@@ -476,7 +476,7 @@ pub fn remove_stale_git_locks(repo: &Path) -> Vec<PathBuf> {
             removed.push(path);
         }
     }
-    let skip = crate::sync::refs::fetched_dirs(&git);
+    let skip = crate::files::refs::fetched_dirs(&git);
     for dir in [git.join("refs"), git.join("logs")] {
         remove_locks_under(&dir, &skip, 0, &mut removed);
     }
@@ -516,7 +516,7 @@ pub(crate) fn remove_stale_fetch_locks(repo: &Path) {
     let git = repo.join(".git");
     let _ = std::fs::remove_file(git.join(SHALLOW_LOCK));
     let mut removed = Vec::new();
-    for dir in crate::sync::refs::fetched_dirs(&git) {
+    for dir in crate::files::refs::fetched_dirs(&git) {
         remove_locks_under(&dir, &[], 0, &mut removed);
     }
     if let Ok(packs) = std::fs::read_dir(git.join("objects/pack")) {

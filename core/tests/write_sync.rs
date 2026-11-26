@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use paw_core::sim::remote::steps;
-use paw_core::copies::content_id;
+use paw_core::files::content_id;
 use paw_core::entry::EntryDoc;
 use paw_core::sim::SimulatedKey;
 use paw_core::sync::operation::SyncState;

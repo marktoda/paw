@@ -8,7 +8,6 @@
 //! - `github`: the GitHub repository chosen for the store;
 //! - `enrolled-key`: the key's identity, once the test decrypt succeeded;
 //! - `recipients`: the pinned keys and accepted `.gpg-id` files;
-//! - `git-identity`: who commits made here are attributed to;
 //! - `site-pairings.json`, `one-time-codes.json`, `one-time-codes-on`:
 //!   AutoFill's pairings and the entries with a one-time code;
 //! - `key-log.*`: the key log;
@@ -26,7 +25,6 @@ pub(crate) const REMOTE: &str = "remote";
 pub(crate) const GITHUB_LINK: &str = "github";
 pub(crate) const ENROLLED_KEY: &str = "enrolled-key";
 pub(crate) const RECIPIENTS: &str = "recipients";
-pub(crate) const GIT_IDENTITY: &str = "git-identity";
 pub(crate) const SITE_PAIRINGS: &str = "site-pairings.json";
 pub(crate) const ONE_TIME_CODES: &str = "one-time-codes.json";
 pub(crate) const ONE_TIME_CODES_ON: &str = "one-time-codes-on";
@@ -50,8 +48,8 @@ pub(crate) fn state_dir_of(repo: &Path) -> Option<&Path> {
 /// Setup finished and the store is here. Reads two files and writes
 /// nothing, so the AutoFill extension can ask.
 pub fn is_set_up(state_dir: &Path) -> bool {
-    let done = std::fs::read_to_string(state_dir.join(SETUP))
-        .is_ok_and(|text| text.lines().next() == Some(SETUP_DONE));
+    let done = super::values::read(&state_dir.join(SETUP))
+        .is_ok_and(|found| found.is_some_and(|values| values.first_line() == Some(SETUP_DONE)));
     done && repo_dir(state_dir).join(crate::path::GPG_ID).is_file()
 }
 

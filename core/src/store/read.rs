@@ -10,16 +10,11 @@
 //! app writes to its own container; nothing can swap a folder for a link in
 //! between.
 
-use std::io::Read;
 use std::path::Path;
 
 use crate::PawError;
+use crate::files::{MAX_FILE_BYTES, read_bounded, too_large};
 use crate::path::{entry_file, has_hidden_part, unsafe_path, unsafe_path_err};
-
-/// No entry, `.gpg-id`, certificate or state file comes close to this. A
-/// larger file is not read, so a hostile repository or a damaged file
-/// cannot make paw load something huge.
-pub(crate) const MAX_FILE_BYTES: u64 = 1 << 20;
 
 fn io_err(relative: &str, e: std::io::Error) -> PawError {
     PawError::Store(format!("could not read {relative}: {e}"))
@@ -59,16 +54,13 @@ pub(crate) fn read_file(root: &Path, relative: &str) -> Result<Option<Vec<u8>>, 
         }
     }
 
-    let file = std::fs::File::open(&on_disk).map_err(|e| io_err(relative, e))?;
-    let mut bytes = Vec::new();
     // The limit again: the size above was only what the file system said.
-    file.take(MAX_FILE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|e| io_err(relative, e))?;
-    if bytes.len() as u64 > MAX_FILE_BYTES {
-        return Err(PawError::Store(format!("{relative} is too large to be an entry")));
+    match read_bounded(&on_disk, MAX_FILE_BYTES) {
+        Err(e) if too_large(&e) => Err(PawError::Store(format!("{relative} is too large to be an entry"))),
+        Err(e) => Err(io_err(relative, e)),
+        Ok(None) => Err(io_err(relative, std::io::ErrorKind::NotFound.into())),
+        Ok(bytes) => Ok(bytes),
     }
-    Ok(Some(bytes))
 }
 
 /// Reads the encrypted bytes of the entry `entry` (its path without the

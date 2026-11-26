@@ -8,7 +8,7 @@
 //! then a lookalike.
 //!
 //! The file is `site-pairings.json` in the store's state directory
-//! ([`super::state_file`]). It holds names and domains only, nothing from
+//! ([`crate::files::list`]). It holds names and domains only, nothing from
 //! inside an entry. The app and the AutoFill extension both write it; two
 //! processes writing in the same instant can lose one pairing, which costs
 //! one more question, never a wrong fill. Size is bounded: [`MAX_ENTRIES`]
@@ -22,11 +22,11 @@ use serde::{Deserialize, Serialize};
 
 use super::PassStore;
 use super::service::{MatchKind, NamePairing, host_of, match_site, names_site, registrable, site_name};
-use super::state_file::{ListFile, ListItem, ListKind, MAX_PATH_BYTES};
+use crate::files::list::{ListFile, ListItem, ListKind, MAX_PATH_BYTES};
 use crate::PawError;
 
 /// The file, in the state directory.
-pub const FILE: &str = crate::layout::SITE_PAIRINGS;
+pub const FILE: &str = crate::files::layout::SITE_PAIRINGS;
 /// The most entries kept.
 pub const MAX_ENTRIES: usize = 300;
 /// The most sites kept per entry.
@@ -37,6 +37,7 @@ static LIST: ListKind = ListKind {
     key: "pairings",
     temp_prefix: ".site-pairings.tmp-",
     max_items: MAX_ENTRIES,
+    on_marker: None,
     writing: Mutex::new(()),
 };
 
@@ -98,7 +99,7 @@ impl PairingFile {
     /// anything; nothing is written if not. Refuses if the state directory
     /// is gone (the store was removed): it is never made again here.
     fn update(&self, change: impl FnOnce(&mut Vec<Pairing>) -> bool) -> std::io::Result<()> {
-        self.list.update(|| true, change).map(|_| ())
+        self.list.update(change).map(|_| ())
     }
 
 /// Keeps that `entry` was filled on `site` (a registrable domain), as

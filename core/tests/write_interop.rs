@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
-use paw_core::copies::content_id;
+use paw_core::files::content_id;
 use paw_core::entry::EntryDoc;
 use paw_core::ffi::write::StoreWriter;
 use paw_core::recipients::{Recipient, entry_recipients};

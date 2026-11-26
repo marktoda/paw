@@ -40,7 +40,7 @@ pub const RING: usize = 120;
 /// grows past this many bytes (about 400 lines).
 const TRIM_AT_BYTES: u64 = 40 * 1024;
 pub const KEEP_LINES: usize = 200;
-const PREFIX: &str = crate::layout::KEY_LOG_PREFIX;
+const PREFIX: &str = crate::files::layout::KEY_LOG_PREFIX;
 
 fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
@@ -107,13 +107,20 @@ impl Sink {
     /// and renaming it over the old one. The new file takes the protection
     /// class of the folder, as every state file does.
     fn trim(&self, path: &Path) -> std::io::Result<()> {
-        let text = std::fs::read_to_string(path)?;
+        let text = read_text(path)?;
         let lines: Vec<&str> = text.lines().collect();
         let kept = &lines[lines.len().saturating_sub(KEEP_LINES)..];
-        let temporary = self.dir.join(format!("{PREFIX}{}.tmp", self.process));
-        std::fs::write(&temporary, kept.iter().map(|l| format!("{l}\n")).collect::<String>())?;
-        std::fs::rename(&temporary, path)
+        let temp_prefix = format!(".{PREFIX}{}.tmp-", self.process);
+        let text: String = kept.iter().map(|l| format!("{l}\n")).collect();
+        crate::files::write_atomic(path, &temp_prefix, text.as_bytes())
     }
+}
+
+/// A log file's lines; an error if it is gone or not text.
+fn read_text(path: &Path) -> std::io::Result<String> {
+    let bytes = crate::files::read_bounded(path, crate::files::MAX_FILE_BYTES)?
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))?;
+    String::from_utf8(bytes).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
 /// One key session's log.
@@ -316,7 +323,7 @@ fn log_files(dir: &Path) -> Vec<(String, PathBuf)> {
 pub fn key_log(state_dir: String, utc_offset_secs: i32) -> Vec<KeyLogLine> {
     let mut files: Vec<std::iter::Peekable<std::vec::IntoIter<KeyLogLine>>> = Vec::new();
     for (process, path) in log_files(Path::new(&state_dir)) {
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(text) = read_text(&path) else { continue };
         let lines: Vec<KeyLogLine> = text
             .lines()
             .filter_map(|line| {

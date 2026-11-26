@@ -219,7 +219,7 @@ impl EntryDraft {
     }
 
     /// An edit of the entry `path`, opened as `doc`. `content_id` is that
-    /// of the file it was decrypted from ([`crate::copies::content_id`]),
+    /// of the file it was decrypted from ([`crate::files::content_id`]),
     /// if known.
     pub fn edit(path: &str, doc: EntryDoc, content_id: Option<Vec<u8>>) -> Self {
         let (folder, name) = split(path);

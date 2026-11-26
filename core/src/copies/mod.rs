@@ -281,7 +281,7 @@ impl CopyCache {
 
     /// Keeps a copy of `text`, just decrypted with the key, for `ttl` from
     /// now (at most [`MAX_TTL`]). `content_id` identifies the ciphertext it
-    /// came from (see [`content_id`]). A zero `ttl` keeps nothing and
+    /// came from (see [`crate::files::content_id`]). A zero `ttl` keeps nothing and
     /// forgets any older copy. Never prompts. Returns when the copy ends.
     pub fn put(
         &self,
@@ -405,14 +405,6 @@ impl From<Invalid> for Sealing {
     fn from(_: Invalid) -> Self {
         Self::Invalid
     }
-}
-
-/// Identifies one version of an entry: SHA-256 of its `.gpg` file. A pull
-/// or an edit that changes the file changes it, which makes an older copy
-/// stale.
-pub fn content_id(ciphertext: &[u8]) -> Vec<u8> {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(ciphertext).to_vec()
 }
 
 impl CopyCache {

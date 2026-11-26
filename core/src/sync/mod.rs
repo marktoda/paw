@@ -17,7 +17,6 @@ pub mod hosts;
 pub mod integrate;
 pub mod operation;
 pub mod queue;
-pub(crate) mod refs;
 mod transport;
 
 use std::path::Path;
@@ -35,6 +34,7 @@ pub use transport::{ConnectError, Connection, DOWNLOAD_LIMIT, HostKeyPin, Presen
 pub(crate) use transport::{made_no_connection, says_repository_missing};
 
 use crate::PawError;
+use crate::files::refs;
 use crate::lock::{Exclusive, FETCH_WAIT, Fetching, StoreLock};
 use crate::path::{unsafe_path, unsafe_path_err};
 

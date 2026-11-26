@@ -18,9 +18,11 @@ use std::path::Path;
 
 use super::CardInfo;
 use crate::PawError;
+use crate::files::values::{self, Values};
 
 /// The file in the state directory. Public data only.
-const FILE: &str = crate::layout::ENROLLED_KEY;
+const FILE: &str = crate::files::layout::ENROLLED_KEY;
+const TEMP_PREFIX: &str = ".enrolled-key.tmp-";
 
 /// Who a key is, as read without a PIN. Nothing in it is secret.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -98,26 +100,26 @@ impl KeyIdentity {
         format!("serial {}{tail}", self.serial())
     }
 
-    fn to_text(&self) -> String {
-        let mut text = format!("ident={}\n", self.ident);
+    fn pairs(&self) -> Vec<(&'static str, &str)> {
+        let mut pairs = vec![("ident", self.ident.as_str())];
         if let Some(fpr) = &self.decryption_fingerprint {
-            text.push_str(&format!("decryption_fingerprint={fpr}\n"));
+            pairs.push(("decryption_fingerprint", fpr));
         }
         if let Some(fpr) = &self.authentication_fingerprint {
-            text.push_str(&format!("authentication_fingerprint={fpr}\n"));
+            pairs.push(("authentication_fingerprint", fpr));
         }
-        text
+        pairs
     }
 
-    fn from_text(text: &str) -> Option<Self> {
-        let value = |name: &str| {
-            text.lines().find_map(|line| line.strip_prefix(name)?.strip_prefix('=')).map(str::to_owned)
-        };
+    fn from_values(values: &Values) -> Option<Self> {
         let fingerprint = |name: &str| {
-            value(name).filter(|fpr| !fpr.is_empty() && fpr.bytes().all(|b| b.is_ascii_hexdigit()))
+            values
+                .get(name)
+                .filter(|fpr| !fpr.is_empty() && fpr.bytes().all(|b| b.is_ascii_hexdigit()))
+                .map(str::to_owned)
         };
         let identity = Self {
-            ident: value("ident")?,
+            ident: values.get("ident")?.to_owned(),
             decryption_fingerprint: fingerprint("decryption_fingerprint"),
             authentication_fingerprint: fingerprint("authentication_fingerprint"),
         };
@@ -140,21 +142,18 @@ pub fn save_enrolment(state_dir: &Path, identity: &KeyIdentity) -> Result<(), Pa
     {
         return Err(PawError::Store("not a key identity".into()));
     }
-    let temporary = state_dir.join(format!("{FILE}.tmp"));
-    std::fs::write(&temporary, identity.to_text()).map_err(|e| io("save", e))?;
-    std::fs::rename(&temporary, state_dir.join(FILE)).map_err(|e| io("save", e))
+    values::write(&state_dir.join(FILE), TEMP_PREFIX, identity.pairs()).map_err(|e| io("save", e))
 }
 
 /// The key the store in `state_dir` was set up with, if setup recorded one.
 /// A record that cannot be read is an error, not "none": treating it as
 /// none would send the PIN to any card.
 pub fn load_enrolment(state_dir: &Path) -> Result<Option<KeyIdentity>, PawError> {
-    match std::fs::read_to_string(state_dir.join(FILE)) {
-        Ok(text) => KeyIdentity::from_text(&text)
+    match values::read(&state_dir.join(FILE)).map_err(|e| io("read", e))? {
+        Some(found) => KeyIdentity::from_values(&found)
             .map(Some)
             .ok_or_else(|| PawError::Store("the enrolled key record is damaged".into())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(io("read", e)),
+        None => Ok(None),
     }
 }
 

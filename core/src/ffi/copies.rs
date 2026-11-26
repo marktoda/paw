@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use crate::entry::opened::OpenedEntry;
 use crate::PawError;
-use crate::copies::{CopyCache, CopyStatus, content_id};
+use crate::copies::{CopyCache, CopyStatus};
+use crate::files::content_id;
 use crate::store::PassStore;
 
 /// What came of trying Face ID first.

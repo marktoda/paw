@@ -12,7 +12,7 @@
 //! [`SetupFlow::open`] picks up where it stopped; a download that was
 //! interrupted is removed and starts again.
 //!
-//! What it keeps where in the state directory is in [`crate::layout`].
+//! What it keeps where in the state directory is in [`crate::files::layout`].
 //!
 //! The steps that need the key run as key tasks on the key session, which
 //! share the PIN typed once (see `ffi::sync`); they go through the
@@ -24,6 +24,8 @@ pub mod outcome;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use crate::files::values::{self, Values};
+use crate::files::{self, layout};
 use crate::key::enrolment::save_enrolment;
 use crate::key::{CardInfo, KeyIdentity, KeyTouch, PinKdfStatus};
 use crate::recipients::Access;
@@ -248,33 +250,30 @@ impl Saved {
         Self { step: Step::ReadKey, key: None, address: None, notice: None, opened: None, problem: None }
     }
 
-    fn to_text(&self) -> String {
-        let mut lines = vec![format!("step={}", self.step.name())];
+    /// What the file holds, a line break in a value read as a space.
+    fn pairs(&self) -> Vec<(&'static str, String)> {
+        let mut pairs = vec![("step", self.step.name().to_owned())];
         if let Some(key) = &self.key {
-            lines.push(format!("ident={}", key.ident));
-            lines.push(format!("ssh_public_key={}", key.ssh_public_key));
-            lines.push(format!("decryption_fingerprint={}", key.decryption_fingerprint));
-            lines.push(format!("authentication_touch={}", touch_name(key.authentication_touch)));
-            lines.push(format!("decryption_touch={}", touch_name(key.decryption_touch)));
+            pairs.push(("ident", key.ident.clone()));
+            pairs.push(("ssh_public_key", key.ssh_public_key.clone()));
+            pairs.push(("decryption_fingerprint", key.decryption_fingerprint.clone()));
+            pairs.push(("authentication_touch", touch_name(key.authentication_touch).to_owned()));
+            pairs.push(("decryption_touch", touch_name(key.decryption_touch).to_owned()));
         }
         for (name, value) in [("address", &self.address), ("notice", &self.notice), ("opened", &self.opened)] {
             if let Some(value) = value {
-                lines.push(format!("{name}={value}"));
+                pairs.push((name, value.clone()));
             }
         }
         if let Some(problem) = self.problem {
-            lines.push(format!("problem={}", problem.name()));
+            pairs.push(("problem", problem.name().to_owned()));
         }
-        lines.iter().map(|line| format!("{}\n", line.replace(['\n', '\r'], " "))).collect()
+        pairs.into_iter().map(|(name, value)| (name, value.replace(['\n', '\r'], " "))).collect()
     }
 
     /// Anything unreadable means starting setup again, which is always safe.
-    fn from_text(text: &str) -> Self {
-        let value = |name: &str| {
-            text.lines()
-                .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
-                .map(str::to_owned)
-        };
+    fn from_values(values: &Values) -> Self {
+        let value = |name: &str| values.get(name).map(str::to_owned);
         let Some(step) = value("step").as_deref().and_then(Step::from_name) else {
             return Self::fresh();
         };
@@ -339,10 +338,9 @@ impl SetupFlow {
     /// be, and resumes where it stopped.
     pub fn open(state_dir: &Path) -> Result<Self, SetupError> {
         std::fs::create_dir_all(state_dir).map_err(failed)?;
-        let saved = match std::fs::read_to_string(state_dir.join(crate::layout::SETUP)) {
-            Ok(text) => Saved::from_text(&text),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Saved::fresh(),
-            Err(e) => return Err(failed(e)),
+        let saved = match values::read(&state_dir.join(layout::SETUP)).map_err(failed)? {
+            Some(found) => Saved::from_values(&found),
+            None => Saved::fresh(),
         };
         let touch = |f: fn(&KeySummary) -> KeyTouch| {
             TouchClock::new(saved.key.as_ref().map(f).unwrap_or(KeyTouch::Unknown))
@@ -374,7 +372,7 @@ impl SetupFlow {
 
     /// Where the store is cloned to.
     pub fn repo_dir(&self) -> PathBuf {
-        crate::layout::repo_dir(&self.dir)
+        crate::files::layout::repo_dir(&self.dir)
     }
 
     fn known_hosts(&self) -> KnownHosts {
@@ -382,10 +380,9 @@ impl SetupFlow {
     }
 
     fn save(&self) -> Result<(), SetupError> {
-        let path = self.dir.join(crate::layout::SETUP);
-        let temporary = self.dir.join(format!("{}.tmp", crate::layout::SETUP));
-        std::fs::write(&temporary, self.saved.to_text()).map_err(failed)?;
-        std::fs::rename(&temporary, &path).map_err(failed)
+        let pairs = self.saved.pairs();
+        let pairs = pairs.iter().map(|(name, value)| (*name, value.as_str()));
+        values::write(&self.dir.join(layout::SETUP), ".setup.tmp-", pairs).map_err(failed)
     }
 
     fn go(&mut self, step: Step) -> Result<SetupState, SetupError> {
@@ -783,7 +780,8 @@ impl SetupFlow {
         let address = self.saved.address.clone().unwrap_or_default();
         {
             let _held = self.exclusive()?;
-            std::fs::write(self.dir.join(crate::layout::REMOTE), format!("{address}\n")).map_err(failed)?;
+            let remote = self.dir.join(layout::REMOTE);
+            files::write_atomic(&remote, ".remote.tmp-", format!("{address}\n").as_bytes()).map_err(failed)?;
         }
         self.go(Step::TestDecrypt)
     }
@@ -954,6 +952,8 @@ mod tests {
     #[test]
     fn a_finished_setup_starts_with_the_line_layout_reads() {
         let done = Saved { step: Step::Done, ..Saved::fresh() };
-        assert_eq!(done.to_text().lines().next(), Some(crate::layout::SETUP_DONE));
+        let pairs = done.pairs();
+        let text = values::text(pairs.iter().map(|(name, value)| (*name, value.as_str())));
+        assert_eq!(text.lines().next(), Some(layout::SETUP_DONE));
     }
 }

@@ -284,7 +284,10 @@ fn from_web(text: &str) -> Result<ParsedAddress, String> {
 
 /// The store address a finished download saved in `state_dir`.
 pub fn saved_address(state_dir: &Path) -> Result<StoreAddress, PawError> {
-    let text = std::fs::read_to_string(state_dir.join(crate::layout::REMOTE))
+    let path = state_dir.join(crate::files::layout::REMOTE);
+    let text = crate::files::read_bounded(&path, crate::files::MAX_FILE_BYTES)
+        .and_then(|found| found.ok_or_else(|| std::io::ErrorKind::NotFound.into()))
+        .and_then(|bytes| String::from_utf8(bytes).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
         .map_err(|e| PawError::Store(format!("no store is set up here: {e}")))?;
     StoreAddress::parse(&text).map(|parsed| parsed.address).map_err(PawError::Store)
 }

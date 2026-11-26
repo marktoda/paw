@@ -161,7 +161,7 @@ impl KnownHosts {
     }
 
     fn path(&self) -> PathBuf {
-        self.state_dir.join(crate::layout::KNOWN_HOSTS)
+        self.state_dir.join(crate::files::layout::KNOWN_HOSTS)
     }
 
     /// The store's lock: a change reads, changes and writes the whole file.
@@ -170,11 +170,10 @@ impl KnownHosts {
     }
 
     fn read(&self) -> Result<Vec<(String, u16, String)>, PawError> {
-        let text = match std::fs::read_to_string(self.path()) {
-            Ok(text) => text,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(io_err(e)),
+        let Some(bytes) = crate::files::read_bounded(&self.path(), crate::files::MAX_FILE_BYTES).map_err(io_err)? else {
+            return Ok(Vec::new());
         };
+        let text = String::from_utf8(bytes).map_err(|e| io_err(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
         Ok(text
             .lines()
             .filter_map(|line| {
@@ -192,10 +191,7 @@ impl KnownHosts {
             .iter()
             .map(|(host, port, key)| format!("{host} {port} {key}\n"))
             .collect();
-        let path = self.path();
-        let temporary = path.with_extension("tmp");
-        std::fs::write(&temporary, text).map_err(io_err)?;
-        std::fs::rename(&temporary, &path).map_err(io_err)
+        crate::files::write_atomic(&self.path(), ".known_hosts.tmp-", text.as_bytes()).map_err(io_err)
     }
 
     /// The confirmed key for `host`, if one was confirmed.

@@ -10,7 +10,7 @@
 //!
 //! The file is `one-time-codes.json` in the store's state directory, next
 //! to `site-pairings.json` and written the same way
-//! ([`super::state_file`]). Two processes writing in the same instant can lose one
+//! ([`crate::files::list`]). Two processes writing in the same instant can lose one
 //! mark, which costs one entry missing from the code list until it is
 //! opened again. Bounded to [`MAX_ENTRIES`] paths, the least recently
 //! marked dropped first.
@@ -27,13 +27,13 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use super::PassStore;
-use super::state_file::{ListFile, ListKind, MAX_PATH_BYTES, remove_if_there};
+use crate::files::list::{ListFile, ListKind, MAX_PATH_BYTES};
 use crate::PawError;
 
 /// The file, in the state directory.
-pub const FILE: &str = crate::layout::ONE_TIME_CODES;
+pub const FILE: &str = crate::files::layout::ONE_TIME_CODES;
 /// Present while the person has the list on.
-pub const ON_MARKER: &str = crate::layout::ONE_TIME_CODES_ON;
+pub const ON_MARKER: &str = crate::files::layout::ONE_TIME_CODES_ON;
 /// The most entries kept.
 pub const MAX_ENTRIES: usize = 1000;
 
@@ -42,6 +42,7 @@ static LIST: ListKind = ListKind {
     key: "entries",
     temp_prefix: ".one-time-codes.tmp-",
     max_items: MAX_ENTRIES,
+    on_marker: Some(ON_MARKER),
     writing: Mutex::new(()),
 };
 
@@ -61,39 +62,18 @@ impl CodeFile {
 
     /// Whether the person turned the list on.
     pub fn enabled(&self) -> bool {
-        self.list.state_dir().join(ON_MARKER).exists()
+        self.list.enabled()
     }
 
-    /// Turns the list on or off. Either way it starts empty: on clears
-    /// what a write racing an earlier off may have left; off removes the
-    /// marker first, so no new mark is kept, then the file.
+    /// Turns the list on or off. Either way it starts empty.
     pub fn set_enabled(&self, enabled: bool) -> std::io::Result<()> {
-        let _turn = self.list.turn();
-        let marker = self.list.state_dir().join(ON_MARKER);
-        if enabled {
-            self.list.require_dir()?;
-            remove_if_there(&self.path())?;
-            return self.list.write_beside(&marker, b"");
-        }
-        let unmarked = remove_if_there(&marker);
-        let removed = remove_if_there(&self.path());
-        unmarked.and(removed)
+        self.list.set_enabled(enabled)
     }
 
     /// Every marked entry, least recently marked first. None while the
     /// list is off; a missing, unreadable or malformed file has none.
     pub fn load(&self) -> Vec<String> {
-        if !self.enabled() {
-            return Vec::new();
-        }
         self.list.load()
-    }
-
-    /// Reads, changes and writes the file; nothing is written if `change`
-    /// says it changed nothing, or while the list is off. Refuses if the
-    /// state directory is gone.
-    fn update(&self, change: impl FnOnce(&mut Vec<String>) -> bool) -> std::io::Result<bool> {
-        self.list.update(|| self.enabled(), change)
     }
 
     /// Keeps whether `entry` has a code. True if that changed the file. A
@@ -103,7 +83,7 @@ impl CodeFile {
         if entry.is_empty() || entry.len() > MAX_PATH_BYTES {
             return Ok(false);
         }
-        self.update(|entries| {
+        self.list.update(|entries: &mut Vec<String>| {
             let known = entries.iter().any(|e| e == entry);
             match (known, has_code) {
                 (false, true) => entries.push(entry.to_owned()),
@@ -120,7 +100,7 @@ impl CodeFile {
         if Some(from) == to {
             return Ok(());
         }
-        self.update(|entries| {
+        self.list.update(|entries: &mut Vec<String>| {
             let Some(at) = entries.iter().position(|e| e == from) else { return false };
             entries.remove(at);
             if let Some(to) = to.filter(|to| !to.is_empty() && to.len() <= MAX_PATH_BYTES) {

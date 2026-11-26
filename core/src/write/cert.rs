@@ -35,7 +35,7 @@ use pgp::types::{KeyDetails, Tag};
 
 use super::WriteError;
 use crate::recipients::hex;
-use crate::store::read::MAX_FILE_BYTES;
+use crate::files::MAX_FILE_BYTES;
 
 /// The key chosen for encrypting to a certificate.
 #[derive(Clone)]

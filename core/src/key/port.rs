@@ -19,7 +19,8 @@ use super::{KeyError, KeyOutcome, KeyPurpose, KeyTaskListener, KeyTaskState, Log
 use super::ApduTransport;
 use super::Uptime;
 use crate::PawError;
-use crate::copies::{CopyCache, content_id};
+use crate::copies::CopyCache;
+use crate::files::content_id;
 use crate::entry::opened::OpenedEntry;
 use crate::store::PassStore;
 

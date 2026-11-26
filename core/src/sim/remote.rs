@@ -1111,7 +1111,8 @@ pub mod steps {
     use crate::lock::{FETCH_WAIT, StoreLock};
     use crate::ssh::SshSigner;
     use crate::sync::operation::{self, SyncReport};
-    use crate::sync::{self, Cloned, Connection, Remote, git_err, refs};
+    use crate::files::refs;
+    use crate::sync::{self, Cloned, Connection, Remote, git_err};
 
     /// Clones the remote's default branch into `dir`, which must be empty
     /// or not exist yet. An empty repository, or one holding what paw will

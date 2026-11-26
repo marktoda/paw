@@ -55,9 +55,9 @@ use crate::recipients::{hex, key_id};
 use crate::path::{folder_and_parents, folder_of, folder_of_gpg_id, gpg_id_in, governing};
 use crate::store::gpg_id::{governing_gpg_id, key_digits, parse_gpg_id};
 use crate::store::read::read_file;
-use crate::store::state_file::{read_bounded, write_atomic};
+use crate::files::{MAX_FILE_BYTES, read_bounded, write_atomic};
 
-const FILE: &str = crate::layout::RECIPIENTS;
+const FILE: &str = crate::files::layout::RECIPIENTS;
 const HEADER: &str = "# paw pinned recipients, version 1";
 const TEMP_PREFIX: &str = ".recipients.tmp-";
 
@@ -360,7 +360,7 @@ impl Keyring {
     /// Empty if nothing has been pinned yet.
     pub fn open(state_dir: &Path) -> Result<Self, WriteError> {
         let file = state_dir.join(FILE);
-        let bytes = read_bounded(&file).map_err(|e| failed("read", e))?.unwrap_or_default();
+        let bytes = read_bounded(&file, MAX_FILE_BYTES).map_err(|e| failed("read", e))?.unwrap_or_default();
         let text = String::from_utf8(bytes).map_err(|e| failed("read", e))?;
         let mut keyring = Self { file, keys: Vec::new(), bindings: Vec::new(), accepted: None };
         for line in text.lines() {
@@ -445,7 +445,7 @@ impl Keyring {
         }
         let dir = self.file.parent().unwrap_or(Path::new("."));
         std::fs::create_dir_all(dir).map_err(|e| failed("save", e))?;
-        write_atomic(dir, TEMP_PREFIX, &self.file, text.as_bytes()).map_err(|e| failed("save", e))
+        write_atomic(&self.file, TEMP_PREFIX, text.as_bytes()).map_err(|e| failed("save", e))
     }
 
     /// Every pinned key.

@@ -21,7 +21,7 @@ use paw_core::sync::{
     self, Author, ChangeKind, Connection, HostKeyPin, IntegrateReport, Integration, KeptBoth,
     RecipientsChange, SyncError,
 };
-use paw_core::write::{GitIdentity, WriteStore};
+use paw_core::write::WriteStore;
 use key_common::{PIN, signer, sync_failure};
 use support::{GitServer, git};
 
@@ -50,8 +50,6 @@ fn world() -> World {
     let server = GitServer::start(&[card.ssh_public_key()]);
     let desktop = server.desktop();
     let state = tempfile::tempdir().unwrap();
-    let iphone = GitIdentity { name: "iPhone".into(), email: "iphone@example.com".into() };
-    paw_core::write::set_git_identity(state.path(), Some(&iphone)).unwrap();
     let w = World { card, server, phone: tempfile::tempdir().unwrap(), desktop, state };
     desktop_write(&w, "web/example.com.gpg", "v1 from the desktop");
     desktop_write(&w, "web/other.gpg", "other");

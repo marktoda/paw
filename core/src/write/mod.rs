@@ -19,13 +19,10 @@ pub mod keyring;
 pub mod ops;
 pub mod scopes;
 
-use std::path::Path;
-
 use pgp::packet::PublicKey;
 use rand::rngs::OsRng;
 
 use crate::PawError;
-use crate::store::state_file::{read_bounded, write_atomic};
 use crate::sync::Author;
 pub use draft::{DraftField, DraftProblem, EntryDraft};
 pub use keyring::{FolderRecipients, KeySource, Keyring, LineStatus, RecipientLine};
@@ -97,65 +94,11 @@ impl From<crate::generate::PolicyError> for WriteError {
     }
 }
 
-/// The author of commits made when no identity is set: neutral, and the
-/// `.invalid` domain can never be anyone's address.
-pub const DEFAULT_AUTHOR_NAME: &str = "paw";
-pub const DEFAULT_AUTHOR_EMAIL: &str = "paw@paw.invalid";
-
-const IDENTITY_FILE: &str = crate::layout::GIT_IDENTITY;
-
-/// The name and e-mail address paw's commits carry.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct GitIdentity {
-    pub name: String,
-    pub email: String,
-}
-
-/// The identity set for the store whose state directory is `state_dir`, or
-/// paw's neutral default. The person's global git configuration is never
+/// Who paw's commits are by: neutral, and the `.invalid` domain can never
+/// be anyone's address. The person's global git configuration is never
 /// read.
-pub fn git_identity(state_dir: &Path) -> GitIdentity {
-    let bytes = read_bounded(&state_dir.join(IDENTITY_FILE)).ok().flatten().unwrap_or_default();
-    let text = String::from_utf8(bytes).unwrap_or_default();
-    let value = |name: &str| {
-        text.lines()
-            .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned)
-    };
-    match (value("name"), value("email")) {
-        (Some(name), Some(email)) => GitIdentity { name, email },
-        _ => GitIdentity { name: DEFAULT_AUTHOR_NAME.into(), email: DEFAULT_AUTHOR_EMAIL.into() },
-    }
-}
-
-/// Sets the identity for later commits; `None` goes back to the default.
-pub fn set_git_identity(state_dir: &Path, identity: Option<&GitIdentity>) -> Result<(), WriteError> {
-    let path = state_dir.join(IDENTITY_FILE);
-    let Some(identity) = identity else {
-        return match std::fs::remove_file(&path) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-                Err(WriteError::Failed { message: format!("could not reset the git identity: {e}") })
-            }
-            _ => Ok(()),
-        };
-    };
-    let bad = |s: &str| s.trim().is_empty() || s.contains(['\n', '\r', '\0', '<', '>']);
-    if bad(&identity.name) || bad(&identity.email) {
-        return Err(WriteError::Failed {
-            message: "a git name and e-mail address must be one line each, without < or >".into(),
-        });
-    }
-    let text = format!("name={}\nemail={}\n", identity.name.trim(), identity.email.trim());
-    std::fs::create_dir_all(state_dir)
-        .and_then(|()| write_atomic(state_dir, ".git-identity.tmp-", &path, text.as_bytes()))
-        .map_err(|e| WriteError::Failed { message: format!("could not save the git identity: {e}") })
-}
-
-pub(crate) fn author(state_dir: &Path) -> Author {
-    let identity = git_identity(state_dir);
-    Author { name: identity.name, email: identity.email }
+pub(crate) fn author() -> Author {
+    Author { name: "paw".into(), email: "paw@paw.invalid".into() }
 }
 
 /// Encrypts an entry to every key in `keys`, as `pass` does with

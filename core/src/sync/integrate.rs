@@ -19,7 +19,8 @@ use git2::{Oid, Repository};
 use super::guard::check_commit;
 use super::history::{KeptBoth, Replay, ReplayNotes, commits_between, ensure_clean, move_branch, paw_commits};
 use super::queue::waiting;
-use super::{SyncError, current_branch, git_err, refs};
+use super::{SyncError, current_branch, git_err};
+use crate::files::refs;
 use crate::store::gpg_id::parse_gpg_id;
 use crate::lock::{Exclusive, StoreLock};
 

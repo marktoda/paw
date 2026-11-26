@@ -40,6 +40,7 @@ use super::http::Http;
 use super::transport::{Failure, HttpsRemote, explain};
 use super::{GitHubError, Secret};
 use crate::PawError;
+use crate::files::{layout, values};
 use crate::lock::{Exclusive, Fetching, StoreLock};
 use crate::sync::address::{StoreAddress, github_repository, saved_address};
 use crate::sync::integrate::{IntegrateReport, RecipientsChange, Replaced};
@@ -65,24 +66,18 @@ impl GitHubLink {
     pub(crate) fn save(&self, state_dir: &Path) -> Result<(), GitHubError> {
         let failed = |e: std::io::Error| GitHubError::Failed { message: format!("could not save the chosen repository: {e}") };
         std::fs::create_dir_all(state_dir).map_err(failed)?;
-        let text = format!(
-            "repository={}\nid={}\nssh={}\n",
-            self.full_name.replace(['\n', '\r'], ""),
-            self.id,
-            self.ssh_address.replace(['\n', '\r'], "")
-        );
-        let temporary = state_dir.join(format!("{}.tmp", crate::layout::GITHUB_LINK));
-        std::fs::write(&temporary, text).map_err(failed)?;
-        std::fs::rename(&temporary, state_dir.join(crate::layout::GITHUB_LINK)).map_err(failed)
+        let (full_name, id, ssh) =
+            (self.full_name.replace(['\n', '\r'], ""), self.id.to_string(), self.ssh_address.replace(['\n', '\r'], ""));
+        let pairs = [("repository", full_name.as_str()), ("id", id.as_str()), ("ssh", ssh.as_str())];
+        values::write(&state_dir.join(layout::GITHUB_LINK), ".github.tmp-", pairs).map_err(failed)
     }
 
     pub(crate) fn load(state_dir: &Path) -> Option<Self> {
-        let text = std::fs::read_to_string(state_dir.join(crate::layout::GITHUB_LINK)).ok()?;
-        let value = |name: &str| text.lines().find_map(|l| l.strip_prefix(name)?.strip_prefix('=')).map(str::to_owned);
-        let full_name = value("repository")?;
+        let found = values::read(&state_dir.join(layout::GITHUB_LINK)).ok()??;
+        let full_name = found.get("repository")?.to_owned();
         // The HTTPS path is built from it: GitHub's rules for names only.
         github_repository(&full_name)?;
-        Some(Self { full_name, id: value("id")?.parse().ok()?, ssh_address: value("ssh")? })
+        Some(Self { full_name, id: found.get("id")?.parse().ok()?, ssh_address: found.get("ssh")?.to_owned() })
     }
 
     /// Whether `store` (the saved address) is this repository: the address
@@ -213,7 +208,7 @@ fn still_refused() -> GitHubError {
 
 impl GitHubAccount {
     fn repo_dir(&self) -> PathBuf {
-        crate::layout::repo_dir(&self.state_dir)
+        crate::files::layout::repo_dir(&self.state_dir)
     }
 
     /// The chosen repository, if the store's remote is it. Reads files only.

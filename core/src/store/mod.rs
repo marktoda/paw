@@ -11,7 +11,6 @@ pub mod pairings;
 pub mod read;
 pub mod search;
 pub mod service;
-pub(crate) mod state_file;
 pub mod tree;
 
 use std::path::PathBuf;

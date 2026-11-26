@@ -250,7 +250,7 @@ pub struct StoreSync {
 
 impl StoreSync {
     fn repo(&self) -> PathBuf {
-        crate::layout::repo_dir(&self.state_dir)
+        crate::files::layout::repo_dir(&self.state_dir)
     }
 
     fn known_hosts(&self) -> KnownHosts {

@@ -11,7 +11,8 @@ mod support;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use paw_core::copies::{CopyCache, CopyStatus, content_id};
+use paw_core::copies::{CopyCache, CopyStatus};
+use paw_core::files::content_id;
 use paw_core::entry::EntryDoc;
 use paw_core::entry::opened::OpenedEntry;
 use paw_core::ffi::write::StoreWriter;
@@ -22,7 +23,7 @@ use paw_core::sim::copies::{SimClock, SimKeystore};
 use paw_core::sync::ChangeKind;
 use paw_core::sync::queue;
 use paw_core::write::{
-    DraftField, EntryDraft, FolderRecipients, GitIdentity, KeySource, Keyring, LineStatus, WriteError, WriteStore,
+    DraftField, EntryDraft, FolderRecipients, KeySource, Keyring, LineStatus, WriteError, WriteStore,
 };
 use pgp::composed::{KeyType, SecretKeyParamsBuilder, SignedPublicKey, SignedPublicSubKey};
 use pgp::packet::{KeyFlags, PubKeyInner, PublicKey, PublicSubkey};
@@ -543,18 +544,10 @@ fn a_generated_password_is_committed_as_generated_and_new_folders_appear() {
 }
 
 #[test]
-fn the_commit_identity_can_be_set_for_the_store() {
+fn commits_are_by_paw() {
     let s = store();
-    let me = GitIdentity { name: "Alex Example".into(), email: "alex@example.com".into() };
-    paw_core::write::set_git_identity(&s.state, Some(&me)).unwrap();
-    assert_eq!(paw_core::write::git_identity(&s.state), me);
-
     s.write().save(&new_entry("", "x", "pw")).unwrap();
-    assert_eq!(s.git(&["log", "-1", "--format=%an <%ae>"]), "Alex Example <alex@example.com>");
-
-    paw_core::write::set_git_identity(&s.state, None).unwrap();
-    assert_eq!(paw_core::write::git_identity(&s.state).name, "paw");
-    assert!(paw_core::write::set_git_identity(&s.state, Some(&GitIdentity { name: "a\nb".into(), email: "x".into() })).is_err());
+    assert_eq!(s.git(&["log", "-1", "--format=%an <%ae>"]), "paw <paw@paw.invalid>");
 }
 
 #[test]

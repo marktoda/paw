@@ -56,7 +56,7 @@ impl std::fmt::Debug for OtpCode {
 #[derive(uniffi::Object)]
 pub struct OpenedEntry {
     doc: Mutex<Option<EntryDoc>>,
-    /// The content id ([`crate::copies::content_id`]) of the file the text
+    /// The content id ([`crate::files::content_id`]) of the file the text
     /// was decrypted from, if known.
     content_id: Option<Vec<u8>>,
 }
