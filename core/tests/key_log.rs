@@ -387,13 +387,14 @@ fn loading_the_enrolled_key_leaves_the_log_as_it_was_set() {
     let state = tempfile::tempdir().unwrap();
     let rig = rig_unplugged(SimTouch::Off, SimTouch::Off);
     rig.port.load_enrolled_key(dir_string(&state)).unwrap();
-    assert_eq!(rig.port.key_log_dir(), None);
+    rig.port.plugged_in(rig.sim.clone()).unwrap();
+    assert!(rig.port.key_log(0).is_empty() && key_log(dir_string(&state), 0).is_empty());
 
     let other = tempfile::tempdir().unwrap();
     rig.port.set_key_log(dir_string(&other), "fill".into());
     rig.port.load_enrolled_key(dir_string(&state)).unwrap();
-    assert_eq!(rig.port.key_log_dir(), Some(dir_string(&other)));
     rig.port.plugged_in(rig.sim.clone()).unwrap();
+    assert!(!rig.port.key_log(0).is_empty());
     assert!(other.path().join(format!("{}fill", paw_core::files::layout::KEY_LOG_PREFIX)).exists());
 }
 

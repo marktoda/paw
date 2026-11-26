@@ -207,7 +207,7 @@ pub fn diagnostics_text(
 
     out.push(String::new());
     out.push("Key log (UTC):".into());
-    let log = port.key_log_dir().map(|dir| crate::key::key_log_text(dir, 0)).unwrap_or_default();
+    let log = port.key_log_text(0);
     if log.is_empty() {
         out.push("(empty)".into());
     }

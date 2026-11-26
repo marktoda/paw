@@ -319,7 +319,6 @@ fn log_files(dir: &Path) -> Vec<(String, PathBuf)> {
 /// Each process's lines keep their file order: lines written while the PIN
 /// stage showed carry whole-second times, so a file is not strictly in
 /// time order, and the merge takes the earliest next line of any file.
-#[uniffi::export]
 pub fn key_log(state_dir: String, utc_offset_secs: i32) -> Vec<KeyLogLine> {
     let mut files: Vec<std::iter::Peekable<std::vec::IntoIter<KeyLogLine>>> = Vec::new();
     for (process, path) in log_files(Path::new(&state_dir)) {
@@ -354,13 +353,11 @@ pub fn key_log(state_dir: String, utc_offset_secs: i32) -> Vec<KeyLogLine> {
 
 /// [`key_log`] as plain text, one line each, oldest first: what Settings ›
 /// Key diagnostics copies. It holds no secrets (see the module comment).
-#[uniffi::export]
 pub fn key_log_text(state_dir: String, utc_offset_secs: i32) -> String {
     key_log(state_dir, utc_offset_secs).iter().map(|line| line.render() + "\n").collect()
 }
 
 /// Deletes every process's key log in `state_dir`.
-#[uniffi::export]
 pub fn clear_key_log(state_dir: String) -> Result<(), PawError> {
     let dir = Path::new(&state_dir);
     let Ok(entries) = std::fs::read_dir(dir) else { return Ok(()) };

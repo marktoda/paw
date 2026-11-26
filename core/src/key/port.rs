@@ -275,6 +275,11 @@ impl KeyPort {
         enrolment_check(self.expected().as_ref(), &session)
     }
 
+    /// The state directory this process's key log is written to, if set.
+    pub(crate) fn key_log_dir(&self) -> Option<String> {
+        self.lock().log.as_ref().map(|sink| sink.dir().to_string_lossy().into_owned())
+    }
+
     /// The key tasks must be on: the enrolled one, if any.
     pub(crate) fn expected(&self) -> Option<KeyIdentity> {
         self.lock().enrolled.clone()
@@ -471,9 +476,22 @@ impl KeyPort {
         self.lock().log = Some(Sink::new(std::path::Path::new(&state_dir), &process));
     }
 
-    /// The state directory this process's key log is written to, if set.
-    pub fn key_log_dir(&self) -> Option<String> {
-        self.lock().log.as_ref().map(|sink| sink.dir().to_string_lossy().into_owned())
+    /// Every process's key log lines in the folder this one writes to
+    /// ([`Self::set_key_log`]), merged by time, oldest first; none if no
+    /// log is set. See [`super::keylog::key_log`].
+    pub fn key_log(&self, utc_offset_secs: i32) -> Vec<super::KeyLogLine> {
+        self.key_log_dir().map(|dir| super::keylog::key_log(dir, utc_offset_secs)).unwrap_or_default()
+    }
+
+    /// [`Self::key_log`] as plain text, one line each: what Settings › Key
+    /// diagnostics copies. It holds no secrets.
+    pub fn key_log_text(&self, utc_offset_secs: i32) -> String {
+        self.key_log_dir().map(|dir| super::keylog::key_log_text(dir, utc_offset_secs)).unwrap_or_default()
+    }
+
+    /// Deletes every process's key log in the folder this one writes to.
+    pub fn clear_key_log(&self) -> Result<(), PawError> {
+        self.key_log_dir().map_or(Ok(()), super::keylog::clear_key_log)
     }
 
     /// Whether a key is plugged in and tasks may send it the PIN: it is the
