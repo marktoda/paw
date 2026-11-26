@@ -9,7 +9,8 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use paw_core::copies::CopyCache;
-use paw_core::key::{KeyError, KeyPort, KeyTask, KeyTaskListener, KeyTaskState, LoginPurpose};
+use paw_core::key::{KeyError, KeyPort, LoginPurpose};
+use paw_core::task::{KeyTask, KeyTaskListener, KeyTaskState};
 use paw_core::sim::copies::{SimClock, SimKeystore};
 use paw_core::sim::fixture::write_fixture_store;
 use paw_core::sim::tasks::{SimLogin, SimSigner, decipher};
@@ -273,9 +274,9 @@ pub fn signer_with(sim: &Arc<SimulatedKey>, pin: &str) -> KeySigner {
 }
 
 /// A sync's failure that is the sync's, not the key's.
-pub fn sync_failure(failure: paw_core::key::TaskFailure) -> paw_core::sync::SyncError {
+pub fn sync_failure(failure: paw_core::task::TaskFailure) -> paw_core::sync::SyncError {
     match failure {
-        paw_core::key::TaskFailure::Sync(error) => error,
+        paw_core::key::Failure::Work(paw_core::task::WorkFailure::Sync(error)) => error,
         other => panic!("expected the sync's failure, got {other:?}"),
     }
 }

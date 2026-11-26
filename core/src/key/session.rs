@@ -20,9 +20,9 @@ use zeroize::Zeroizing;
 use super::kdf::{self, PinKdf};
 use super::keylog::{self, KeyLog, Sink};
 use super::apdu::{self, Verify};
-use super::task::TaskCore;
+use super::task::TaskSide;
 use super::wire::Wire;
-use super::{FAST_REFUSAL, KeyError, KeyTaskState, MAX_PIN_LEN, MIN_PIN_LEN, PIN_BACKGROUND_LIMIT, Uptime};
+use super::{FAST_REFUSAL, KeyError, MAX_PIN_LEN, MIN_PIN_LEN, PIN_BACKGROUND_LIMIT, Uptime};
 use crate::ssh::SshPublicKey;
 use super::card::{self, ApduTransport, CardInfo};
 use crate::PawError;
@@ -99,7 +99,7 @@ struct State {
     /// does not hold the PIN again.
     forgets: u64,
     /// Tasks to wake when the session ends.
-    tasks: Vec<Weak<TaskCore>>,
+    tasks: Vec<Weak<dyn TaskSide>>,
 }
 
 /// One connected key, from plug-in to removal.
@@ -228,7 +228,7 @@ impl KeySession {
         self.card_free.notify_all();
     }
 
-    pub(crate) fn watch(&self, task: &Arc<TaskCore>) {
+    pub(crate) fn watch(&self, task: &Arc<dyn TaskSide>) {
         let mut state = self.lock();
         state.tasks.retain(|t| t.strong_count() > 0);
         state.tasks.push(Arc::downgrade(task));
@@ -404,7 +404,7 @@ impl KeySession {
     ///
     /// A card that cannot say whether the PIN is verified is judged on the
     /// time alone.
-    pub(crate) fn refused(&self, task: &TaskCore, step: &str, sw: u16, touch_possible: bool, elapsed: Duration) -> Halt {
+    pub(crate) fn refused(&self, task: &dyn TaskSide, step: &str, sw: u16, touch_possible: bool, elapsed: Duration) -> Halt {
         let check = match self.wire.send(&apdu::CHECK_PIN) {
             Ok((_, check)) => check,
             Err(error) => return Halt::Fail(error),
@@ -453,7 +453,7 @@ impl KeySession {
     }
 
     /// Waits until the card is free, showing `Busy` meanwhile.
-    fn acquire(&self, task: &Arc<TaskCore>) -> Result<CardGuard<'_>, KeyError> {
+    fn acquire(&self, task: &dyn TaskSide) -> Result<CardGuard<'_>, KeyError> {
         let mut state = self.lock();
         let mut said_busy = false;
         loop {
@@ -470,7 +470,7 @@ impl KeySession {
             if !said_busy {
                 // Not under the lock: the listener may call into the session.
                 drop(state);
-                task.set(KeyTaskState::Busy);
+                task.show_busy();
                 said_busy = true;
                 state = self.lock();
                 continue;
@@ -483,7 +483,7 @@ impl KeySession {
     /// during the job ends the session.
     pub(crate) fn run<T>(
         &self,
-        task: &Arc<TaskCore>,
+        task: &dyn TaskSide,
         job: impl FnOnce(&mut CardJob<'_>) -> Result<T, Halt>,
     ) -> Result<T, Halt> {
         self.apply_background_limit();
@@ -496,7 +496,7 @@ impl KeySession {
                 return Err(Halt::Fail(error));
             }
         };
-        task.set(KeyTaskState::Working { progress: None });
+        task.show_working();
         let forgets = self.lock().forgets;
         let result = match card::open(self.wire.clone()) {
             Ok(card) => job(&mut CardJob { session: self, card, forgets }),

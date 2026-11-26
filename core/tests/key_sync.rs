@@ -8,7 +8,8 @@ mod support;
 
 use key_common::*;
 use paw_core::sim::remote::steps;
-use paw_core::key::{KeyOutcome, KeyTaskState, LoginPurpose};
+use paw_core::key::LoginPurpose;
+use paw_core::task::{KeyOutcome, KeyTaskState};
 use paw_core::sim::SimTouch;
 use paw_core::sync::Connection;
 use support::{GitServer, git};

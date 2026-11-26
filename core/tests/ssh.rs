@@ -11,7 +11,8 @@ use std::time::Duration;
 
 use key_common::*;
 use paw_core::ffi::sync::Setup;
-use paw_core::key::{KeyError, KeyTaskState, LoginPurpose};
+use paw_core::key::{KeyError, LoginPurpose};
+use paw_core::task::KeyTaskState;
 use paw_core::setup::SetupState;
 use paw_core::sim::{SimOptions, SimulatedKey};
 use paw_core::ssh::{SshPublicKey, SshSigner};

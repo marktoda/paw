@@ -9,7 +9,8 @@ mod key_common;
 use std::sync::Arc;
 
 use key_common::*;
-use paw_core::key::{KeyError, KeyTaskState, KeyTouch};
+use paw_core::key::{KeyError, KeyTouch};
+use paw_core::task::KeyTaskState;
 use paw_core::sim::SimulatedKey;
 use paw_core::sim::fixture::encrypt;
 use paw_core::sim::tasks::decipher;

@@ -30,7 +30,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use super::{KeyError, KeyPurpose, KeyTaskState, KeyTouch, LoginPurpose, apdu};
+use super::task::{Stage, Workflow};
+use super::{KeyError, KeyPurpose, KeyTouch, LoginPurpose, apdu};
 use crate::PawError;
 
 /// Lines a session keeps in memory: about 40 card commands with the task
@@ -248,6 +249,7 @@ pub(crate) fn error_name(error: &KeyError) -> String {
         KeyError::EntryUnreadable { .. } => "EntryUnreadable".into(),
         KeyError::DecryptFailed { .. } => "DecryptFailed".into(),
         KeyError::Reader { .. } => "Reader".into(),
+        KeyError::Internal { .. } => "Internal".into(),
         KeyError::StoreBusy => "StoreBusy".into(),
         KeyError::Cancelled => "Cancelled".into(),
     }
@@ -255,10 +257,10 @@ pub(crate) fn error_name(error: &KeyError) -> String {
 
 /// A stage as the log shows it. `None` for progress updates, which would
 /// fill the log during a download.
-pub(crate) fn stage_words(state: &KeyTaskState) -> Option<String> {
+pub(crate) fn stage_words<W: Workflow>(state: &Stage<W>) -> Option<String> {
     Some(match state {
-        KeyTaskState::PlugIn => "PlugIn".into(),
-        KeyTaskState::Pin { tries_left, forgot_after_background, last_error } => {
+        Stage::PlugIn => "PlugIn".into(),
+        Stage::Pin { tries_left, forgot_after_background, last_error } => {
             let mut words = "Pin".to_string();
             if let Some(error) = last_error {
                 words += &format!(" (again: {})", error_name(error));
@@ -271,15 +273,14 @@ pub(crate) fn stage_words(state: &KeyTaskState) -> Option<String> {
             }
             words
         }
-        KeyTaskState::Busy => "Busy".into(),
-        KeyTaskState::Touch => "Touch".into(),
-        KeyTaskState::Working { progress: None } => "Working".into(),
-        KeyTaskState::Working { progress: Some(_) } => return None,
-        KeyTaskState::Done { .. } => "Done".into(),
-        KeyTaskState::Failed { error } => format!("Failed({})", error_name(error)),
-        KeyTaskState::SyncFailed { .. } => "SyncFailed".into(),
-        KeyTaskState::SetupFailed { .. } => "SetupFailed".into(),
-        KeyTaskState::Cancelled => "Cancelled".into(),
+        Stage::Busy => "Busy".into(),
+        Stage::Touch => "Touch".into(),
+        Stage::Working { progress: None } => "Working".into(),
+        Stage::Working { progress: Some(_) } => return None,
+        Stage::Done(_) => "Done".into(),
+        Stage::Failed(error) => format!("Failed({})", error_name(error)),
+        Stage::WorkFailed(failure) => W::failure_name(failure).into(),
+        Stage::Cancelled => "Cancelled".into(),
     })
 }
 

@@ -1156,7 +1156,7 @@ pub mod steps {
         dir: &Path,
         state_dir: &Path,
         send: bool,
-    ) -> Result<SyncReport, crate::key::TaskFailure> {
+    ) -> Result<SyncReport, crate::task::TaskFailure> {
         operation::run_until(remote, signer, dir, &|| crate::write::held_back::holds_back(dir, state_dir), send, &|| false, None)
     }
 }

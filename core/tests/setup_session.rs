@@ -12,7 +12,8 @@ use std::sync::Arc;
 
 use key_common::{Driver, PIN, WAIT, finish, is_pin, is_touch, port_with};
 use paw_core::ffi::sync::{Setup, StoreSync};
-use paw_core::key::{KeyError, KeyIdentity, KeyOutcome, KeyPort, KeyTaskListener, KeyTaskState, enrolment};
+use paw_core::key::{KeyError, KeyIdentity, KeyPort, enrolment};
+use paw_core::task::{KeyOutcome, KeyTaskListener, KeyTaskState};
 use paw_core::setup::outcome::{RemoteMessage, RemoteReason};
 use paw_core::setup::{SetupError, SetupState, UnusableKeyReason};
 use paw_core::sim::copies::SimClock;
@@ -225,7 +226,7 @@ fn a_cancelled_download_goes_back_to_the_pin_step_and_starts_over_without_a_new_
     // Cancel at the first progress report.
     struct CancelOnProgress {
         inner: Arc<Driver>,
-        task: std::sync::OnceLock<std::sync::Weak<paw_core::key::KeyTask>>,
+        task: std::sync::OnceLock<std::sync::Weak<paw_core::task::KeyTask>>,
     }
     impl KeyTaskListener for CancelOnProgress {
         fn state_changed(&self, state: KeyTaskState) {

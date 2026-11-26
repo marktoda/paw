@@ -13,9 +13,9 @@
 
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
-use super::task::TaskCore;
+use super::task::TaskSide;
 use super::wire::{TouchHook, Wire};
-use super::{CACHED_TOUCH_GRACE, KeyTaskState, KeyTouch};
+use super::{CACHED_TOUCH_GRACE, KeyTouch};
 
 /// Reports `Touch` for the commands sent while it lives.
 pub(crate) struct TouchWatch {
@@ -24,7 +24,7 @@ pub(crate) struct TouchWatch {
 
 impl TouchWatch {
     /// `slot` names the slot in the key log ("decryption", "authentication").
-    pub(crate) fn arm(wire: &Arc<Wire>, task: &Arc<TaskCore>, policy: KeyTouch, slot: &str) -> Self {
+    pub(crate) fn arm(wire: &Arc<Wire>, task: &Arc<dyn TaskSide>, policy: KeyTouch, slot: &str) -> Self {
         let watch = match policy {
             KeyTouch::Off => "none",
             KeyTouch::EachUse => "at once",
@@ -59,21 +59,17 @@ pub(crate) fn possible(policy: KeyTouch) -> bool {
     policy != KeyTouch::Off
 }
 
-fn working() -> KeyTaskState {
-    KeyTaskState::Working { progress: None }
-}
-
 struct AtOnce {
-    task: Arc<TaskCore>,
+    task: Arc<dyn TaskSide>,
 }
 
 impl TouchHook for AtOnce {
     fn sent(&self) {
-        self.task.set(KeyTaskState::Touch);
+        self.task.show_touch();
     }
 
     fn answered(&self) {
-        self.task.set(working());
+        self.task.show_working();
     }
 }
 
@@ -100,7 +96,7 @@ impl Shared {
 }
 
 struct Delayed {
-    task: Arc<TaskCore>,
+    task: Arc<dyn TaskSide>,
     shared: Arc<Shared>,
 }
 
@@ -125,7 +121,7 @@ impl TouchHook for Delayed {
                 pending.shown = true;
                 // Under the lock, so `Touch` is queued before the `Working`
                 // that the answer brings.
-                task.set(KeyTaskState::Touch);
+                task.show_touch();
             }
         });
     }
@@ -138,7 +134,7 @@ impl TouchHook for Delayed {
         };
         self.shared.answered.notify_all();
         if shown {
-            self.task.set(working());
+            self.task.show_working();
         }
     }
 }

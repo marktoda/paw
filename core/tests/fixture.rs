@@ -11,7 +11,8 @@ use std::sync::Arc;
 
 use key_common::{Driver, PIN, finish, is_touch};
 use paw_core::entry::opened::OpenedEntry;
-use paw_core::key::{KeyError, KeyOutcome, KeyPort, KeyTaskState};
+use paw_core::key::{KeyError, KeyPort};
+use paw_core::task::{KeyOutcome, KeyTaskState};
 use paw_core::recipients::{Access, Recipient};
 use paw_core::sim::SimulatedKey;
 use paw_core::sim::copies::SimClock;

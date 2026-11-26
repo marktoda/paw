@@ -12,25 +12,25 @@ use std::time::Instant;
 
 use super::session::{CardJob, Halt, KeySession, card_error};
 use super::apdu;
-use super::task::TaskCore;
+use super::task::TaskSide;
 use super::touch::{self, TouchWatch};
-use super::{KeyError, KeyTaskState};
+use super::KeyError;
 use crate::ssh::{SshPublicKey, SshSigner};
 
 pub struct SessionSigner {
-    task: Arc<TaskCore>,
+    task: Arc<dyn TaskSide>,
     session: Arc<KeySession>,
     public_key: SshPublicKey,
 }
 
 impl SessionSigner {
-    pub(crate) fn new(task: Arc<TaskCore>, session: Arc<KeySession>) -> Result<Self, KeyError> {
+    pub(crate) fn new(task: Arc<dyn TaskSide>, session: Arc<KeySession>) -> Result<Self, KeyError> {
         let public_key = session.ssh_key()?.clone();
         Ok(Self { task, session, public_key })
     }
 }
 
-pub(crate) fn authenticate(job: &mut CardJob<'_>, task: &Arc<TaskCore>, data: &[u8]) -> Result<Vec<u8>, Halt> {
+pub(crate) fn authenticate(job: &mut CardJob<'_>, task: &Arc<dyn TaskSide>, data: &[u8]) -> Result<Vec<u8>, Halt> {
     let session = job.session();
     let wire = session.wire().clone();
     let policy = session.card_info().authentication_touch;
@@ -54,7 +54,7 @@ pub(crate) fn authenticate(job: &mut CardJob<'_>, task: &Arc<TaskCore>, data: &[
         // A lost PIN cannot be asked for while the server waits: the
         // signature fails with `PinForgotten` (see `sign`).
         Some((apdu::INTERNAL_AUTHENTICATE, sw)) if apdu::security_refusal(sw) => {
-            Err(session.refused(task, "signing", sw, touch::possible(policy), sent.elapsed()))
+            Err(session.refused(task.as_ref(), "signing", sw, touch::possible(policy), sent.elapsed()))
         }
         _ => Err(Halt::Fail(card_error(&wire, "signing", error))),
     }
@@ -69,14 +69,14 @@ impl SshSigner for SessionSigner {
         if self.task.cancelled() {
             return Err(KeyError::Cancelled);
         }
-        let result = self.session.run(&self.task, |job| {
+        let result = self.session.run(self.task.as_ref(), |job| {
             job.unlock(None)?;
             authenticate(job, &self.task, data)
         });
         match result {
             Ok(_) if self.task.cancelled() => Err(KeyError::Cancelled),
             Ok(signature) => {
-                self.task.set(KeyTaskState::Working { progress: None });
+                self.task.show_working();
                 Ok(signature)
             }
             Err(Halt::AskPin(Some(error)) | Halt::Fail(error)) => Err(error),

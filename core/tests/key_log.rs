@@ -12,7 +12,8 @@ use std::time::Duration;
 use key_common::*;
 use paw_core::key::ApduTransport;
 use paw_core::key::keylog::KEEP_LINES;
-use paw_core::key::{KeyError, KeyTaskState, clear_key_log, key_log, key_log_text};
+use paw_core::key::{KeyError, clear_key_log, key_log, key_log_text};
+use paw_core::task::KeyTaskState;
 use paw_core::sim::{SimOptions, SimTouch, SimulatedKey};
 
 /// The simulated key behind a transport that keeps a copy of every data
@@ -64,7 +65,7 @@ fn logged_rig(dir: &std::path::Path, process: &str, decrypt: SimTouch) -> Rig {
 fn open_and_finish(rig: &Rig, entry: &str) {
     let driver = Driver::helpful(PIN, &rig.sim);
     let task = open(rig, entry, &driver);
-    assert!(matches!(finish(&task), paw_core::key::KeyTaskState::Done { .. }));
+    assert!(matches!(finish(&task), paw_core::task::KeyTaskState::Done { .. }));
 }
 
 fn dir_string(dir: &tempfile::TempDir) -> String {

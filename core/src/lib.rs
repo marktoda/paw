@@ -21,6 +21,7 @@ pub mod store;
 pub mod sync;
 pub mod setup;
 pub mod key;
+pub mod task;
 pub mod generate;
 pub mod files;
 pub mod lock;

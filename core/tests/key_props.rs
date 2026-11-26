@@ -34,7 +34,7 @@ impl ApduTransport for Tampered {
 }
 
 /// Whether `task` ends within `timeout`.
-fn ends_within(task: &Arc<paw_core::key::KeyTask>, timeout: Duration) -> bool {
+fn ends_within(task: &Arc<paw_core::task::KeyTask>, timeout: Duration) -> bool {
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
         if task.state().is_final() {

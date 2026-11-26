@@ -21,7 +21,7 @@ use zeroize::Zeroizing;
 
 use super::session::{CardJob, Halt, card_error};
 use super::apdu;
-use super::task::TaskCore;
+use super::task::TaskSide;
 use super::touch::{self, TouchWatch};
 use super::KeyError;
 use crate::recipients;
@@ -102,7 +102,7 @@ impl<'a> Plan<'a> {
     pub(crate) fn decipher(
         &self,
         job: &mut CardJob<'_>,
-        task: &Arc<TaskCore>,
+        task: &Arc<dyn TaskSide>,
         key: &PublicKey,
     ) -> Result<PlainSessionKey, Halt> {
         let session = job.session();
@@ -138,7 +138,7 @@ impl<'a> Plan<'a> {
             }
             match wire.last() {
                 Some((apdu::PSO, sw)) if apdu::security_refusal(sw) => {
-                    return Err(session.refused(task, "decrypting", sw, touch_possible, sent.elapsed()));
+                    return Err(session.refused(task.as_ref(), "decrypting", sw, touch_possible, sent.elapsed()));
                 }
                 Some((_, sw)) if sw != apdu::SW_OK => {
                     return Err(Halt::Fail(apdu::unexpected("decrypting", sw)));

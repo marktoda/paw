@@ -14,7 +14,8 @@ use std::time::{Duration, Instant};
 
 use key_common::{Driver, PIN, WAIT, finish, is_touch, port_with};
 use paw_core::ffi::sync::Setup;
-use paw_core::key::{KeyError, KeyPort, KeyTaskState, KeyTouch};
+use paw_core::key::{KeyError, KeyPort, KeyTouch};
+use paw_core::task::KeyTaskState;
 use paw_core::sync::address::StoreAddress;
 use paw_core::setup::outcome::RemoteReason;
 use paw_core::key::touch_clock::{TouchClock, TouchExpectation};

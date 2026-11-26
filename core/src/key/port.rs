@@ -14,8 +14,8 @@ use super::enrolment::{self, KeyIdentity, KeyMismatch};
 use super::keylog::{self, Sink};
 use super::session::{Halt, KeySession};
 use super::signer::{SessionSigner, authenticate};
-use super::task::{Body, KeyTask, TaskCore};
-use super::{KeyError, KeyOutcome, KeyPurpose, KeyTaskListener, KeyTaskState, LoginPurpose, TaskFailure};
+use super::task::{Body, Failure, KeyDone, Running, Stage, StageListener, TaskCore, TaskSide, Workflow};
+use super::{KeyError, KeyPurpose, LoginPurpose};
 use super::ApduTransport;
 use super::Uptime;
 use crate::PawError;
@@ -27,7 +27,7 @@ use crate::store::PassStore;
 struct State {
     session: Option<Arc<KeySession>>,
     /// Tasks at `PlugIn`.
-    waiting: Vec<Weak<TaskCore>>,
+    waiting: Vec<Weak<dyn TaskSide>>,
     /// The key the store was set up with. While set, no task sends the PIN
     /// to another card.
     enrolled: Option<KeyIdentity>,
@@ -40,11 +40,15 @@ struct State {
 const TOUCH_CHECK_LEN: usize = 146;
 
 /// Work a task does once the key has done its part, before it ends.
-pub(crate) type After = Box<dyn FnOnce(&Arc<KeySession>) -> Result<(), TaskFailure> + Send>;
+pub(crate) type After<W> =
+    Box<dyn FnOnce(&Arc<KeySession>) -> Result<(), Failure<<W as Workflow>::Failure>> + Send>;
+
+/// How a task's work ends.
+pub(crate) type Ends<W> = Result<<W as Workflow>::Outcome, Failure<<W as Workflow>::Failure>>;
 
 /// What a sign-in task does on the network with the signer, in the task's
 /// thread. It reports progress and ends the task.
-pub(crate) type Work = Box<dyn FnOnce(&Arc<TaskCore>, SessionSigner) -> Result<KeyOutcome, TaskFailure> + Send>;
+pub(crate) type Work<W> = Box<dyn FnOnce(&dyn TaskSide, SessionSigner) -> Ends<W> + Send>;
 
 /// Deciphers one ciphertext with the session's key, in a decrypting
 /// task's thread: the PIN is asked once, the key is touched for each.
@@ -53,15 +57,14 @@ pub(crate) type Opener<'a> = dyn FnMut(&[u8]) -> Result<zeroize::Zeroizing<Vec<u
 /// What a decrypting task does with its [`Opener`], in the task's thread.
 /// It reports progress, checks for cancel between ciphertexts, and returns
 /// how the task ends.
-pub(crate) type DecryptWork =
-    Box<dyn FnOnce(&Arc<TaskCore>, &mut Opener<'_>) -> Result<KeyOutcome, TaskFailure> + Send>;
+pub(crate) type DecryptWork<W> = Box<dyn FnOnce(&dyn TaskSide, &mut Opener<'_>) -> Ends<W> + Send>;
 
 /// What an open does once the entry has decrypted.
-enum Then {
+enum Then<W: Workflow> {
     /// Hands the entry over, keeping a Face ID copy if given a cache.
     Keep(Option<(Arc<CopyCache>, Duration)>),
-    /// Wipes it at once (setup's key check), then runs `after` if given.
-    Check(Option<After>),
+    /// Wipes it at once (setup's key check), then runs `after`.
+    Check(After<W>),
 }
 
 /// The refusal for `session` if it is not `expected`.
@@ -130,41 +133,42 @@ impl KeyPort {
     }
 
     /// Waits at `PlugIn` until a key is connected.
-    fn wait_for_session(&self, task: &Arc<TaskCore>) -> Result<Arc<KeySession>, Halt> {
+    fn wait_for_session<W: Workflow>(&self, task: &Arc<TaskCore<W>>) -> Result<Arc<KeySession>, Halt> {
         loop {
             let seen = self.plugged.load(Ordering::SeqCst);
             if let Some(session) = self.session() {
                 task.bind(&session);
                 return Ok(session);
             }
-            task.set(KeyTaskState::PlugIn);
-            self.lock().waiting.push(Arc::downgrade(task));
+            task.set(Stage::PlugIn);
+            let side: Arc<dyn TaskSide> = task.clone();
+            self.lock().waiting.push(Arc::downgrade(&side));
             task.wait_until(|| self.plugged.load(Ordering::SeqCst) != seen)?;
         }
     }
 
     /// Where a new task starts: the first stage that still needs doing.
     /// `check` runs what can be refused before any PIN or touch.
-    fn initial(
+    fn initial<W: Workflow>(
         session: Option<&KeySession>,
         expected: Option<&KeyIdentity>,
         check: impl FnOnce(&KeySession) -> Result<(), KeyError>,
-    ) -> KeyTaskState {
-        let Some(session) = session else { return KeyTaskState::PlugIn };
+    ) -> Stage<W> {
+        let Some(session) = session else { return Stage::PlugIn };
         if let Some(mismatch) = enrolment_check(expected, session) {
-            return KeyTaskState::Failed { error: KeyError::DifferentKey { mismatch: Box::new(mismatch) } };
+            return Stage::Failed(KeyError::DifferentKey { mismatch: Box::new(mismatch) });
         }
         if let Err(error) = check(session) {
-            return KeyTaskState::Failed { error };
+            return Stage::Failed(error);
         }
         if session.holds_pin_now() {
-            return if session.card_busy() { KeyTaskState::Busy } else { KeyTaskState::Working { progress: None } };
+            return if session.card_busy() { Stage::Busy } else { Stage::Working { progress: None } };
         }
         let prompt = session.pin_prompt();
         if prompt.tries_left == 0 {
-            return KeyTaskState::Failed { error: KeyError::PinBlocked };
+            return Stage::Failed(KeyError::PinBlocked);
         }
-        KeyTaskState::Pin {
+        Stage::Pin {
             tries_left: prompt.tries_left,
             forgot_after_background: prompt.forgot_after_background,
             last_error: None,
@@ -178,21 +182,21 @@ impl KeyPort {
     /// A card that is not `expected` (the enrolled key, unless a caller
     /// such as setup knows better) is refused before anything else, so no
     /// PIN reaches it.
-    fn start(
+    fn start<W: Workflow>(
         self: &Arc<Self>,
         purpose: KeyPurpose,
-        listener: Arc<dyn KeyTaskListener>,
+        listener: Arc<dyn StageListener<W>>,
         expected: Option<KeyIdentity>,
         check: impl FnOnce(&KeySession) -> Result<(), KeyError>,
-        body: impl FnOnce(&Arc<TaskCore>, &Arc<KeySession>) -> Result<KeyOutcome, TaskFailure> + Send + 'static,
-    ) -> Arc<KeyTask> {
+        body: impl FnOnce(&Arc<TaskCore<W>>, &Arc<KeySession>) -> Ends<W> + Send + 'static,
+    ) -> Running<W> {
         let session = self.session();
         let held_at_start = session.as_deref().is_some_and(KeySession::holds_pin_now);
         let initial = Self::initial(session.as_deref(), expected.as_ref(), check);
         let what = keylog::purpose_words(&purpose);
         let starts_at = keylog::stage_words(&initial).unwrap_or_default();
         let finished = initial.is_final();
-        let starts_at_pin = matches!(initial, KeyTaskState::Pin { .. });
+        let starts_at_pin = matches!(initial, Stage::Pin { .. });
         let start_line = move |tag: String, session: &KeySession, plugged_later: bool| {
             let info = session.card_info();
             format!(
@@ -206,7 +210,7 @@ impl KeyPort {
         let logged_session = session.clone();
         let port = self.clone();
         let line = start_line.clone();
-        let body: Body = Box::new(move |task| {
+        let body: Body<W> = Box::new(move |task| {
             let session = match session {
                 Some(session) => {
                     session.log().line(line(task.tag(), &session, false));
@@ -227,12 +231,63 @@ impl KeyPort {
             }
             body(task, &session)
         });
-        let task = KeyTask::start(purpose, listener, initial, body);
+        let task = Running::start(purpose, listener, initial, body);
         // A task refused before it began never runs its body.
         if let (true, Some(session)) = (finished, logged_session) {
             session.log().line(start_line(task.tag(), &session, false));
         }
         task
+    }
+
+    /// Opens `entry` with the key and keeps a Face ID copy of it for `ttl`
+    /// in `copies` (none if `copies` is absent or `ttl` is zero; at most 12
+    /// hours).
+    ///
+    /// An entry the key cannot open is refused before the PIN or a touch.
+    pub(crate) fn open_entry_task<W: Workflow>(
+        self: &Arc<Self>,
+        store: Arc<PassStore>,
+        entry: String,
+        copies: Option<(Arc<CopyCache>, Duration)>,
+        listener: Arc<dyn StageListener<W>>,
+    ) -> Running<W> {
+        let purpose = KeyPurpose::OpenEntry { entry: entry.clone() };
+        let expected = self.expected();
+        self.open_or_check(purpose, store, entry, Then::Keep(copies), listener, expected)
+    }
+
+    /// Key diagnostics' touch timeout check: with the PIN (asked if the
+    /// session holds none), the key is asked for one signature with its
+    /// authentication key, of fixed bytes the size of a git login, and
+    /// nobody is meant to touch it. Shows `Touch` as a sign-in does.
+    ///
+    /// A key that waits for a touch fails the task with `TouchTimeout` once
+    /// it gives up (about 15 seconds on a YubiKey); the key log then has the
+    /// status word, how long the key waited, and what the PIN check after
+    /// it answered. `Done` with `SignedIn` means the key signed: it was
+    /// touched, or the slot asks for no touch. Nothing else is sent, and
+    /// the signature is thrown away.
+    ///
+    /// Refused before the PIN, as every task is, on a card that is not the
+    /// enrolled key, and on a key with no authentication key.
+    pub(crate) fn touch_timeout_task<W: Workflow>(self: &Arc<Self>, listener: Arc<dyn StageListener<W>>) -> Running<W> {
+        let expected = self.expected();
+        self.start(
+            KeyPurpose::CheckTouchTimeout,
+            listener,
+            expected,
+            |session| session.ssh_key().map(drop),
+            |task, session| {
+                session.ssh_key()?;
+                let unsigned: Vec<u8> = (0..TOUCH_CHECK_LEN).map(|i| i as u8).collect();
+                let side: Arc<dyn TaskSide> = task.clone();
+                task.unlocked(session, |job| authenticate(job, &side, &unsigned))?;
+                if task.cancelled() {
+                    return Err(KeyError::Cancelled.into());
+                }
+                Ok(KeyDone::SignedIn.into())
+            },
+        )
     }
 
     /// The key tasks must be on: the enrolled one, if any.
@@ -244,13 +299,13 @@ impl KeyPort {
     /// signer in the task's own thread: setup's download and sync's send
     /// and refresh. `work` reports progress, checks for cancel between its
     /// network steps, and returns how the task ends.
-    pub(crate) fn sign_in_then(
+    pub(crate) fn sign_in_then<W: Workflow>(
         self: &Arc<Self>,
         login: LoginPurpose,
-        listener: Arc<dyn KeyTaskListener>,
+        listener: Arc<dyn StageListener<W>>,
         expected: Option<KeyIdentity>,
-        work: Work,
-    ) -> Arc<KeyTask> {
+        work: Work<W>,
+    ) -> Running<W> {
         self.start(
             KeyPurpose::SignIn { login },
             listener,
@@ -262,9 +317,9 @@ impl KeyPort {
                 if task.cancelled() {
                     return Err(KeyError::Cancelled.into());
                 }
-                task.set(KeyTaskState::Working { progress: None });
+                task.show_working();
                 let signer = SessionSigner::new(task.clone(), session.clone())?;
-                work(task, signer)
+                work(task.as_ref(), signer)
             },
         )
     }
@@ -272,12 +327,12 @@ impl KeyPort {
     /// A task that deciphers several ciphertexts with the key and hands
     /// each one's text to `work` (re-encrypting held-back changes). Refused
     /// before the PIN on a key with no decryption key.
-    pub(crate) fn decrypt_then(
+    pub(crate) fn decrypt_then<W: Workflow>(
         self: &Arc<Self>,
         purpose: KeyPurpose,
-        listener: Arc<dyn KeyTaskListener>,
-        work: DecryptWork,
-    ) -> Arc<KeyTask> {
+        listener: Arc<dyn StageListener<W>>,
+        work: DecryptWork<W>,
+    ) -> Running<W> {
         let expected = self.expected();
         self.start(
             purpose,
@@ -286,42 +341,43 @@ impl KeyPort {
             |session| session.decryption_key().map(drop),
             move |task, session| {
                 let key = session.decryption_key()?.clone();
+                let side: Arc<dyn TaskSide> = task.clone();
                 let mut open = |ciphertext: &[u8]| -> Result<zeroize::Zeroizing<Vec<u8>>, Halt> {
                     let plan = Plan::new(ciphertext, &key)?;
-                    let session_key = task.unlocked(session, |job| plan.decipher(job, task, &key))?;
+                    let session_key = task.unlocked(session, |job| plan.decipher(job, &side, &key))?;
                     if task.cancelled() {
                         return Err(Halt::Fail(KeyError::Cancelled));
                     }
                     Ok(plan.finish(session_key)?)
                 };
-                work(task, &mut open)
+                work(task.as_ref(), &mut open)
             },
         )
     }
 
     /// Setup's key check, which then runs `after` (still in the task, past
     /// the point where cancel can stop it) before the task is done.
-    pub(crate) fn check_key_then(
+    pub(crate) fn check_key_then<W: Workflow>(
         self: &Arc<Self>,
         store: Arc<PassStore>,
         entry: String,
-        listener: Arc<dyn KeyTaskListener>,
+        listener: Arc<dyn StageListener<W>>,
         expected: Option<KeyIdentity>,
-        after: After,
-    ) -> Arc<KeyTask> {
+        after: After<W>,
+    ) -> Running<W> {
         let purpose = KeyPurpose::CheckKey { entry: Some(entry.clone()) };
-        self.open_or_check(purpose, store, entry, Then::Check(Some(after)), listener, expected)
+        self.open_or_check(purpose, store, entry, Then::Check(after), listener, expected)
     }
 
-    fn open_or_check(
+    fn open_or_check<W: Workflow>(
         self: &Arc<Self>,
         purpose: KeyPurpose,
         store: Arc<PassStore>,
         entry: String,
-        then: Then,
-        listener: Arc<dyn KeyTaskListener>,
+        then: Then<W>,
+        listener: Arc<dyn StageListener<W>>,
         expected: Option<KeyIdentity>,
-    ) -> Arc<KeyTask> {
+    ) -> Running<W> {
         let check_store = store.clone();
         let check_entry = entry.clone();
         self.start(
@@ -333,7 +389,8 @@ impl KeyPort {
                 let ciphertext = read_and_check(&store, &entry, session)?;
                 let key = session.decryption_key()?;
                 let plan = Plan::new(&ciphertext, key)?;
-                let session_key = task.unlocked(session, |job| plan.decipher(job, task, key))?;
+                let side: Arc<dyn TaskSide> = task.clone();
+                let session_key = task.unlocked(session, |job| plan.decipher(job, &side, key))?;
                 if task.cancelled() {
                     // The late answer of a cancelled task: wiped on drop.
                     return Err(KeyError::Cancelled.into());
@@ -346,13 +403,11 @@ impl KeyPort {
                     Then::Keep(copies) => copies,
                     Then::Check(after) => {
                         drop(plaintext);
-                        if let Some(after) = after {
-                            if !task.begin_commit() {
-                                return Err(KeyError::Cancelled.into());
-                            }
-                            after(session)?;
+                        if !task.begin_commit() {
+                            return Err(KeyError::Cancelled.into());
                         }
-                        return Ok(KeyOutcome::KeyChecked);
+                        after(session)?;
+                        return Ok(KeyDone::KeyChecked.into());
                     }
                 };
                 if !task.begin_commit() {
@@ -370,7 +425,7 @@ impl KeyPort {
                 let mut plaintext = plaintext;
                 let entry = OpenedEntry::decrypted(std::mem::take(&mut *plaintext), content_id(&ciphertext))
                     .map_err(entry_unreadable)?;
-                Ok(KeyOutcome::Opened { entry, face_id_until_ms, copy_failed })
+                Ok(KeyDone::Opened { entry, face_id_until_ms, copy_failed }.into())
             },
         )
     }
@@ -390,66 +445,6 @@ impl KeyPort {
     /// The connected key's session, if a key is connected and answering.
     pub fn session(&self) -> Option<Arc<KeySession>> {
         self.lock().session.clone().filter(|session| !session.ended())
-    }
-
-    /// Opens `entry` with the key and keeps a Face ID copy of it for
-    /// `ttl_secs` in `copies` (none if `copies` is absent or `ttl_secs` is
-    /// zero; at most 12 hours).
-    ///
-    /// An entry the key cannot open is refused before the PIN or a touch.
-    pub fn open_entry(
-        self: Arc<Self>,
-        store: Arc<PassStore>,
-        entry: String,
-        copies: Option<Arc<CopyCache>>,
-        ttl_secs: u32,
-        listener: Arc<dyn KeyTaskListener>,
-    ) -> Arc<KeyTask> {
-        let purpose = KeyPurpose::OpenEntry { entry: entry.clone() };
-        let copies = copies.map(|copies| (copies, Duration::from_secs(ttl_secs.into())));
-        let expected = self.expected();
-        self.open_or_check(purpose, store, entry, Then::Keep(copies), listener, expected)
-    }
-
-    /// Setup's key check: opens `entry` to prove the key works, and wipes
-    /// the text at once. No copy is kept.
-    pub fn check_key(self: Arc<Self>, store: Arc<PassStore>, entry: String, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
-        let purpose = KeyPurpose::CheckKey { entry: Some(entry.clone()) };
-        let expected = self.expected();
-        self.open_or_check(purpose, store, entry, Then::Check(None), listener, expected)
-    }
-
-    /// Key diagnostics' touch timeout check: with the PIN (asked if the
-    /// session holds none), the key is asked for one signature with its
-    /// authentication key, of fixed bytes the size of a git login, and
-    /// nobody is meant to touch it. Shows `Touch` as a sign-in does.
-    ///
-    /// A key that waits for a touch fails the task with `TouchTimeout` once
-    /// it gives up (about 15 seconds on a YubiKey); the key log then has the
-    /// status word, how long the key waited, and what the PIN check after
-    /// it answered. `Done` with `SignedIn` means the key signed: it was
-    /// touched, or the slot asks for no touch. Nothing else is sent, and
-    /// the signature is thrown away.
-    ///
-    /// Refused before the PIN, as every task is, on a card that is not the
-    /// enrolled key, and on a key with no authentication key.
-    pub fn check_touch_timeout(self: Arc<Self>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
-        let expected = self.expected();
-        self.start(
-            KeyPurpose::CheckTouchTimeout,
-            listener,
-            expected,
-            |session| session.ssh_key().map(drop),
-            |task, session| {
-                session.ssh_key()?;
-                let unsigned: Vec<u8> = (0..TOUCH_CHECK_LEN).map(|i| i as u8).collect();
-                task.unlocked(session, |job| authenticate(job, task, &unsigned))?;
-                if task.cancelled() {
-                    return Err(KeyError::Cancelled.into());
-                }
-                Ok(KeyOutcome::SignedIn)
-            },
-        )
     }
 
     /// Sets the key the store was set up with (from `load_enrolled_key`), or

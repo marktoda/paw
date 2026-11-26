@@ -5,7 +5,7 @@
 //! The session holds what lasts while the key stays plugged in: what the
 //! card said about itself, and the PIN once it has been verified. A task
 //! walks through the key sheet's stages (design.md 2.3), and the sheet only
-//! renders [`KeyTaskState`]: it never combines states or decides anything.
+//! renders [`crate::task::KeyTaskState`]: it never combines states or decides anything.
 //!
 //! - [`port`]: where keys are plugged in and out, and where tasks start.
 //! - [`session`]: one connected card; the PIN; one card job at a time.
@@ -33,7 +33,6 @@ mod touch;
 pub mod touch_clock;
 mod wire;
 
-use std::sync::Arc;
 use std::time::Duration;
 
 pub use card::{ApduTransport, CardInfo, KeyTouch};
@@ -45,17 +44,10 @@ pub use keylog::{KeyLogLine, clear_key_log, key_log, key_log_text};
 pub use port::KeyPort;
 pub(crate) use port::{After, DecryptWork, Work};
 pub(crate) use session::Halt;
-pub(crate) use task::TaskCore;
+pub(crate) use task::TaskSide;
 pub use session::KeySession;
 pub use signer::SessionSigner;
-pub use task::KeyTask;
-
-use crate::PawError;
-use crate::entry::opened::OpenedEntry;
-use crate::setup::SetupError;
-use crate::sync::SyncError;
-use crate::sync::operation::SyncReport;
-use crate::write::held_back::ReencryptReport;
+pub use task::{Failure, KeyDone, Running, Stage, StageListener, Workflow};
 
 /// Milliseconds since boot, counting sleep; never goes backwards within one
 /// boot. What the PIN's time in the background is measured with.
@@ -135,6 +127,10 @@ pub enum KeyError {
     /// The reader or the card answered something unexpected.
     #[error("the key answered unexpectedly: {detail}")]
     Reader { detail: String },
+    /// paw itself failed while the key was in use (a panic, a thread that
+    /// could not start). Nothing is wrong with the key.
+    #[error("paw hit an internal error: {detail}")]
+    Internal { detail: String },
     /// See [`crate::PawError::StoreBusy`]: the entry could not be read.
     #[error("{}", crate::lock::STORE_BUSY)]
     StoreBusy,
@@ -171,133 +167,4 @@ pub enum LoginPurpose {
 pub struct TaskProgress {
     pub done: u32,
     pub total: u32,
-}
-
-/// What a finished task produced.
-#[derive(Clone, uniffi::Enum)]
-pub enum KeyOutcome {
-    /// The entry is open. `face_id_until_ms` is when its Face ID copy ends
-    /// (wall clock), or `None` if none was kept; `copy_failed` says why a
-    /// copy that was asked for was not kept.
-    Opened { entry: Arc<OpenedEntry>, face_id_until_ms: Option<i64>, copy_failed: Option<PawError> },
-    /// The key opened the test entry; its text was wiped at once.
-    KeyChecked,
-    /// The login was signed and the caller has finished with the key. For
-    /// `CheckTouchTimeout`: the key signed, so it was touched, or its
-    /// authentication slot asks for no touch.
-    SignedIn,
-    /// A send or a check went through.
-    Synced { report: SyncReport },
-    /// The re-encrypt ran to the end: what it did and what it left.
-    Reencrypted { report: ReencryptReport },
-}
-
-impl std::fmt::Debug for KeyOutcome {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Opened { face_id_until_ms, copy_failed, .. } => f
-                .debug_struct("Opened")
-                .field("entry", &"<redacted>")
-                .field("face_id_until_ms", face_id_until_ms)
-                .field("copy_failed", copy_failed)
-                .finish(),
-            Self::KeyChecked => f.write_str("KeyChecked"),
-            Self::SignedIn => f.write_str("SignedIn"),
-            Self::Synced { report } => f.debug_struct("Synced").field("report", report).finish(),
-            Self::Reencrypted { report } => f.debug_struct("Reencrypted").field("report", report).finish(),
-        }
-    }
-}
-
-/// The key sheet's stage (design.md 2.3).
-#[derive(Debug, Clone, uniffi::Enum)]
-pub enum KeyTaskState {
-    /// No key is connected. The task goes on by itself once one is.
-    PlugIn,
-    /// Ask for the PIN. `tries_left` is what the key says remain.
-    /// `forgot_after_background` adds "paw forgot your PIN after 15
-    /// minutes away." `last_error` is why the PIN is asked again (a wrong
-    /// PIN, a PIN that was not 6 to 127 characters, or a held PIN the key
-    /// no longer accepts).
-    Pin { tries_left: u8, forgot_after_background: bool, last_error: Option<KeyError> },
-    /// The key is finishing something else (an earlier command, perhaps a
-    /// cancelled one still waiting for its touch). This task is queued.
-    Busy,
-    /// The key is waiting for a touch for this task's command.
-    Touch,
-    /// The key or the work after it is busy for this task.
-    Working { progress: Option<TaskProgress> },
-    Done { outcome: KeyOutcome },
-    /// The key failed.
-    Failed { error: KeyError },
-    /// The key did its part and the sync after it failed.
-    SyncFailed { error: SyncError },
-    /// The key did its part and the setup step after it failed.
-    SetupFailed { error: SetupError },
-    Cancelled,
-}
-
-impl KeyTaskState {
-    /// Done, failed or cancelled: nothing changes it any more.
-    pub fn is_final(&self) -> bool {
-        matches!(
-            self,
-            Self::Done { .. } | Self::Failed { .. } | Self::SyncFailed { .. } | Self::SetupFailed { .. } | Self::Cancelled
-        )
-    }
-}
-
-/// How a task's work failed, on its way to the task's final state.
-#[derive(Debug)]
-pub enum TaskFailure {
-    Key(KeyError),
-    Sync(SyncError),
-    Setup(SetupError),
-}
-
-impl TaskFailure {
-    pub(crate) fn state(self) -> KeyTaskState {
-        match self {
-            Self::Key(error) => KeyTaskState::Failed { error },
-            Self::Sync(error) => KeyTaskState::SyncFailed { error },
-            Self::Setup(error) => KeyTaskState::SetupFailed { error },
-        }
-    }
-}
-
-impl From<KeyError> for TaskFailure {
-    fn from(error: KeyError) -> Self {
-        Self::Key(error)
-    }
-}
-
-impl From<SyncError> for TaskFailure {
-    fn from(error: SyncError) -> Self {
-        Self::Sync(error)
-    }
-}
-
-impl From<SetupError> for TaskFailure {
-    fn from(error: SetupError) -> Self {
-        Self::Setup(error)
-    }
-}
-
-impl From<Halt> for TaskFailure {
-    fn from(halt: Halt) -> Self {
-        match halt {
-            Halt::Fail(error) => Self::Key(error),
-            Halt::AskPin(_) => {
-                Self::Key(KeyError::Reader { detail: "the PIN was needed where it cannot be asked".into() })
-            }
-        }
-    }
-}
-
-/// Told every time a task's stage changes, in order, on whichever thread
-/// made the change. It must return quickly and must not block; it may call
-/// back into the task (`supply_pin`, `cancel`, `state`).
-#[uniffi::export(with_foreign)]
-pub trait KeyTaskListener: Send + Sync {
-    fn state_changed(&self, state: KeyTaskState);
 }

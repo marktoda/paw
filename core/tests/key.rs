@@ -11,9 +11,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use key_common::*;
-use paw_core::key::{
-    CACHED_TOUCH_GRACE, KeyError, KeyOutcome, KeyTaskState, LoginPurpose, PIN_BACKGROUND_LIMIT,
-};
+use paw_core::key::{CACHED_TOUCH_GRACE, KeyError, LoginPurpose, PIN_BACKGROUND_LIMIT};
+use paw_core::task::{KeyOutcome, KeyTaskState};
 use paw_core::key::ApduTransport;
 use paw_core::sim::SimTouch;
 use paw_core::ssh::SshSigner;
@@ -436,7 +435,7 @@ fn a_task_started_with_no_key_waits_at_plug_in_and_goes_on() {
 // Cancel, at every stage.
 
 /// Cancels and checks the task says so at once and for good.
-fn cancel_now(task: &Arc<paw_core::key::KeyTask>, driver: &Driver) {
+fn cancel_now(task: &Arc<paw_core::task::KeyTask>, driver: &Driver) {
     task.cancel();
     assert!(matches!(task.state(), KeyTaskState::Cancelled));
     assert!(!task.join(), "the task's thread ended without a panic");
@@ -677,17 +676,6 @@ fn an_open_keeps_a_face_id_copy_when_asked() {
     assert_eq!(password, SECRET);
     assert_eq!(until, Some(rig.clock.wall_ms() + 3_600_000));
     assert_eq!(rig.copies.list().unwrap().len(), 1);
-}
-
-#[test]
-fn the_setup_key_check_opens_an_entry_and_keeps_nothing() {
-    let rig = rig(SimTouch::EachUse, SimTouch::EachUse);
-    let driver = Driver::helpful(PIN, &rig.sim);
-    let task = rig.port.clone().check_key(rig.store.clone(), ENTRY.into(), driver.clone());
-    driver.drive(&task);
-    assert!(matches!(finish(&task), KeyTaskState::Done { outcome: KeyOutcome::KeyChecked }));
-    assert_eq!(rig.sim.decipher_count(), 1);
-    assert!(rig.copies.list().unwrap().is_empty());
 }
 
 // Secrets in formatted output.
