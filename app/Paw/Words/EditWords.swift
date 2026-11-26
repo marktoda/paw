@@ -15,16 +15,17 @@ extension SyncError: WordedError {
         switch self {
         case .UncommittedChanges(let paths):
             "The store has changes paw didn't make: \(paths.joined(separator: ", "))."
-        case .Failed(let message), .RefusedRemote(_, let message), .PushRefused(let message),
-             .RepositoryMissing(let message):
+        case .Failed(let message):
             capitalised(message) + "."
+        case .Remote(let failure):
+            capitalised(remoteDetail(failure)) + "."
         case .StoreBusy:
             capitalised(storeBusyText) + "."
-        case .HostKeyBundled(let host):
-            capitalised(hostKeyBundled(host)) + "."
+        case .BeingSent, .NotWaiting, .QueueKeptChanging:
+            capitalised(SyncFailure.queueDetail(self) ?? "") + "."
         case .Cancelled:
             "Stopped."
-        default:
+        case .NotPawHistory:
             String(describing: self)
         }
     }

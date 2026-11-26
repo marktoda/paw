@@ -91,18 +91,11 @@ enum GitHubRefresh {
 struct SignInCheck: Sendable {
     let core: GitHubAccount
 
-    struct Checked {
-        let result: Result<SyncReport, Error>
-        /// The sign-in is still kept after it: if not, the check goes on
-        /// with the key.
-        let stillSignedIn: Bool
-    }
-
     /// From a tap. `SyncModel` records it, as it does a check with the key.
-    func run() -> Checked {
-        let result = Result { try core.refreshStore() }
-        let stillSignedIn = (try? core.isSignedIn()) ?? false
-        return Checked(result: result, stillSignedIn: stillSignedIn)
+    /// A sign-in that has ended fails with `RemoteFailure.notSignedIn` or
+    /// `.signedOut`: the check then goes on with the key.
+    func run() -> Result<SyncReport, Error> {
+        Result { try core.refreshStore() }
     }
 
     /// In the background, for at most `seconds`, until `stop`.

@@ -26,15 +26,70 @@ use git2::{ConfigLevel, Oid, Repository};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::PawError;
-use crate::path::{is_gpg_id_alias, is_hfs_ignored, unsafe_path};
+use crate::path::{UnsafePart, is_gpg_id_alias, is_hfs_ignored, unsafe_part};
 
 /// A path in a repository that paw will not check out, and why.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct RefusedPath {
     /// The path as the repository names it (lossy if it is not UTF-8).
     pub path: String,
-    /// Why, in words for people.
-    pub reason: String,
+    /// Why: at least one reason, in the order they were found.
+    pub reasons: Vec<RefusedReason>,
+}
+
+/// Why [`check_tree`] refuses a path.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum RefusedReason {
+    /// The whole tree, at path `/`: it has more than `max_entries` files
+    /// and folders, or more than `max_mib` MiB of names.
+    TooBig { max_entries: u32, max_mib: u32 },
+    NotUtf8,
+    HasSlash,
+    PathTooLong,
+    UnsafeName { part: UnsafePart },
+    /// Some file system would take the name for `.gpg-id`.
+    GpgIdAlias,
+    GpgIdNotFile,
+    NestedTooDeep,
+    SymbolicLink,
+    Submodule,
+    NotRegularFile,
+    AppearsTwice,
+    /// Case, Unicode normalisation or ignored code points make it the
+    /// same name as `first` on the phone's file system.
+    SameNameAs { first: String },
+}
+
+/// The words a commit that names the path is refused with (the write path
+/// says them); the app words a refused remote itself.
+impl std::fmt::Display for RefusedReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooBig { max_entries, max_mib } => write!(
+                f,
+                "the repository holds more than {max_entries} files and folders, or more than {max_mib} MiB of names"
+            ),
+            Self::NotUtf8 => f.write_str("its name is not UTF-8"),
+            Self::HasSlash => f.write_str("its name contains a slash"),
+            Self::PathTooLong => f.write_str("its path is too long"),
+            Self::UnsafeName { part } => f.write_str(part.words()),
+            Self::GpgIdAlias => f.write_str("some file systems would take it for .gpg-id"),
+            Self::GpgIdNotFile => f.write_str("a .gpg-id must be a file"),
+            Self::NestedTooDeep => f.write_str("its folders are nested too deeply"),
+            Self::SymbolicLink => f.write_str("it is a symbolic link"),
+            Self::Submodule => f.write_str("it is a submodule, a link to another repository"),
+            Self::NotRegularFile => f.write_str("it is not a regular file"),
+            Self::AppearsTwice => f.write_str("it appears twice in the same folder"),
+            Self::SameNameAs { first } => write!(f, "on an iPhone it is the same name as {first}"),
+        }
+    }
+}
+
+impl RefusedPath {
+    /// Every reason, in words, as one phrase.
+    fn reason_words(&self) -> String {
+        self.reasons.iter().map(ToString::to_string).collect::<Vec<_>>().join(", and ")
+    }
 }
 
 /// The repository contains something paw will not check out.
@@ -46,23 +101,28 @@ const NAMED_IN_MESSAGE: usize = 5;
 /// Folders this deep or deeper are refused: no store needs them, and a crafted
 /// tree could otherwise make the walk very long.
 const MAX_DEPTH: usize = 32;
-/// The words the app shows; [`std::fmt::Display`] starts with them.
-pub(crate) const REFUSED_PREFIX: &str = "the remote contains something paw will not check out";
+/// What [`refused_message`] starts with.
+const REFUSED_PREFIX: &str = "the remote contains something paw will not check out";
 
 impl std::fmt::Display for Refused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let named: Vec<String> = self
-            .0
-            .iter()
-            .take(NAMED_IN_MESSAGE)
-            .map(|refused| format!("{} ({})", refused.path, refused.reason))
-            .collect();
-        write!(f, "{REFUSED_PREFIX}: {}", named.join("; "))?;
-        if self.0.len() > NAMED_IN_MESSAGE {
-            write!(f, "; and {} more", self.0.len() - NAMED_IN_MESSAGE)?;
-        }
-        Ok(())
+        f.write_str(&refused_message(&self.0))
     }
+}
+
+/// "the remote contains something paw will not check out: ..." with the
+/// first few paths and why.
+pub(crate) fn refused_message(paths: &[RefusedPath]) -> String {
+    let named: Vec<String> = paths
+        .iter()
+        .take(NAMED_IN_MESSAGE)
+        .map(|refused| format!("{} ({})", refused.path, refused.reason_words()))
+        .collect();
+    let mut message = format!("{REFUSED_PREFIX}: {}", named.join("; "));
+    if paths.len() > NAMED_IN_MESSAGE {
+        message.push_str(&format!("; and {} more", paths.len() - NAMED_IN_MESSAGE));
+    }
+    message
 }
 
 impl From<Refused> for PawError {
@@ -73,8 +133,7 @@ impl From<Refused> for PawError {
 
 impl From<Refused> for super::SyncError {
     fn from(refused: Refused) -> Self {
-        let message = refused.to_string();
-        super::SyncError::RefusedRemote { paths: refused.0, message }
+        crate::remote::RemoteFailure::RefusedContent { paths: refused.0 }.into()
     }
 }
 
@@ -143,8 +202,8 @@ const MAX_TOTAL_PATH_BYTES: usize = 16 << 20;
 ///   memory are bounded whatever the repository holds.
 pub(crate) fn check_tree(repo: &Repository, tree: Oid) -> Result<Vec<RefusedPath>, git2::Error> {
     let mut refused = Vec::new();
-    let mut refuse = |path: &str, reason: &str| {
-        refused.push(RefusedPath { path: path.to_owned(), reason: reason.to_owned() });
+    let mut refuse = |path: &str, reasons: Vec<RefusedReason>| {
+        refused.push(RefusedPath { path: path.to_owned(), reasons });
     };
     // (scheme, folded path) -> the first path filed under it.
     let mut seen: HashMap<(usize, String), String> = HashMap::new();
@@ -159,35 +218,35 @@ pub(crate) fn check_tree(repo: &Repository, tree: Oid) -> Result<Vec<RefusedPath
                 refused.clear();
                 refused.push(RefusedPath {
                     path: "/".into(),
-                    reason: format!(
-                        "the repository holds more than {MAX_ENTRIES} files and folders, or more than {} MiB of names",
-                        MAX_TOTAL_PATH_BYTES >> 20
-                    ),
+                    reasons: vec![RefusedReason::TooBig {
+                        max_entries: MAX_ENTRIES as u32,
+                        max_mib: (MAX_TOTAL_PATH_BYTES >> 20) as u32,
+                    }],
                 });
                 return Ok(refused);
             }
             let join = |name: &str| if prefix.is_empty() { name.to_owned() } else { format!("{prefix}/{name}") };
             let Ok(name) = std::str::from_utf8(entry.name_bytes()) else {
-                refuse(&join(&String::from_utf8_lossy(entry.name_bytes())), "its name is not UTF-8");
+                refuse(&join(&String::from_utf8_lossy(entry.name_bytes())), vec![RefusedReason::NotUtf8]);
                 continue;
             };
             let path = join(name);
             let mode = entry.filemode();
             if name.contains('/') {
-                refuse(&path, "its name contains a slash");
+                refuse(&path, vec![RefusedReason::HasSlash]);
                 continue;
             }
             if path.len() > MAX_PATH_BYTES {
-                refuse(&path, "its path is too long");
+                refuse(&path, vec![RefusedReason::PathTooLong]);
                 continue;
             }
             // The folders above were checked already; the name has no slash.
-            if let Some(why) = unsafe_path(name) {
-                refuse(&path, why);
+            if let Some(part) = unsafe_part(name) {
+                refuse(&path, vec![RefusedReason::UnsafeName { part }]);
                 continue;
             }
             if is_gpg_id_alias(name) {
-                refuse(&path, "some file systems would take it for .gpg-id");
+                refuse(&path, vec![RefusedReason::GpgIdAlias]);
                 continue;
             }
             let names = folded(name);
@@ -200,17 +259,17 @@ pub(crate) fn check_tree(repo: &Repository, tree: Oid) -> Result<Vec<RefusedPath
             });
             let mut reasons = Vec::new();
             match mode {
-                TREE if name == ".gpg-id" => reasons.push("a .gpg-id must be a file".to_owned()),
-                TREE if depth + 1 >= MAX_DEPTH => reasons.push("its folders are nested too deeply".to_owned()),
+                TREE if name == ".gpg-id" => reasons.push(RefusedReason::GpgIdNotFile),
+                TREE if depth + 1 >= MAX_DEPTH => reasons.push(RefusedReason::NestedTooDeep),
                 TREE | BLOB | BLOB_EXECUTABLE | BLOB_GROUP_WRITABLE => {}
-                LINK => reasons.push("it is a symbolic link".to_owned()),
-                GITLINK => reasons.push("it is a submodule, a link to another repository".to_owned()),
-                _ => reasons.push("it is not a regular file".to_owned()),
+                LINK => reasons.push(RefusedReason::SymbolicLink),
+                GITLINK => reasons.push(RefusedReason::Submodule),
+                _ => reasons.push(RefusedReason::NotRegularFile),
             }
             let first = (0..SCHEMES).find_map(|scheme| seen.get(&(scheme, folded_path[scheme].clone())));
             match first {
-                Some(first) if *first == path => reasons.push("it appears twice in the same folder".to_owned()),
-                Some(first) => reasons.push(format!("on an iPhone it is the same name as {first}")),
+                Some(first) if *first == path => reasons.push(RefusedReason::AppearsTwice),
+                Some(first) => reasons.push(RefusedReason::SameNameAs { first: first.clone() }),
                 None => {
                     for (scheme, key) in folded_path.iter().enumerate() {
                         seen.insert((scheme, key.clone()), path.clone());
@@ -218,7 +277,7 @@ pub(crate) fn check_tree(repo: &Repository, tree: Oid) -> Result<Vec<RefusedPath
                 }
             }
             if !reasons.is_empty() {
-                refuse(&path, &reasons.join(", and "));
+                refuse(&path, reasons);
             } else if mode == TREE {
                 folders.push((path, folded_path, entry.id(), depth + 1));
             }
@@ -384,12 +443,13 @@ mod tests {
             // Siblings.
             let refused = check_tree(&repo, tree_of(&repo, &[(a, BLOB), (b, BLOB)])).unwrap();
             assert_eq!(refused.len(), 1, "{a:?} {b:?}: {refused:?}");
-            assert!(refused[0].reason.contains("same name as"), "{refused:?}");
+            assert!(matches!(refused[0].reasons[..], [RefusedReason::SameNameAs { .. }]), "{refused:?}");
             // A link, then a file through it under the other spelling.
             let through = format!("{b}/recipients");
             let refused = check_tree(&repo, tree_of(&repo, &[(a, LINK), (&through, BLOB)])).unwrap();
-            assert!(refused.iter().any(|r| r.reason.contains("same name as")), "{a:?} {b:?}: {refused:?}");
-            assert!(refused.iter().any(|r| r.path == a && r.reason.contains("symbolic link")), "{refused:?}");
+            let says = |r: &RefusedPath, reason: fn(&RefusedReason) -> bool| r.reasons.iter().any(reason);
+            assert!(refused.iter().any(|r| says(r, |x| matches!(x, RefusedReason::SameNameAs { .. }))), "{a:?} {b:?}: {refused:?}");
+            assert!(refused.iter().any(|r| r.path == a && says(r, |x| *x == RefusedReason::SymbolicLink)), "{refused:?}");
         }
     }
 
@@ -413,7 +473,7 @@ mod tests {
         let took = started.elapsed();
 
         assert_eq!(refused.len(), 1, "{refused:?}");
-        assert!(refused[0].reason.contains("more than 100000"), "{refused:?}");
+        assert_eq!(refused[0].reasons, [RefusedReason::TooBig { max_entries: 100_000, max_mib: 16 }], "{refused:?}");
         // Stopped at the cap: well under a minute even unoptimised, on a busy machine.
         assert!(took < std::time::Duration::from_secs(60), "{took:?}");
     }
@@ -424,7 +484,7 @@ mod tests {
         let deep = vec!["d"; 40].join("/") + "/a.gpg";
         let refused = check_tree(&repo, tree_of(&repo, &[(&deep, BLOB)])).unwrap();
         assert_eq!(refused.len(), 1, "{refused:?}");
-        assert!(refused[0].reason.contains("nested too deeply"));
+        assert_eq!(refused[0].reasons, [RefusedReason::NestedTooDeep]);
         let fine = vec!["d"; 30].join("/") + "/a.gpg";
         assert!(check_tree(&repo, tree_of(&repo, &[(&fine, BLOB)])).unwrap().is_empty());
     }

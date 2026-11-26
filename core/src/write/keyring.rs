@@ -453,6 +453,11 @@ impl Keyring {
         &self.keys
     }
 
+    /// Whether setup has recorded the store's recipients.
+    pub(crate) fn confirmed(&self) -> bool {
+        self.accepted.is_some()
+    }
+
     fn pin(&mut self, key: PinnedKey) -> Result<String, WriteError> {
         let fingerprint = key.fingerprint.clone();
         self.keys.retain(|old| old.fingerprint != fingerprint);
@@ -562,7 +567,7 @@ impl Keyring {
             .into_iter()
             .map(|line| RecipientLine { status: self.line_status(&line, now), line })
             .collect();
-        let confirmed = self.accepted.is_some();
+        let confirmed = self.confirmed();
         let ready = lines.iter().all(|l| matches!(l.status, LineStatus::Ready { .. }));
         Ok(FolderRecipients {
             gpg_id,

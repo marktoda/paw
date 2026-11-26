@@ -14,7 +14,8 @@ final class SyncWordsTests: XCTestCase {
     }
 
     func testNoNetworkIsOfflineNotAnError() {
-        let failure = SyncFailure(.Network(detail: "timed out"), during: .send, unpushed: 1, host: "github.com")
+        let failure = SyncFailure(
+            SyncError.Remote(failure: .unreachable(host: "github.com", detail: "timed out")), during: .send, unpushed: 1, host: "github.com")
         XCTAssertEqual(failure.kind, .offline)
         XCTAssertEqual(failure.problem, "Can't reach github.com")
         XCTAssertEqual(failure.nextStep, "Check your connection. Your change is saved on this iPhone.")
@@ -26,7 +27,8 @@ final class SyncWordsTests: XCTestCase {
 
     func testAChangedHostKeyStopsSyncAndPointsToSettings() {
         let failure = SyncFailure(
-            .HostKeyChanged(host: "git.example", expected: ["SHA256:aaa", "SHA256:bbb"], presented: "SHA256:ccc"),
+            SyncError.Remote(failure: .hostKeyChanged(
+                host: "git.example", expected: ["SHA256:aaa", "SHA256:bbb"], presented: "SHA256:ccc", bundled: false)),
             during: .refresh, unpushed: 0, host: "git.example")
         XCTAssertEqual(failure.kind, .hostKeyChanged)
         XCTAssertEqual(failure.problem, "git.example's identity changed")
@@ -37,12 +39,13 @@ final class SyncWordsTests: XCTestCase {
     }
 
     func testARejectedKeySaysWhatWasNotDone() {
-        let check = SyncFailure(.KeyRejected, during: .refresh, unpushed: 0, host: "github.com")
+        let rejected = SyncError.Remote(failure: .keyNotAccepted(host: "github.com", publicKey: "ssh-ed25519 AAAA"))
+        let check = SyncFailure(rejected, during: .refresh, unpushed: 0, host: "github.com")
         XCTAssertEqual(check.kind, .keyNotAccepted)
         XCTAssertEqual(check.problem, "github.com didn't accept this key")
         XCTAssertEqual(check.nextStep, "Check its SSH key is on your account there.")
         XCTAssertEqual(check.pill, "Not checked \u{00B7} key not accepted")
-        let send = SyncFailure(.KeyRejected, during: .send, unpushed: 2, host: "github.com")
+        let send = SyncFailure(rejected, during: .send, unpushed: 2, host: "github.com")
         XCTAssertEqual(send.pill, "Not sent \u{00B7} key not accepted")
         XCTAssertEqual(
             send.nextStep, "Check its SSH key is on your account there. Your 2 changes are saved on this iPhone.")
@@ -50,7 +53,8 @@ final class SyncWordsTests: XCTestCase {
 
     func testARefusedPushAMissingStoreAndARefusedRemoteHaveTheirOwnWords() {
         let refused = SyncFailure(
-            .PushRefused(detail: "The host refused the push: protected branch"), during: .send, unpushed: 2, host: "h")
+            SyncError.Remote(failure: .pushRefused(detail: "The host refused the push: protected branch")),
+            during: .send, unpushed: 2, host: "h")
         XCTAssertEqual(refused.kind, .pushRefused)
         XCTAssertEqual(refused.problem, "h refused your changes")
         XCTAssertEqual(refused.nextStep, "Your 2 changes are saved on this iPhone. Details say why.")
@@ -58,14 +62,15 @@ final class SyncWordsTests: XCTestCase {
         XCTAssertEqual(refused.details, ["The host refused the push: protected branch"])
 
         let gone = SyncFailure(
-            .RepositoryMissing(detail: "Repository not found"), during: .send, unpushed: 0, host: "h")
+            SyncError.Remote(failure: .repositoryMissing(
+                host: "h", repository: "store.git", said: nil, detail: "Repository not found")),
+            during: .send, unpushed: 0, host: "h")
         XCTAssertEqual(gone.kind, .repositoryGone)
         XCTAssertEqual(gone.pill, "Not sent \u{00B7} store not found")
 
         let remote = SyncFailure(
-            .RefusedRemote(
-                paths: [RefusedPath(path: "Web/github.com", reason: "a name used twice")],
-                message: "the remote contains something paw will not check out: Web/github.com (a name used twice)"),
+            SyncError.Remote(failure: .refusedContent(
+                paths: [RefusedPath(path: "Web/github.com", reasons: [.appearsTwice])])),
             during: .refresh, unpushed: 1, host: "h")
         XCTAssertEqual(remote.kind, .refusedRemote)
         XCTAssertEqual(remote.problem, "Your store has names paw can't download")

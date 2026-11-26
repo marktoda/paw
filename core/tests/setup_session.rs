@@ -13,7 +13,7 @@ use std::sync::Arc;
 use key_common::{Driver, PIN, WAIT, finish, is_pin, is_touch, port_with};
 use paw_core::ffi::sync::{Setup, StoreSync};
 use paw_core::key::{KeyError, KeyIdentity, KeyOutcome, KeyPort, KeyTaskListener, KeyTaskState, enrolment};
-use paw_core::setup::outcome::{RemoteMessage, RemoteReason};
+use paw_core::remote::RemoteFailure;
 use paw_core::setup::{SetupError, SetupState, UnusableKeyReason};
 use paw_core::sim::copies::SimClock;
 use paw_core::sim::fixture::other_key_fingerprint_hex;
@@ -264,7 +264,7 @@ fn a_refused_key_is_reported_at_the_host_check_before_any_pin() {
     let SetupState::ConfirmHost { fingerprint, .. } = w.setup.check_host().unwrap() else { panic!() };
     let error = w.setup.confirm_host(fingerprint).unwrap_err();
     assert!(
-        matches!(&error, SetupError::KeyNotAccepted { public_key, .. } if *public_key == w.sim.ssh_public_key()),
+        matches!(&error, SetupError::Remote { failure: RemoteFailure::KeyNotAccepted { public_key, .. } } if *public_key == w.sim.ssh_public_key()),
         "{error:?}"
     );
     assert_eq!(w.sim.verify_attempts(), 0);
@@ -287,14 +287,17 @@ fn a_changed_host_key_stops_setup_with_both_fingerprints() {
     // Checked again before the PIN: refused, nothing sent.
     let error = w.setup.check_host().unwrap_err();
     assert!(
-        matches!(&error, SetupError::HostKeyChanged { expected, presented: p, .. } if *expected == [pinned.clone()] && *p == presented),
+        matches!(&error, SetupError::Remote { failure: RemoteFailure::HostKeyChanged { expected, presented: p, bundled: false, .. } } if *expected == [pinned.clone()] && *p == presented),
         "{error:?}"
     );
 
     // At the download, after the PIN: refused before the key signs.
     let driver = Driver::helpful(PIN, &w.sim);
     let state = download(&w, &driver);
-    assert!(matches!(state, KeyTaskState::SetupFailed { error: SetupError::HostKeyChanged { .. } }), "{state:?}");
+    assert!(
+        matches!(state, KeyTaskState::SetupFailed { error: SetupError::Remote { failure: RemoteFailure::HostKeyChanged { .. } } }),
+        "{state:?}"
+    );
     assert_eq!(w.sim.authentication_count(), 0);
     assert_eq!(w.server.logins(), 0);
     assert!(matches!(w.setup.state(), SetupState::NeedPin { .. }));
@@ -367,36 +370,29 @@ fn a_repository_the_key_cannot_see_is_told_apart_from_a_refused_key() {
     w.setup.read_key_from_session(session).unwrap();
     w.setup.set_address(address(&w)).unwrap();
     let SetupState::ConfirmHost { fingerprint, .. } = w.setup.check_host().unwrap() else { panic!() };
-    assert!(matches!(w.setup.confirm_host(fingerprint).unwrap_err(), SetupError::KeyNotAccepted { .. }));
-    assert_eq!(w.setup.last_remote_message().unwrap().reason, RemoteReason::KeyNotAccepted);
+    let error = w.setup.confirm_host(fingerprint).unwrap_err();
+    assert!(matches!(error, SetupError::Remote { failure: RemoteFailure::KeyNotAccepted { .. } }), "{error:?}");
     w.server.sim.set_refuse_key(false);
     assert!(matches!(w.setup.check_host().unwrap(), SetupState::NeedPin { .. }));
-    assert_eq!(w.setup.last_remote_message(), None);
 
     // The key logs in, and the host says there is no such repository for it.
     w.server.sim.set_repository_not_found(true);
     let driver = Driver::helpful(PIN, &w.sim);
     let state = download(&w, &driver);
 
-    let KeyTaskState::SetupFailed { error: SetupError::Failed { message } } = state else { panic!("{state:?}") };
-    assert!(message.contains("doesn't exist, or this key can't see it"), "{message}");
+    let KeyTaskState::SetupFailed { error: SetupError::Remote { failure } } = state else { panic!("{state:?}") };
+    let RemoteFailure::RepositoryMissing { host, repository, said, .. } = failure else { panic!("{failure:?}") };
     assert_eq!(
-        w.setup.last_remote_message(),
-        Some(RemoteMessage {
-            reason: RemoteReason::RepositoryNotFound,
-            host: "127.0.0.1".into(),
-            repository: "store.git".into(),
-            said: Some("ERROR: Repository not found.".into()),
-        })
+        (host.as_str(), repository.as_str(), said.as_deref()),
+        ("127.0.0.1", "store.git", Some("ERROR: Repository not found."))
     );
     assert_eq!(w.server.logins(), 1);
     assert!(matches!(w.setup.state(), SetupState::NeedPin { .. }));
     assert!(!w.dir.path().join("repo").exists());
 
-    // Access granted: the next try goes through and the message is gone.
+    // Access granted: the next try goes through.
     w.server.sim.set_repository_not_found(false);
     assert!(matches!(download(&w, &Driver::helpful(PIN, &w.sim)), KeyTaskState::Done { .. }));
-    assert_eq!(w.setup.last_remote_message(), None);
 }
 
 #[test]
@@ -410,11 +406,9 @@ fn an_empty_repository_sends_the_task_path_back_to_the_address_with_the_reason()
 
     assert!(matches!(state, KeyTaskState::SetupFailed { error: SetupError::EmptyRepository }), "{state:?}");
     assert!(matches!(w.setup.state(), SetupState::Address { .. }), "{:?}", w.setup.state());
-    assert_eq!(w.setup.last_remote_message().unwrap().reason, RemoteReason::EmptyRepository);
     assert!(!w.dir.path().join("repo").exists());
     let relaunched = Setup::open(w.dir.path().to_string_lossy().into_owned()).unwrap();
     assert!(matches!(relaunched.state(), SetupState::Address { .. }));
-    assert_eq!(relaunched.last_remote_message(), w.setup.last_remote_message());
 
     // The same address again, once the store is pushed: it goes through.
     let desktop = w.server.desktop();
@@ -423,15 +417,12 @@ fn an_empty_repository_sends_the_task_path_back_to_the_address_with_the_reason()
     support::git(desktop.path(), &["commit", "--quiet", "-m", "The store."]);
     support::git(desktop.path(), &["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
     relaunched.set_address(address(&w)).unwrap();
-    assert_eq!(relaunched.last_remote_message(), None);
     assert!(matches!(relaunched.check_host().unwrap(), SetupState::NeedPin { .. }));
     let driver = Driver::helpful(PIN, &w.sim);
     let task = relaunched.clone().download_with_key(w.port.clone(), driver.clone());
     driver.drive(&task);
     assert!(matches!(finish(&task), KeyTaskState::Done { .. }));
     assert!(matches!(relaunched.state(), SetupState::TestDecrypt { .. }));
-    let reopened = Setup::open(w.dir.path().to_string_lossy().into_owned()).unwrap();
-    assert_eq!(reopened.last_remote_message(), None);
     assert!(!std::fs::read_to_string(w.dir.path().join("setup")).unwrap().contains("problem="));
 }
 
@@ -442,7 +433,10 @@ fn an_expected_host_key_change_is_forgotten_and_confirmed_again_without_leaving_
     let old = w.server.sim.host_key_fingerprint();
     w.server.sim.set_changed_host_key(true);
     let new = w.server.sim.host_key_fingerprint();
-    let Err(SetupError::HostKeyChanged { expected, presented, .. }) = w.setup.check_host() else { panic!() };
+    let Err(SetupError::Remote { failure: RemoteFailure::HostKeyChanged { expected, presented, .. } }) = w.setup.check_host()
+    else {
+        panic!()
+    };
     assert_eq!((expected, presented.clone()), (vec![old], new.clone()));
 
     assert!(matches!(w.setup.forget_host_key().unwrap(), SetupState::CheckHost { .. }));
@@ -471,7 +465,7 @@ fn a_bundled_hosts_key_cannot_be_forgotten() {
 
         let error = w.setup.forget_host_key().unwrap_err();
 
-        assert!(matches!(&error, SetupError::HostKeyBundled { .. }), "{error:?}");
+        assert!(matches!(&error, SetupError::Remote { failure: RemoteFailure::HostKeyBundled { .. } }), "{error:?}");
         assert!(known.lookup(host, port).unwrap().is_some());
         // The bundled keys are what counts for it, whatever was saved.
         let pinned = known.pin(host, port).unwrap().unwrap();
@@ -487,7 +481,10 @@ fn settings_cannot_forget_a_bundled_hosts_key_either() {
 
     let error = sync.forget_host_key().unwrap_err();
 
-    assert!(matches!(&error, paw_core::sync::SyncError::HostKeyBundled { .. }), "{error:?}");
+    assert!(
+        matches!(&error, paw_core::sync::SyncError::Remote { failure: RemoteFailure::HostKeyBundled { .. } }),
+        "{error:?}"
+    );
 }
 
 #[test]

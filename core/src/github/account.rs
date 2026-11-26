@@ -12,9 +12,10 @@ use zeroize::Zeroizing;
 use super::device::{DeviceSignIn, PollClock, SystemPollClock};
 use super::http::Http;
 use super::refresh::GitHubLink;
-use super::repos::{self, GitHubRepository, RepositoryList, is_unauthorised};
+use super::repos::{self, GitHubRepository, RepositoryList};
 use super::session::{TokenKeeper, TokenVault, WallClock, system_wall_clock};
 use super::{Endpoints, GitHubError, Secret};
+use crate::remote::{AboutRemote, RemoteFailure};
 
 /// What signing out did.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -47,7 +48,8 @@ pub struct GitHubAccount {
     /// The last list shown, which `select_repository` picks from.
     listed: Mutex<Vec<GitHubRepository>>,
     /// Lowers the download cap, for tests.
-    pub(crate) download_limit: Mutex<Option<u64>>,
+    #[cfg(feature = "sim")]
+    download_limit: Mutex<Option<u64>>,
 }
 
 impl GitHubAccount {
@@ -71,6 +73,7 @@ impl GitHubAccount {
             state_dir: state_dir.to_path_buf(),
             clock,
             listed: Mutex::new(Vec::new()),
+            #[cfg(feature = "sim")]
             download_limit: Mutex::new(None),
         }
     }
@@ -80,21 +83,29 @@ impl GitHubAccount {
     }
 
     /// Lowers the most a fetch may receive, in bytes (tests).
+    #[cfg(feature = "sim")]
     pub fn set_download_limit(&self, bytes: u64) {
         *self.download_limit.lock().unwrap_or_else(|p| p.into_inner()) = Some(bytes);
     }
 
-    /// Runs `call` with an access token; if GitHub refuses it (401, as
-    /// `unauthorised` reads `call`'s error), once more with a refreshed one.
-    pub(crate) fn with_token<T, E: From<GitHubError>>(
+    /// The most a fetch may receive, if lowered.
+    pub(crate) fn download_limit(&self) -> Option<u64> {
+        #[cfg(feature = "sim")]
+        return *self.download_limit.lock().unwrap_or_else(|p| p.into_inner());
+        #[cfg(not(feature = "sim"))]
+        None
+    }
+
+    /// Runs `call` with an access token; if GitHub refuses it
+    /// ([`RemoteFailure::Unauthorised`]), once more with a refreshed one.
+    pub(crate) fn with_token<T, E: From<GitHubError> + AboutRemote>(
         &self,
         http: &Http,
         mut call: impl FnMut(Secret) -> Result<T, E>,
-        unauthorised: impl Fn(&E) -> bool,
     ) -> Result<T, E> {
         let token = self.keeper.access_token(http, None)?;
         match call(token.clone()) {
-            Err(e) if unauthorised(&e) => {
+            Err(e) if e.is_unauthorised() => {
                 let token = self.keeper.access_token(http, Some(&token))?;
                 call(token)
             }
@@ -138,10 +149,10 @@ impl GitHubAccount {
     /// sent without a sign-in ([`GitHubError::NotSignedIn`]).
     pub fn repositories(&self) -> Result<RepositoryList, GitHubError> {
         if !self.keeper.signed_in()? {
-            return Err(GitHubError::NotSignedIn);
+            return Err(RemoteFailure::NotSignedIn.into());
         }
         let http = Http::new(&self.endpoints, None);
-        let list = self.with_token(&http, |token| repos::list(&http, &token), is_unauthorised)?;
+        let list = self.with_token(&http, |token| repos::list(&http, &token))?;
         let shown = match &list {
             RepositoryList::Repositories { repositories, .. } => repositories.clone(),
             RepositoryList::NotInstalled { .. } => Vec::new(),
@@ -160,7 +171,7 @@ impl GitHubAccount {
         let chosen = listed
             .iter()
             .find(|r| r.full_name.eq_ignore_ascii_case(full_name))
-            .ok_or_else(|| GitHubError::Failed { message: format!("{full_name} is not in the list; list the repositories again") })?;
+            .ok_or_else(|| GitHubError::NotListed { full_name: full_name.to_owned() })?;
         let link = GitHubLink { full_name: chosen.full_name.clone(), id: chosen.id, ssh_address: chosen.ssh_address.clone() };
         let _held = crate::lock::StoreLock::for_state_dir(&self.state_dir)
             .exclusive()

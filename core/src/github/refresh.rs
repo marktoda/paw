@@ -37,9 +37,9 @@ use std::time::{Duration, Instant};
 
 use super::account::GitHubAccount;
 use super::http::Http;
-use super::transport::{Failure, HttpsRemote, explain};
+use super::transport::HttpsRemote;
 use super::{GitHubError, Secret};
-use crate::PawError;
+use crate::remote::RemoteFailure;
 use crate::lock::{Exclusive, Fetching, StoreLock};
 use crate::sync::address::{StoreAddress, github_repository, saved_address};
 use crate::sync::integrate::{IntegrateReport, RecipientsChange, Replaced};
@@ -179,38 +179,6 @@ impl BackgroundRefreshReport {
     }
 }
 
-/// Why a token fetch failed.
-pub(crate) enum FetchError {
-    GitHub(GitHubError),
-    Paw(PawError),
-    /// GitHub did not accept the token (401).
-    Unauthorised,
-}
-
-impl From<GitHubError> for FetchError {
-    fn from(e: GitHubError) -> Self {
-        Self::GitHub(e)
-    }
-}
-
-impl From<FetchError> for SyncError {
-    fn from(e: FetchError) -> Self {
-        match e {
-            FetchError::Paw(e) => e.into(),
-            FetchError::GitHub(GitHubError::Network { message }) => SyncError::Network { detail: message },
-            FetchError::GitHub(other) => SyncError::Failed { message: other.to_string() },
-            FetchError::Unauthorised => SyncError::Failed { message: still_refused().to_string() },
-        }
-    }
-}
-
-/// A token GitHub refused even after it was refreshed.
-fn still_refused() -> GitHubError {
-    GitHubError::Refused {
-        message: "GitHub did not let paw's sign-in read this repository; is paw still installed on it?".into(),
-    }
-}
-
 impl GitHubAccount {
     fn repo_dir(&self) -> PathBuf {
         crate::layout::repo_dir(&self.state_dir)
@@ -218,11 +186,11 @@ impl GitHubAccount {
 
     /// The chosen repository, if the store's remote is it. Reads files only.
     fn checked_link(&self) -> Result<GitHubLink, GitHubError> {
-        let link = GitHubLink::load(&self.state_dir).ok_or(GitHubError::NotLinked)?;
+        let link = GitHubLink::load(&self.state_dir).ok_or(RemoteFailure::NotLinked)?;
         let store = saved_address(&self.state_dir)
             .map_err(|e| GitHubError::Failed { message: e.to_string() })?;
         if !link.is_store(&store) {
-            return Err(GitHubError::WrongRepository { store: store.display(), granted: link.full_name });
+            return Err(RemoteFailure::WrongRepository { store: store.display(), granted: link.full_name }.into());
         }
         Ok(link)
     }
@@ -234,22 +202,14 @@ impl GitHubAccount {
         token: Secret,
         fetch_wait: Duration,
         progress: Option<crate::sync::TransferCallback<'_>>,
-    ) -> Result<Fetching, FetchError> {
-        let repo = crate::sync::guard::open(&self.repo_dir()).map_err(FetchError::Paw)?;
+    ) -> Result<Fetching, SyncError> {
+        let repo = crate::sync::guard::open(&self.repo_dir())?;
         // The transfer runs without the store lock, under the fetch lock,
         // into private refs; [`Self::publish`] moves them.
-        let fetching = crate::sync::begin_fetch_within(&self.store_lock(), &repo, fetch_wait).map_err(FetchError::Paw)?;
-        let limit = *self.download_limit.lock().unwrap_or_else(|p| p.into_inner());
-        let remote = HttpsRemote::new(http.clone(), &link.full_name, token, limit);
-        match remote.with_remote(&repo, |r| crate::sync::fetch_connected(r, progress)) {
-            Ok(_) => Ok(fetching),
-            Err((error, failure)) => Err(match explain(error, failure) {
-                Ok(paw) => FetchError::Paw(paw),
-                Err(Failure::Unauthorised) => FetchError::Unauthorised,
-                Err(Failure::GitHub(e)) => FetchError::GitHub(e),
-                Err(Failure::TooBig(_)) => FetchError::Paw(PawError::Git("the git host sent too much".into())),
-            }),
-        }
+        let fetching = crate::sync::begin_fetch_within(&self.store_lock(), &repo, fetch_wait)?;
+        let remote = HttpsRemote::new(http.clone(), &link.full_name, token, self.download_limit());
+        remote.with_remote(&repo, |r| crate::sync::fetch_connected(r, progress))?;
+        Ok(fetching)
     }
 
     fn store_lock(&self) -> StoreLock {
@@ -258,7 +218,7 @@ impl GitHubAccount {
 
     /// With the store lock: what [`Self::fetch_with_token`] received
     /// becomes the store's `origin/*`. Returns the lock, held.
-    fn publish(&self, fetching: Fetching, wait: Duration) -> Result<Exclusive, PawError> {
+    fn publish(&self, fetching: Fetching, wait: Duration) -> Result<Exclusive, SyncError> {
         let held = self.store_lock().exclusive_within(wait)?;
         let repo = crate::sync::guard::open(&self.repo_dir())?;
         crate::sync::publish_fetched(&held, &repo, fetching)?;
@@ -274,15 +234,12 @@ impl GitHubAccount {
         link: &GitHubLink,
         fetch_wait: Duration,
         mut progress: Option<crate::sync::TransferCallback<'_>>,
-    ) -> Result<Fetching, FetchError> {
+    ) -> Result<Fetching, SyncError> {
         let fetch = |token| {
             let progress = progress.as_mut().map(|p| &mut **p as crate::sync::TransferCallback<'_>);
             self.fetch_once(http, link, token, fetch_wait, progress)
         };
-        match self.with_token(http, fetch, |e| matches!(e, FetchError::Unauthorised)) {
-            Err(FetchError::Unauthorised) => Err(FetchError::GitHub(still_refused())),
-            other => other,
-        }
+        self.with_token(http, fetch)
     }
 
     /// The background refresh: see the module comment. Ends by `budget`
@@ -309,19 +266,25 @@ impl GitHubAccount {
         }
         let link = match self.checked_link() {
             Ok(link) => link,
-            Err(GitHubError::NotLinked) => return BackgroundRefreshReport::ended(BackgroundOutcome::NotLinked),
+            Err(GitHubError::Remote { failure: RemoteFailure::NotLinked }) => {
+                return BackgroundRefreshReport::ended(BackgroundOutcome::NotLinked);
+            }
             Err(e) => return failed(&e),
         };
         let out_of_time = || BackgroundRefreshReport::ended(BackgroundOutcome::OutOfTime);
-        let from_github = |e: GitHubError| match e {
-            GitHubError::SignedOut => BackgroundRefreshReport::ended(BackgroundOutcome::SignedOut),
-            GitHubError::NotSignedIn => BackgroundRefreshReport::ended(BackgroundOutcome::NotSignedIn),
-            GitHubError::Network { message } if Instant::now() >= deadline => {
-                let _ = message;
-                out_of_time()
-            }
-            GitHubError::Network { message } => BackgroundRefreshReport::ended(BackgroundOutcome::Offline { message }),
-            other => failed(&other),
+        let ended = |e: SyncError| {
+            BackgroundRefreshReport::ended(match e {
+                SyncError::Remote { failure: RemoteFailure::SignedOut } => BackgroundOutcome::SignedOut,
+                SyncError::Remote { failure: RemoteFailure::NotSignedIn } => BackgroundOutcome::NotSignedIn,
+                SyncError::Remote { failure: RemoteFailure::Unreachable { .. } } if Instant::now() >= deadline => {
+                    BackgroundOutcome::OutOfTime
+                }
+                SyncError::Remote { failure: RemoteFailure::Unreachable { detail, .. } } => {
+                    BackgroundOutcome::Offline { message: detail }
+                }
+                SyncError::StoreBusy => BackgroundOutcome::Busy,
+                other => BackgroundOutcome::Failed { message: other.to_string() },
+            })
         };
 
         if stopping(RefreshStep::Token) {
@@ -330,7 +293,7 @@ impl GitHubAccount {
         let http = Http::new(&self.endpoints, Some(deadline));
         // Refreshed here if need be, so the fetch below starts with a good one.
         if let Err(e) = self.keeper.access_token(&http, None) {
-            return from_github(e);
+            return ended(e.into());
         }
         if stopping(RefreshStep::Fetch) {
             return out_of_time();
@@ -339,13 +302,7 @@ impl GitHubAccount {
         let fetching = match self.fetch_with_token(&http, &link, lock_wait(), Some(&mut in_time)) {
             Ok(fetching) => fetching,
             Err(_) if stopping(RefreshStep::Fetch) => return out_of_time(),
-            Err(FetchError::Paw(PawError::StoreBusy)) => return BackgroundRefreshReport::ended(BackgroundOutcome::Busy),
-            Err(FetchError::GitHub(e)) => return from_github(e),
-            Err(FetchError::Paw(PawError::Network(message))) => {
-                return BackgroundRefreshReport::ended(BackgroundOutcome::Offline { message });
-            }
-            Err(FetchError::Paw(e)) => return failed(&e),
-            Err(FetchError::Unauthorised) => return failed(&still_refused()),
+            Err(e) => return ended(e),
         };
         // From here to the end, local work only, with the store lock held:
         // published, checked and integrated as one step.
@@ -355,8 +312,7 @@ impl GitHubAccount {
         }
         let held = match self.publish(fetching, lock_wait()) {
             Ok(held) => held,
-            Err(PawError::StoreBusy) => return BackgroundRefreshReport::ended(BackgroundOutcome::Busy),
-            Err(e) => return failed(&e),
+            Err(e) => return ended(e),
         };
 
         if stopping(RefreshStep::Check) {
@@ -456,14 +412,13 @@ impl GitHubAccount {
     /// Fetches over HTTPS with the sign-in and integrates exactly as
     /// `StoreSync.refresh` does, pushing nothing. No key, no card. Refused
     /// before anything is sent if there is no sign-in, no chosen
-    /// repository, or the store's remote is another repository. Sign-in
-    /// problems come as `Failed` (or `Network`); `is_signed_in` then says
-    /// whether the person must sign in again.
+    /// repository, or the store's remote is another repository. A sign-in
+    /// that ended comes as `RemoteFailure::NotSignedIn` or `SignedOut`.
     pub fn refresh_store(&self) -> Result<SyncReport, SyncError> {
-        if !self.keeper.signed_in().map_err(FetchError::GitHub)? {
-            return Err(FetchError::GitHub(GitHubError::NotSignedIn).into());
+        if !self.keeper.signed_in()? {
+            return Err(RemoteFailure::NotSignedIn.into());
         }
-        let link = self.checked_link().map_err(FetchError::GitHub)?;
+        let link = self.checked_link()?;
         let http = Http::new(&self.endpoints, None);
         let fetching = self.fetch_with_token(&http, &link, crate::lock::FETCH_WAIT, None)?;
         let held = self.publish(fetching, crate::lock::DEFAULT_WAIT)?;

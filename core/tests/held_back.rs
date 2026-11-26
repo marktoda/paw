@@ -326,7 +326,7 @@ fn a_save_while_each_one_is_opened_does_not_add_up_to_a_failure() {
         w.save("Notes", &format!("n{saved}"), "pw");
         decrypt(&w.card, PIN, bytes)
             .map(zeroize::Zeroizing::new)
-            .map_err(|e| queue::OpenFailure::Stop(paw_core::sync::SyncError::Failed { message: e.to_string() }))
+            .map_err(|e| queue::OpenFailure::Stop(paw_core::sync::SyncError::Failed { message: e.to_string() }.into()))
     };
 
     let report = queue::reencrypt_each(&w.repo(), w.state.path(), &mut open, &mut |_, _| {}).unwrap();

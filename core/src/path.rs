@@ -86,27 +86,55 @@ pub(crate) fn governing(folder: &str, mut has: impl FnMut(&str) -> bool) -> Opti
     folder_and_parents(folder).map(gpg_id_in).find(|file| has(file))
 }
 
+/// What makes a path unsafe to write: see [`unsafe_part`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum UnsafePart {
+    NulOrBackslash,
+    Absolute,
+    EmptyComponent,
+    DotComponent,
+    /// A component that some file system takes for `.git`.
+    GitDirectory,
+}
+
+impl UnsafePart {
+    pub(crate) fn words(self) -> &'static str {
+        match self {
+            Self::NulOrBackslash => "it contains a NUL or a backslash",
+            Self::Absolute => "it is absolute",
+            Self::EmptyComponent => "it has an empty component",
+            Self::DotComponent => "it has a `.` or `..` component",
+            Self::GitDirectory => "it names git's own directory",
+        }
+    }
+}
+
 /// Why `path` cannot name an entry, or `None` if it can. `path` comes from
 /// the user or from the repository, and the repository is not trusted.
-pub(crate) fn unsafe_path(path: &str) -> Option<&'static str> {
+pub(crate) fn unsafe_part(path: &str) -> Option<UnsafePart> {
     if path.contains(['\0', '\\']) {
-        return Some("it contains a NUL or a backslash");
+        return Some(UnsafePart::NulOrBackslash);
     }
     if path.starts_with('/') {
-        return Some("it is absolute");
+        return Some(UnsafePart::Absolute);
     }
     for component in path.split('/') {
         if component.is_empty() {
-            return Some("it has an empty component");
+            return Some(UnsafePart::EmptyComponent);
         }
         if component == "." || component == ".." {
-            return Some("it has a `.` or `..` component");
+            return Some(UnsafePart::DotComponent);
         }
         if is_dot_git(component) {
-            return Some("it names git's own directory");
+            return Some(UnsafePart::GitDirectory);
         }
     }
     None
+}
+
+/// [`unsafe_part`] in words.
+pub(crate) fn unsafe_path(path: &str) -> Option<&'static str> {
+    unsafe_part(path).map(UnsafePart::words)
 }
 
 pub(crate) fn unsafe_path_err(path: &str, why: &str) -> PawError {

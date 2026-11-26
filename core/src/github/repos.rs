@@ -11,6 +11,7 @@
 //! does not look inside a repository to guess whether it is a pass store:
 //! the person picks, and setup's own checks say if it is not one.
 
+use crate::remote::RemoteFailure;
 use serde::Deserialize;
 
 use super::http::Http;
@@ -90,31 +91,17 @@ struct Repository {
     pushed_at: Option<String>,
 }
 
-/// What a 401 is until the token has been refreshed and tried again: see
-/// [`is_unauthorised`].
-pub(crate) const UNAUTHORISED: &str = "GitHub did not accept paw's sign-in";
-
-pub(crate) fn unauthorised() -> GitHubError {
-    GitHubError::Refused { message: UNAUTHORISED.into() }
-}
-
-/// Whether GitHub refused the access token (401), so a refreshed one is
-/// worth one more try.
-pub(crate) fn is_unauthorised(error: &GitHubError) -> bool {
-    matches!(error, GitHubError::Refused { message } if message == UNAUTHORISED)
-}
-
 fn unreadable() -> GitHubError {
-    GitHubError::Refused { message: "GitHub's list was not readable".into() }
+    GitHubError::refused("GitHub's list was not readable")
 }
 
 /// What a REST answer's status means, if not 200.
 pub(crate) fn api_status(status: u16) -> Result<(), GitHubError> {
     match status {
         200 => Ok(()),
-        401 => Err(unauthorised()),
-        500.. => Err(GitHubError::Network { message: format!("GitHub answered {status}") }),
-        other => Err(GitHubError::Refused { message: format!("GitHub answered {other}") }),
+        401 => Err(RemoteFailure::Unauthorised.into()),
+        500.. => Err(GitHubError::network(format!("GitHub answered {status}"))),
+        other => Err(GitHubError::refused(format!("GitHub answered {other}"))),
     }
 }
 

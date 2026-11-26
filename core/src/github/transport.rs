@@ -23,7 +23,8 @@ use git2::transport::{Service, SmartSubtransport, SmartSubtransportStream, Trans
 use super::http::Http;
 use super::{GitHubError, Secret};
 use crate::PawError;
-use crate::sync::DOWNLOAD_LIMIT;
+use crate::remote::RemoteFailure;
+use crate::sync::{DOWNLOAD_LIMIT, SyncError};
 
 /// The URL libgit2 is given; the real one is in [`ACTIVE`].
 const TRANSPORT_URL: &str = "paw-https://github";
@@ -35,9 +36,8 @@ const REQUEST_LIMIT: usize = 1 << 20;
 pub(crate) enum Failure {
     /// More than the cap arrived.
     TooBig(u64),
-    /// GitHub did not accept the token (401).
-    Unauthorised,
-    /// A GitHub-level failure (refused redirect, not found, network).
+    /// A GitHub-level failure (refused token, refused redirect, not found,
+    /// network).
     GitHub(GitHubError),
 }
 
@@ -55,7 +55,6 @@ impl Shared {
     fn fail(&self, failure: Failure) -> io::Error {
         let message = match &failure {
             Failure::TooBig(_) => "the git host sent too much".to_owned(),
-            Failure::Unauthorised => "GitHub did not accept the sign-in".to_owned(),
             Failure::GitHub(e) => e.to_string(),
         };
         let mut slot = self.failure.lock().unwrap_or_else(|p| p.into_inner());
@@ -91,33 +90,33 @@ impl HttpsRemote {
     }
 
     /// Runs `operation` against a libgit2 remote whose transport is this
-    /// connection. On failure, what went wrong in the transport, if it was
-    /// the transport.
+    /// connection.
     pub(crate) fn with_remote<T>(
         &self,
         repo: &git2::Repository,
         operation: impl FnOnce(&mut git2::Remote<'_>) -> Result<T, git2::Error>,
-    ) -> Result<T, (git2::Error, Option<Failure>)> {
+    ) -> Result<T, SyncError> {
         register_transport();
         ACTIVE.with(|active| *active.borrow_mut() = Some(self.shared.clone()));
         let result = repo
             .remote_anonymous(TRANSPORT_URL)
             .and_then(|mut remote| operation(&mut remote));
         ACTIVE.with(|active| *active.borrow_mut() = None);
-        result.map_err(|e| (e, self.shared.failure.lock().unwrap_or_else(|p| p.into_inner()).take()))
+        result.map_err(|e| explain(e, self.shared.failure.lock().unwrap_or_else(|p| p.into_inner()).take()))
     }
 }
 
-/// A failed fetch as paw reports it.
-pub(crate) fn explain(error: git2::Error, failure: Option<Failure>) -> Result<PawError, Failure> {
+/// A failed fetch as paw reports it: what went wrong in the transport, if
+/// it was the transport.
+fn explain(error: git2::Error, failure: Option<Failure>) -> SyncError {
     match failure {
-        Some(Failure::TooBig(limit)) => Ok(PawError::Git(format!(
+        Some(Failure::TooBig(limit)) => PawError::Git(format!(
             "the git host sent more than {} MiB, far more than a password store; paw stopped the download",
             limit >> 20
-        ))),
-        Some(Failure::GitHub(GitHubError::Network { message })) => Ok(PawError::Network(message)),
-        Some(other) => Err(other),
-        None => Ok(PawError::Git(error.message().to_owned())),
+        ))
+        .into(),
+        Some(Failure::GitHub(error)) => error.into(),
+        None => PawError::Git(error.message().to_owned()).into(),
     }
 }
 
@@ -180,18 +179,18 @@ fn request(shared: &Arc<Shared>, url: &str, post: Option<&[u8]>, expected_type: 
     let status = response.status().as_u16();
     match status {
         200 => {}
-        401 | 403 => return Err(shared.git_error(Failure::Unauthorised)),
+        401 | 403 => return Err(shared.git_error(Failure::GitHub(RemoteFailure::Unauthorised.into()))),
         404 => {
-            let message = "GitHub says the repository is not there, or paw's access to it was removed".into();
-            return Err(shared.git_error(Failure::GitHub(GitHubError::Refused { message })));
+            let message = "GitHub says the repository is not there, or paw's access to it was removed";
+            return Err(shared.git_error(Failure::GitHub(GitHubError::refused(message))));
         }
         500.. => {
             let message = format!("GitHub answered {status}");
-            return Err(shared.git_error(Failure::GitHub(GitHubError::Network { message })));
+            return Err(shared.git_error(Failure::GitHub(GitHubError::network(message))));
         }
         other => {
             let message = format!("GitHub answered {other}");
-            return Err(shared.git_error(Failure::GitHub(GitHubError::Refused { message })));
+            return Err(shared.git_error(Failure::GitHub(GitHubError::refused(message))));
         }
     }
     let content_type = response
@@ -202,8 +201,8 @@ fn request(shared: &Arc<Shared>, url: &str, post: Option<&[u8]>, expected_type: 
         .to_ascii_lowercase();
     if !content_type.starts_with(expected_type) {
         // A "dumb" server, or a login page: nothing paw speaks.
-        let message = "GitHub did not answer as a git server".into();
-        return Err(shared.git_error(Failure::GitHub(GitHubError::Refused { message })));
+        let message = "GitHub did not answer as a git server";
+        return Err(shared.git_error(Failure::GitHub(GitHubError::refused(message))));
     }
     // ureq stops at the cap too; paw's own count below names it.
     let reader = response.into_body().into_with_config().limit(shared.limit.saturating_add(1)).reader();
@@ -233,7 +232,7 @@ impl Read for Stream {
             if self.shared.received.load(Ordering::SeqCst) >= self.shared.limit {
                 self.shared.fail(Failure::TooBig(self.shared.limit))
             } else {
-                self.shared.fail(Failure::GitHub(GitHubError::Network { message: e.to_string() }))
+                self.shared.fail(Failure::GitHub(GitHubError::network(e.to_string())))
             }
         })?;
         let total = self.shared.received.fetch_add(n as u64, Ordering::SeqCst) + n as u64;
@@ -282,8 +281,7 @@ mod tests {
         let http = Http::new(&Endpoints::github(), Some(std::time::Instant::now()));
         let remote = HttpsRemote::new(http, "you/store", Secret::new("ghu_test".into()), None);
         let pushed = remote.with_remote(&repo, |r| r.push(&["refs/heads/main:refs/heads/main"], None));
-        let (error, failure) = pushed.err().unwrap();
-        assert!(error.message().contains("never pushes"), "{}", error.message());
-        assert!(failure.is_none());
+        let Err(SyncError::Failed { message }) = pushed else { panic!("{pushed:?}") };
+        assert!(message.contains("never pushes"), "{message}");
     }
 }

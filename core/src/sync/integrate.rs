@@ -182,18 +182,21 @@ fn fetched(repo: &Repository, tips: &Tips) -> Result<Option<Fetched>, SyncError>
 }
 
 /// Integrates `origin/<branch>` into the current branch of the store at
-/// `dir`. Run after [`super::fetch`].
+/// `dir`, taking the store's lock: tests' way to run the integrate step on
+/// its own. Run after [`super::fetch`].
 ///
 /// If the remote's tip, or a commit rebuilt on it, holds something paw
 /// will not check out ([`super::refused_remote`]), this fails with
-/// [`SyncError::Failed`] naming the paths, and the branch, the working
-/// copy and the unpushed changes stay as they were.
+/// [`crate::remote::RemoteFailure::RefusedContent`] naming the paths, and
+/// the branch, the working copy and the unpushed changes stay as they were.
+#[cfg(feature = "sim")]
 pub fn integrate(dir: &Path) -> Result<Integration, SyncError> {
     let held = StoreLock::for_repo(dir).exclusive()?;
     integrate_locked(&held, dir)
 }
 
-/// [`integrate`], with the store's lock already held.
+/// Integrates `origin/<branch>` into the current branch of the store at
+/// `dir`, with the store's lock already held.
 pub(crate) fn integrate_locked(held: &Exclusive, dir: &Path) -> Result<Integration, SyncError> {
     let repo = super::guard::open(dir)?;
     let tips = tips(&repo)?;
@@ -267,7 +270,7 @@ pub fn accept_replaced_remote(dir: &Path, keep_changes: bool) -> Result<Integrat
     Ok(report)
 }
 
-/// The `.gpg-id` changes an [`integrate`] would report now: between the
+/// The `.gpg-id` changes an integrate would report now: between the
 /// remote tip paw saw last and the fetched one. Empty when nothing was
 /// fetched, or the remote's history was replaced (that is its own
 /// decision). Changes nothing; for the background refresh, which leaves

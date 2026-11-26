@@ -16,7 +16,8 @@ use paw_core::sim::remote::steps;
 use paw_core::key::{KeyError, LoginPurpose};
 use paw_core::sim::SimulatedKey;
 use paw_core::ssh::{SshPublicKey, SshSigner};
-use paw_core::sync::{self, Author, Connection, HostKeyPin};
+use paw_core::remote::RemoteFailure;
+use paw_core::sync::{self, Author, Cloned, Connection, HostKeyPin, SyncError};
 use paw_core::PawError;
 use support::{GitServer, git};
 
@@ -50,9 +51,10 @@ fn commit_entry(dir: &Path) -> String {
 }
 
 /// `Connection` has no `Debug`, so `unwrap_err` is not available.
-fn refusal(result: Result<Connection, sync::ConnectError>) -> PawError {
+fn refusal(result: Result<Connection, sync::ConnectError>) -> RemoteFailure {
     match result.err().expect("the connection should have been refused") {
-        sync::ConnectError::Remote(error) => error,
+        sync::ConnectError::Sync(SyncError::Remote { failure }) => failure,
+        sync::ConnectError::Sync(error) => panic!("expected the host's refusal, got {error:?}"),
         sync::ConnectError::Key(error) => panic!("expected the host's refusal, got the key's: {error:?}"),
     }
 }
@@ -60,7 +62,7 @@ fn refusal(result: Result<Connection, sync::ConnectError>) -> PawError {
 fn key_refusal(result: Result<Connection, sync::ConnectError>) -> KeyError {
     match result.err().expect("the connection should have been refused") {
         sync::ConnectError::Key(error) => error,
-        sync::ConnectError::Remote(error) => panic!("expected the key's refusal, got {error:?}"),
+        sync::ConnectError::Sync(error) => panic!("expected the key's refusal, got {error:?}"),
     }
 }
 
@@ -71,7 +73,7 @@ fn clones_commits_and_pushes_with_the_card() {
     let dir = tempfile::tempdir().unwrap();
 
     let connection = connect(&server, &card);
-    steps::clone(&connection, &server.remote(), dir.path()).unwrap();
+    assert_eq!(steps::clone(&connection, &server.remote(), dir.path()).unwrap(), Cloned::Store);
     drop(connection);
 
     assert_eq!(std::fs::read_to_string(dir.path().join("README")).unwrap(), "a password store\n");
@@ -101,7 +103,7 @@ fn fetch_and_push_share_one_login() {
     let card = card();
     let server = GitServer::start(&[authorised_line(&card)]);
     let dir = tempfile::tempdir().unwrap();
-    steps::clone(&connect(&server, &card), &server.remote(), dir.path()).unwrap();
+    assert_eq!(steps::clone(&connect(&server, &card), &server.remote(), dir.path()).unwrap(), Cloned::Store);
     let commit = commit_entry(dir.path());
     let touches_before = card.authentication_count();
 
@@ -123,7 +125,7 @@ fn fetch_brings_in_what_the_desktop_pushed() {
     let server = GitServer::start(&[authorised_line(&card)]);
     let dir = tempfile::tempdir().unwrap();
     let connection = connect(&server, &card);
-    steps::clone(&connection, &server.remote(), dir.path()).unwrap();
+    assert_eq!(steps::clone(&connection, &server.remote(), dir.path()).unwrap(), Cloned::Store);
 
     let desktop = server.desktop_commit("desktop.gpg", "from the desktop");
     let remote_tip = steps::fetch(&connection, dir.path()).unwrap();
@@ -142,7 +144,7 @@ fn a_push_onto_a_remote_that_moved_is_refused_and_changes_nothing() {
     let server = GitServer::start(&[authorised_line(&card)]);
     let dir = tempfile::tempdir().unwrap();
     let connection = connect(&server, &card);
-    steps::clone(&connection, &server.remote(), dir.path()).unwrap();
+    assert_eq!(steps::clone(&connection, &server.remote(), dir.path()).unwrap(), Cloned::Store);
 
     let desktop = server.desktop_commit("desktop.gpg", "from the desktop");
     commit_entry(dir.path());
@@ -162,7 +164,7 @@ fn a_push_the_host_refuses_is_reported() {
     let server = GitServer::start(&[authorised_line(&card)]);
     let dir = tempfile::tempdir().unwrap();
     let connection = connect(&server, &card);
-    steps::clone(&connection, &server.remote(), dir.path()).unwrap();
+    assert_eq!(steps::clone(&connection, &server.remote(), dir.path()).unwrap(), Cloned::Store);
     let before = server.tip();
 
     // As a pre-receive hook that exits with an error would.
@@ -170,7 +172,7 @@ fn a_push_the_host_refuses_is_reported() {
     commit_entry(dir.path());
 
     match steps::push(&connection, dir.path()) {
-        Err(sync::PushError::Failed(sync::SyncError::PushRefused { detail: message })) => {
+        Err(sync::PushError::Failed(SyncError::Remote { failure: RemoteFailure::PushRefused { detail: message } })) => {
             assert!(message.contains("refused the push"), "{message}")
         }
         other => panic!("expected a refusal, got {other:?}"),
@@ -187,8 +189,8 @@ fn a_key_the_host_does_not_know_is_rejected_before_the_card_is_used() {
 
     let error = refusal(Connection::open(&server.remote(), &signer(&card)));
 
-    assert!(matches!(error, PawError::KeyRejected), "{error:?}");
-    assert_eq!(error.to_string(), "the git host did not accept this key");
+    let ours = authorised_line(&card);
+    assert_eq!(error, RemoteFailure::KeyNotAccepted { host: "127.0.0.1".into(), public_key: ours });
     // No signature, so no touch.
     assert_eq!(card.authentication_count(), 0);
     assert_eq!(server.logins(), 0);
@@ -205,8 +207,8 @@ fn a_host_with_the_wrong_key_is_refused_before_login() {
     let error = refusal(Connection::open(&remote, &signer(&card)));
 
     match error {
-        PawError::HostKeyMismatch { presented } => assert_eq!(presented, real),
-        other => panic!("expected HostKeyMismatch, got {other:?}"),
+        RemoteFailure::HostKeyChanged { presented, bundled, .. } => assert_eq!((presented, bundled), (real, false)),
+        other => panic!("expected HostKeyChanged, got {other:?}"),
     }
     assert_eq!(card.authentication_count(), 0);
     assert_eq!(server.logins(), 0);
@@ -237,7 +239,11 @@ fn an_unreachable_host_is_a_network_error() {
 
     let error = refusal(Connection::open(&remote, &signer(&card)));
 
-    assert!(matches!(error, PawError::Network(_)), "{error:?}");
+    // Refused, or reset by the closing server.
+    assert!(
+        matches!(error, RemoteFailure::NoConnection { fallback: None, .. } | RemoteFailure::Unreachable { .. }),
+        "{error:?}"
+    );
 }
 
 /// Wraps a signer to record how much data a login asks it to sign.
@@ -274,7 +280,7 @@ fn a_login_for_a_short_user_name_fits_one_short_apdu() {
 /// A clone of a fresh server's store, for the tests that only commit.
 fn cloned(server: &GitServer, card: &Arc<SimulatedKey>) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    steps::clone(&connect(server, card), &server.remote(), dir.path()).unwrap();
+    assert_eq!(steps::clone(&connect(server, card), &server.remote(), dir.path()).unwrap(), Cloned::Store);
     dir
 }
 
@@ -352,9 +358,10 @@ fn a_clone_with_links_in_it_is_refused() {
 
     let result = steps::clone(&connect(&server, &card), &server.remote(), dir.path());
 
-    let Err(PawError::UnsafePath(said)) = result else { panic!("{result:?}") };
-    assert!(said.contains("shared (it is a symbolic link)"), "{said}");
-    assert!(said.contains("victim.gpg (it is a symbolic link)"), "{said}");
+    let Ok(Cloned::Refused(refused)) = result else { panic!("{result:?}") };
+    let paths: Vec<&str> = refused.iter().map(|refused| refused.path.as_str()).collect();
+    assert_eq!(paths, ["shared", "victim.gpg"]);
+    assert!(refused.iter().all(|refused| refused.reasons == [sync::RefusedReason::SymbolicLink]));
     assert!(!dir.path().join("shared").exists());
     assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 1);
 }
@@ -450,7 +457,7 @@ fn a_download_larger_than_the_limit_is_stopped() {
     let fetching = steps::fetch(&connection, small.path());
 
     for result in [cloning.map(|_| String::new()), fetching] {
-        let Err(PawError::Git(message)) = result else { panic!("{result:?}") };
+        let Err(SyncError::Failed { message }) = result else { panic!("{result:?}") };
         assert!(message.contains("more than 1 MiB"), "{message}");
     }
     assert!(!dir.path().join("huge.gpg").exists());

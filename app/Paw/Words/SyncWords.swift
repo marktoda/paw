@@ -79,36 +79,16 @@ extension SyncFailure {
     /// sign-in.
     init(_ error: SyncError, during kind: SyncKind, unpushed: Int, host: String) {
         let waiting = Self.waiting(unpushed)
-        let notDone = switch kind {
-        case .send: "Not sent"
-        case .refresh: "Not checked"
-        case .reencrypt: "Not re-encrypted"
-        }
+        let notDone = Self.notDone(kind)
         self.during = kind
         switch error {
-        case .Network(let message):
-            self.kind = .offline
-            problem = "Can't reach \(host)"
-            nextStep = sentences("Check your connection.", waiting)
-            details = [message]
-            pill = "Offline"
-        case .HostKeyChanged(let host, let expected, let presented):
-            self.kind = .hostKeyChanged
-            problem = "\(host)'s identity changed"
-            nextStep = "Sync is stopped and nothing was sent. If the server's admin confirms the change, "
-                + "remove the store in Settings and set it up again."
-            details = ["Expected \(expected.joined(separator: " or "))", "It presented \(presented)"]
-            pill = "Sync stopped \u{00B7} Review"
-        case .KeyRejected:
-            self.kind = .keyNotAccepted
-            problem = "\(host) didn't accept this key"
-            nextStep = sentences("Check its SSH key is on your account there.", waiting)
-            pill = "\(notDone) \u{00B7} key not accepted"
-        case .RemoteKeptMoving:
-            self.kind = .remoteKeptMoving
-            problem = "The store kept changing while paw was sending"
-            nextStep = sentences("Try again in a moment.", waiting)
-            pill = "\(notDone) \u{00B7} try again"
+        case .Remote(let failure):
+            let remote = SyncFailure(failure, during: kind, unpushed: unpushed, host: host)
+            self.kind = remote.kind
+            problem = remote.problem
+            nextStep = remote.nextStep
+            details = remote.details
+            pill = remote.pill
         case .NotPawHistory(let commit, let reason):
             self.kind = .other
             problem = Device.words("This iPhone's store has a change paw didn't make")
@@ -121,23 +101,6 @@ extension SyncFailure {
             nextStep = "Nothing was overwritten or sent."
             details = paths
             pill = "Sync stopped"
-        case .RefusedRemote:
-            self.kind = .refusedRemote
-            problem = Self.refusedRemoteProblem
-            nextStep = Self.refusedRemoteNextStep(unpushed: unpushed)
-            pill = "Sync paused \u{00B7} Review"
-        case .PushRefused(let message):
-            self.kind = .pushRefused
-            problem = "\(host) refused your changes"
-            nextStep = sentences(waiting, "Details say why.")
-            details = [message]
-            pill = "Not sent \u{00B7} refused"
-        case .RepositoryMissing(let message):
-            self.kind = .repositoryGone
-            problem = "\(host) can't find your store"
-            nextStep = sentences("It may have been renamed, deleted or made private.", waiting)
-            details = [message]
-            pill = "\(notDone) \u{00B7} store not found"
         case .Cancelled:
             let cancelled = Self.cancelled(during: kind, unpushed: unpushed)
             self.kind = cancelled.kind
@@ -150,11 +113,11 @@ extension SyncFailure {
             nextStep = sentences("Try again.", waiting)
             details = [storeBusyText]
             pill = notDone
-        case .HostKeyBundled(let bundled):
+        case .BeingSent, .NotWaiting, .QueueKeptChanging:
             self.kind = .other
             problem = Self.couldNot(kind)
             nextStep = sentences("Try again.", waiting)
-            details = [hostKeyBundled(bundled)]
+            details = [Self.queueDetail(error) ?? ""]
             pill = notDone
         case .Failed(let message):
             self.kind = .other
@@ -162,6 +125,79 @@ extension SyncFailure {
             nextStep = sentences("Try again.", waiting)
             details = [message]
             pill = notDone
+        }
+    }
+
+    /// Why a change to the waiting queue didn't happen, in one line.
+    static func queueDetail(_ error: SyncError) -> String? {
+        switch error {
+        case .BeingSent: "this change is being sent right now; wait for the send to finish"
+        case .NotWaiting(let id): "\(id) is not an unpushed change"
+        case .QueueKeptChanging: "the waiting changes kept changing while paw was re-encrypting them; try again"
+        default: nil
+        }
+    }
+
+    /// The remote's failure during a sync. `host` is the store's host.
+    init(_ failure: RemoteFailure, during kind: SyncKind, unpushed: Int, host: String) {
+        let waiting = Self.waiting(unpushed)
+        let notDone = Self.notDone(kind)
+        self.during = kind
+        switch failure {
+        case .noConnection(_, let message, _), .unreachable(_, let message):
+            self.kind = .offline
+            problem = "Can't reach \(host)"
+            nextStep = sentences("Check your connection.", waiting)
+            details = [message]
+            pill = "Offline"
+        case .hostKeyChanged(let host, let expected, let presented, _):
+            self.kind = .hostKeyChanged
+            problem = "\(host)'s identity changed"
+            nextStep = "Sync is stopped and nothing was sent. If the server's admin confirms the change, "
+                + "remove the store in Settings and set it up again."
+            details = ["Expected \(expected.joined(separator: " or "))", "It presented \(presented)"]
+            pill = "Sync stopped \u{00B7} Review"
+        case .keyNotAccepted:
+            self.kind = .keyNotAccepted
+            problem = "\(host) didn't accept this key"
+            nextStep = sentences("Check its SSH key is on your account there.", waiting)
+            pill = "\(notDone) \u{00B7} key not accepted"
+        case .keptMoving:
+            self.kind = .remoteKeptMoving
+            problem = "The store kept changing while paw was sending"
+            nextStep = sentences("Try again in a moment.", waiting)
+            pill = "\(notDone) \u{00B7} try again"
+        case .refusedContent:
+            self.kind = .refusedRemote
+            problem = Self.refusedRemoteProblem
+            nextStep = Self.refusedRemoteNextStep(unpushed: unpushed)
+            pill = "Sync paused \u{00B7} Review"
+        case .pushRefused(let message):
+            self.kind = .pushRefused
+            problem = "\(host) refused your changes"
+            nextStep = sentences(waiting, "Details say why.")
+            details = [message]
+            pill = "Not sent \u{00B7} refused"
+        case .repositoryMissing(_, _, _, let message):
+            self.kind = .repositoryGone
+            problem = "\(host) can't find your store"
+            nextStep = sentences("It may have been renamed, deleted or made private.", waiting)
+            details = [message]
+            pill = "\(notDone) \u{00B7} store not found"
+        default:
+            self.kind = .other
+            problem = Self.couldNot(kind)
+            nextStep = sentences("Try again.", waiting)
+            details = [remoteDetail(failure)]
+            pill = notDone
+        }
+    }
+
+    private static func notDone(_ kind: SyncKind) -> String {
+        switch kind {
+        case .send: "Not sent"
+        case .refresh: "Not checked"
+        case .reencrypt: "Not re-encrypted"
         }
     }
 
