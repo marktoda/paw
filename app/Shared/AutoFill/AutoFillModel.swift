@@ -44,6 +44,32 @@ struct AutoFillNotice: Equatable {
 /// straight to the provider, and the entry is wiped at once. So does a
 /// one-time code, made from the entry at that moment: neither the code nor
 /// its secret is kept. File and card work runs off the main thread.
+///
+/// Which entries a list offers for a site comes from names alone: nothing
+/// is decrypted to build a list or a suggestion (design.md 5.6 rule 6).
+/// The core does the matching (`PassStore.matchServices`,
+/// core/src/store/service.rs): an entry is offered when one part of its
+/// path is the site's host exactly, or a host with the same registrable
+/// domain by the Public Suffix List. Never a piece of a name, so
+/// `evil-example.com`, `example.com.evil.net` and `bob.github.io` are not
+/// `example.com`, `example.com` and `alice.github.io`.
+///
+/// An entry named without a domain (`bankofamerica`, `alaskaair/alice`)
+/// matches by name: a whole part of its path is the first label of the
+/// site's registrable domain. A name fits lookalikes too
+/// (`bankofamerica.co`), so the first fill on each domain asks, and the
+/// domains it has filled on are kept (`SitePairings`). One paired only
+/// with other domains of the same name is not offered at all.
+///
+/// Internationalised names: iOS reports a site in its `xn--` form, and the
+/// core compares hosts in that form on both sides (UTS-46), so the entries
+/// `bücher.example` and `xn--bcher-kva.example` both match it, and a site
+/// spelled with lookalike letters (`pаypal.com`, Cyrillic `а`) never
+/// matches an entry spelled with plain ones. Names are shown by the core's
+/// `displayHost`: always the `xn--` form. Name matches stay plain ASCII.
+/// paw offers nothing automatically for a site address that is not
+/// printable ASCII, or whose host has no dot. Search still finds every
+/// entry.
 @MainActor @Observable
 final class AutoFillModel {
     enum Screen: Equatable {
@@ -157,7 +183,7 @@ final class AutoFillModel {
                     matches = found.filter { isTrustedMatch(kind: $0.kind) }.map(\.entry)
                     maybe = found.filter { $0.kind == .name(pairing: .unpaired) }.map(\.entry)
                 case .entry(let path, _):
-                    matches = SiteMatch.entry(path, in: source.store).map { [$0] } ?? []
+                    matches = source.store.entry(path: path).map { [$0] } ?? []
                 }
             }
             let carried = Handoff(value: (opening, live, matches, found, maybe, withCode))

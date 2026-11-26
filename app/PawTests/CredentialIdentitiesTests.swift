@@ -27,4 +27,12 @@ final class CredentialIdentitiesTests: XCTestCase {
             "web/github.com github.com github.com",
         ])
     }
+
+    /// The user string a suggestion shows for an entry's path: the entry's
+    /// name, which is the user in a `domain/user` layout and the site
+    /// otherwise (a blank suggestion looks broken).
+    func testTheSuggestionUserIsTheEntrysName() {
+        XCTAssertEqual(entryRef(path: "github.com/alice").name, "alice")
+        XCTAssertEqual(entryRef(path: "web/github.com").name, "github.com")
+    }
 }

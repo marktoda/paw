@@ -51,7 +51,7 @@ enum AutoFillHarnessLaunch {
     /// A tap on the suggestion for `path`, as iOS hands it over. iOS gives
     /// no site with it here.
     private static func suggestion(_ kind: AutoFillKind, path: String) -> ASCredentialRequest {
-        let identity = kind.identity(domain: "", user: EntrySite.suggestionUser(forPath: path), path: path)
+        let identity = kind.identity(domain: "", user: entryRef(path: path).name, path: path)
         switch identity {
         case let password as ASPasswordCredentialIdentity:
             return ASPasswordCredentialRequest(credentialIdentity: password)
