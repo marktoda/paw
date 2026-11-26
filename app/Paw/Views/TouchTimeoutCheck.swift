@@ -13,9 +13,8 @@ struct TouchTimeoutSection: View {
     let check: KeyTaskDriver
     let finished: () -> Void
 
-    /// Started and not yet ended. After Cancel a command waiting for a
-    /// touch still runs until the key gives up; the check shows it until
-    /// then, and only then reads the key log again.
+    /// Started and not yet ended. Cancel ends it at once, even while the
+    /// key still waits for a touch (`core/src/key/task.rs`).
     private var running: Bool {
         check.state.map { !$0.isFinal } ?? false
     }

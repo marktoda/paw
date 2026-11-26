@@ -171,7 +171,7 @@ final class KeyTaskDriverTests: XCTestCase {
         XCTAssertEqual(owner.doneShownCount, 0)
     }
 
-    func testTheStateFollowsACancelledTaskUntilItEnds() async throws {
+    func testCancelEndsTheTaskAtOnceWhileTheKeyStillWaitsForATouch() async throws {
         let fixture = try Fixture(touch: true)
         let owner = Owner()
         let driver = driver(owner: owner)
@@ -184,12 +184,21 @@ final class KeyTaskDriverTests: XCTestCase {
 
         driver.cancel()
         XCTAssertFalse(driver.isFollowing)
-        XCTAssertEqual(driver.state.map(\.isFinal), false, "The key still waits for a touch")
-
-        fixture.key.touch()
-        await waitFor("the cancelled check to end") { driver.state?.isFinal == true }
+        guard case .cancelled? = driver.state else {
+            return XCTFail("Cancel should end the check at once, the state is \(String(describing: driver.state))")
+        }
+        XCTAssertTrue(fixture.key.waitingForTouch(), "The key still waits for a touch")
         XCTAssertEqual(driver.pendingTasks, 0)
         XCTAssertEqual(owner.lateEnds.count, 1)
+
+        // The key is touched after the cancel: the core throws the answer away.
+        fixture.key.touch()
+        await waitFor("the key to stop waiting") { !fixture.key.waitingForTouch() }
+        guard case .cancelled? = driver.state else {
+            return XCTFail("The key's late answer should change nothing, the state is \(String(describing: driver.state))")
+        }
+        XCTAssertEqual(owner.lateEnds.count, 1)
+        XCTAssertEqual(owner.ends.count, 0)
     }
 
     func testALateFinishAfterCancelIsHeardAsACancelThenAsLetGo() async throws {
