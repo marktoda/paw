@@ -16,15 +16,6 @@
 //!   with `report-status`, the pack indexed by libgit2. No deletes, no
 //!   tags, no shallow clones.
 //!
-//! It can also be told to refuse the key, to present another host key (as
-//! after a reinstall, or an attacker), to drop the connection halfway
-//! through sending a pack, and to answer as GitHub does for a repository the
-//! key's account cannot see.
-//!
-//! It can listen on a chosen port and keep its repository in a chosen
-//! folder, so an app that is killed and launched again can serve the same
-//! repository at the same address ([`SimRemote::serve`]).
-//!
 //! Its host keys are fixed values in this file and protect nothing.
 
 use std::path::{Path, PathBuf};
@@ -44,7 +35,6 @@ use crate::PawError;
 use crate::ssh::SshPublicKey;
 use crate::sync::{HostKeyPin, Remote};
 
-/// The repository's path, as the client asks for it.
 pub const REPO: &str = "store.git";
 const BRANCH: &str = "refs/heads/main";
 const USER: &str = "git";
@@ -74,7 +64,6 @@ fn line_of(key: &PrivateKey) -> String {
     key.public_key().to_openssh().unwrap_or_default()
 }
 
-/// The public key line of the host's usual ed25519 key.
 pub fn ed25519_host_key() -> String {
     line_of(&ed25519_host(1))
 }
@@ -91,10 +80,8 @@ pub fn ecdsa_host_key() -> String {
     PrivateKey::from_openssh(ECDSA_HOST_KEY).map(|key| line_of(&key)).unwrap_or_default()
 }
 
-/// What the repository holds when the host starts.
 #[derive(Debug, Clone)]
 pub enum SimRemoteContents {
-    /// No commits at all.
     Empty,
     /// One commit adding these files (path, contents).
     Files(Vec<(String, Vec<u8>)>),
@@ -102,7 +89,6 @@ pub enum SimRemoteContents {
     FixtureStore,
 }
 
-/// How to start a [`SimRemote`] from Rust.
 #[derive(Debug, Clone)]
 pub struct SimRemoteOptions {
     /// Public key lines (`ssh-ed25519 AAAA...`) that may log in.
@@ -112,8 +98,6 @@ pub struct SimRemoteOptions {
     pub ecdsa_host_key: bool,
 }
 
-/// Runs before the next `git-receive-pack` starts, before it lists its
-/// branches.
 type BeforePush = Box<dyn FnOnce() + Send>;
 
 struct Shared {
@@ -125,7 +109,6 @@ struct Shared {
     refuse_pushes: AtomicBool,
     repository_not_found: AtomicBool,
     logins: AtomicU32,
-    /// One entry per successful login: the services it ran, in order.
     services: Mutex<Vec<Vec<String>>>,
     before_push: Mutex<Option<BeforePush>>,
 }
@@ -135,8 +118,6 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// A simulated git host. See the module comment. Stops when dropped, and
-/// removes its repository.
 #[derive(uniffi::Object)]
 pub struct SimRemote {
     runtime: Option<tokio::runtime::Runtime>,
@@ -155,7 +136,6 @@ fn git_failed(what: &str) -> impl Fn(git2::Error) -> PawError + '_ {
     move |e| failed(what, e.message())
 }
 
-/// A fresh, empty directory under the system's temporary directory.
 fn fresh_dir() -> Result<PathBuf, PawError> {
     use rand::RngCore;
     let mut bytes = [0u8; 8];
@@ -166,7 +146,6 @@ fn fresh_dir() -> Result<PathBuf, PawError> {
     Ok(dir)
 }
 
-/// Every file under `dir`, as (path with `/`, contents), sorted.
 fn files_under(dir: &Path) -> Result<Vec<(String, Vec<u8>)>, PawError> {
     let mut found = Vec::new();
     let mut folders = vec![(dir.to_path_buf(), String::new())];
@@ -188,8 +167,6 @@ fn files_under(dir: &Path) -> Result<Vec<(String, Vec<u8>)>, PawError> {
     Ok(found)
 }
 
-/// Commits `files` to `main` of the bare repository at `repo`, on top of
-/// whatever it has. Returns the commit.
 fn commit_files(repo: &Path, files: &[(String, Vec<u8>)], message: &str) -> Result<Oid, PawError> {
     let repo = Repository::open_bare(repo).map_err(git_failed("open the repository"))?;
     let parent = repo.refname_to_id(BRANCH).ok().and_then(|id| repo.find_commit(id).ok());
@@ -211,9 +188,8 @@ fn commit_files(repo: &Path, files: &[(String, Vec<u8>)], message: &str) -> Resu
         .map_err(git_failed("commit"))
 }
 
-/// Listens on `port` of 127.0.0.1. A host on the same port that was just
-/// stopped may hold it a moment longer, so a busy port is tried again for a
-/// few seconds.
+/// A host on the same port that was just stopped may hold it a moment
+/// longer, so a busy port is tried again for a few seconds.
 async fn bind(port: u16) -> Result<tokio::net::TcpListener, PawError> {
     let mut tries = 0;
     loop {
@@ -237,7 +213,6 @@ fn fixture_options(key: &SimulatedKey) -> SimRemoteOptions {
 }
 
 impl SimRemote {
-    /// Starts a host as `options` say.
     pub fn start_with(options: SimRemoteOptions) -> Result<Arc<Self>, PawError> {
         Self::start_with_on(options, 0)
     }
@@ -364,7 +339,6 @@ impl SimRemote {
         })
     }
 
-    /// The bare repository on disk.
     pub fn bare(&self) -> PathBuf {
         self.shared.repo.clone()
     }
@@ -446,7 +420,6 @@ impl SimRemote {
         self.shared.logins.load(Ordering::SeqCst)
     }
 
-    /// The commit `main` points at, if it has one.
     pub fn tip(&self) -> Option<String> {
         let repo = Repository::open_bare(&self.shared.repo).ok()?;
         repo.refname_to_id(BRANCH).ok().map(|id| id.to_string())
@@ -477,7 +450,6 @@ impl SimRemote {
             .unwrap_or_default()
     }
 
-    /// Accept this public key line too.
     pub fn authorise(&self, line: String) -> Result<(), PawError> {
         let key = PublicKey::from_openssh(line.trim()).map_err(|e| failed("read the key", e))?;
         lock(&self.shared.authorised).push(key);
@@ -496,7 +468,6 @@ impl Drop for SimRemote {
     }
 }
 
-/// One SSH connection to the host.
 struct Connection {
     shared: Arc<Shared>,
     /// Index of this connection in `Shared::services`, once logged in.
@@ -595,14 +566,12 @@ impl server::Handler for Connection {
     }
 }
 
-/// How a service ended.
 enum Ended {
     Done,
     /// The connection was dropped on purpose.
     Dropped,
 }
 
-/// Runs one git service on one channel until it is done.
 async fn serve(shared: Arc<Shared>, service: Service, channel: Channel<Msg>, handle: server::Handle) {
     let (read, write) = channel.split();
     let mut input = Input { channel: read, buffer: Vec::new() };
@@ -639,7 +608,6 @@ async fn not_found(channel: Channel<Msg>) {
     let _ = write.close().await;
 }
 
-/// The client's side of a channel, as pkt-lines and raw bytes.
 struct Input {
     channel: ChannelReadHalf,
     buffer: Vec<u8>,
@@ -763,7 +731,6 @@ pub(crate) fn parse_oid(text: &str) -> Result<Oid, String> {
     Oid::from_str(text).map_err(|_| format!("not an object id: {text}"))
 }
 
-/// The commits of `haves` the repository has.
 pub(crate) fn known_commits(repo: &Path, haves: &[Oid]) -> Result<Vec<Oid>, String> {
     let repo = Repository::open_bare(repo).map_err(|e| e.message().to_owned())?;
     Ok(haves.iter().copied().filter(|id| repo.find_commit(*id).is_ok()).collect())
@@ -937,7 +904,6 @@ impl PackScanner {
                 return Ok(Some(at + inflate.total_in() as usize));
             }
             if (inflate.total_in(), inflate.total_out()) == before {
-                // Needs input it does not have yet.
                 return Ok(None);
             }
         }
@@ -955,8 +921,6 @@ fn optional_oid(text: &str) -> Result<Option<Oid>, String> {
     if text == ZERO_HEX { Ok(None) } else { parse_oid(text).map(Some) }
 }
 
-/// Indexes the pack, then applies each command. Returns one report line
-/// per command.
 fn apply_push(repo: &Path, pack: Option<&[u8]>, commands: &[Command], refuse: bool) -> Result<Vec<String>, String> {
     let message = |e: git2::Error| e.message().to_owned();
     let repo = Repository::open_bare(repo).map_err(message)?;

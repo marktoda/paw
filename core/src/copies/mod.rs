@@ -83,7 +83,6 @@ fn keystore_err(e: KeystoreError) -> PawError {
     }
 }
 
-/// The clocks, read once.
 struct Now {
     wall_ms: i64,
     monotonic_ms: i64,
@@ -208,7 +207,6 @@ impl CopyCache {
 }
 
 impl CopyCache {
-    /// The person turned copies off.
     fn off(&self) -> bool {
         self.dir.join(OFF_MARKER).exists()
     }
@@ -397,7 +395,6 @@ impl CopyCache {
 
 }
 
-/// Why sealing a new copy failed.
 enum Sealing {
     Keystore(KeystoreError),
     Invalid,

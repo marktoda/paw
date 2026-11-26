@@ -45,25 +45,8 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for KeystoreError {
 /// sealed: each copy's text is encrypted in Rust (see `format`), so
 /// plaintext never reaches Swift to be stored.
 ///
-/// On iOS (`SecureEnclaveKeystore`), unverified on a device so far:
-/// - The seal key is a Secure Enclave P-256 key
-///   (`kSecAttrTokenIDSecureEnclave`, `kSecAttrIsPermanent`), created on
-///   first use by `SecKeyCreateRandomKey` with `SecAccessControlCreateWithFlags(
-///   kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly, [.privateKeyUsage,
-///   .biometryCurrentSet])`, in the keychain access group shared with the
-///   AutoFill extension. No `.devicePasscode` / `.userPresence`: the
-///   passcode must not open a copy.
-/// - `seal` is `SecKeyCreateEncryptedData` with the public key and
-///   `.eciesEncryptionCofactorVariableIVX963SHA256AESGCM`; no prompt.
-/// - `unseal` is `SecKeyCreateDecryptedData` with the private key, found with
-///   a fresh `LAContext` whose `localizedReason` is `reason`
-///   (`kSecUseAuthenticationContext`). It blocks until Face ID answers, so
-///   it must not be called on the main thread.
-/// - `index_key` is a 32-byte random generic-password item
-///   (`kSecClassGenericPassword`), `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`,
-///   no access control, same access group. Create it with `SecItemAdd`; on
-///   `errSecDuplicateItem` read the one the other process made.
-/// - `reset` deletes both items.
+/// On iOS this is `EnclaveKeystore` (app/Shared/Platform). The passcode
+/// must never open a copy.
 #[uniffi::export(with_foreign)]
 pub trait DeviceKeystore: Send + Sync {
     /// Encrypts `secret` (a 32-byte data key) to the device key, creating

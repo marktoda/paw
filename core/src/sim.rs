@@ -9,12 +9,6 @@
 //! Commands may arrive as short APDUs, chained short APDUs or extended-length
 //! APDUs; which of the last two the card advertises is an option, because a
 //! real key advertises both and the library's choice depends on it.
-//!
-//! For the key session's tests it can also be unplugged and plugged back in
-//! (a power cycle: the PIN is no longer verified), drop the verified PIN on
-//! a re-SELECT (whether a YubiKey does is not known, so it is a switch),
-//! honour a CACHED touch policy, have its PIN changed "on another computer",
-//! and count the VERIFY commands it receives.
 
 pub mod copies;
 pub mod fixture;
@@ -48,12 +42,8 @@ const MAX_EXTENDED_COMMAND: u16 = 2048;
 /// says otherwise. A YubiKey's is 15 seconds.
 const TOUCH_CACHE: Duration = Duration::from_secs(15);
 
-/// [`SimulatedKey::time_out_touch`] answers no sooner than this after the
-/// command came, so the core takes it for a touch timeout rather than an
-/// instant refusal.
 const MIN_TOUCH_TIMEOUT: Duration = FAST_REFUSAL.saturating_add(Duration::from_millis(100));
 
-/// A slot's touch policy, as the simulated key can be set to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum SimTouch {
     Off,
@@ -93,25 +83,20 @@ const KEYS: SimKeys = SimKeys { decryption: 7, authentication: 9, serial: [0x12,
 /// key (that one is `[8; 32]`), so it opens nothing in the fixture store.
 const OTHER_KEYS: SimKeys = SimKeys { decryption: 11, authentication: 13, serial: [0x87, 0x65, 0x43, 0x21] };
 
-/// The two slots that can wait for a touch.
 #[derive(Clone, Copy)]
 enum Slot {
     Decryption = 0,
     Authentication = 1,
 }
 
-/// How a simulated key is set up. [`SimulatedKey::new`] covers the common
-/// case; tests that need the slots to differ build this directly.
 pub struct SimOptions {
     pub pin: String,
-    /// Touch policy of the decryption slot.
     pub decrypt_touch: bool,
-    /// Touch policy of the authentication slot. A real key sets it per slot.
+    /// A real key sets the touch policy per slot.
     pub auth_touch: bool,
     /// How long a key operation waits for [`SimulatedKey::touch`] before
     /// failing, as a real key does when nobody touches it.
     pub touch_timeout: Duration,
-    /// Advertise extended-length APDUs as well as command chaining.
     pub extended_length: bool,
 }
 
@@ -119,7 +104,6 @@ pub struct SimOptions {
 pub struct SimulatedKey {
     secret: StaticSecret,
     auth_key: SigningKey,
-    /// The serial in the application identifier.
     serial: [u8; 4],
     options: SimOptions,
     state: Mutex<State>,
@@ -133,25 +117,18 @@ struct State {
     touch_pending: bool,
     deciphers: u32,
     authentications: u32,
-    /// Touches a key operation waited for and used.
     touches: u32,
-    /// Data of a chained command received so far (CLA bit 0x10).
     chain: Vec<u8>,
-    /// Plugged in. While not, every exchange fails as a removed card's does.
     present: bool,
     /// Counts plug-ins, so a command that was running across a removal and
     /// re-insertion still fails.
     plugged: u32,
-    /// A SELECT drops the verified PIN, as a power cycle does.
     reselect_drops_pin: bool,
     /// Indexed by [`Slot`].
     policies: [SimTouch; 2],
     last_touch: [Option<Instant>; 2],
     touch_cache: Duration,
-    /// A key operation is waiting for a touch right now.
     waiting_for_touch: bool,
-    /// [`SimulatedKey::time_out_touch`] asked the waiting operation to
-    /// fail now, as if the key's timeout had run out.
     time_out_now: bool,
     /// VERIFY commands with a PIN in them: each may use a try.
     verify_attempts: u32,
@@ -236,7 +213,6 @@ impl SimulatedKey {
         self.fingerprint().iter().map(|b| format!("{b:02X}")).collect()
     }
 
-    /// One command APDU in, one response APDU (with status bytes) out.
     /// While the key is unplugged the answer is empty, which the core reads
     /// as a reader failure.
     pub fn exchange(&self, apdu: Vec<u8>) -> Vec<u8> {
@@ -272,8 +248,6 @@ impl SimulatedKey {
         self.lock().tries_left = tries;
     }
 
-    /// VERIFY commands that carried a PIN, wrong or right: the tries paw
-    /// has put at risk.
     /// Turns the PIN KDF on, as `ykman openpgp access set-kdf` would
     /// (iterated and salted SHA-256, 100,000 bytes); or, with
     /// `algorithm` other than 3, sets a KDF paw does not support.
@@ -285,7 +259,6 @@ impl SimulatedKey {
         self.lock().kdf = Some(object);
     }
 
-    /// Whether a key operation is waiting for a touch right now.
     pub fn waiting_for_touch(&self) -> bool {
         self.lock().waiting_for_touch
     }
@@ -303,13 +276,12 @@ impl SimulatedKey {
 
 /// For the Rust tests; Swift never calls these.
 impl SimulatedKey {
-    /// How many decrypts the key has performed.
     pub fn decipher_count(&self) -> u32 {
         self.lock().deciphers
     }
 
-    /// Whether a SELECT drops the verified PIN. Off unless set: whether a
-    /// YubiKey does this through the iPhone's reader is not known.
+    /// Off unless set: whether a YubiKey drops the verified PIN on a SELECT
+    /// through the iPhone's reader is not known.
     pub fn set_reselect_drops_pin(&self, drops: bool) {
         self.lock().reselect_drops_pin = drops;
     }
@@ -330,7 +302,6 @@ impl SimulatedKey {
         self.lock().policies[Slot::Authentication as usize] = policy;
     }
 
-    /// How long one touch lasts for a CACHED slot.
     pub fn set_touch_cache_ms(&self, ms: u32) {
         self.lock().touch_cache = Duration::from_millis(ms.into());
     }
@@ -339,12 +310,10 @@ impl SimulatedKey {
         self.lock().verify_attempts
     }
 
-    /// Empty VERIFY commands, which ask whether the PIN is verified.
     pub fn pin_queries(&self) -> u32 {
         self.lock().pin_queries
     }
 
-    /// Whether the PIN is verified on the key right now.
     pub fn pin_verified(&self) -> bool {
         self.lock().verified
     }
@@ -493,7 +462,6 @@ impl SimulatedKey {
         crate::key::card::card_decryption_key(self.clone()).map_err(|e| crate::PawError::Store(e.to_string()))
     }
 
-    /// The raw ed25519 public key of the authentication slot.
     pub fn authentication_public_key(&self) -> [u8; 32] {
         self.auth_key.verifying_key().to_bytes()
     }
@@ -621,7 +589,6 @@ impl SimulatedKey {
                 if state.tries_left == 0 {
                     return Err(apdu::SW_PIN_BLOCKED);
                 }
-                // No data asks whether the PIN is verified, without using a try.
                 if data.is_empty() {
                     return if state.verified { Ok(vec![]) } else { Err(apdu::SW_TRIES_LEFT | u16::from(state.tries_left)) };
                 }
@@ -641,7 +608,6 @@ impl SimulatedKey {
                     Err(apdu::SW_SECURITY_NOT_SATISFIED)
                 }
             }
-            // P1 FF: forget that the PIN was verified.
             (VERIFY, FORGET_P1, PW1_82) => {
                 self.lock().verified = false;
                 Ok(vec![])
@@ -659,9 +625,6 @@ impl SimulatedKey {
         }
     }
 
-    /// Checks that the PIN was verified and, if the slot's policy asks for
-    /// it, waits for a touch and consumes it.
-    ///
     /// A touch that does not come in time fails with 6982, as does a
     /// removal. What a YubiKey answers after its touch timeout is not yet
     /// known.

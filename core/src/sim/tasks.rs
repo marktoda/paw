@@ -1,8 +1,6 @@
-//! Key tasks for Rust tests and the simulator's prepared stores: a driver
-//! that plays the person at the key sheet ([`SimDriver`]), a git login whose
-//! signer the test uses, and one ciphertext deciphered. The last two are
-//! the app's tasks (`sign_in_then`, `decrypt_then`); only the work after
-//! the key differs.
+//! Key tasks for Rust tests and the simulator's prepared stores. The login
+//! and decipher tasks are the app's own (`sign_in_then`, `decrypt_then`);
+//! only the work after the key differs.
 
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
@@ -70,7 +68,6 @@ impl SimDriver {
         }
     }
 
-    /// The PIN stage `state` of `task`: types the PIN, or gives up.
     fn answer(&self, task: &KeyTask, state: &KeyTaskState) {
         let Some(pin) = &self.pin else { return };
         if self.gives_up && matches!(state, KeyTaskState::Pin { last_error: Some(_), .. }) {

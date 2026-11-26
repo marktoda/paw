@@ -6,9 +6,6 @@
 //! reset really makes old blobs unopenable. Face ID's answer is a switch.
 //! Like [`super::SimulatedKey`], neither may reach a device build
 //! (design.md 5.5).
-//!
-//! Swift wraps each in a class implementing the foreign trait, forwarding
-//! to the methods of the same name, as it does with `SimulatedKey`.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -21,7 +18,6 @@ use zeroize::Zeroizing;
 use crate::clock::Clock;
 use crate::copies::{DeviceKeystore, KeystoreError};
 
-/// What the simulated Face ID does when asked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum SimFaceId {
     Match,
@@ -76,7 +72,6 @@ impl SimKeystore {
         })
     }
 
-    /// How Face ID answers from now on.
     pub fn set_face_id(&self, answer: SimFaceId) {
         lock(&self.state).face_id = answer;
     }
