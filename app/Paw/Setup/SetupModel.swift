@@ -259,16 +259,6 @@ final class SetupModel {
         return readStoreAddress(text: typed)
     }
 
-    /// "Connects to github.com as git."
-    static func readingLine(_ reading: AddressReading) -> String {
-        let port = reading.port == 22 ? "" : " on port \(reading.port)"
-        var line = "Connects to \(reading.host) as \(reading.user)\(port)."
-        if reading.hostKeyBundled {
-            line += " Its fingerprint is built in."
-        }
-        return line
-    }
-
     // MARK: Moving through the steps
 
     /// "Set up" on the welcome screen: on to the key.
@@ -317,7 +307,7 @@ final class SetupModel {
             keyConfirmed = false
         case .failure(let error):
             state = setup.state()
-            show(error, during: .readingKey)
+            show(error)
         }
     }
 
@@ -334,7 +324,7 @@ final class SetupModel {
         problem = nil
         let typed = addressText
         let host = storeAddressHost(address: typed)
-        run("Checking \(host.isEmpty ? "the address" : host)\u{2026}", during: .checkingHost) { setup in
+        run("Checking \(host.isEmpty ? "the address" : host)\u{2026}") { setup in
             _ = try setup.setAddress(address: typed)
             return try setup.checkHost()
         }
@@ -343,7 +333,7 @@ final class SetupModel {
     /// "Trust this server" on the host's fingerprint.
     func trustHost(fingerprint: String) {
         problem = nil
-        run("Checking \(host)\u{2026}", during: .checkingHost) { setup in
+        run("Checking \(host)\u{2026}") { setup in
             try setup.confirmHost(fingerprint: fingerprint)
         }
     }
@@ -351,7 +341,7 @@ final class SetupModel {
     /// "Check again" once the key was added on the host.
     func checkAgain() {
         problem = nil
-        run("Checking \(host)\u{2026}", during: .checkingHost) { setup in
+        run("Checking \(host)\u{2026}") { setup in
             try setup.checkHost()
         } then: { [weak self] _ in
             self?.notAccepted = nil
@@ -363,9 +353,11 @@ final class SetupModel {
     /// presents now for confirmation.
     func forgetHostKey() {
         problem = nil
-        run("Checking \(host)\u{2026}", during: .forgettingHostKey) { setup in
+        run("Checking \(host)\u{2026}") { setup in
             _ = try setup.forgetHostKey()
             return try setup.checkHost()
+        } failed: { [weak self] error in
+            self?.hostKeyNotForgotten(error)
         }
     }
 
@@ -373,7 +365,7 @@ final class SetupModel {
     /// the address screen says so under the field.
     func usePortFallback() {
         problem = nil
-        run(nil, during: .checkingHost) { setup in
+        run(nil) { setup in
             try setup.usePortFallback()
         } then: { [weak self] state in
             if case .checkHost(let address, _) = state {
@@ -396,17 +388,17 @@ final class SetupModel {
         case .plugIn:
             started = false
         case .yourKey:
-            run(nil, during: .goingBack) { setup in try setup.back() } then: { [weak self] _ in
+            run(nil) { setup in try setup.back() } then: { [weak self] _ in
                 self?.started = false
             }
         case .address:
             if case .address = state {
                 keyConfirmed = false
             } else {
-                run(nil, during: .goingBack) { setup in try setup.back() }
+                run(nil) { setup in try setup.back() }
             }
         case .confirmHost, .download, .check:
-            run(nil, during: .goingBack) { setup in try setup.back() } then: { [weak self] state in
+            run(nil) { setup in try setup.back() } then: { [weak self] state in
                 if case .checkHost(let address, _) = state {
                     self?.addressText = address
                 }
@@ -453,14 +445,12 @@ final class SetupModel {
         }
     }
 
-    enum Moment {
-        case readingKey, checkingHost, downloading, checkingKey, goingBack, forgettingHostKey
-    }
-
-    /// Runs a plain core step off the main thread; `then` sees its new state.
-    private func run(_ message: String?, during moment: Moment,
+    /// Runs a plain core step off the main thread; `then` sees its new
+    /// state, `failed` why it stopped (said as `show` says it unless given).
+    private func run(_ message: String?,
                      _ work: @escaping @Sendable (Setup) throws -> SetupState,
-                     then: @escaping (SetupState) -> Void = { _ in }) {
+                     then: @escaping (SetupState) -> Void = { _ in },
+                     failed: ((Error) -> Void)? = nil) {
         guard working == nil else { return }
         working = message ?? ""
         let setup = setup
@@ -478,7 +468,11 @@ final class SetupModel {
                         then(state)
                     case .failure(let error):
                         self.state = setup.state()
-                        self.show(error, during: moment)
+                        if let failed {
+                            failed(error)
+                        } else {
+                            self.show(error)
+                        }
                     }
                 }
             }
@@ -518,23 +512,6 @@ final class SetupModel {
         return "your store"
     }
 
-    private func workingMessage(_ purpose: SetupSheet.Purpose, started: Bool) -> String {
-        switch purpose {
-        case .download:
-            started ? "Downloading your store\u{2026}" : "Connecting to \(host)\u{2026}"
-        case .check:
-            "Checking your key\u{2026}"
-        }
-    }
-
-    /// "412 of 1,240 \u{00B7} 1.2 MB", once the host has said how many.
-    private static func transferLine(_ transfer: TransferProgress) -> String? {
-        guard transfer.totalObjects > 0 else { return nil }
-        let bytes = ByteCountFormatter.string(
-            fromByteCount: Int64(clamping: transfer.receivedBytes), countStyle: .file)
-        return "\(Int(transfer.receivedObjects).formatted()) of \(Int(transfer.totalObjects).formatted()) \u{00B7} \(bytes)"
-    }
-
     private func succeeded() {
         state = setup.state()
         if case .done = state {
@@ -555,12 +532,12 @@ final class SetupModel {
     /// the setup's.
     private func stopped(_ purpose: SetupSheet.Purpose, because error: SetupError) {
         state = setup.state()
-        show(error, during: purpose == .download ? .downloading : .checkingKey)
+        show(error, downloading: purpose == .download)
     }
 
     // MARK: Words
 
-    private func show(_ error: Error, during moment: Moment) {
+    private func show(_ error: Error, downloading: Bool = false) {
         guard let error = error as? SetupError else {
             problem = SetupProblem(
                 problem: "Setup stopped", nextStep: "Try again.", details: [describe(error)], action: .retry,
@@ -572,14 +549,23 @@ final class SetupModel {
             addressProblem = addressProblemWords(problem)
         case .Remote(.keyNotAccepted(let host, let publicKey)):
             notAccepted = KeyNotAccepted(host: host, publicKey: publicKey)
-        case .Remote(.hostKeyBundled(let host)) where moment == .forgettingHostKey:
-            problem = SetupWords.hostKeyKept(hostKeyBundled(host))
-        case .Failed(let message) where moment == .forgettingHostKey:
-            problem = SetupWords.hostKeyKept(message)
-        case .StoreBusy where moment == .forgettingHostKey:
-            problem = SetupWords.hostKeyKept(storeBusyText)
         default:
-            problem = SetupWords.words(error, during: moment)
+            problem = SetupWords.words(error, downloading: downloading)
+        }
+    }
+
+    /// "I expected this change" stopped: the server's key is kept, and
+    /// the screen says why when the core gave a reason.
+    private func hostKeyNotForgotten(_ error: Error) {
+        switch error as? SetupError {
+        case .Remote(.hostKeyBundled(let host))?:
+            problem = SetupWords.hostKeyKept(hostKeyBundled(host))
+        case .Failed(let message)?:
+            problem = SetupWords.hostKeyKept(message)
+        case .StoreBusy?:
+            problem = SetupWords.hostKeyKept(StoreBusyWords.line)
+        default:
+            show(error)
         }
     }
 }
@@ -620,8 +606,8 @@ extension SetupModel {
     private func working(_ purpose: SetupSheet.Purpose, _ progress: TaskProgress?) -> (message: String, progress: String?) {
         // Re-read on every change: objects and bytes, when known.
         let transfer = purpose == .download ? setup.transferProgress() : nil
-        let line = transfer.flatMap(Self.transferLine) ?? progress.map(\.counted)
-        return (workingMessage(purpose, started: progress != nil || transfer != nil), line)
+        let line = transfer.flatMap(SetupWords.transferLine) ?? progress.map(\.counted)
+        return (SetupWords.working(purpose, host: host, started: progress != nil || transfer != nil), line)
     }
 
     private func ended(_ end: KeyTaskEnd<SetupError>, purpose: SetupSheet.Purpose) -> KeySheetStage? {

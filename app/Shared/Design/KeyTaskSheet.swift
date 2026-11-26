@@ -8,8 +8,6 @@ struct KeyTaskSheet: View {
     /// What the key is for, e.g. "Open Fastmail".
     let purpose: String
     var note: String? = nil
-    /// A way on that is not built yet, on the failed stage.
-    var comingSoon: String? = nil
     let onCancel: () -> Void
 
     var body: some View {
@@ -20,8 +18,7 @@ struct KeyTaskSheet: View {
             note: note,
             onContinue: { driver.continueWithPin() },
             onCancel: onCancel,
-            onRetry: { driver.retry() },
-            comingSoon: comingSoon)
+            onRetry: { driver.retry() })
         #if DEBUG && targetEnvironment(simulator)
             .modifier(SimulatedKeyControls(driver: driver))
         #endif

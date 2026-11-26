@@ -415,7 +415,7 @@ private struct StoreProblemView: View {
         if busy {
             VStack(spacing: PawMetrics.Spacing.l) {
                 ProgressView()
-                Text("The store is busy. Trying again\u{2026}")
+                Text(StoreBusyWords.line)
                     .font(PawFont.subheadline)
                     .foregroundStyle(PawColor.labelSecondary)
                 Button("Try again", action: retry)

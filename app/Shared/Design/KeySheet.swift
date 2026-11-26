@@ -46,9 +46,6 @@ struct KeySheetContent: View {
     var onCancel: () -> Void = {}
     /// "Try again" on the failed stage.
     var onRetry: () -> Void = {}
-    /// A way on that is not built yet, shown on the failed stage as a
-    /// dimmed row, e.g. "Replace key (coming)".
-    var comingSoon: String? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     #if DEBUG && targetEnvironment(simulator)
@@ -260,12 +257,6 @@ struct KeySheetContent: View {
                 Button("Try again", action: onRetry)
                     .buttonStyle(.pawPrimary)
                     .accessibilityIdentifier("key-sheet-retry")
-                if let comingSoon {
-                    Button(comingSoon) {}
-                        .buttonStyle(.pawSecondary)
-                        .disabled(true)
-                        .accessibilityIdentifier("key-sheet-coming-soon")
-                }
                 cancelButton("Cancel")
             case .done:
                 EmptyView()

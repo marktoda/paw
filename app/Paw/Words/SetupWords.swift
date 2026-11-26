@@ -5,8 +5,7 @@ import Foundation
 /// only words it.
 enum SetupWords {
     /// What the host check or download found wrong with the remote.
-    static func remoteWords(_ failure: RemoteFailure, during moment: SetupModel.Moment) -> SetupProblem {
-        let downloading = moment == .downloading
+    static func remoteWords(_ failure: RemoteFailure, downloading: Bool) -> SetupProblem {
         switch failure {
         case .noConnection(let host, let detail, let fallback):
             var words = unreachable(host: host, detail: detail, downloading: downloading)
@@ -94,11 +93,10 @@ enum SetupWords {
     }
 
     /// The failure table of design.md 2.4, S3 and S4.
-    static func words(_ error: SetupError, during moment: SetupModel.Moment) -> SetupProblem {
-        let downloading = moment == .downloading
+    static func words(_ error: SetupError, downloading: Bool) -> SetupProblem {
         switch error {
         case .Remote(let failure):
-            return remoteWords(failure, during: moment)
+            return remoteWords(failure, downloading: downloading)
         case .EmptyRepository:
             return SetupProblem(
                 problem: "That store is empty",
@@ -123,7 +121,9 @@ enum SetupWords {
         case .Failed(let message):
             return didNotWork(message, downloading: downloading)
         case .StoreBusy:
-            return didNotWork(storeBusyText, downloading: downloading)
+            return SetupProblem(
+                problem: StoreBusyWords.problem, nextStep: StoreBusyWords.nextStep, action: .retry,
+                actionTitle: "Try again")
         case .BadAddress(let problem):
             return SetupProblem(problem: "Check the address", nextStep: addressProblemWords(problem))
         }
@@ -158,6 +158,35 @@ enum SetupWords {
         SetupProblem(
             problem: "paw kept this server's key", nextStep: asSentence(detail),
             action: .startOver, actionTitle: "Start setup again")
+    }
+
+    /// "Connects to github.com as git.", under the address field.
+    static func readingLine(_ reading: AddressReading) -> String {
+        let port = reading.port == 22 ? "" : " on port \(reading.port)"
+        var line = "Connects to \(reading.host) as \(reading.user)\(port)."
+        if reading.hostKeyBundled {
+            line += " Its fingerprint is built in."
+        }
+        return line
+    }
+
+    /// The key sheet's Working headline: connecting to `host` until the
+    /// download has `started`.
+    static func working(_ purpose: SetupSheet.Purpose, host: String, started: Bool) -> String {
+        switch purpose {
+        case .download:
+            started ? "Downloading your store\u{2026}" : "Connecting to \(host)\u{2026}"
+        case .check:
+            "Checking your key\u{2026}"
+        }
+    }
+
+    /// "412 of 1,240 \u{00B7} 1.2 MB", once the host has said how many.
+    static func transferLine(_ transfer: TransferProgress) -> String? {
+        guard transfer.totalObjects > 0 else { return nil }
+        let bytes = ByteCountFormatter.string(
+            fromByteCount: Int64(clamping: transfer.receivedBytes), countStyle: .file)
+        return "\(Int(transfer.receivedObjects).formatted()) of \(Int(transfer.totalObjects).formatted()) \u{00B7} \(bytes)"
     }
 
     /// The host's usual port could not be reached: offers the other one.

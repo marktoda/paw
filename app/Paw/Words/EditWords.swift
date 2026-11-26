@@ -60,7 +60,7 @@ func editProblem(_ error: WriteError, folder: String) -> EditProblem {
     case .Failed(let message), .Certificate(let message):
         return EditProblem(problem: "Couldn't save this", nextStep: "Nothing was changed. Details: \(message)")
     case .StoreBusy:
-        return EditProblem(problem: "Couldn't save this", nextStep: "Nothing was changed. Details: \(storeBusyText)")
+        return EditProblem(problem: StoreBusyWords.problem, nextStep: StoreBusyWords.nextStep)
     case .NoEncryptionKey(_, let reason):
         return EditProblem(problem: "A key for this folder can't encrypt", nextStep: reason)
     case .NotPinned:

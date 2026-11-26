@@ -120,7 +120,7 @@ struct HeldBackScreen: View {
                 "Should be for",
                 item.recipients.isEmpty
                     ? "Can't read this folder's list of keys."
-                    : item.recipients.map(RecipientsReviewScreen.grouped).joined(separator: "\n"),
+                    : item.recipients.map(RecipientLineWords.grouped).joined(separator: "\n"),
                 prose: item.recipients.isEmpty,
                 note: item.list == .accepted
                     ? syncing.reencryptLeft[item.entry].flatMap(reencryptWords)
@@ -242,7 +242,7 @@ struct RefusedRemoteScreen: View {
                         .pawListRow()
                     }
                 } header: {
-                    PawSectionHeader(syncing.refused.count == 1 ? "1 name" : "\(syncing.refused.count) names")
+                    PawSectionHeader(counted(syncing.refused.count, "name", "names"))
                 }
             }
             Section {

@@ -313,7 +313,7 @@ final class AppModel {
             openWithKey(entry)
         case .failure(let error):
             let words = FaceIdWords.notice(error, entry: entry.name)
-            notice = Notice(problem: words.problem, nextStep: words.nextStep, keyEntry: entry)
+            notice = Notice(problem: words.problem, nextStep: words.nextStep, keyEntry: words.offersKey ? entry : nil)
         }
     }
 

@@ -32,7 +32,7 @@ extension KeySheetStage {
         case .touch: "Touch your key"
         case .working(let message, _): message
         case .done: "Done"
-        case .locked: "Your key is locked"
+        case .locked: KeyErrorWords.locked.problem
         case .failed(let problem, _): problem
         }
     }
@@ -59,7 +59,7 @@ extension KeySheetStage {
         case .done:
             return nil
         case .locked:
-            return "Unlock it on a computer with its reset code or admin PIN. Passwords that open with Face ID still work."
+            return KeyErrorWords.locked.nextStep
         case .failed(_, let nextStep):
             return nextStep
         }

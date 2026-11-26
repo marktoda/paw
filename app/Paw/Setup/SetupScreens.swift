@@ -343,7 +343,7 @@ private struct AddressScreen: View {
                         .accessibilityIdentifier("address-problem")
                 } else {
                     if let reading {
-                        Text(SetupModel.readingLine(reading))
+                        Text(SetupWords.readingLine(reading))
                             .font(PawFont.footnote)
                             .foregroundStyle(PawColor.label)
                             .fixedSize(horizontal: false, vertical: true)
@@ -661,7 +661,7 @@ private struct DoneScreen: View {
     private var summary: String {
         let passwords = passwordCount(entries)
         guard let folders = model.storeFacts?.folders, folders > 0 else { return passwords }
-        return "\(passwords) in \(folders == 1 ? "1 folder" : "\(folders) folders")"
+        return "\(passwords) in \(counted(folders, "folder", "folders"))"
     }
 
     /// Who can open the store's passwords, from its top-level `.gpg-id`.
@@ -675,11 +675,9 @@ private struct DoneScreen: View {
         }
     }
 
-    /// "key ending 2C11 41DE", or the line as written if it is not hex.
+    /// "the key ending 2C11 41DE", or the line as written if it is not hex.
     private static func spokenRecipient(_ line: String) -> String {
-        let hex = line.hasPrefix("0x") ? String(line.dropFirst(2)) : line
-        guard hex.count >= 8, hex.allSatisfy(\.isHexDigit) else { return line }
-        return "the key ending \(fingerprintEnding(hex))"
+        RecipientLineWords.hex(line) == nil ? line : "the key ending \(RecipientLineWords.ending(line))"
     }
 }
 

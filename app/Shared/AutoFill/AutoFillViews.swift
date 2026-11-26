@@ -52,8 +52,8 @@ struct AutoFillRootView: View {
                 .background(PawColor.bg.ignoresSafeArea())
         case .busy:
             VStack(spacing: PawMetrics.Spacing.l) {
-                ErrorRow(kind: .warning, problem: "The store is busy", nextStep: "paw is using it. Try again in a moment.",
-                         isBanner: true)
+                ErrorRow(
+                    kind: .warning, problem: StoreBusyWords.problem, nextStep: StoreBusyWords.nextStep, isBanner: true)
                 Button("Try again") { model.reopen() }
                     .buttonStyle(.pawPrimary)
                     .accessibilityIdentifier("autofill-retry")

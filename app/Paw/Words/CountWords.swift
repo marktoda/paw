@@ -1,8 +1,13 @@
 import Foundation
 
+/// "1 match", "3 matches": a count with its noun.
+func counted(_ count: Int, _ one: String, _ many: String) -> String {
+    count == 1 ? "1 \(one)" : "\(count) \(many)"
+}
+
 /// "1 change", "3 changes".
 func changeCount(_ count: Int) -> String {
-    count == 1 ? "1 change" : "\(count) changes"
+    counted(count, "change", "changes")
 }
 
 /// What removing the store from this iPhone deletes, and the changes not
@@ -22,7 +27,7 @@ func removeStoreWarning(unpushed: Int?) -> String {
 
 /// "1 password", "3 passwords".
 func passwordCount(_ count: Int) -> String {
-    count == 1 ? "1 password" : "\(count) passwords"
+    counted(count, "password", "passwords")
 }
 
 /// The search field's prompt on Home: "Search 3 passwords".

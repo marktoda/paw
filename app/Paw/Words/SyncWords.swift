@@ -70,9 +70,9 @@ extension SyncFailure {
             pill = cancelled.pill
         case .StoreBusy:
             self.kind = .other
-            problem = Self.couldNot(kind)
-            nextStep = sentences("Try again.", waiting)
-            details = [storeBusyText]
+            problem = StoreBusyWords.problem
+            nextStep = sentences(StoreBusyWords.nextStep, waiting)
+            details = []
             pill = notDone
         case .BeingSent, .NotWaiting, .QueueKeptChanging:
             self.kind = .other
@@ -283,7 +283,7 @@ extension SyncError: WordedError {
         case .Remote(let failure):
             capitalised(remoteDetail(failure)) + "."
         case .StoreBusy:
-            capitalised(storeBusyText) + "."
+            StoreBusyWords.line
         case .BeingSent, .NotWaiting, .QueueKeptChanging:
             capitalised(SyncFailure.queueDetail(self) ?? "") + "."
         case .Cancelled:

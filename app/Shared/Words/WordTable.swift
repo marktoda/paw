@@ -9,7 +9,8 @@ struct WordTable: Sendable {
     let differentKey: @Sendable (KeyMismatch) -> KeyErrorWords
     /// The key is in, but reading it failed.
     let keyUnreadable: @Sendable (Swift.Error) -> KeyErrorWords
-    /// Face ID did not open the entry named.
+    /// Face ID did not open the entry named, for a reason that is not a
+    /// busy store (`FaceIdWords.notice`).
     let faceIdNotice: @Sendable (Swift.Error, _ entry: String) -> FaceIdNotice
 
     static let app = WordTable(
@@ -59,9 +60,6 @@ struct WordTable: Sendable {
             KeyErrorWords(problem: "paw couldn't read your key", nextStep: "Unplug it, plug it back in, then try again.")
         },
         faceIdNotice: { error, entry in
-            if isStoreBusy(error) {
-                return FaceIdNotice(problem: "The store is busy", nextStep: "Tap \(entry) again.", offersKey: false)
-            }
             let short: (problem: String, nextStep: String)? = switch error as? PawError {
             case .FaceIdLockedOut?: ("Face ID is locked", "Lock and unlock your iPhone, then try again.")
             case .FaceIdChanged?: ("Face ID changed on this iPhone", "")

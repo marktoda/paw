@@ -43,6 +43,31 @@ extension Recipient {
     }
 }
 
+/// A `.gpg-id` line as people read it: a key's fingerprint or ID by its
+/// hex, without `0x`, and anything else (an email address, a short line)
+/// as written.
+enum RecipientLineWords {
+    /// The line's hex, if it is a fingerprint or key ID.
+    static func hex(_ line: String) -> String? {
+        var hex = line.filter { !$0.isWhitespace }
+        if hex.lowercased().hasPrefix("0x") {
+            hex.removeFirst(2)
+        }
+        guard hex.count >= 8, hex.allSatisfy(\.isHexDigit) else { return nil }
+        return hex
+    }
+
+    /// "2C11 41DE", the end people compare.
+    static func ending(_ line: String) -> String {
+        hex(line).map(fingerprintEnding) ?? line
+    }
+
+    /// The whole hex in groups of four, as people read it out.
+    static func grouped(_ line: String) -> String {
+        hex(line).map { fingerprintGroups(text: $0).joined(separator: " ") } ?? line
+    }
+}
+
 /// Times as the screens say them: "6:40 PM".
 func clockTime(ms: Int64) -> String {
     Date(timeIntervalSince1970: TimeInterval(ms) / 1000).formatted(date: .omitted, time: .shortened)
