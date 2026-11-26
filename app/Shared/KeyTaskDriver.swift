@@ -137,8 +137,9 @@ struct KeyJob<Step: KeyStepError> {
     var stageShown: (KeySheetStage) -> Void = { _ in }
     /// The sheet closed, however it closed.
     var closed: () -> Void = {}
-    /// The task starts only once every task the sheet let go of has ended
-    /// (setup's download must be removed before the next one begins).
+    /// The task starts, and starts again on Try again, only once every
+    /// task the sheet let go of has ended (setup's download must be
+    /// removed before the next one begins).
     var waitsForLetGoTasks = false
 }
 
@@ -266,11 +267,7 @@ final class KeyTaskDriver {
         latest = nil
         state = nil
         show(.busy)
-        if workflow.waitsForLetGoTasks, !tasks.isEmpty {
-            startWaits = true
-        } else {
-            launch()
-        }
+        launchOrWait(workflow)
         // A reader is there but its key was never read (or the read
         // failed): try again now rather than wait for a replug.
         reader?.readIfNeeded()
@@ -294,10 +291,10 @@ final class KeyTaskDriver {
             show(.plugIn)
             return
         }
-        guard shown != nil, job != nil else { return }
+        guard shown != nil, let job else { return }
         letGoOfFollowed()
         show(.busy)
-        launch()
+        launchOrWait(job)
     }
 
     /// Cancel, or the sheet swiped away: the sheet closes. Cancel always
@@ -326,6 +323,16 @@ final class KeyTaskDriver {
             tasks[id]?.locked = true
         }
         cancelAll()
+    }
+
+    /// Starts the task now, or, for a workflow that asks, once every task
+    /// the sheet let go of has ended: on a start and on Try again alike.
+    private func launchOrWait(_ job: Workflow) {
+        if job.waitsForLetGoTasks, !tasks.isEmpty {
+            startWaits = true
+        } else {
+            launch()
+        }
     }
 
     private func launch() {
