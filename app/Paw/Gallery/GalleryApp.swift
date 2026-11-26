@@ -79,7 +79,7 @@ struct GalleryApp: View {
             }
             return false
         }
-        model.keyRequest = nil
+        model.cancelKeyTask()
         model.keySheetDismissed()
     }
 
