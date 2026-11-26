@@ -227,6 +227,12 @@ fn turning_copies_off_ends_them_even_if_the_setting_cannot_be_written() {
     app.put("web/github.com", b"pw\n", b"id", Duration::from_secs(3600)).unwrap().unwrap();
     // As good as a full disk: nothing new can be created in the folder.
     std::fs::set_permissions(&window, std::fs::Permissions::from_mode(0o500)).unwrap();
+    if std::fs::write(window.join("probe"), b"").is_ok() {
+        // Root writes anyway: there is no full disk to be had this way.
+        std::fs::set_permissions(&window, std::fs::Permissions::from_mode(0o700)).unwrap();
+        eprintln!("skipped: permissions do not stop this user");
+        return;
+    }
 
     let result = app.set_copies_enabled(false);
     let opened = app.open("web/github.com", b"id", "Open").map(|text| text.to_vec());

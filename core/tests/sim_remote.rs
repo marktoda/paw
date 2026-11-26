@@ -20,9 +20,19 @@ fn key() -> Arc<SimulatedKey> {
     SimulatedKey::new(PIN.into(), false, 1000)
 }
 
-/// A port nothing listens on right now.
-fn free_port() -> u16 {
-    std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port()
+/// Starts a host with `start` on a port nothing listened on a moment
+/// before, and that port. A port another test took meanwhile is given up
+/// for another.
+fn on_a_free_port(start: impl Fn(u16) -> Result<Arc<SimRemote>, paw_core::PawError>) -> (u16, Arc<SimRemote>) {
+    let mut last = None;
+    for _ in 0..5 {
+        let port = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+        match start(port) {
+            Ok(host) => return (port, host),
+            Err(e) => last = Some(e),
+        }
+    }
+    panic!("no free port to listen on: {last:?}");
 }
 
 /// Clones what `host` serves and returns the checked-out tip.
@@ -38,9 +48,7 @@ fn clone_tip(host: &SimRemote, key: &Arc<SimulatedKey>) -> String {
 #[test]
 fn a_host_started_on_a_chosen_port_listens_there() {
     let key = key();
-    let port = free_port();
-
-    let host = SimRemote::start_on(key.clone(), port).unwrap();
+    let (port, host) = on_a_free_port(|port| SimRemote::start_on(key.clone(), port));
 
     assert_eq!(host.port(), port);
     assert_eq!(host.address(), format!("ssh://git@127.0.0.1:{port}/store.git"));
@@ -52,11 +60,10 @@ fn a_host_started_on_a_chosen_port_listens_there() {
 #[test]
 fn a_relaunched_host_serves_the_same_repository_at_the_same_address() {
     let key = key();
-    let port = free_port();
     let dir = tempfile::tempdir().unwrap();
     let folder = dir.path().join("remote").to_string_lossy().into_owned();
 
-    let first = SimRemote::serve(key.clone(), folder.clone(), port).unwrap();
+    let (port, first) = on_a_free_port(|port| SimRemote::serve(key.clone(), folder.clone(), port));
     let address = first.address();
     let fingerprint = first.host_key_fingerprint();
     let changed = first.commit_file("added.gpg".into(), b"x".to_vec(), "Another machine.".into()).unwrap();

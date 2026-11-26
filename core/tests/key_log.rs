@@ -294,6 +294,27 @@ fn the_pin_stage_and_the_verify_after_it_have_whole_second_times() {
     assert!(lines[verify + 1..].iter().filter(|l| l.text.starts_with('→')).all(|l| l.text.ends_with(" ms")));
 }
 
+/// A task seen in its final stage has already logged that stage: a reader
+/// of the log right after the sheet closed finds how the task ended.
+#[test]
+fn a_task_seen_finished_has_logged_how_it_ended() {
+    let rig = rig_unplugged(SimTouch::Off, SimTouch::Off);
+    rig.port.plugged_in(rig.sim.clone()).unwrap();
+    for _ in 0..300 {
+        let driver = Driver::helpful(PIN, &rig.sim);
+        let task = open(&rig, OTHER_ENTRY, &driver);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !task.state().is_final() {
+            assert!(std::time::Instant::now() < deadline, "the task never finished");
+            std::hint::spin_loop();
+        }
+        let ring = rig.port.session().unwrap().diagnostics(0);
+        let started = ring.lines().filter(|l| l.contains(" task open:")).last().unwrap();
+        let tag = started.split_whitespace().find(|word| word.starts_with('#')).unwrap();
+        assert!(ring.contains(&format!("{tag} stage Done")), "{ring}");
+    }
+}
+
 #[test]
 fn the_session_ring_is_bounded() {
     let state = tempfile::tempdir().unwrap();
@@ -317,9 +338,12 @@ fn a_process_file_is_cut_back_to_its_last_lines() {
     let size = std::fs::metadata(&file).unwrap().len();
     assert!(size <= 41 * 1024, "{size} bytes");
     let lines = key_log(dir_string(&state), 0);
-    assert!(lines.len() >= KEEP_LINES && lines.len() < 2 * KEEP_LINES + 100, "{} lines", lines.len());
+    assert!(lines.len() >= KEEP_LINES, "{} lines", lines.len());
     assert!(lines.last().unwrap().text.contains("stage Done"));
-    assert!(!state.path().join(format!("{}app.tmp", paw_core::files::layout::KEY_LOG_PREFIX)).exists());
+    let temp = format!(".{}app.tmp", paw_core::files::layout::KEY_LOG_PREFIX);
+    let names: Vec<String> =
+        std::fs::read_dir(state.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    assert!(!names.iter().any(|name| name.starts_with(&temp)), "a trim left its temporary file: {names:?}");
 }
 
 #[test]

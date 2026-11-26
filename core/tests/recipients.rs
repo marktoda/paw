@@ -7,7 +7,7 @@
 
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 mod key_common;
 
@@ -87,7 +87,7 @@ fn card_certificate() -> Vec<u8> {
     certificate.to_bytes().unwrap()
 }
 
-/// A GnuPG home that exists for one test run.
+/// A GnuPG home that exists for one test.
 struct Gpg {
     home: tempfile::TempDir,
 }
@@ -149,18 +149,15 @@ impl Drop for Gpg {
     }
 }
 
-/// One GnuPG home for the whole file: two generated keys, as on a laptop
-/// with a backup key, and the simulated card's certificate imported.
-fn gpg() -> &'static Gpg {
-    static GPG: OnceLock<Gpg> = OnceLock::new();
-    GPG.get_or_init(|| {
-        let gpg = Gpg { home: tempfile::tempdir().unwrap() };
-        for email in [LAPTOP, BACKUP] {
-            gpg.run(&["--quick-generate-key", email, "future-default", "default", "never"], b"");
-        }
-        gpg.run(&["--import"], &card_certificate());
-        gpg
-    })
+/// A GnuPG home of the test's own: two generated keys, as on a laptop with
+/// a backup key, and the simulated card's certificate imported.
+fn gpg_home() -> Gpg {
+    let gpg = Gpg { home: tempfile::tempdir().unwrap() };
+    for email in [LAPTOP, BACKUP] {
+        gpg.run(&["--quick-generate-key", email, "future-default", "default", "never"], b"");
+    }
+    gpg.run(&["--import"], &card_certificate());
+    gpg
 }
 
 fn named(keys: Vec<Recipient>) -> EntryRecipients {
@@ -189,7 +186,8 @@ fn the_card_reports_the_fingerprint_that_entries_name() {
 
 #[test]
 fn an_entry_from_gnupg_for_the_card_can_be_opened_and_really_opens() {
-    let entry = gpg().encrypt(&[CARD], &[]);
+    let gpg = gpg_home();
+    let entry = gpg.encrypt(&[CARD], &[]);
 
     assert_eq!(entry_recipients(&entry).unwrap(), named(vec![key_id(&card_fingerprint())]));
     assert_eq!(access(&entry, &card_fingerprint()), Access::CanOpen);
@@ -199,8 +197,9 @@ fn an_entry_from_gnupg_for_the_card_can_be_opened_and_really_opens() {
 
 #[test]
 fn an_entry_for_another_key_is_refused_with_that_keys_id() {
-    let laptop = gpg().encryption_fingerprint(LAPTOP);
-    let entry = gpg().encrypt(&[LAPTOP], &[]);
+    let gpg = gpg_home();
+    let laptop = gpg.encryption_fingerprint(LAPTOP);
+    let entry = gpg.encrypt(&[LAPTOP], &[]);
 
     assert_eq!(entry_recipients(&entry).unwrap(), named(vec![key_id(&laptop)]));
     assert_eq!(
@@ -213,17 +212,18 @@ fn an_entry_for_another_key_is_refused_with_that_keys_id() {
 
 #[test]
 fn an_entry_for_two_keys_opens_with_either_and_lists_both() {
-    let laptop = gpg().encryption_fingerprint(LAPTOP);
-    let backup = gpg().encryption_fingerprint(BACKUP);
+    let gpg = gpg_home();
+    let laptop = gpg.encryption_fingerprint(LAPTOP);
+    let backup = gpg.encryption_fingerprint(BACKUP);
 
-    let with_card = gpg().encrypt(&[LAPTOP, CARD], &[]);
+    let with_card = gpg.encrypt(&[LAPTOP, CARD], &[]);
     let listed = entry_recipients(&with_card).unwrap();
     assert_eq!(listed.keys.len(), 2);
     assert!(listed.keys.contains(&key_id(&laptop)) && listed.keys.contains(&key_id(&card_fingerprint())));
     assert_eq!(access(&with_card, &card_fingerprint()), Access::CanOpen);
     assert_eq!(access(&with_card, &laptop), Access::CanOpen);
 
-    let without_card = gpg().encrypt(&[LAPTOP, BACKUP], &[]);
+    let without_card = gpg.encrypt(&[LAPTOP, BACKUP], &[]);
     let Access::NotForThisKey { recipients } = access(&without_card, &card_fingerprint()) else {
         panic!("the card is not a recipient");
     };
@@ -249,12 +249,13 @@ fn an_entry_from_paw_for_two_keys_lists_both_in_order() {
 
 #[test]
 fn hidden_recipients_are_reported_as_hidden() {
-    let hidden = gpg().encrypt(&[LAPTOP], &["--throw-keyids"]);
+    let gpg = gpg_home();
+    let hidden = gpg.encrypt(&[LAPTOP], &["--throw-keyids"]);
     assert_eq!(entry_recipients(&hidden).unwrap(), named(vec![Recipient::Hidden]));
     // Nothing says whose it is, so only a try can tell.
     assert_eq!(access(&hidden, &card_fingerprint()), Access::MightOpen);
 
-    let both_hidden = gpg().encrypt(&[LAPTOP, BACKUP], &["--throw-keyids"]);
+    let both_hidden = gpg.encrypt(&[LAPTOP, BACKUP], &["--throw-keyids"]);
     assert_eq!(
         entry_recipients(&both_hidden).unwrap(),
         named(vec![Recipient::Hidden, Recipient::Hidden])
@@ -263,7 +264,8 @@ fn hidden_recipients_are_reported_as_hidden() {
 
 #[test]
 fn an_entry_locked_with_a_passphrase_is_told_apart() {
-    let symmetric = gpg().run(&["--symmetric", "--passphrase", "hunter2"], ENTRY.as_bytes());
+    let gpg = gpg_home();
+    let symmetric = gpg.run(&["--symmetric", "--passphrase", "hunter2"], ENTRY.as_bytes());
     assert_eq!(
         entry_recipients(&symmetric).unwrap(),
         EntryRecipients { keys: vec![], passphrase: true }
@@ -274,8 +276,8 @@ fn an_entry_locked_with_a_passphrase_is_told_apart() {
     assert!(reason.contains("passphrase"), "{reason}");
 
     // Both a key and a passphrase: the key still decides.
-    let laptop = gpg().encryption_fingerprint(LAPTOP);
-    let both = gpg().run(
+    let laptop = gpg.encryption_fingerprint(LAPTOP);
+    let both = gpg.run(
         &["--symmetric", "--passphrase", "hunter2", "--encrypt", "--recipient", LAPTOP],
         ENTRY.as_bytes(),
     );

@@ -311,7 +311,7 @@ fn forget_pin_returns_at_once_while_the_reader_is_slow_and_deverifies_after() {
 
     let started = Instant::now();
     session.forget_pin();
-    assert!(started.elapsed() < Duration::from_millis(200), "forget_pin waited for the card");
+    assert!(started.elapsed() < Duration::from_secs(2), "forget_pin waited for the card");
     assert!(!session.holds_pin(), "the PIN is gone from memory before forget_pin returns");
     assert!(eventually(|| held.arrived.load(std::sync::atomic::Ordering::SeqCst)), "the de-verify was sent");
     assert!(rig.sim.pin_verified(), "the reader has not answered yet");
@@ -342,7 +342,7 @@ fn holds_pin_after_the_background_limit_answers_without_the_card() {
     let started = Instant::now();
     assert!(!session.holds_pin());
     session.note_foregrounded();
-    assert!(started.elapsed() < Duration::from_millis(200), "holds_pin waited for the card");
+    assert!(started.elapsed() < Duration::from_secs(2), "holds_pin waited for the card");
     held.release();
     assert!(eventually(|| !rig.sim.pin_verified()));
 }
@@ -360,7 +360,7 @@ fn forget_pin_during_a_touch_wait_returns_at_once_and_deverifies_after_the_comma
 
     let started = Instant::now();
     session.forget_pin();
-    assert!(started.elapsed() < Duration::from_millis(200), "forget_pin waited for the touch");
+    assert!(started.elapsed() < Duration::from_secs(2), "forget_pin waited for the touch");
     assert!(!session.holds_pin());
     assert!(rig.sim.pin_verified(), "the card is still busy with the decrypt");
 

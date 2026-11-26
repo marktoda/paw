@@ -20,9 +20,12 @@ use paw_core::sim::SimTouch;
 use paw_core::sync::address::AddressNotice;
 use paw_core::sync::hosts;
 
-/// A port nothing listens on.
-fn closed_port() -> u16 {
-    TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port()
+/// A port nothing listens on, held (bound, not listening) until it is
+/// dropped so that no other test can listen there meanwhile.
+fn closed_port() -> (u16, tokio::net::TcpSocket) {
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind(([127, 0, 0, 1], 0).into()).unwrap();
+    (socket.local_addr().unwrap().port(), socket)
 }
 
 fn at_check_host(dir: &std::path::Path, port: &Arc<KeyPort>, address: &str) -> Arc<Setup> {
@@ -69,7 +72,8 @@ fn port_443_is_held_to_githubs_bundled_keys() {
 fn a_host_that_is_not_github_offers_nothing() {
     let port = key_port();
     let dir = tempfile::tempdir().unwrap();
-    let setup = at_check_host(dir.path(), &port, &format!("ssh://git@127.0.0.1:{}/store.git", closed_port()));
+    let (closed, _held) = closed_port();
+    let setup = at_check_host(dir.path(), &port, &format!("ssh://git@127.0.0.1:{closed}/store.git"));
 
     let error = setup.check_host().unwrap_err();
 
