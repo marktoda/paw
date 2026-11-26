@@ -165,3 +165,33 @@ fn desktop_change_at(bare: &Path, path: &str, create: impl FnOnce(&Path)) {
     git(work.path(), &["commit", "--quiet", "-m", &format!("Add {path} from the desktop.")]);
     git(work.path(), &["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
 }
+
+/// Moves `from` to `to` (full paths) as the edit form does: an edit of the
+/// open entry whose name and folder change, saved. `open` is its text;
+/// without it a placeholder stands in, for a move that keeps the file as it
+/// is (the same recipients), and the helper fails if the move re-encrypted.
+pub fn move_entry(
+    store: &paw_core::write::WriteStore,
+    from: &str,
+    to: &str,
+    open: Option<&paw_core::entry::EntryDoc>,
+) -> Result<paw_core::write::Saved, paw_core::write::WriteError> {
+    use paw_core::entry::EntryDoc;
+    let placeholder = open.is_none();
+    let doc = match open {
+        Some(doc) => doc.duplicate(),
+        None => EntryDoc::parse(b"placeholder\n".to_vec()).unwrap(),
+    };
+    let mut draft = paw_core::write::EntryDraft::edit(from, doc, None);
+    let (folder, name) = to.rsplit_once('/').unwrap_or(("", to));
+    draft.set_folder(folder);
+    draft.set_name(name);
+    let before = store.repo().join(format!("{from}.gpg"));
+    let before = std::fs::read(before).ok();
+    let saved = store.save(&draft)?;
+    if placeholder {
+        let after = std::fs::read(store.repo().join(format!("{to}.gpg"))).ok();
+        assert_eq!(before, after, "a move without the open entry re-encrypted a placeholder");
+    }
+    Ok(saved)
+}

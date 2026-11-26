@@ -25,7 +25,7 @@ use paw_core::sync::queue;
 use paw_core::write::held_back::{self, LeftHeldBack, LeftReason, ReencryptReport};
 use paw_core::sync::{self, ChangeKind, Connection};
 use paw_core::write::{EntryDraft, Keyring, WriteStore};
-use support::{GitServer, git};
+use support::{GitServer, git, move_entry};
 
 /// A fingerprint no key paw has is for.
 const UNKNOWN: &str = "0123456789ABCDEF0123456789ABCDEF01234567";
@@ -342,7 +342,7 @@ fn a_save_while_each_one_is_opened_does_not_add_up_to_a_failure() {
 fn a_rename_that_kept_its_ciphertext_is_opened_once() {
     let w = world();
     w.save("Work", "a", "a-pw");
-    WriteStore::open(w.state.path()).rename("Work/a", "Work/b", None).unwrap();
+    move_entry(&WriteStore::open(w.state.path()), "Work/a", "Work/b", None).unwrap();
     let (card, other) = (w.card.fingerprint_hex(), w.other.fingerprint_hex());
     w.new_list("Work", &[&card, &other], true);
     assert_eq!(w.held(), ["Work/a", "Work/b"]);

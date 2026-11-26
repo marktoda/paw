@@ -132,7 +132,7 @@ pub(crate) fn folder_problems(folder: &str) -> Vec<DraftProblem> {
 /// Whether `path` (an entry or folder, without `.gpg`) collides with
 /// something in `tree` other than `except`, as a case-insensitive file
 /// system would see it. Returns the problem to show.
-pub(crate) fn collision(tree: &StoreTree, path: &str, except: Option<&str>) -> Option<DraftProblem> {
+fn collision(tree: &StoreTree, path: &str, except: Option<&str>) -> Option<DraftProblem> {
     let (folder, name) = split(path);
     let wanted = case_folded(path);
     let except = except.map(case_folded);

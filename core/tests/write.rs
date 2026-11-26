@@ -29,7 +29,7 @@ use pgp::composed::{KeyType, SecretKeyParamsBuilder, SignedPublicKey, SignedPubl
 use pgp::packet::{KeyFlags, PubKeyInner, PublicKey, PublicSubkey};
 use pgp::types::{KeyDetails, Password};
 use key_common::{PIN, decrypt_text};
-use support::git;
+use support::{git, move_entry};
 
 const MARKER: &str = "PLAINTEXT-MARKER-5f1c";
 
@@ -579,7 +579,7 @@ fn names_that_reach_outside_the_store_are_refused() {
     }
     for entry in [".gpg-id", "Work/.gpg-id", ".git/config"] {
         assert!(matches!(s.write().delete(entry).unwrap_err(), WriteError::Invalid { .. }), "{entry}");
-        assert!(s.write().rename("Work/github.com", entry, None).is_err(), "{entry}");
+        assert!(move_entry(&s.write(), "Work/github.com", entry, None).is_err(), "{entry}");
     }
     assert_eq!(s.head(), head);
     s.clean();
@@ -687,7 +687,7 @@ fn a_rename_moves_the_same_encrypted_file_without_the_key() {
     let s = store();
     let blob = s.git(&["rev-parse", "HEAD:Work/github.com.gpg"]);
 
-    let saved = s.write().rename("Work/github.com", "Archive/github.com", None).unwrap();
+    let saved = move_entry(&s.write(), "Work/github.com", "Archive/github.com", None).unwrap();
 
     assert_eq!(saved.entry, "Archive/github.com");
     assert_eq!(s.git(&["rev-parse", "HEAD:Archive/github.com.gpg"]), blob);
@@ -703,8 +703,8 @@ fn a_rename_moves_the_same_encrypted_file_without_the_key() {
 fn a_rename_onto_a_taken_name_is_refused() {
     let s = store();
     let head = s.head();
-    assert!(matches!(s.write().rename("Work/github.com", "Work/jira", None).unwrap_err(), WriteError::Invalid { .. }));
-    assert!(matches!(s.write().rename("Work/nothing", "Work/x", None).unwrap_err(), WriteError::NoSuchEntry { .. }));
+    assert!(matches!(move_entry(&s.write(), "Work/github.com", "Work/jira", None).unwrap_err(), WriteError::Invalid { .. }));
+    assert!(matches!(move_entry(&s.write(), "Work/nothing", "Work/x", None).unwrap_err(), WriteError::NoSuchEntry { .. }));
     assert_eq!(s.head(), head);
 }
 
@@ -729,18 +729,11 @@ fn store_with_shared_folder() -> (Store, String) {
 }
 
 #[test]
-fn a_move_to_other_recipients_needs_the_entry_open_and_re_encrypts() {
+fn a_move_to_other_recipients_re_encrypts() {
     let (s, other_fpr) = store_with_shared_folder();
-    let head = s.head();
-
-    assert!(matches!(
-        s.write().rename("Work/github.com", "Shared/github.com", None).unwrap_err(),
-        WriteError::NeedsOpenEntry { entry } if entry == "Work/github.com"
-    ));
-    assert_eq!(s.head(), head);
 
     let doc = EntryDoc::parse(s.decrypt("Work/github.com").into_bytes()).unwrap();
-    let saved = s.write().rename("Work/github.com", "Shared/github.com", Some(&doc)).unwrap();
+    let saved = move_entry(&s.write(), "Work/github.com", "Shared/github.com", Some(&doc)).unwrap();
 
     let keys = entry_recipients(&s.file("Shared/github.com")).unwrap().keys;
     let card_fpr = card().fingerprint_hex();
@@ -765,10 +758,10 @@ fn a_move_to_a_folder_missing_a_key_is_refused_even_when_open() {
     let head = s.head();
 
     // Not yet accepted: that comes first.
-    let error = s.write().rename("Work/github.com", "Shared/github.com", Some(&doc)).unwrap_err();
+    let error = move_entry(&s.write(), "Work/github.com", "Shared/github.com", Some(&doc)).unwrap_err();
     assert!(matches!(error, WriteError::RecipientsChanged { .. }), "{error:?}");
     s.keyring().accept_recipients(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, "Shared").unwrap();
-    let error = s.write().rename("Work/github.com", "Shared/github.com", Some(&doc)).unwrap_err();
+    let error = move_entry(&s.write(), "Work/github.com", "Shared/github.com", Some(&doc)).unwrap_err();
 
     assert!(matches!(error, WriteError::MissingRecipients { missing, .. } if missing == ["backup@example.com"]));
     assert_eq!(s.head(), head);
@@ -782,7 +775,7 @@ fn five_changes(s: &Store) {
     draft.set_password("edited");
     s.write().save(&draft).unwrap();
     s.write().delete("Work/Jira").unwrap();
-    s.write().rename("Work/new", "Work/newer", None).unwrap();
+    move_entry(&s.write(), "Work/new", "Work/newer", None).unwrap();
 }
 
 #[test]
@@ -850,7 +843,7 @@ fn a_move_with_re_encryption_can_be_undone() {
     let (s, _) = store_with_shared_folder();
     let doc = EntryDoc::parse(s.decrypt("Work/github.com").into_bytes()).unwrap();
     let before = s.file("Work/github.com");
-    s.write().rename("Work/github.com", "Shared/github.com", Some(&doc)).unwrap();
+    move_entry(&s.write(), "Work/github.com", "Shared/github.com", Some(&doc)).unwrap();
 
     queue::undo_last(&s.repo).unwrap();
 
@@ -872,7 +865,7 @@ fn no_plaintext_reaches_the_disk_in_the_store_or_the_state_directory() {
     edit.set_name("canary2");
     s.write().save(&edit).unwrap();
     let doc = EntryDoc::parse(s.decrypt("Work/canary2").into_bytes()).unwrap();
-    s.write().rename("Work/canary2", "Elsewhere/canary3", Some(&doc)).unwrap();
+    move_entry(&s.write(), "Work/canary2", "Elsewhere/canary3", Some(&doc)).unwrap();
 
     // Every file under the state directory (the store, `.git`, the pinned
     // keys) and the temporary directory around it, byte for byte...
@@ -1018,15 +1011,12 @@ fn an_edit_without_a_live_copy_makes_none() {
 }
 
 #[test]
-fn delete_wipes_the_copy_and_a_plain_rename_drops_it() {
+fn delete_wipes_the_copy() {
     let s = store();
     let c = copies();
-    for entry in ["Work/github.com", "Work/Jira"] {
-        c.cache.put(entry, b"x", &content_id(&s.file(entry)), std::time::Duration::from_secs(3600)).unwrap();
-    }
+    c.cache.put("Work/Jira", b"x", &content_id(&s.file("Work/Jira")), std::time::Duration::from_secs(3600)).unwrap();
 
     writer(&s).delete("Work/Jira".into(), Some(c.cache.clone())).unwrap();
-    s.write().with_copies(Some(c.cache.clone()), std::time::Duration::ZERO).rename("Work/github.com", "Work/github", None).unwrap();
 
     assert!(c.cache.list().unwrap().is_empty());
 }
@@ -1040,11 +1030,8 @@ fn a_move_of_an_open_entry_takes_its_copy_along() {
         .unwrap();
 
     let doc = EntryDoc::parse(s.decrypt("Work/github.com").into_bytes()).unwrap();
-    let outcome = s
-        .write()
-        .with_copies(Some(c.cache.clone()), std::time::Duration::ZERO)
-        .rename("Work/github.com", "Shared/github.com", Some(&doc))
-        .unwrap();
+    let writer = s.write().with_copies(Some(c.cache.clone()), std::time::Duration::ZERO);
+    let outcome = move_entry(&writer, "Work/github.com", "Shared/github.com", Some(&doc)).unwrap();
 
     assert_eq!(outcome.face_id_until_ms, Some(1_790_000_000_000 + 3_600_000));
     let live: Vec<String> = c.cache.list().unwrap().into_iter().map(|l| l.entry).collect();
@@ -1084,7 +1071,7 @@ fn site_pairings_follow_a_rename_a_move_and_an_edit_and_go_with_a_delete() {
     pairings.record("Work/Jira", "jira.com", None).unwrap();
     pairings.record("Work/github.com", "github.com", None).unwrap();
 
-    s.write().rename("Work/Jira", "Work/jira", None).unwrap();
+    move_entry(&s.write(), "Work/Jira", "Work/jira", None).unwrap();
     assert!(paired().contains(&("Work/jira".to_owned(), jira())), "{:?}", paired());
 
     // An edit that moves it.
@@ -1126,7 +1113,9 @@ fn one_time_code_marks_follow_saves_renames_and_deletes() {
     writer(&s).save(draft, None, 0).unwrap();
     assert_eq!(codes.load(), ["Work/Linear"]);
 
-    s.write().rename("Work/Linear", "Work/linear", None).unwrap();
+    let draft = writer(&s).edit_draft(opened(&s, "Work/Linear"), "Work/Linear".into()).unwrap();
+    draft.set_name("linear".into());
+    writer(&s).save(draft, None, 0).unwrap();
     assert_eq!(codes.load(), ["Work/linear"]);
 
     let draft = writer(&s).edit_draft(opened(&s, "Work/linear"), "Work/linear".into()).unwrap();

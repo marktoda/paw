@@ -258,7 +258,7 @@ fn git_log_shows_one_entry_per_commit_in_pass_wording() {
     let mut edit = EntryDraft::edit("Web/given", opened, Some(content_id(&store.file("Web/given"))));
     edit.set_username("alice");
     write.save(&edit).unwrap();
-    write.rename("Web/given", "Web/renamed", None).unwrap();
+    support::move_entry(&write, "Web/given", "Web/renamed", None).unwrap();
     write.delete("Web/example.com").unwrap();
 
     let log = git(&store.repo, &["log", "--format=%s|%an <%ae>", "--name-status", "-M", "-5"]);

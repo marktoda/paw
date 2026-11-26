@@ -21,7 +21,7 @@ use paw_core::sync::{self, ChangeKind, Connection, Integration, KeptBoth, queue}
 use paw_core::write::{EntryDraft, Keyring, WriteStore, held_back};
 use pgp::types::KeyDetails;
 use key_common::{PIN, decrypt, decrypt_text, signer};
-use support::{GitServer, git};
+use support::{GitServer, git, move_entry};
 
 fn card() -> Arc<SimulatedKey> {
     SimulatedKey::new(PIN.into(), false, 50)
@@ -129,9 +129,9 @@ fn every_kind_of_change(w: &World) {
     edit.set_password("phone-pw");
     w.write().save(&edit).unwrap();
     w.write().delete("Work/Jira").unwrap();
-    w.write().rename("Work/old", "Work/older", None).unwrap();
+    move_entry(&w.write(), "Work/old", "Work/older", None).unwrap();
     let travel = EntryDoc::parse(w.decrypt(&w.repo(), "Work/travel").into_bytes()).unwrap();
-    w.write().rename("Work/travel", "Shared/travel", Some(&travel)).unwrap();
+    move_entry(&w.write(), "Work/travel", "Shared/travel", Some(&travel)).unwrap();
 }
 
 fn queued(w: &World) -> Vec<(ChangeKind, String, Option<String>)> {
@@ -209,7 +209,7 @@ fn a_paw_edit_of_an_entry_the_desktop_also_edited_is_kept_twice() {
 #[test]
 fn a_paw_rename_of_an_entry_the_desktop_deleted_still_lands_under_its_new_name() {
     let w = world();
-    w.write().rename("Work/old", "Work/older", None).unwrap();
+    move_entry(&w.write(), "Work/old", "Work/older", None).unwrap();
     git(w.desktop.path(), &["rm", "--quiet", "Work/old.gpg"]);
     w.desktop_push(&[], "Remove Work/old from store.");
 
@@ -434,7 +434,7 @@ fn personal_gets_two_keys_then_reencrypt(w: &World, expected: u32) {
 fn a_rename_that_kept_its_blob_is_re_encrypted_only_at_its_new_path() {
     let w = world();
     w.write().save(&new_entry("Work", "new", "new-pw")).unwrap();
-    w.write().rename("Work/new", "Personal/new", None).unwrap();
+    move_entry(&w.write(), "Work/new", "Personal/new", None).unwrap();
 
     personal_gets_two_keys_then_reencrypt(&w, 1);
 
@@ -451,8 +451,8 @@ fn a_rename_that_kept_its_blob_is_re_encrypted_only_at_its_new_path() {
 fn a_rename_chain_through_another_scope_is_re_encrypted_only_there() {
     let w = world();
     w.write().save(&new_entry("Work", "a", "a-pw")).unwrap();
-    w.write().rename("Work/a", "Personal/b", None).unwrap();
-    w.write().rename("Personal/b", "Work/c", None).unwrap();
+    move_entry(&w.write(), "Work/a", "Personal/b", None).unwrap();
+    move_entry(&w.write(), "Personal/b", "Work/c", None).unwrap();
     // Before the re-encryption: the same blob at all three paths.
     assert_eq!(key_counts(&w, "Work/a.gpg"), [1]);
 
@@ -478,8 +478,8 @@ fn a_rename_chain_through_another_scope_is_re_encrypted_only_there() {
 fn a_rename_chain_within_the_new_scope_is_re_encrypted_at_each_path() {
     let w = world();
     w.write().save(&new_entry("Work", "a", "a-pw")).unwrap();
-    w.write().rename("Work/a", "Personal/b", None).unwrap();
-    w.write().rename("Personal/b", "Personal/c", None).unwrap();
+    move_entry(&w.write(), "Work/a", "Personal/b", None).unwrap();
+    move_entry(&w.write(), "Personal/b", "Personal/c", None).unwrap();
 
     personal_gets_two_keys_then_reencrypt(&w, 2);
 }
@@ -513,7 +513,7 @@ fn a_move_re_encrypted_for_its_new_scope_keeps_that_ciphertext_when_the_old_scop
     let w = world();
     w.write().save(&new_entry("Work", "a", "a-pw")).unwrap();
     let doc = EntryDoc::parse(w.decrypt(&w.repo(), "Work/a").into_bytes()).unwrap();
-    w.write().rename("Work/a", "Shared/a", Some(&doc)).unwrap();
+    move_entry(&w.write(), "Work/a", "Shared/a", Some(&doc)).unwrap();
     assert_eq!(key_counts(&w, "Shared/a.gpg"), [2]);
     let shared = git(&w.repo(), &["rev-parse", "HEAD:Shared/a.gpg"]);
     // The desktop adds the other key to the whole store.

@@ -238,6 +238,14 @@ fn save_in(writer: &WriteStore, name: &str) -> Result<paw_core::write::Saved, Wr
     writer.save(&draft)
 }
 
+/// Moves `lock/from` to `lock/to` as the edit form does.
+fn move_in(writer: &WriteStore, from: &str, to: &str) -> Result<paw_core::write::Saved, WriteError> {
+    let doc = paw_core::entry::EntryDoc::parse(format!("pw-{from}\n").into_bytes()).unwrap();
+    let mut draft = EntryDraft::edit(&format!("lock/{from}"), doc, None);
+    draft.set_name(to);
+    writer.save(&draft)
+}
+
 fn git_lock_files(git: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut folders = vec![git.to_path_buf()];
@@ -824,7 +832,7 @@ fn every_mutating_entry_point_returns_even_when_its_thread_holds_the_lock() {
             let text = |e: &dyn std::fmt::Display| e.to_string();
 
             note("save", save_in(&writer, &format!("{tag}-a")).map(drop).map_err(|e| text(&e)));
-            note("rename", writer.rename(&format!("lock/{tag}-a"), &format!("lock/{tag}-b"), None).map(drop).map_err(|e| text(&e)));
+            note("move", move_in(&writer, &format!("{tag}-a"), &format!("{tag}-b")).map(drop).map_err(|e| text(&e)));
             note("delete", writer.delete(&format!("lock/{tag}-b")).map(drop).map_err(|e| text(&e)));
             let saved = save_in(&writer, &format!("{tag}-c")).unwrap();
             note("discard", queue::discard(&repo, &saved.commits[0]).map(drop).map_err(|e| text(&e)));

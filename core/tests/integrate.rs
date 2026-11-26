@@ -23,7 +23,7 @@ use paw_core::sync::{
 };
 use paw_core::write::WriteStore;
 use key_common::{PIN, signer, sync_failure};
-use support::{GitServer, git};
+use support::{GitServer, git, move_entry};
 
 struct World {
     card: Arc<SimulatedKey>,
@@ -75,7 +75,7 @@ fn phone_delete(w: &World, entry: &str) {
 
 /// paw's rename, through its write API: the same encrypted file, renamed.
 fn phone_rename(w: &World, from: &str, to: &str) {
-    WriteStore::new(w.state.path(), phone(w)).rename(from, to, None).unwrap();
+    move_entry(&WriteStore::new(w.state.path(), phone(w)), from, to, None).unwrap();
 }
 
 /// A commit made with the git command line, as another tool would.

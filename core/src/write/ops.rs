@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::draft::{EntryDraft, collision, folder_problems, name_problems};
+use super::draft::{EntryDraft, folder_problems, name_problems};
 use super::keyring::{FolderRecipients, Keyring};
 use super::{WriteError, author, encrypt, now_secs};
 use crate::PawError;
@@ -373,73 +373,4 @@ impl WriteStore {
         Ok(Deleted { commit, follow_up_failures: follow_ups.0 })
     }
 
-    /// Renames or moves `from` to `to` (full paths). Within the same
-    /// recipients the encrypted file moves unchanged and `open` is not
-    /// needed. To a folder with other recipients the entry is re-encrypted
-    /// from `open` (its decrypted text), and without it the move is refused
-    /// with [`WriteError::NeedsOpenEntry`]. A Face ID copy moves with an
-    /// open entry and is forgotten otherwise: moving it would mean opening
-    /// it. Returns what was done.
-    pub fn rename(&self, from: &str, to: &str, open: Option<&EntryDoc>) -> Result<Saved, WriteError> {
-        let (saved_id, commit) = {
-            let held = self.exclusive()?;
-            let current = self.current(from)?;
-            check_path(to)?;
-            if from == to {
-                return Ok(Saved {
-                    entry: to.to_owned(),
-                    previous: None,
-                    content_id: content_id(&current),
-                    commits: Vec::new(),
-                    opened: None,
-                    face_id_until_ms: None,
-                    follow_up_failures: Vec::new(),
-                });
-            }
-            self.move_checked(&held, &current, from, to, open)?
-        };
-        let mut follow_ups = FollowUps::default();
-        self.entry_moved(from, Some(to), &mut follow_ups);
-        let face_id_until_ms = match (open, &self.copies) {
-            (Some(doc), Some(copies)) => follow_ups.copy(copies.reseal(from, to, &doc.to_bytes(), &saved_id)),
-            _ => {
-                self.forget_copy(from, &mut follow_ups);
-                None
-            }
-        };
-        Ok(Saved {
-            entry: to.to_owned(),
-            previous: Some(from.to_owned()),
-            content_id: saved_id,
-            commits: vec![commit],
-            opened: None,
-            face_id_until_ms,
-            follow_up_failures: follow_ups.0,
-        })
-    }
-
-    /// The commit of a rename or move, with the store held: the content id
-    /// of the file at `to` and the commit.
-    fn move_checked(
-        &self,
-        held: &Exclusive,
-        current: &[u8],
-        from: &str,
-        to: &str,
-        open: Option<&EntryDoc>,
-    ) -> Result<(Vec<u8>, String), WriteError> {
-        if let Some(taken) = collision(&self.tree()?, to, Some(from)) {
-            return Err(WriteError::Invalid { problems: vec![taken] });
-        }
-        let to_folder = folder_of(to);
-        let reencrypt = !self.same_recipients(folder_of(from), to_folder)?;
-        let keys = match (reencrypt, open) {
-            (false, _) => None,
-            (true, None) => return Err(WriteError::NeedsOpenEntry { entry: from.to_owned() }),
-            (true, Some(_)) => Some(self.keyring()?.resolve(&self.repo, to_folder, now_secs())?),
-        };
-        let reencrypt = open.zip(keys.as_deref());
-        let (commit, ciphertext) = self.move_commit(held, from, to, reencrypt, &author())?;
-        Ok((content_id(ciphertext.as_deref().unwrap_or(current)), commit))
-    }
 }

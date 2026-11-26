@@ -49,10 +49,6 @@ pub enum WriteError {
     /// Setup has not recorded who can open this store yet.
     #[error("paw hasn't confirmed who can open this store yet")]
     RecipientsNotConfirmed,
-    /// Moving to a folder with other recipients re-encrypts the entry,
-    /// which needs it open.
-    #[error("open {entry} with your key to move it to a folder with different keys")]
-    NeedsOpenEntry { entry: String },
     #[error("there is no entry called {entry}")]
     NoSuchEntry { entry: String },
     #[error("there's already an entry called {entry}")]
