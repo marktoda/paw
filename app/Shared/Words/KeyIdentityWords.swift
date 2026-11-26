@@ -17,5 +17,5 @@ func spokenSerial(_ ident: String) -> String {
 
 /// "2C11 41DE": the last eight hex digits of a fingerprint, in two groups.
 func fingerprintEnding(_ fingerprint: String) -> String {
-    fingerprintEnding(fingerprint: fingerprint).joined(separator: " ")
+    fingerprintTail(fingerprint: fingerprint).joined(separator: " ")
 }
