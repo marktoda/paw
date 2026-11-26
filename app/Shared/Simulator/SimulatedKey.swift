@@ -19,19 +19,19 @@ final class SimulatedKeyHolder: @unchecked Sendable {
     private var plugged: Bool
 
     private init() {
-        let pin = LaunchArgument.simPin.string ?? "123456"
-        let touch = LaunchArgument.simTouch.string == nil || LaunchArgument.simTouch.bool
-        let timeout = LaunchArgument.simTouchTimeoutMs.int ?? 15_000
+        let pin = KeyLaunchArgument.simPin.string ?? "123456"
+        let touch = KeyLaunchArgument.simTouch.string == nil || KeyLaunchArgument.simTouch.bool
+        let timeout = KeyLaunchArgument.simTouchTimeoutMs.int ?? 15_000
         key = SimulatedKey(pin: pin, touchRequired: touch, touchTimeoutMs: UInt32(clamping: max(timeout, 0)))
-        if let tries = LaunchArgument.simPinTries.int {
+        if let tries = KeyLaunchArgument.simPinTries.int {
             key.setPinTriesLeft(tries: UInt8(clamping: tries))
         }
-        if LaunchArgument.simKdf.string == "unsupported" {
+        if KeyLaunchArgument.simKdf.string == "unsupported" {
             // Any algorithm but 3 (iterated and salted SHA-256) is one paw can't follow.
             key.setPinKdf(algorithm: 7)
         }
-        attachFailuresLeft = max(LaunchArgument.simAttachFails.int ?? 0, 0)
-        plugged = !LaunchArgument.simUnplugged.bool
+        attachFailuresLeft = max(KeyLaunchArgument.simAttachFails.int ?? 0, 0)
+        plugged = !KeyLaunchArgument.simUnplugged.bool
         if !plugged {
             key.unplug()
         }
