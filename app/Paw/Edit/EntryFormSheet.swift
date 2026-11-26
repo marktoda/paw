@@ -648,11 +648,12 @@ struct FieldProblem: View {
 }
 
 extension StoreWriter {
-    /// Whether paw has every key `folder` is encrypted for. A folder whose
-    /// list of keys only changed stays choosable: the form then offers the
-    /// review.
-    func folderOpenable(_ folder: String) -> Bool {
-        guard let recipients = try? folderRecipients(folder: folder) else { return false }
+    /// Whether paw has every key `folder` is encrypted for; `nil` when its
+    /// list of keys can't be read, so the folder is offered and the form
+    /// says why once it is chosen. A folder whose list of keys only changed
+    /// stays choosable: the form then offers the review.
+    func folderOpenable(_ folder: String) -> Bool? {
+        guard let recipients = try? folderRecipients(folder: folder) else { return nil }
         return recipients.lines.allSatisfy(\.isReady)
     }
 }

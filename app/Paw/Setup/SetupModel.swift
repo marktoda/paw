@@ -515,7 +515,8 @@ final class SetupModel {
         } catch {
             unread = true
         }
-        if let store = try? PassStore(dir: repoPath) {
+        do {
+            let store = try PassStore(dir: repoPath)
             let recipients: [String]
             do {
                 recipients = try store.recipients(folder: "")
@@ -524,6 +525,8 @@ final class SetupModel {
                 unread = true
             }
             storeFacts = StoreFacts(folders: store.home().folders.count, recipients: recipients.count)
+        } catch {
+            unread = true
         }
         whoCanOpenUnread = unread
     }

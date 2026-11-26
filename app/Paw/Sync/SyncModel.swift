@@ -384,6 +384,10 @@ final class SyncModel {
         let copies = copies
         workQueue.async { [weak self] in
             var summary = SyncSummary(origin: origin, report: report)
+            // A list that can't be read is said on Home from the same store
+            // change (`AppModel.copiesProblem`); an entry that can't be read
+            // is gone, and its copy with it, or the store is, which Home
+            // says too.
             if let copies {
                 for copy in (try? copies.list()) ?? [] {
                     if case .stale? = try? store.faceIdStatus(copies: copies, entry: copy.entry) {

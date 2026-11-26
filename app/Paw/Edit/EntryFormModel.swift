@@ -44,7 +44,8 @@ final class EntryFormModel {
     let folders: [String]
     /// Whether paw has every key each folder is encrypted for, read off the
     /// main thread when the form opens and when the store changes. A folder
-    /// not in it yet is offered: Save waits for that folder's own answer.
+    /// not in it (not read yet, or its list unreadable) is offered: Save
+    /// waits for that folder's own answer, which says why it can't.
     private(set) var folderOpenable: [String: Bool] = [:]
 
     var name = ""
