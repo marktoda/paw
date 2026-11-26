@@ -417,7 +417,7 @@ struct Waiting {
 impl Waiting {
     fn count(dir: &Path, state_dir: &Path) -> Self {
         Self {
-            held_back: crate::sync::queue::held_back(dir, state_dir).map_or(0, |held| held.len() as u32),
+            held_back: crate::write::held_back::held_back(dir, state_dir).map_or(0, |held| held.len() as u32),
             unpushed: crate::sync::queue::unpushed(dir).map_or(0, |queue| queue.len() as u32),
         }
     }

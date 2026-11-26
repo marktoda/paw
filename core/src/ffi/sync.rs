@@ -26,7 +26,8 @@ use crate::PawError;
 use crate::sync::address::{StoreAddress, saved_address};
 use crate::sync::hosts::{KnownHosts, is_bundled};
 use crate::sync::operation;
-use crate::sync::queue::{self, HeldBack, LeftReason, OpenFailure, QueueItem, ReencryptCheck};
+use crate::sync::queue::{self, QueueItem};
+use crate::write::held_back::{self, HeldBack, LeftReason, OpenFailure, ReencryptCheck};
 use crate::sync::{IntegrateReport, RefusedPath, SyncError, TransferProgress, accept_replaced_remote};
 
 /// First-run setup; see [`crate::setup`]. Each call is one step and returns
@@ -285,8 +286,10 @@ impl StoreSync {
             let stop = || task.cancelled();
             let mut progress =
                 |update: TransferProgress| task.report_progress(update.received_objects, update.total_objects);
+            let (repo, state_dir) = (sync.repo(), sync.state_dir.clone());
+            let holds_back = || held_back::holds_back(&repo, &state_dir);
             let result: Result<_, TaskFailure> =
-                operation::run_until(&remote, &signer, &sync.repo(), &sync.state_dir, push, &stop, Some(&mut progress));
+                operation::run_until(&remote, &signer, &repo, &holds_back, push, &stop, Some(&mut progress));
             if task.cancelled() {
                 return Err(KeyError::Cancelled.into());
             }
@@ -433,14 +436,14 @@ impl StoreSync {
     /// should be for; the person accepts the new recipients, then
     /// re-encrypts them with `reencrypt_with_key`, or discards one outright.
     pub fn held_back(&self) -> Result<Vec<HeldBack>, SyncError> {
-        queue::held_back(&self.repo(), &self.state_dir)
+        held_back::held_back(&self.repo(), &self.state_dir)
     }
 
     /// How many held-back changes "Re-encrypt" can do now (their folder's
     /// new list is accepted and paw has every key on it), and why each
     /// other one can't be done. No key, no network.
     pub fn reencrypt_check(&self) -> Result<ReencryptCheck, SyncError> {
-        queue::reencrypt_check(&self.repo(), &self.state_dir)
+        held_back::reencrypt_check(&self.repo(), &self.state_dir)
     }
 
     /// "Re-encrypt" as a key task (`Reencrypt`): opens each held-back
@@ -453,7 +456,7 @@ impl StoreSync {
     /// changes. Ends `Done` with `Reencrypted` and what it did and left if
     /// it ran to the end; `reencrypt_check` says what is left after a stop.
     pub fn reencrypt_with_key(self: Arc<Self>, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
-        let count = match queue::reencrypt_check(&self.repo(), &self.state_dir) {
+        let count = match held_back::reencrypt_check(&self.repo(), &self.state_dir) {
             Ok(check) => check.ready,
             Err(error) => return KeyTask::failed(KeyPurpose::Reencrypt { count: 0 }, listener, error.into()),
         };
@@ -476,7 +479,7 @@ impl StoreSync {
                 task.set(KeyTaskState::Working { progress: Some(TaskProgress { done, total }) });
             };
             let result: Result<_, TaskFailure> =
-                queue::reencrypt_each(&sync.repo(), &sync.state_dir, &mut open, &mut progress);
+                held_back::reencrypt_each(&sync.repo(), &sync.state_dir, &mut open, &mut progress);
             if task.cancelled() {
                 return Err(KeyError::Cancelled.into());
             }

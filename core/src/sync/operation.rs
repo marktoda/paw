@@ -158,10 +158,9 @@ fn stopped() -> SyncError {
     SyncError::Cancelled
 }
 
-/// Whether any waiting change is held back (see [`super::queue::held_back`]).
-fn holding_back(dir: &Path, state_dir: &Path) -> Result<bool, SyncError> {
-    Ok(!super::queue::held_back(dir, state_dir)?.is_empty())
-}
+/// Whether a waiting change must not be pushed now, asked after each
+/// integrate.
+pub(crate) type HoldsBack<'a> = dyn Fn() -> Result<bool, SyncError> + 'a;
 
 /// `progress` for one step, keeping it for the next.
 fn reborrow<'b>(progress: &'b mut Option<TransferCallback<'_>>) -> Option<TransferCallback<'b>> {
@@ -172,11 +171,11 @@ fn reborrow<'b>(progress: &'b mut Option<TransferCallback<'_>>) -> Option<Transf
 }
 
 /// Fetches, integrates and, if `send`, pushes on one login, for the store
-/// at `dir` whose state directory is `state_dir`. Retries once, on the
-/// same connection, if the remote moved before the push. After
-/// integrating, if any waiting change is not encrypted for exactly its
-/// entry's accepted recipients ([`super::queue::held_back`]), nothing is
-/// pushed and the state is [`SyncState::Waiting`]. Stops between steps
+/// at `dir`. Retries once, on the same connection, if the remote moved
+/// before the push. After integrating, if `holds_back` says a waiting
+/// change is not encrypted for exactly its entry's accepted recipients
+/// (`crate::write::held_back`), nothing is pushed and the state is
+/// [`SyncState::Waiting`]. Stops between steps
 /// once `stop` says so, and reports each fetch's progress to `progress`.
 ///
 /// Fails with the key's own error if the key did not sign the login, else
@@ -185,7 +184,7 @@ pub(crate) fn run_until<E: From<KeyError> + From<SyncError>>(
     remote: &Remote,
     signer: &dyn SshSigner,
     dir: &Path,
-    state_dir: &Path,
+    holds_back: &HoldsBack<'_>,
     send: bool,
     stop: &dyn Fn() -> bool,
     progress: Option<TransferCallback<'_>>,
@@ -196,7 +195,7 @@ pub(crate) fn run_until<E: From<KeyError> + From<SyncError>>(
         Err(ConnectError::Key(error)) => return Err(error.into()),
         Err(ConnectError::Remote(error)) => return Err(connect_error(remote, error).into()),
     };
-    let mut report = run_on(&connection, dir, state_dir, send, stop, progress)?;
+    let mut report = run_on(&connection, dir, holds_back, send, stop, progress)?;
     report.signatures = counting.count.load(Ordering::SeqCst);
     Ok(report)
 }
@@ -205,7 +204,7 @@ pub(crate) fn run_until<E: From<KeyError> + From<SyncError>>(
 fn run_on(
     connection: &Connection,
     dir: &Path,
-    state_dir: &Path,
+    holds_back: &HoldsBack<'_>,
     send: bool,
     stop: &dyn Fn() -> bool,
     mut progress: Option<TransferCallback<'_>>,
@@ -232,7 +231,7 @@ fn run_on(
     }
     // A waiting change encrypted for recipients its entry no longer has
     // is not sent: nothing is, until the person has dealt with it.
-    if !send || waiting == 0 || holding_back(dir, state_dir)? {
+    if !send || waiting == 0 || holds_back()? {
         return Ok(report);
     }
     let Some(pushing) = &pushing else {
@@ -253,7 +252,7 @@ fn run_on(
                 return Ok(report);
             };
             waiting = again;
-            if waiting > 0 && holding_back(dir, state_dir)? {
+            if waiting > 0 && holds_back()? {
                 return Ok(report);
             }
             let (repo, branch, tip) = branch_tip(dir)?;

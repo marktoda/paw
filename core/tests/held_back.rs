@@ -20,7 +20,8 @@ use paw_core::key::{KeyError, KeyOutcome, KeyPort, KeyTask, KeyTaskListener, Key
 use paw_core::sim::copies::SimClock;
 use paw_core::sim::{SimTouch, SimulatedKey};
 use paw_core::sync::operation::SyncState;
-use paw_core::sync::queue::{self, LeftHeldBack, LeftReason, ReencryptReport};
+use paw_core::sync::queue;
+use paw_core::write::held_back::{self, LeftHeldBack, LeftReason, ReencryptReport};
 use paw_core::sync::{self, ChangeKind, Connection};
 use paw_core::write::{EntryDraft, Keyring, WriteStore};
 use support::{GitServer, git};
@@ -298,7 +299,7 @@ fn changes_that_cannot_be_re_encrypted_stay_held_back_and_say_why() {
 fn with_nothing_held_back_it_does_nothing() {
     let w = world();
     w.save("Work", "a", "a-pw");
-    assert_eq!(w.sync.reencrypt_check().unwrap(), queue::ReencryptCheck { ready: 0, left: vec![] });
+    assert_eq!(w.sync.reencrypt_check().unwrap(), held_back::ReencryptCheck { ready: 0, left: vec![] });
     let head = git(&w.repo(), &["rev-parse", "HEAD"]);
     let driver = Driver::helpful(PIN, &w.card);
 
@@ -321,15 +322,15 @@ fn a_save_while_each_one_is_opened_does_not_add_up_to_a_failure() {
     w.card.set_decryption_touch(SimTouch::Off);
     let mut saved = 0;
     // Each open saves something else, so the queue moves under every one.
-    let mut open = |_: &queue::HeldBack, bytes: &[u8]| {
+    let mut open = |_: &held_back::HeldBack, bytes: &[u8]| {
         saved += 1;
         w.save("Notes", &format!("n{saved}"), "pw");
         decrypt(&w.card, PIN, bytes)
             .map(zeroize::Zeroizing::new)
-            .map_err(|e| queue::OpenFailure::Stop(paw_core::sync::SyncError::Failed { message: e.to_string() }))
+            .map_err(|e| held_back::OpenFailure::Stop(paw_core::sync::SyncError::Failed { message: e.to_string() }))
     };
 
-    let report = queue::reencrypt_each(&w.repo(), w.state.path(), &mut open, &mut |_, _| {}).unwrap();
+    let report = held_back::reencrypt_each(&w.repo(), w.state.path(), &mut open, &mut |_, _| {}).unwrap();
 
     assert_eq!(report, ReencryptReport { reencrypted: 5, left: vec![] });
     assert_eq!(saved, 5);

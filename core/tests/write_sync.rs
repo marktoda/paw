@@ -18,7 +18,7 @@ use paw_core::entry::EntryDoc;
 use paw_core::sim::SimulatedKey;
 use paw_core::sync::operation::SyncState;
 use paw_core::sync::{self, ChangeKind, Connection, Integration, KeptBoth, queue};
-use paw_core::write::{EntryDraft, Keyring, WriteStore};
+use paw_core::write::{EntryDraft, Keyring, WriteStore, held_back};
 use pgp::types::KeyDetails;
 use key_common::{PIN, decrypt, decrypt_text, signer};
 use support::{GitServer, git};
@@ -238,7 +238,7 @@ fn a_paw_delete_of_an_entry_the_desktop_edited_is_dropped() {
 fn a_waiting_change_is_not_pushed_after_its_recipients_changed() {
     let w = world();
     w.write().save(&new_entry("Work", "new", "new-pw")).unwrap();
-    assert!(queue::held_back(&w.repo(), w.state.path()).unwrap().is_empty());
+    assert!(held_back::held_back(&w.repo(), w.state.path()).unwrap().is_empty());
     // Meanwhile the desktop adds a recipient for the whole store.
     let card_fpr = w.card.fingerprint_hex();
     let other_fpr = hex(paw_core::sim::fixture::other_key().unwrap().fingerprint().as_bytes());
@@ -252,18 +252,18 @@ fn a_waiting_change_is_not_pushed_after_its_recipients_changed() {
     assert_eq!(report.pushed, 0);
     assert_eq!(w.server.tip(), desktop_tip, "nothing was pushed");
     assert_eq!(report.integration.recipients_changed.len(), 1, "{report:?}");
-    let held = queue::held_back(&w.repo(), w.state.path()).unwrap();
+    let held = held_back::held_back(&w.repo(), w.state.path()).unwrap();
     assert_eq!(held.len(), 1, "{held:?}");
     assert_eq!(held[0].entry, "Work/new");
     assert_eq!(held[0].gpg_id, ".gpg-id");
     assert_eq!(held[0].encrypted_for, [format!("key ID {}", &card_fpr[24..])]);
     assert_eq!(held[0].recipients, [card_fpr.clone(), other_fpr.clone()]);
-    assert_eq!(held[0].list, queue::HeldBackList::NotAccepted);
+    assert_eq!(held[0].list, held_back::HeldBackList::NotAccepted);
 
     // Accepting the new recipients does not make the old ciphertext right.
     Keyring::open(w.state.path()).unwrap().accept_recipients(&w.repo(), "Work").unwrap();
-    let held = queue::held_back(&w.repo(), w.state.path()).unwrap();
-    assert!(held.len() == 1 && held[0].list == queue::HeldBackList::Accepted, "{held:?}");
+    let held = held_back::held_back(&w.repo(), w.state.path()).unwrap();
+    assert!(held.len() == 1 && held[0].list == held_back::HeldBackList::Accepted, "{held:?}");
     assert_eq!(send().state, SyncState::Waiting { unpushed: 1 });
     assert_eq!(w.server.tip(), desktop_tip);
 
@@ -272,7 +272,7 @@ fn a_waiting_change_is_not_pushed_after_its_recipients_changed() {
     again.set_password("newer-pw");
     w.write().save(&again).unwrap();
     queue::discard(&w.repo(), &held[0].id).unwrap();
-    assert!(queue::held_back(&w.repo(), w.state.path()).unwrap().is_empty());
+    assert!(held_back::held_back(&w.repo(), w.state.path()).unwrap().is_empty());
     let report = send();
     assert_eq!(report.state, SyncState::UpToDate);
     assert_eq!(report.pushed, 1);
@@ -293,7 +293,7 @@ fn add_a_recipient(w: &World) -> (String, String) {
 fn open_with_card(
     w: &World,
     opened: &std::cell::RefCell<Vec<String>>,
-) -> impl FnMut(&queue::HeldBack, &[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>, queue::OpenFailure> {
+) -> impl FnMut(&held_back::HeldBack, &[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>, held_back::OpenFailure> {
     move |item, bytes| {
         opened.borrow_mut().push(item.entry.clone());
         Ok(zeroize::Zeroizing::new(decrypt(&w.card, PIN, bytes).unwrap()))
@@ -302,12 +302,12 @@ fn open_with_card(
 
 /// Re-encrypts the held-back changes as the app's key task does, opening
 /// each with the card.
-fn reencrypt(w: &World, opened: &std::cell::RefCell<Vec<String>>) -> Result<queue::ReencryptReport, sync::SyncError> {
-    queue::reencrypt_each(&w.repo(), w.state.path(), &mut open_with_card(w, opened), &mut |_, _| {})
+fn reencrypt(w: &World, opened: &std::cell::RefCell<Vec<String>>) -> Result<held_back::ReencryptReport, sync::SyncError> {
+    held_back::reencrypt_each(&w.repo(), w.state.path(), &mut open_with_card(w, opened), &mut |_, _| {})
 }
 
 /// Why each held-back change was left.
-fn left(report: &queue::ReencryptReport) -> Vec<queue::LeftReason> {
+fn left(report: &held_back::ReencryptReport) -> Vec<held_back::LeftReason> {
     report.left.iter().map(|l| l.reason.clone()).collect()
 }
 
@@ -325,14 +325,14 @@ fn held_back_changes_are_encrypted_again_once_the_new_recipients_are_accepted_an
     w.write().delete("Work/Jira").unwrap();
     let (_, other_fpr) = add_a_recipient(&w);
     let before = queued(&w);
-    assert_eq!(queue::held_back(&w.repo(), w.state.path()).unwrap().len(), 2);
+    assert_eq!(held_back::held_back(&w.repo(), w.state.path()).unwrap().len(), 2);
     let opened = std::cell::RefCell::new(Vec::new());
 
     // Not accepted yet: nothing is opened and nothing changes.
     let tip = head(&w.repo());
     let report = reencrypt(&w, &opened).unwrap();
     assert_eq!(report.reencrypted, 0);
-    assert_eq!(left(&report), [queue::LeftReason::NotAccepted, queue::LeftReason::NotAccepted]);
+    assert_eq!(left(&report), [held_back::LeftReason::NotAccepted, held_back::LeftReason::NotAccepted]);
     assert!(opened.borrow().is_empty());
     assert_eq!(head(&w.repo()), tip);
 
@@ -342,7 +342,7 @@ fn held_back_changes_are_encrypted_again_once_the_new_recipients_are_accepted_an
     assert_eq!((report.reencrypted, left(&report)), (2, vec![]));
     assert_eq!(*opened.borrow(), ["Work/new", "Work/new"]);
     assert_eq!(queued(&w), before, "the same changes, in the same order");
-    assert!(queue::held_back(&w.repo(), w.state.path()).unwrap().is_empty());
+    assert!(held_back::held_back(&w.repo(), w.state.path()).unwrap().is_empty());
     let bytes = std::fs::read(w.repo().join("Work/new.gpg")).unwrap();
     let found = paw_core::recipients::entry_recipients(&bytes).unwrap();
     assert_eq!(found.keys.len(), 2, "{found:?}");
@@ -376,12 +376,12 @@ fn a_held_back_change_that_cannot_be_opened_is_left_as_it_was() {
     let tip = head(&w.repo());
 
     let mut open =
-        |_: &queue::HeldBack, _: &[u8]| Err(queue::OpenFailure::Stop(sync::SyncError::Failed { message: "no touch".into() }));
-    let error = queue::reencrypt_each(&w.repo(), w.state.path(), &mut open, &mut |_, _| {}).unwrap_err();
+        |_: &held_back::HeldBack, _: &[u8]| Err(held_back::OpenFailure::Stop(sync::SyncError::Failed { message: "no touch".into() }));
+    let error = held_back::reencrypt_each(&w.repo(), w.state.path(), &mut open, &mut |_, _| {}).unwrap_err();
 
     assert!(error.to_string().contains("no touch"), "{error}");
     assert_eq!(head(&w.repo()), tip);
-    assert_eq!(queue::held_back(&w.repo(), w.state.path()).unwrap().len(), 1);
+    assert_eq!(held_back::held_back(&w.repo(), w.state.path()).unwrap().len(), 1);
 }
 
 /// How many keys each version of `path` in the queue is encrypted for,
@@ -417,7 +417,7 @@ fn personal_gets_two_keys_then_reencrypt(w: &World, expected: u32) {
     let report = reencrypt(w, &opened).unwrap();
     assert_eq!((report.reencrypted, left(&report)), (expected, vec![]));
     assert_eq!(queued(w), before, "the same changes, in the same order");
-    let held = queue::held_back(&w.repo(), w.state.path()).unwrap();
+    let held = held_back::held_back(&w.repo(), w.state.path()).unwrap();
     assert!(held.is_empty(), "{held:?}");
 
     let tip = head(&w.repo());
@@ -468,7 +468,7 @@ fn a_rename_chain_through_another_scope_is_re_encrypted_only_there() {
     assert_eq!(key_counts(&w, "Work/a.gpg"), [1]);
     assert_eq!(key_counts(&w, "Personal/b.gpg"), [2]);
     assert_eq!(key_counts(&w, "Work/c.gpg"), [1]);
-    assert!(queue::held_back(&w.repo(), w.state.path()).unwrap().is_empty());
+    assert!(held_back::held_back(&w.repo(), w.state.path()).unwrap().is_empty());
     let report = steps::sync(&w.server.remote(), &signer(&w.card), &w.repo(), w.state.path(), true).unwrap();
     assert_eq!(report.state, SyncState::UpToDate);
     assert_eq!(report.pushed, 3);

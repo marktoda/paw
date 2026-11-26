@@ -15,6 +15,7 @@
 
 pub mod cert;
 pub mod draft;
+pub mod held_back;
 pub mod keyring;
 pub mod ops;
 pub mod scopes;

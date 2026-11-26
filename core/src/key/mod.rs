@@ -55,7 +55,7 @@ use crate::entry::opened::OpenedEntry;
 use crate::setup::SetupError;
 use crate::sync::SyncError;
 use crate::sync::operation::SyncReport;
-use crate::sync::queue::ReencryptReport;
+use crate::write::held_back::ReencryptReport;
 
 /// Milliseconds since boot, counting sleep; never goes backwards within one
 /// boot. What the PIN's time in the background is measured with.
