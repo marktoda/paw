@@ -301,6 +301,21 @@ fn a_local_rename_is_replayed() {
 }
 
 #[test]
+fn a_local_rename_of_an_entry_edited_on_the_remote_keeps_the_edit() {
+    let w = world();
+    phone_rename(&w, "web/other", "web/renamed");
+    desktop_write(&w, "web/other.gpg", "edited on the desktop");
+
+    let report = integrated(&w);
+
+    assert_eq!(report.dropped_deletes, ["web/other"]);
+    assert_eq!(read(&w, "web/other.gpg"), "edited on the desktop");
+    assert_eq!(read(&w, "web/renamed.gpg"), "other");
+    assert_eq!(report.replayed, 1);
+    clean(&w);
+}
+
+#[test]
 fn an_entry_edited_on_both_sides_is_kept_twice() {
     let w = world();
     let mine = phone_write(&w, "web/example.com.gpg", "v2 from the phone");

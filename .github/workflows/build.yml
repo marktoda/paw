@@ -19,7 +19,8 @@ jobs:
   # run against an in-process SSH server and the runner's own git. The same
   # job tests the core as devices get it, without the `sim` feature, and
   # checks that both sets of Swift bindings still generate (which also
-  # scans the host build without `sim`: scripts/check-no-sim.sh).
+  # scans the host build without `sim`: scripts/check-no-sim.sh) and that
+  # the licence notices list every crate linked in.
   core:
     runs-on: ubuntu-latest
     steps:
@@ -37,6 +38,10 @@ jobs:
         run: cargo test --manifest-path core/Cargo.toml --no-default-features --target-dir core/target/no-sim
       - name: Generate the Swift bindings
         run: scripts/build-core.sh --bindings-only
+      - name: Check the licence notices are up to date
+        run: |
+          cargo fetch --manifest-path core/Cargo.toml
+          python3 scripts/licences.py --check
 
   # The core contains C (libgit2 and ring), which needs the Apple SDK to
   # compile for iOS, so the iOS libraries are built on a Mac.

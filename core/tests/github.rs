@@ -569,6 +569,78 @@ fn signing_out_forgets_the_tokens_and_revokes_them_when_asked() {
     assert!(w.vault.is_empty());
 }
 
+/// `vault`, but a `store` waits while the gate is shut: a refresh stalled
+/// after GitHub rotated the pair, before the keychain kept it.
+struct GatedVault {
+    vault: Arc<SimTokenVault>,
+    gate: std::sync::Mutex<(bool, u32)>,
+    changed: std::sync::Condvar,
+}
+
+impl GatedVault {
+    fn shut(vault: &Arc<SimTokenVault>) -> Arc<Self> {
+        Arc::new(Self { vault: vault.clone(), gate: std::sync::Mutex::new((true, 0)), changed: std::sync::Condvar::new() })
+    }
+
+    fn wait_for_a_store(&self) {
+        let gate = self.gate.lock().unwrap();
+        let (gate, timeout) = self.changed.wait_timeout_while(gate, Duration::from_secs(10), |(_, waiting)| *waiting == 0).unwrap();
+        assert!(!timeout.timed_out(), "no store came");
+        drop(gate);
+    }
+
+    fn open(&self) {
+        self.gate.lock().unwrap().0 = false;
+        self.changed.notify_all();
+    }
+}
+
+impl paw_core::github::TokenVault for GatedVault {
+    fn store(&self, name: String, secret: Vec<u8>) -> Result<(), paw_core::github::VaultError> {
+        let mut gate = self.gate.lock().unwrap();
+        gate.1 += 1;
+        self.changed.notify_all();
+        let _gate = self.changed.wait_while(gate, |(shut, _)| *shut).unwrap();
+        self.vault.store(name, secret)
+    }
+
+    fn load(&self, name: String) -> Result<Option<Vec<u8>>, paw_core::github::VaultError> {
+        self.vault.load(name)
+    }
+
+    fn remove(&self, name: String) -> Result<(), paw_core::github::VaultError> {
+        self.vault.remove(name)
+    }
+}
+
+#[test]
+fn signing_out_while_a_refresh_is_stalled_leaves_no_sign_in() {
+    let w = world();
+    w.set_up();
+    w.wall.fetch_add(9 * 3600, Ordering::SeqCst);
+    let gated = GatedVault::shut(&w.vault);
+    let wall = w.wall.clone();
+    let refreshing = Arc::new(GitHubAccount::with(
+        w.github.endpoints(),
+        w.state_dir(),
+        gated.clone(),
+        w.clock.clone(),
+        Arc::new(move || wall.load(Ordering::SeqCst)),
+    ));
+    let refresh = std::thread::spawn(move || refreshing.refresh_store().map(drop));
+    gated.wait_for_a_store();
+
+    let account = w.account.clone();
+    let sign_out = std::thread::spawn(move || account.sign_out(false));
+    std::thread::sleep(Duration::from_millis(200));
+    gated.open();
+    sign_out.join().unwrap().unwrap();
+    let _ = refresh.join().unwrap();
+
+    assert!(w.vault.is_empty(), "the refreshed pair came back after the sign-out");
+    assert!(!w.account.is_signed_in().unwrap());
+}
+
 // --- the same checks as SSH ------------------------------------------------------------
 
 #[test]

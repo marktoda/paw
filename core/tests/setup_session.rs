@@ -491,6 +491,52 @@ fn a_pin_kdf_paw_does_not_support_stops_setup_at_your_key_before_any_pin() {
     }
 }
 
+/// The simulated key, answering as if some of its slots had no key
+/// generated: the card reports an all-zero fingerprint for each of `blank`
+/// (0 signing, 1 decryption, 2 authentication).
+struct BlankSlots {
+    sim: Arc<SimulatedKey>,
+    blank: Vec<usize>,
+}
+
+impl paw_core::key::CardConnection for BlankSlots {
+    fn transmit(&self, apdu: Vec<u8>) -> Result<Vec<u8>, paw_core::key::ConnectionError> {
+        let mut response = self.sim.transmit(apdu.clone())?;
+        let fingerprints = match apdu.get(1..4) {
+            // GET DATA of the fingerprints alone.
+            Some([0xCA, 0x00, 0xC5]) => Some(0),
+            // Within the application related data, as tag C5, 60 bytes.
+            Some([0xCA, 0x00, 0x6E]) => response.windows(2).position(|w| w == [0xC5, 0x3C]).map(|at| at + 2),
+            _ => None,
+        };
+        if let Some(start) = fingerprints {
+            for slot in &self.blank {
+                response[start + slot * 20..start + (slot + 1) * 20].fill(0);
+            }
+        }
+        Ok(response)
+    }
+}
+
+#[test]
+fn a_key_with_no_keys_generated_is_refused_before_any_pin() {
+    for (blank, reason) in
+        [(vec![1, 2], UnusableKeyReason::NoDecryptionKey), (vec![1], UnusableKeyReason::NoDecryptionKey), (vec![2], UnusableKeyReason::NoAuthenticationKey)]
+    {
+        let sim = cached_login_key();
+        let port = KeyPort::new(SimClock::new(1_790_000_000_000));
+        let session = port.plugged_in(Arc::new(BlankSlots { sim: sim.clone(), blank: blank.clone() })).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::open(dir.path().to_string_lossy().into_owned()).unwrap();
+
+        let read = setup.read_key_from_session(session);
+
+        assert!(matches!(&read, Err(SetupError::UnusableKey { reason: found }) if *found == reason), "{blank:?}: {read:?}");
+        assert_eq!(setup.state(), SetupState::ReadKey);
+        assert_eq!(sim.verify_attempts() + sim.pin_queries(), 0);
+    }
+}
+
 #[test]
 fn a_download_reports_objects_and_bytes_received() {
     let w = world();
