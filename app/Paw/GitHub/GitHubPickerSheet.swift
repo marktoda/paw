@@ -192,9 +192,8 @@ private struct GitHubCodeView: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                 #if DEBUG && targetEnvironment(simulator)
-                SimulatorActionButton(action: SimulatorAction(title: "authorise the code", identifier: "sim-github-authorise") {
-                    SimGitHubLaunch.shared.authorise()
-                })
+                SimulatorActionButton(action: SimulatorAction(
+                    title: "authorise the code", identifier: "sim-github-authorise") { SimGitHubLaunch.shared.authorise() })
                 #endif
             }
             .frame(maxWidth: PawMetrics.readableWidth)
@@ -387,9 +386,8 @@ private struct GitHubNotInstalledView: View {
                         .accessibilityIdentifier("github-check-again")
                 }
                 #if DEBUG && targetEnvironment(simulator)
-                SimulatorActionButton(action: SimulatorAction(title: "choose the store on GitHub", identifier: "sim-github-install") {
-                    SimGitHubLaunch.shared.install()
-                })
+                SimulatorActionButton(action: SimulatorAction(
+                    title: "choose the store on GitHub", identifier: "sim-github-install") { SimGitHubLaunch.shared.install() })
                 #endif
             }
             .frame(maxWidth: PawMetrics.sheetTextWidth)

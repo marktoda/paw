@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 /// The one key sheet, following `model.keyRequest`.
 struct KeySheetHost: View {
