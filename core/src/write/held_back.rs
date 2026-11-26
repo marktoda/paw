@@ -12,6 +12,15 @@ use crate::sync::history::{ensure_clean, index_entry, move_branch};
 use crate::sync::queue::{Waiting, waiting};
 use crate::sync::{SyncError, check_not_being_sent, git_err, guard};
 
+impl From<WriteError> for SyncError {
+    fn from(error: WriteError) -> Self {
+        match error {
+            WriteError::StoreBusy => Self::StoreBusy,
+            other => Self::Failed { message: other.to_string() },
+        }
+    }
+}
+
 /// A waiting change whose ciphertext is not encrypted for exactly the
 /// recipients its entry has now: its `.gpg-id` changed after it was saved
 /// (a pull brought a new one, or it was moved), or the new recipients are

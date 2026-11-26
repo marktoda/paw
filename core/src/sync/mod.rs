@@ -100,15 +100,6 @@ impl From<PawError> for SyncError {
     }
 }
 
-impl From<crate::write::WriteError> for SyncError {
-    fn from(error: crate::write::WriteError) -> Self {
-        match error {
-            crate::write::WriteError::StoreBusy => Self::StoreBusy,
-            other => Self::Failed { message: other.to_string() },
-        }
-    }
-}
-
 /// How far a clone or fetch has got, for a progress bar. Return `false`
 /// to stop.
 pub type TransferCallback<'a> = &'a mut dyn FnMut(TransferProgress) -> bool;
