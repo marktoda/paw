@@ -3,8 +3,8 @@ import XCTest
 
 /// The key-task driver every key sheet uses, on its own: the core's states
 /// as sheet stages, the PIN field, each task's end heard exactly once, and
-/// a task's end after Cancel, and what each task holds until it ends. Real
-/// tasks on the fixture's simulated key, through the session's reader.
+/// a task's end after Cancel, what each task holds until it ends, and a
+/// key that drops out mid-task. Real tasks on the fixture's simulated key.
 @MainActor
 final class KeyTaskDriverTests: XCTestCase {
     /// Background time as a task holds it: how many times it was ended.
@@ -48,6 +48,42 @@ final class KeyTaskDriverTests: XCTestCase {
                 closed: { [unowned self] in
                     closedCount += 1
                 })
+        }
+    }
+
+    /// The next `count` card exchanges fail, as when the key drops off
+    /// the port for a moment.
+    private final class Dropouts: @unchecked Sendable {
+        private let lock = NSLock()
+        private var left = 0
+
+        func failNext(_ count: Int) {
+            lock.withLock { left = count }
+        }
+
+        func take() -> Bool {
+            lock.withLock {
+                guard left > 0 else { return false }
+                left -= 1
+                return true
+            }
+        }
+    }
+
+    private final class DroppingConnection: CardConnection, @unchecked Sendable {
+        let key: CardConnection
+        let dropouts: Dropouts
+
+        init(key: CardConnection, dropouts: Dropouts) {
+            self.key = key
+            self.dropouts = dropouts
+        }
+
+        func transmit(apdu: Data) throws -> Data {
+            if dropouts.take() {
+                throw ConnectionError.Failed(message: "The key went away.")
+            }
+            return try key.transmit(apdu: apdu)
         }
     }
 
@@ -251,5 +287,37 @@ final class KeyTaskDriverTests: XCTestCase {
         XCTAssertEqual(owner.lateEnds.count, 1, "The key's late answer changes nothing")
         XCTAssertEqual(owner.ends.count, 0)
         XCTAssertNil(driver.lastEnd, "Not the sheet's end")
+    }
+
+    func testAKeyThatDropsOutMidTaskIsReadAgainSoTryAgainCarriesOn() async throws {
+        let fixture = try Fixture()
+        let owner = Recorder()
+        let key = fixture.key
+        let dropouts = Dropouts()
+        let port = KeyPort(clock: fixture.clock.asClock())
+        let reader = KeyReader(port: port, source: SimulatedKeySource(connect: {
+            DroppingConnection(key: key.asConnection(), dropouts: dropouts)
+        }))
+        reader.watch()
+        let driver = KeyTaskDriver(reader: reader)
+        driver.start(owner.job { listener in port.checkTouchTimeout(listener: listener) })
+        await waitForStage(driver, .pin(triesLeft: 3, forgotten: false))
+
+        dropouts.failNext(1)
+        driver.pin = Fixture.pin
+        driver.continueWithPin()
+        await waitFor("the task to end with the key gone, it ended \(owner.ends)") {
+            if case .failed(.KeyRemoved)? = owner.ends.last { return true }
+            return false
+        }
+        // Still in, as far as the system knows: read again, with no replug.
+        await waitFor("the key to be read again") { port.session() != nil }
+
+        driver.retry()
+        await waitForStage(driver, .pin(triesLeft: 3, forgotten: false))
+        driver.pin = Fixture.pin
+        driver.continueWithPin()
+        await waitForStage(driver, .done)
+        XCTAssertEqual(owner.ends.count, 2)
     }
 }

@@ -1,6 +1,16 @@
 import UIKit
 import UniformTypeIdentifiers
 
+/// What `Clipboard` uses of a pasteboard: the system's, or a test's.
+@MainActor
+protocol Pasteboard: AnyObject {
+    var changeCount: Int { get }
+    var items: [[String: Any]] { get set }
+    func setItems(_ items: [[String: Any]], options: [UIPasteboard.OptionsKey: Any])
+}
+
+extension UIPasteboard: Pasteboard {}
+
 /// Puts secrets on the pasteboard for this device only, with a system
 /// expiry, and remembers whether what is there is still paw's. One per
 /// open store, on its clock.
@@ -14,9 +24,11 @@ final class Clipboard {
     /// The copies' clock, so the simulated clock can end a copy in tests.
     /// The system's own expiry always runs on real time.
     private let clock: Clock
+    private let pasteboard: Pasteboard
 
-    init(clock: Clock) {
+    init(clock: Clock, pasteboard: Pasteboard = UIPasteboard.general) {
         self.clock = clock
+        self.pasteboard = pasteboard
     }
 
     /// The system's own expiry, on real time. In the simulator the UI tests
@@ -34,17 +46,17 @@ final class Clipboard {
 
     func copy(_ value: String) {
         let expiry = Date().addingTimeInterval(Self.systemLifetime)
-        UIPasteboard.general.setItems(
+        pasteboard.setItems(
             [[UTType.utf8PlainText.identifier: value]],
             options: [.localOnly: true, .expirationDate: expiry])
-        ownChangeCount = UIPasteboard.general.changeCount
+        ownChangeCount = pasteboard.changeCount
         expiresAtMs = clock.wallMs() + Int64(Self.lifetime * 1000)
     }
 
     /// Lock now: clears the pasteboard if paw filled it last.
     func clearIfOurs() {
-        guard let ownChangeCount, UIPasteboard.general.changeCount == ownChangeCount else { return }
-        UIPasteboard.general.items = []
+        guard let ownChangeCount, pasteboard.changeCount == ownChangeCount else { return }
+        pasteboard.items = []
         self.ownChangeCount = nil
         expiresAtMs = nil
     }
