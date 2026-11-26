@@ -20,10 +20,10 @@ struct SimulatorSettingsSection: View {
     }
 
     @ViewBuilder private var controlRows: some View {
-            Button("Move the clock 1 hour on") { model.advanceSimulatedClock(hours: 1) }
+            Button("Move the clock 1 hour on") { advanceClock(hours: 1) }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-advance-1h")
-            Button("Move the clock 9 hours on") { model.advanceSimulatedClock(hours: 9) }
+            Button("Move the clock 9 hours on") { advanceClock(hours: 9) }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-advance-9h")
             // A touch that comes after the sheet was closed.
@@ -33,7 +33,7 @@ struct SimulatorSettingsSection: View {
             Button("Let the key answer when read") { SimulatedKeyHolder.shared.stopAttachFailures() }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-key-answers")
-            Button("Let the next open finish after Cancel") { model.keyTask.simulatesLateCancelNext = true }
+            Button("Let the next open finish after Cancel") { SimulatedLateCancel.armed = true }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-late-cancel-next")
             // Ends a touch wait the sheet let go of, as the key's timeout would.
@@ -65,6 +65,11 @@ struct SimulatorSettingsSection: View {
                     .accessibilityValue(protection)
                     .accessibilityIdentifier("sim-file-protection")
             }
+    }
+
+    private func advanceClock(hours: Int64) {
+        SimulatedClockHolder.shared.advance(hours: hours)
+        model.timePassed()
     }
 }
 

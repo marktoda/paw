@@ -24,8 +24,8 @@ struct SyncSheet: Identifiable {
         case key(kind: SyncKind)
     }
 
-    let id = UUID()
-    var mode: Mode
+    let id: UUID
+    let mode: Mode
 }
 
 /// What the pill on Home says. Worked out from what the core reports:
@@ -183,7 +183,6 @@ final class SyncModel {
     let sync: StoreSync
     let address: String
 
-    var sheet: SyncSheet?
     /// The key sheet's task: a send, a check or a re-encrypt.
     let keyTask: KeyTaskDriver
     private(set) var running: SyncKind?
@@ -224,9 +223,11 @@ final class SyncModel {
     @ObservationIgnored private var pendingSettings = false
     /// What the last re-encrypt left, and why (only what it found trying).
     @ObservationIgnored private var lastLeft: [LeftHeldBack] = []
-    /// What came back needs looking at: after Done, the sheet turns into
-    /// the status page instead of closing.
-    @ObservationIgnored private var doneNeedsLook = false
+    /// The status page is up, or comes up when the key sheet closes.
+    private var statusUp = false
+    /// What the key sheet's task is.
+    private var keyKind: SyncKind = .refresh
+    @ObservationIgnored private let sheetId = UUID()
     private let workQueue = DispatchQueue(label: "paw-sync", qos: .userInitiated)
 
     init(sync: StoreSync, queue: StoreEdits, live: LiveStore, requests: Signal<ScreenRequest>, reader: KeyReader,
@@ -241,12 +242,8 @@ final class SyncModel {
         keyTask = KeyTaskDriver(reader: reader)
         address = sync.address()
         lastChecked = LastChecked.read(repoDir: live.repoDir)
-        #if DEBUG && targetEnvironment(simulator)
-        SimRemotePanel.shared.storeReady(repoDir: live.repoDir)
-        #endif
         recomputeLocal()
         backgroundRun = BackgroundRefresh.lastRun()
-        keyTask.owner = self
         live.changed.subscribe(self) { model, changed in
             model.storeChanged(changed)
         }
@@ -258,6 +255,15 @@ final class SyncModel {
 
     private var unpushed: Int {
         queue.unpushed.count
+    }
+
+    /// The sync sheet while it is up: the key sheet while the key's task
+    /// has it, else the status page.
+    var sheet: SyncSheet? {
+        if keyTask.isShown {
+            return SyncSheet(id: sheetId, mode: .key(kind: keyKind))
+        }
+        return statusUp ? SyncSheet(id: sheetId, mode: .status) : nil
     }
 
     // MARK: What the pill says
@@ -304,7 +310,7 @@ final class SyncModel {
     func showStatus() {
         guard sheet == nil else { return }
         recomputeLocal()
-        sheet = SyncSheet(mode: .status)
+        statusUp = true
     }
 
     /// Whether "Send" is offered: never for a change that is held back, and
@@ -361,23 +367,10 @@ final class SyncModel {
     /// core's sign-in task.
     func start(_ kind: SyncKind) {
         guard running == nil, !accepting else { return }
-        let mode = SyncSheet.Mode.key(kind: kind)
-        if sheet == nil {
-            sheet = SyncSheet(mode: mode)
-        } else {
-            sheet?.mode = mode
-        }
-        let sync = sync
-        let port = reader.port
-        keyTask.start { (listener: KeyTaskListener) -> KeyTask in
-            let task: KeyTask = switch kind {
-            case .send: sync.sendWithKey(port: port, listener: listener)
-            case .refresh: sync.refreshWithKey(port: port, listener: listener)
-            case .reencrypt: sync.reencryptWithKey(port: port, listener: listener)
-            }
-            BackgroundTime.hold("Sync", while: task)
-            return task
-        }
+        keyKind = kind
+        // The status page, if up, turns into the key sheet.
+        statusUp = false
+        keyTask.start(job(kind))
     }
 
     /// "Try again" on the status page, after a failure.
@@ -396,14 +389,14 @@ final class SyncModel {
     /// cannot be stopped; the core throws its answer away. The queue is
     /// left as it was.
     func cancelSheet() {
-        if case .key(let kind)? = sheet?.mode {
+        if keyTask.isShown {
             keyTask.cancel()
             if running != nil {
-                failure = SyncFailure.cancelled(during: kind, unpushed: unpushed)
+                failure = SyncFailure.cancelled(during: keyKind, unpushed: unpushed)
             }
             running = nil
         }
-        sheet = nil
+        statusUp = false
         keyPathNote = nil
     }
 
@@ -438,20 +431,13 @@ final class SyncModel {
         return kind.working(unpushed: unpushed)
     }
 
-    private static func progressLine(_ progress: TaskProgress) -> String {
-        "\(Int(progress.done).formatted()) of \(Int(progress.total).formatted())"
-    }
-
     /// The task failed for a reason that is not the key's: the sheet turns
     /// into the status page, with the failure said inline.
     private func syncFailed(_ error: SyncError, kind: SyncKind, unpushed: Int) {
         running = nil
-        #if DEBUG && targetEnvironment(simulator)
-        SimRemotePanel.shared.syncFailed()
-        #endif
         failure = SyncFailure(error, during: kind, unpushed: unpushed, host: host)
         recomputeLocal()
-        sheet?.mode = .status
+        statusUp = true
     }
 
     /// The core's sync went through. The sheet shows Done for a second and
@@ -459,13 +445,13 @@ final class SyncModel {
     /// held-back changes): then it turns into the status page that says so.
     private func finished(_ kind: SyncKind, outcome: KeyOutcome) {
         running = nil
-        switch outcome {
-        case .reencrypted(let report):
-            doneNeedsLook = reencrypted(report)
-        case .synced(let report):
-            doneNeedsLook = absorb(report, kind: kind)
-        default:
-            doneNeedsLook = kind == .reencrypt ? reencrypted(nil) : absorb(nil, kind: kind)
+        let needsLook = switch outcome {
+        case .reencrypted(let report): reencrypted(report)
+        case .synced(let report): absorb(report, kind: kind)
+        default: kind == .reencrypt ? reencrypted(nil) : absorb(nil, kind: kind)
+        }
+        if needsLook {
+            statusUp = true
         }
     }
 
@@ -494,9 +480,6 @@ final class SyncModel {
         }
         live.announce(.synced(report?.integration, replaced: false))
         refused = (try? sync.refusedRemote()) ?? []
-        #if DEBUG && targetEnvironment(simulator)
-        SimRemotePanel.shared.refresh()
-        #endif
         return needsLook
     }
 
@@ -593,11 +576,8 @@ final class SyncModel {
         case .success(let report):
             if absorb(report, kind: .refresh) {
                 recomputeLocal()
-                if sheet == nil {
-                    sheet = SyncSheet(mode: .status)
-                } else {
-                    sheet?.mode = .status
-                }
+                // Over the key sheet if one is up, and staying once it closes.
+                statusUp = true
             }
         case .failure(let error):
             if case .Remote(let failure)? = error as? SyncError, signInEnded(failure) {
@@ -682,30 +662,60 @@ final class SyncModel {
     }
 }
 
-extension SyncModel: KeyTaskOwner {
-    private var keyKind: SyncKind {
-        if case .key(let kind)? = sheet?.mode { return kind }
-        return .refresh
+extension SyncModel {
+    /// A send, a check or a re-encrypt with the key.
+    private func job(_ kind: SyncKind) -> KeyJob<SyncError> {
+        let sync = sync
+        let port = reader.port
+        return KeyJob(
+            begin: { listener in
+                let task: KeyTask = switch kind {
+                case .send: sync.sendWithKey(port: port, listener: listener)
+                case .refresh: sync.refreshWithKey(port: port, listener: listener)
+                case .reencrypt: sync.reencryptWithKey(port: port, listener: listener)
+                }
+                BackgroundTime.hold("Sync", while: task)
+                return task
+            },
+            words: { [weak self] in
+                syncKeyWords(during: kind, unpushed: self?.unpushed ?? 0)
+            },
+            working: { [weak self] progress in
+                self?.working(kind, progress) ?? ("", nil)
+            },
+            ended: { [weak self] end in
+                self?.ended(end, kind: kind)
+            },
+            letGo: { [weak self] _, _ in
+                // A re-encrypt may have rewritten some changes, the last of
+                // them after its Cancel.
+                if kind == .reencrypt {
+                    self?.live.announce(.reencrypted)
+                }
+            },
+            starting: { [weak self] in
+                self?.taskStarting(kind)
+            },
+            stageShown: { [weak self] stage in
+                if stage == .touch {
+                    self?.signedIn = true
+                }
+            })
     }
 
-    var keyWords: KeyErrorWords.Context {
-        syncKeyWords(during: keyKind, unpushed: unpushed)
-    }
-
-    func workingStage(_ progress: TaskProgress?) -> KeySheetStage {
-        let kind = keyKind
+    /// The Working stage, and the pill's count while the task runs.
+    private func working(_ kind: SyncKind, _ progress: TaskProgress?) -> (message: String, progress: String?) {
         if kind == .reencrypt {
             // The key's answer clears it; the count goes on.
             if let progress { self.progress = progress }
-            return .working(message: workingMessage(kind, unpushed: unpushed), progress: nil)
+            return (workingMessage(kind, unpushed: unpushed), nil)
         }
         self.progress = progress
-        return .working(message: workingMessage(kind, unpushed: unpushed), progress: progress.map(Self.progressLine))
+        return (workingMessage(kind, unpushed: unpushed), progress.map(\.counted))
     }
 
     /// A send, check or re-encrypt starts, or starts again on Try again.
-    func keyTaskStarting() {
-        let kind = keyKind
+    private func taskStarting(_ kind: SyncKind) {
         failure = nil
         running = kind
         progress = nil
@@ -715,58 +725,26 @@ extension SyncModel: KeyTaskOwner {
         }
     }
 
-    func keyStageShown(_ stage: KeySheetStage) {
-        if stage == .touch {
-            signedIn = true
-        }
-    }
-
-    func keyTaskEnded(_ end: KeyTaskEnd) -> KeySheetStage? {
+    private func ended(_ end: KeyTaskEnd<SyncError>, kind: SyncKind) -> KeySheetStage? {
         // A re-encrypt may have rewritten some changes, however it ended.
         defer {
-            if case .reencrypt = end.purpose {
+            if kind == .reencrypt {
                 live.announce(.reencrypted)
             }
         }
-        guard case .key(let kind)? = sheet?.mode else { return nil }
-        switch end.result {
+        switch end {
         case .done(let outcome):
             finished(kind, outcome: outcome)
             return .done
-        case .syncFailed(let error):
+        case .stepFailed(let error):
             syncFailed(error, kind: kind, unpushed: unpushed)
             return nil
-        case .setupFailed, .cancelled:
+        case .cancelled:
             cancelSheet()
             return nil
-        case .failed(let error):
+        case .failed:
             running = nil
-            #if DEBUG && targetEnvironment(simulator)
-            if error != .PinBlocked {
-                SimRemoteHandle.shared.syncFailed()
-            }
-            #endif
-            return standardStage(end.result)
-        }
-    }
-
-    /// A task the sheet let go of has ended: a re-encrypt may have
-    /// rewritten some changes, the last of them after its Cancel.
-    func letGoTaskEnded(_ end: KeyTaskEnd) {
-        if case .reencrypt = end.purpose {
-            live.announce(.reencrypted)
-        }
-    }
-
-    /// Done has shown for a second: close, unless what came back needs
-    /// looking at (replaced history, held-back changes); then the sheet
-    /// turns into the status page that says so.
-    func doneShown() {
-        guard case .key? = sheet?.mode else { return }
-        if doneNeedsLook {
-            sheet?.mode = .status
-        } else {
-            sheet = nil
+            return end.standardStage(syncKeyWords(during: kind, unpushed: unpushed))
         }
     }
 }

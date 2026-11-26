@@ -30,22 +30,18 @@ final class KeyReader {
     private(set) var failure: Error?
     /// The system has no smart card support: this device can't use USB keys.
     private(set) var unsupported = false
-    /// After each read that worked, with the session it found or opened.
-    @ObservationIgnored var onRead: ((KeySession) -> Void)?
-    /// Called instead of reading when a key comes in, by a screen whose
-    /// own step reads it (setup's Plug in).
-    @ObservationIgnored var onPresent: (() -> Void)?
-    #if DEBUG && targetEnvironment(simulator)
-    /// Puts the simulated key in, for the debug control on Plug in.
-    @ObservationIgnored var plugsInSimulatedKey: () -> Void = { SimulatedKeyHolder.shared.key.plugIn() }
-    #endif
+    /// After each read, with the session it found or opened, or why it
+    /// failed.
+    @ObservationIgnored var onRead: ((Result<KeySession, Error>) -> Void)?
 
     @ObservationIgnored private var attempt = 0
     @ObservationIgnored private var watching = false
     /// `stopWatching` ran: nothing queued before it reads the key or
     /// follows a reader again.
     @ObservationIgnored private var stopped = false
-    #if !(DEBUG && targetEnvironment(simulator))
+    #if DEBUG && targetEnvironment(simulator)
+    @ObservationIgnored private var plugWatch: NSObjectProtocol?
+    #else
     @ObservationIgnored private var slotWatch: NSKeyValueObservation?
     @ObservationIgnored private var slotStateWatch: NSKeyValueObservation?
     #endif
@@ -61,14 +57,22 @@ final class KeyReader {
         return failure.map { .failed($0) }
     }
 
-    /// Starts following the readers, once. `startsUnplugged` is for the
-    /// simulator: the simulated key is out at launch. On a device the
-    /// system says, and a key already in is read.
-    func watch(startsUnplugged: Bool) {
+    /// Starts following the readers, once. A key already in is read
+    /// (in the simulator, the owner reads it when it needs to).
+    func watch() {
         guard !watching, !stopped else { return }
         watching = true
         #if DEBUG && targetEnvironment(simulator)
-        present = !startsUnplugged || port.session() != nil
+        present = SimulatedKeyHolder.shared.isPluggedIn || port.session() != nil
+        plugWatch = NotificationCenter.default.addObserver(
+            forName: SimulatedKeyHolder.pluggedInNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.stopped else { return }
+                self.present = true
+                self.readIfNeeded()
+            }
+        }
         #else
         // Minimal, and unverified on hardware: a reader appearing plugs in,
         // the list emptying unplugs. A key pulled out mid-command is also
@@ -92,7 +96,12 @@ final class KeyReader {
     /// Stops following the readers, for good: the screen is going away.
     func stopWatching() {
         stopped = true
-        #if !(DEBUG && targetEnvironment(simulator))
+        #if DEBUG && targetEnvironment(simulator)
+        if let plugWatch {
+            NotificationCenter.default.removeObserver(plugWatch)
+        }
+        plugWatch = nil
+        #else
         slotWatch = nil
         slotStateWatch = nil
         #endif
@@ -135,40 +144,16 @@ final class KeyReader {
         read()
     }
 
-    /// The session for a step that reads the key itself, opened if there is
-    /// none. Blocks: call it off the main thread, and hand a failure to
-    /// `readFailed`.
-    nonisolated func openSession() throws -> KeySession {
-        try port.session() ?? port.pluggedIn(connection: connect())
-    }
-
-    /// A read made by `openSession` failed.
-    func readFailed(_ error: Error) {
-        failure = error
-    }
-
-    func clearFailure() {
-        failure = nil
-    }
-
     private func readFinished(_ result: Result<KeySession, Error>) {
         switch result {
-        case .success(let session):
+        case .success:
             failure = nil
-            onRead?(session)
         case .failure(let error):
             // A key that cannot be read leaves any task at Plug in, which
             // is still true: no key paw can use is plugged in.
             failure = error
         }
-    }
-
-    private func keyCameIn() {
-        if let onPresent {
-            onPresent()
-        } else {
-            readIfNeeded()
-        }
+        onRead?(result)
     }
 
     /// The key went away: its session ends and the core drops the PIN. A
@@ -179,22 +164,13 @@ final class KeyReader {
         port.unplugged()
     }
 
-    #if DEBUG && targetEnvironment(simulator)
-    /// The debug control on Plug in: as a reader appearing on a device does.
-    func simulatedPlugIn() {
-        plugsInSimulatedKey()
-        present = true
-        keyCameIn()
-    }
-    #endif
-
     #if !(DEBUG && targetEnvironment(simulator))
     private func readersChanged(present: Bool) {
         guard !stopped else { return }
         self.present = present
         if present {
             watchSlotState()
-            keyCameIn()
+            readIfNeeded()
         } else {
             slotStateWatch = nil
             wentAway()
@@ -212,8 +188,8 @@ final class KeyReader {
                 guard slot.state == .validCard else { return }
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
-                        guard let self, !self.stopped, self.port.session() == nil else { return }
-                        self.keyCameIn()
+                        guard let self, !self.stopped else { return }
+                        self.readIfNeeded()
                     }
                 }
             }

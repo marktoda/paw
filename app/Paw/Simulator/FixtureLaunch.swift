@@ -45,7 +45,7 @@ enum FixtureLaunch {
 
         let keystore = SimKeystore()
         keystore.setFaceId(answer: faceId)
-        let clock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000))
+        let clock = SimulatedClockHolder.shared.clock
         // One clock for the copies and the key port, so moving it on ends
         // copies and, in the background, the held PIN.
         let sharedClock = clock.asClock()
@@ -57,7 +57,6 @@ enum FixtureLaunch {
         let session = try StoreSession(StoreSession.Parts(
             repoDir: storePath, copies: copies, clock: sharedClock, keyPort: keyPort,
             connect: { try KeyConnection.open() },
-            simulator: .simulated(clock: clock, keyPort: keyPort),
             writing: try? writable.get().writing, gitHub: nil, setUp: nil))
         return AppModel(session: session, notice: WritableFixture.notice(writable))
     }

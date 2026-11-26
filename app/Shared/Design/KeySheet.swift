@@ -46,14 +46,14 @@ struct KeySheetContent: View {
     var onCancel: () -> Void = {}
     /// "Try again" on the failed stage.
     var onRetry: () -> Void = {}
-    /// Controls that stand in for the hardware in the simulator, drawn
-    /// below everything else and styled so they cannot pass for the app's own.
-    var simulatorActions: [SimulatorAction] = []
     /// A way on that is not built yet, shown on the failed stage as a
     /// dimmed row, e.g. "Replace key (coming)".
     var comingSoon: String? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    #if DEBUG && targetEnvironment(simulator)
+    @Environment(\.simulatorActions) private var simulatorActions
+    #endif
     @State private var showPin = false
     @State private var shake: CGFloat = 0
     @State private var showTouchHint = false
@@ -285,52 +285,15 @@ struct KeySheetContent: View {
     // MARK: Words
 
     private var headline: String {
-        switch stage {
-        case .plugIn: "Plug in your key"
-        case .pin: "Enter your key's PIN"
-        case .wrongPin: "Wrong PIN"
-        case .pinAgain(_, let problem, _): problem
-        case .busy: "One moment"
-        case .touch: "Touch your key"
-        case .working(let message, _): message
-        case .done: "Done"
-        case .locked: "Your key is locked"
-        case .failed(let problem, _): problem
-        }
+        stage.headline
     }
 
     private var explanation: String? {
-        switch stage {
-        case .plugIn:
-            return nil
-        case .pin(_, let forgotten):
-            return forgotten
-                ? "Asked again after 15 minutes away."
-                : "Not your iPhone passcode."
-        case .wrongPin(let triesLeft):
-            return triesLeft == 1 ? "Not sure? Stop and check your PIN first." : nil
-        case .pinAgain(_, _, let nextStep):
-            return nextStep
-        case .busy:
-            return "Your key is finishing something else."
-        case .touch:
-            return "The gold part, while it blinks."
-        case .working(_, let progress):
-            return progress
-        case .done:
-            return nil
-        case .locked:
-            return "Unlock it on a computer with its reset code or admin PIN. Passwords that open with Face ID still work."
-        case .failed(_, let nextStep):
-            return nextStep
-        }
+        stage.explanation
     }
 
     private var triesLeft: Int? {
-        switch stage {
-        case .pin(let triesLeft, _), .wrongPin(let triesLeft), .pinAgain(let triesLeft, _, _): return triesLeft
-        default: return nil
-        }
+        stage.triesLeft
     }
 
     private static func haptic(for stage: KeySheetStage) -> SensoryFeedback? {
@@ -342,13 +305,8 @@ struct KeySheetContent: View {
         }
     }
 
-    /// Shown before any input whenever fewer than 3 tries remain.
     private var triesLine: String? {
-        guard let triesLeft, triesLeft < 3 else { return nil }
-        if triesLeft == 1 {
-            return "1 try left before the key locks."
-        }
-        return isWrongPin ? "\(triesLeft) tries left before the key locks." : "\(triesLeft) tries left."
+        stage.triesLine
     }
 
     private var announcement: String {
@@ -366,10 +324,7 @@ struct KeySheetContent: View {
     }
 
     private var isWrongPin: Bool {
-        switch stage {
-        case .wrongPin, .pinAgain: return true
-        default: return false
-        }
+        stage.followsRefusedPin
     }
 
     private var canContinue: Bool {
@@ -399,13 +354,6 @@ struct KeySheetContent: View {
         }
         AccessibilityNotification.Announcement(announcement).post()
     }
-}
-
-/// A stand-in for the hardware, for the simulator's debug builds.
-struct SimulatorAction {
-    let title: String
-    let identifier: String
-    let perform: () -> Void
 }
 
 extension View {

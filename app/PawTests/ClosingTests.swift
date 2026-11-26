@@ -40,7 +40,8 @@ final class ClosingTests: XCTestCase {
         let id = try XCTUnwrap(opened)
         XCTAssertEqual(model.session(id)?.hadCopy, true)
 
-        model.advanceSimulatedClock(hours: 9)
+        fixture.clock.advanceMs(ms: 9 * 3_600_000)
+        model.timePassed()
         XCTAssertEqual(model.closedEntry(id)?.reason, .copyEnded)
         XCTAssertNil(model.session(id), "A closed entry keeps nothing of it")
         XCTAssertNil(model.liveCopy("web/github.com"))
@@ -126,7 +127,7 @@ final class ClosingTests: XCTestCase {
 
         // The next open finishes past the point where Cancel can stop it,
         // as if Cancel came just as the card answered.
-        model.keyTask.simulatesLateCancelNext = true
+        SimulatedLateCancel.armed = true
         model.open(EntryRef(path: "web/gitlab.com"))
         await waitFor("the open to end") { model.keyTask.pendingTasks == 0 }
         XCTAssertNil(model.keyRequest)

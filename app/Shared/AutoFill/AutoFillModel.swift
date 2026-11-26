@@ -74,7 +74,8 @@ final class AutoFillModel {
 
     let request: AutoFillRequest
     let kind: AutoFillKind
-    private(set) var screen: Screen = .loading
+    /// What shows under the key sheet, and once it has gone.
+    private var page: Screen = .loading
     /// The site the list is for, e.g. `github.com`. `nil` for an app iOS
     /// gives no site for.
     private(set) var site: String?
@@ -107,7 +108,8 @@ final class AutoFillModel {
     private(set) var notice: AutoFillNotice?
     private(set) var keyEntry: EntryRef?
     /// The key sheet's task: opening `keyEntry` with the key. Done fills at
-    /// once, with no pause: the request ends there.
+    /// once, with no pause: the request ends there. The PIN is forgotten
+    /// whenever the sheet closes.
     let keyTask: KeyTaskDriver
     let faceId: FaceIdOpener
     /// Face ID copies can be kept and are on in Settings: the key sheet
@@ -132,9 +134,12 @@ final class AutoFillModel {
         self.kind = kind
         self.completion = completion
         self.open = open
-        keyTask = KeyTaskDriver(pausesOnDone: false)
+        keyTask = KeyTaskDriver()
         faceId = FaceIdOpener()
-        keyTask.owner = self
+    }
+
+    var screen: Screen {
+        keyTask.isShown ? .key : page
     }
 
     /// Opens the store off the main thread, then shows the list (or, for
@@ -178,11 +183,12 @@ final class AutoFillModel {
     private func opened(_ opening: AutoFillOpening, live: [String], matches: [EntryRef]) {
         switch opening {
         case .noStore:
-            screen = .noStore
+            page = .noStore
         case .busy:
-            screen = .busy
+            page = .busy
         case .unreadable:
-            screen = .problem("paw couldn't read your store", "Open paw to fix it.", backToList: false)
+            let words = AutoFillWords.storeUnreadable
+            page = .problem(words.problem, words.nextStep, backToList: false)
         case .ready(let source):
             self.source = source
             let reader = KeyReader(port: source.keyPort, connect: source.connect)
@@ -194,13 +200,13 @@ final class AutoFillModel {
             switch request {
             case .list(let services):
                 site = services.lazy.compactMap { serviceHost(service: $0) }.first
-                screen = .list
+                page = .list
             case .entry:
                 guard let entry = matches.first else {
                     end(.credentialIdentityNotFound)
                     return
                 }
-                screen = .list
+                page = .list
                 pick(entry)
             }
         }
@@ -209,7 +215,7 @@ final class AutoFillModel {
     /// Try again after "The store is busy".
     func reopen() {
         guard screen == .busy else { return }
-        screen = .loading
+        page = .loading
         started = false
         start()
     }
@@ -276,16 +282,16 @@ final class AutoFillModel {
             return
         }
         guard let match = found[entry.path] else {
-            screen = .confirm(entry, .otherSite)
+            page = .confirm(entry, .otherSite)
             return
         }
         switch match.kind {
         case .exactHost, .sameDomain, .name(.paired):
             open(entry)
         case .name(.unpaired):
-            screen = .confirm(entry, .firstTime(site: displayHost(host: match.site)))
+            page = .confirm(entry, .firstTime(site: displayHost(host: match.site)))
         case .name(.pairedElsewhere(let known)):
-            screen = .confirm(entry, .lookalike(
+            page = .confirm(entry, .lookalike(
                 site: displayHost(host: match.site), known: known.map { displayHost(host: $0) }))
         }
     }
@@ -314,7 +320,7 @@ final class AutoFillModel {
             pairing = nil
             warned = entry.path
         }
-        screen = .list
+        page = .list
         open(entry)
     }
 
@@ -329,7 +335,7 @@ final class AutoFillModel {
             return
         }
         switch screen {
-        case .confirm, .problem(_, _, backToList: true): screen = .list
+        case .confirm, .problem(_, _, backToList: true): page = .list
         default: break
         }
     }
@@ -357,7 +363,7 @@ final class AutoFillModel {
 
     private func openWithFaceId(_ entry: EntryRef) {
         guard let source, let copies = source.copies else { return }
-        screen = .faceId(entry)
+        page = .faceId(entry)
         faceId.open(entry, store: source.store, copies: copies, reason: purpose(entry)) { [weak self] result in
             self?.faceIdFinished(entry, result)
         }
@@ -369,20 +375,20 @@ final class AutoFillModel {
             fill(opened, entry: entry)
         case .success(.needsKey):
             live.remove(entry.path)
-            screen = .list
+            page = .list
             openWithKey(entry)
         case .failure(let error):
             if case .FaceIdCancelled? = error as? PawError, isSuggestion {
                 end(.userCanceled)
                 return
             }
-            screen = .list
+            page = .list
             notice = Self.faceIdNotice(error, entry: entry)
         }
     }
 
     private static func faceIdNotice(_ error: Error, entry: EntryRef) -> AutoFillNotice {
-        let words = FaceIdWords.notice(error, entry: entry.name, shownIn: .autoFill)
+        let words = FaceIdWords.notice(error, entry: entry.name, table: .autoFill)
         return AutoFillNotice(problem: words.problem, nextStep: words.nextStep, keyEntry: words.offersKey ? entry : nil)
     }
 
@@ -393,29 +399,19 @@ final class AutoFillModel {
         guard let source, let reader, !keyTask.isFollowing else { return }
         notice = nil
         keyEntry = entry
-        screen = .key
-        reader.watch(startsUnplugged: KeyConnection.startsUnplugged)
-        let store = source.store
-        let copies = source.copies
-        let port = source.keyPort
-        // A copy is kept after the key opens the entry, as in the app: the
-        // copy cache is safe for two processes (core/src/copies/dir.rs).
-        keyTask.start { listener in
-            port.openEntry(
-                store: store, entry: entry.path, copies: copies, ttlSecs: FaceIdOpener.windowSecs, listener: listener)
-        }
+        reader.watch()
+        keyTask.start(keyJob(entry, source: source))
     }
 
     /// Cancel on the key sheet: back to the list, or, for a suggestion
-    /// (which shows nothing else), the request ends. The PIN is forgotten.
+    /// (which shows nothing else), the request ends.
     func cancelKey() {
         keyTask.cancel()
         keyEntry = nil
-        source?.keyPort.session()?.forgetPin()
         if isSuggestion {
             end(.userCanceled)
         } else {
-            screen = .list
+            page = .list
         }
     }
 
@@ -433,7 +429,7 @@ final class AutoFillModel {
             opened.close()
             guard !finished else { return }
             pairing = nil
-            screen = .confirm(entry, warning)
+            page = .confirm(entry, warning)
             return
         }
         let taken = kind.take(from: opened, entry: entry)
@@ -445,16 +441,15 @@ final class AutoFillModel {
                 withCode.remove(entry.path)
             }
             if let unusable = taken.unusable {
-                screen = .problem(unusable.problem, unusable.nextStep, backToList: !isSuggestion)
+                page = .problem(unusable.problem, unusable.nextStep, backToList: !isSuggestion)
             } else {
-                screen = isSuggestion
-                    ? .problem("\(entry.name) has no \(kind.missing)", "Add one in paw, then try again.", backToList: false)
-                    : .problem("\(entry.name) has no \(kind.missing)", "Pick another entry.", backToList: true)
+                let words = AutoFillWords.nothingToFill(entry.name, kind, fromList: !isSuggestion)
+                page = .problem(words.problem, words.nextStep, backToList: !isSuggestion)
             }
             return
         }
         guard !finished else { return }
-        screen = .filled
+        page = .filled
         recordPairing(entry)
         shutDown()
         completion?.fill(credential)
@@ -511,71 +506,74 @@ final class AutoFillModel {
     /// (no PIN or key task is involved, and the entry it opens is wiped
     /// at once), in case the system prompt itself hid the view.
     func viewWentAway() {
-        if case .faceId = screen {
-            source?.keyPort.session()?.forgetPin()
+        if case .faceId = page {
             return
         }
         end(.userCanceled)
     }
 
     /// The request's one end, however it ends (a fill, `end`, the view or
-    /// the controller going away): every key task is let go of, a Face ID
-    /// answer still to come is wiped unread, the PIN is forgotten and the
-    /// readers are no longer followed. Runs once; later calls do nothing.
+    /// the controller going away): every key task is let go of (the key
+    /// sheet closing forgets the PIN), a Face ID answer still to come is
+    /// wiped unread, and the readers are no longer followed. Runs once;
+    /// later calls do nothing.
     func shutDown() {
         guard !shutdown else { return }
         shutdown = true
         finished = true
         keyTask.cancelAll()
         faceId.forget()
-        source?.keyPort.session()?.forgetPin()
         reader?.stopWatching()
     }
 }
 
-extension AutoFillModel: KeyTaskOwner {
-    var keyWords: KeyErrorWords.Context {
-        KeyErrorWords.Context(entry: keyEntry?.name ?? "", shownIn: .autoFill)
-    }
-
-    func workingStage(_ progress: TaskProgress?) -> KeySheetStage {
-        .working(message: "Opening \(keyEntry?.name ?? "")\u{2026}", progress: nil)
-    }
-
-    func keyTaskEnded(_ end: KeyTaskEnd) -> KeySheetStage? {
-        guard let entry = keyEntry, !finished else {
-            letGoTaskEnded(end)
-            return nil
-        }
-        switch end.result {
-        case .done(let outcome):
-            // paw is done with the key for this pick, whatever the entry
-            // turns out to hold.
-            source?.keyPort.session()?.forgetPin()
-            if case .opened(let opened, let until, _) = outcome {
-                if until != nil, source?.copies != nil {
-                    live.insert(entry.path)
+extension AutoFillModel {
+    /// Opening `entry` with the key to fill it. A copy is kept after the
+    /// key opens the entry, as in the app: the copy cache is safe for two
+    /// processes (core/src/copies/dir.rs).
+    private func keyJob(_ entry: EntryRef, source: AutoFillSource) -> KeyJob<Never> {
+        let store = source.store
+        let copies = source.copies
+        let port = source.keyPort
+        let words = KeyErrorWords.Context(entry: entry.name, table: .autoFill)
+        return KeyJob(
+            begin: { listener in
+                port.openEntry(
+                    store: store, entry: entry.path, copies: copies, ttlSecs: FaceIdOpener.windowSecs,
+                    listener: listener)
+            },
+            words: { words },
+            working: { _ in (KeySheetWords.opening(entry.name), nil) },
+            ended: { [weak self] end in
+                guard let self else { return nil }
+                guard case .done(let outcome) = end else { return end.standardStage(words) }
+                if case .opened(let opened, let until, _) = outcome {
+                    if until != nil, copies != nil {
+                        live.insert(entry.path)
+                    }
+                    fill(opened, entry: entry)
                 }
-                fill(opened, entry: entry)
-            }
-            return .done
-        // An open never syncs or sets up.
-        case .cancelled, .syncFailed, .setupFailed:
-            return nil
-        case .failed:
-            return standardStage(end.result)
-        }
+                // A fill shows no Done: the request ends there.
+                return nil
+            },
+            letGo: { [weak self] end, _ in
+                self?.disposeOfLateOpen(end, entry: entry, copies: copies)
+            },
+            closed: {
+                // paw is done with the key for this pick, however it went.
+                port.session()?.forgetPin()
+            })
     }
 
-    /// A task the sheet let go of has ended. One that finished anyway (in
-    /// the last moment after the card answered) is wiped, and the copy it
-    /// kept is removed: nothing was asked for.
-    func letGoTaskEnded(_ end: KeyTaskEnd) {
-        guard case .done(.opened(let opened, let until, _)) = end.result else { return }
+    /// An open the sheet let go of that finished anyway (in the last
+    /// moment after the card answered) is wiped, and the copy it kept is
+    /// removed: nothing was asked for.
+    private func disposeOfLateOpen(_ end: KeyTaskEnd<Never>, entry: EntryRef, copies: CopyCache?) {
+        guard case .done(.opened(let opened, let until, _)) = end else { return }
         opened.close()
-        if until != nil, let copies = source?.copies, case .openEntry(let path) = end.purpose {
+        if until != nil, let copies {
             let carried = Handoff(value: copies)
-            work.async { try? carried.value.forgetEntry(entry: path) }
+            work.async { try? carried.value.forgetEntry(entry: entry.path) }
         }
     }
 }

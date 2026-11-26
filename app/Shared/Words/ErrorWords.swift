@@ -16,12 +16,6 @@ func isStoreBusy(_ error: Swift.Error) -> Bool {
     return false
 }
 
-/// Where words are shown, when that changes them: AutoFill says some
-/// things more shortly than the app.
-enum ShownIn {
-    case app, autoFill
-}
-
 /// An error that says itself in one sentence, where a screen has room for
 /// one line. The app's own error types conform where it words them.
 protocol WordedError: Swift.Error {

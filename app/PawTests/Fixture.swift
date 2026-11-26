@@ -54,11 +54,6 @@ final class Fixture {
                 }
                 return key.asConnection()
             },
-            simulator: SimulatorControls(
-                advanceClock: { clock.advanceMs(ms: $0) },
-                plugIn: { key.plugIn() },
-                startsUnplugged: false,
-                awayMs: 0),
             writing: prepared?.writing, gitHub: nil, setUp: nil))
         let model = AppModel(session: session)
         self.key = key
@@ -108,7 +103,7 @@ final class Fixture {
     /// entry is pushed.
     func dismissDoneSheet(file: StaticString = #filePath, line: UInt = #line) async {
         await waitForStage(.done, file: file, line: line)
-        model.keyRequest = nil
+        model.cancelKeyTask()
         model.keySheetDismissed()
     }
 

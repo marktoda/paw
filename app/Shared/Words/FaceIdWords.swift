@@ -1,6 +1,6 @@
 import Foundation
 
-/// What a Face ID open that failed says, in the app and in AutoFill.
+/// What Face ID says: a failed open, and how long a copy lasts.
 enum FaceIdWords {
     /// What happened, in a few words; `nil` for an error that is not Face
     /// ID's.
@@ -16,36 +16,19 @@ enum FaceIdWords {
     }
 
     /// The notice after tapping `entry` failed with `error`, in this
-    /// device's words, and whether it offers the key instead.
-    static func notice(_ error: Swift.Error, entry: String, shownIn: ShownIn = .app)
-        -> (problem: String, nextStep: String, offersKey: Bool) {
-        let paw = error as? PawError
-        if shownIn == .autoFill, isStoreBusy(error) {
-            return ("The store is busy", "Tap \(entry) again.", false)
-        }
-        if shownIn == .autoFill, let short = autoFillNotice(paw, entry: entry) {
-            return (Device.words(short.problem), Device.words(short.nextStep), true)
-        }
-        let nextStep = switch paw {
-        case .FaceIdCancelled?, .FaceIdNotRecognised?: "Tap \(entry) to try again."
-        case .FaceIdLockedOut?: "Lock and unlock your iPhone, then try again."
-        default: "Open \(entry) with your key."
-        }
-        let said = paw.flatMap(Self.problem) ?? describe(error)
-        return (Device.words(said), Device.words(nextStep), true)
+    /// device's words.
+    static func notice(_ error: Swift.Error, entry: String, table: WordTable = .app) -> FaceIdNotice {
+        table.faceIdNotice(error, entry)
     }
 
-    /// AutoFill's shorter notices; `nil` where it says what the app says.
-    private static func autoFillNotice(_ error: PawError?, entry: String) -> (problem: String, nextStep: String)? {
-        switch error {
-        case .FaceIdLockedOut?:
-            return ("Face ID is locked", "Lock and unlock your iPhone, then try again.")
-        case .FaceIdChanged?:
-            return ("Face ID changed on this iPhone", "")
-        case .FaceIdCancelled?, .FaceIdNotRecognised?, .FaceIdNotSetUp?:
-            return nil
-        default:
-            return ("Face ID didn't open \(entry)", "")
-        }
+    /// How long a Face ID copy lasts: "8 hours".
+    static var window: String {
+        "\(FaceIdOpener.windowSecs / 3600) hours"
+    }
+
+    /// The key sheet's note when a copy will be kept, by what the copy
+    /// does: "Then it opens with Face ID for 8 hours."
+    static func afterKey(_ verb: String) -> String {
+        "Then it \(verb) with Face ID for \(window)."
     }
 }

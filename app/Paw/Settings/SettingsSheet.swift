@@ -49,9 +49,7 @@ struct SettingsSheet: View {
                 }
                 RemoveStoreSection(model: model)
                 #if DEBUG && targetEnvironment(simulator)
-                if model.simulator != nil {
-                    SimulatorSettingsSection(model: model)
-                }
+                SimulatorSettingsSection(model: model)
                 #endif
             }
             .listStyle(.insetGrouped)

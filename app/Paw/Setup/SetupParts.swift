@@ -9,10 +9,11 @@ struct SetupPage<Content: View, Buttons: View>: View {
     var message: String? = nil
     var titleFont = PawFont.title
     let identifier: String
-    /// The simulator's stand-ins for this screen, under its buttons.
-    var simulatorActions: [SimulatorAction] = []
     @ViewBuilder var content: Content
     @ViewBuilder var buttons: Buttons
+    #if DEBUG && targetEnvironment(simulator)
+    @Environment(\.simulatorActions) private var simulatorActions
+    #endif
 
     var body: some View {
         ScrollView {

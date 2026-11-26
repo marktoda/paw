@@ -6,47 +6,40 @@ import XCTest
 /// a task's end after Cancel. Real tasks on the fixture's simulated key.
 @MainActor
 final class KeyTaskDriverTests: XCTestCase {
-    /// Words and ends, as a workflow would have them, recorded.
+    /// A workflow's words and ends, recorded.
     @MainActor
-    private final class Owner: KeyTaskOwner {
-        var ends: [KeyTaskEnd] = []
-        var lateEnds: [KeyTaskEnd] = []
-        var doneShownCount = 0
+    private final class Recorder {
+        var ends: [KeyTaskEnd<Never>] = []
+        var lateEnds: [(end: KeyTaskEnd<Never>, locked: Bool)] = []
+        var closedCount = 0
+        let words = KeyErrorWords.Context(entry: "github.com")
 
-        let keyWords = KeyErrorWords.Context(entry: "github.com")
-
-        func workingStage(_ progress: TaskProgress?) -> KeySheetStage {
-            .working(message: "Opening github.com\u{2026}", progress: nil)
-        }
-
-        func keyTaskEnded(_ end: KeyTaskEnd) -> KeySheetStage? {
-            ends.append(end)
-            if case .done(.opened(let entry, _, _)) = end.result { entry.close() }
-            return standardStage(end.result)
-        }
-
-        func letGoTaskEnded(_ end: KeyTaskEnd) {
-            lateEnds.append(end)
-            if case .done(.opened(let entry, _, _)) = end.result { entry.close() }
-        }
-
-        func doneShown() {
-            doneShownCount += 1
+        func job(_ begin: @escaping (KeyTaskListener) -> KeyTask) -> KeyJob<Never> {
+            KeyJob(
+                begin: begin,
+                words: { [words] in words },
+                working: { _ in ("Opening github.com\u{2026}", nil) },
+                ended: { [unowned self] end in
+                    ends.append(end)
+                    if case .done(.opened(let entry, _, _)) = end { entry.close() }
+                    return end.standardStage(words)
+                },
+                letGo: { [unowned self] end, locked in
+                    lateEnds.append((end, locked))
+                    if case .done(.opened(let entry, _, _)) = end { entry.close() }
+                },
+                closed: { [unowned self] in
+                    closedCount += 1
+                })
         }
     }
 
-    private func driver(owner: Owner) -> KeyTaskDriver {
-        let driver = KeyTaskDriver()
-        driver.owner = owner
-        return driver
-    }
-
-    private func open(_ path: String, with driver: KeyTaskDriver, _ fixture: Fixture) {
+    private func open(_ path: String, with driver: KeyTaskDriver, _ recorder: Recorder, _ fixture: Fixture) {
         let store = fixture.model.store
         let port = fixture.model.keyPort
-        driver.start { listener in
+        driver.start(recorder.job { listener in
             port.openEntry(store: store, entry: path, copies: nil, ttlSecs: 0, listener: listener)
-        }
+        })
     }
 
     private func waitForStage(_ driver: KeyTaskDriver, _ stage: KeySheetStage,
@@ -60,7 +53,7 @@ final class KeyTaskDriverTests: XCTestCase {
             .working(progress: nil),
         ]
         for state in running {
-            XCTAssertNil(KeyTaskResult(state), "\(state)")
+            XCTAssertNil(KeyTaskEnd<SyncError>(state), "\(state)")
             XCTAssertFalse(state.isFinal, "\(state)")
         }
         let rejected = SyncError.Remote(failure: .keyNotAccepted(host: "h", publicKey: "k"))
@@ -71,21 +64,25 @@ final class KeyTaskDriverTests: XCTestCase {
         for state in ended {
             XCTAssertTrue(state.isFinal, "\(state)")
         }
-        guard case .cancelled? = KeyTaskResult(.failed(error: .Cancelled)) else {
+        guard case .cancelled? = KeyTaskEnd<Never>(.failed(error: .Cancelled)) else {
             return XCTFail("The key's Cancelled is a cancel")
+        }
+        guard case .stepFailed? = KeyTaskEnd<SyncError>(.syncFailed(error: rejected)),
+              case .stepFailed? = KeyTaskEnd<SetupError>(.setupFailed(error: .EmptyRepository)) else {
+            return XCTFail("A sync's or a setup's own failure is its step's")
         }
     }
 
     func testTheStageForEachEnd() {
-        let owner = Owner()
-        XCTAssertEqual(owner.standardStage(.done(.signedIn)), .done)
-        XCTAssertEqual(owner.standardStage(.failed(.PinBlocked)), .locked)
-        XCTAssertEqual(owner.standardStage(.failed(.TouchTimeout)), .failed(
+        let words = KeyErrorWords.Context(entry: "github.com")
+        XCTAssertEqual(KeyTaskEnd<Never>.done(.signedIn).standardStage(words), .done)
+        XCTAssertEqual(KeyTaskEnd<Never>.failed(.PinBlocked).standardStage(words), .locked)
+        XCTAssertEqual(KeyTaskEnd<Never>.failed(.TouchTimeout).standardStage(words), .failed(
             problem: "Your key wasn't touched in time", nextStep: "Try again and touch the gold part while it blinks."))
-        XCTAssertNil(owner.standardStage(.cancelled))
+        XCTAssertNil(KeyTaskEnd<Never>.cancelled.standardStage(words))
         let rejected = SyncError.Remote(failure: .keyNotAccepted(host: "h", publicKey: "k"))
-        XCTAssertNil(owner.standardStage(.syncFailed(rejected)))
-        XCTAssertNil(owner.standardStage(.setupFailed(.EmptyRepository)))
+        XCTAssertNil(KeyTaskEnd<SyncError>.stepFailed(rejected).standardStage(words))
+        XCTAssertNil(KeyTaskEnd<SetupError>.stepFailed(.EmptyRepository).standardStage(words))
     }
 
     func testOnlyThePinStagesAskForThePin() {
@@ -100,9 +97,9 @@ final class KeyTaskDriverTests: XCTestCase {
 
     func testThePinStagesAndThePinField() async throws {
         let fixture = try Fixture()
-        let owner = Owner()
-        let driver = driver(owner: owner)
-        open("web/github.com", with: driver, fixture)
+        let owner = Recorder()
+        let driver = KeyTaskDriver()
+        open("web/github.com", with: driver, owner, fixture)
         await waitForStage(driver, .pin(triesLeft: 3, forgotten: false))
 
         driver.pin = "000000"
@@ -129,35 +126,34 @@ final class KeyTaskDriverTests: XCTestCase {
 
     func testEachEndIsHeardOnceAndDoneClosesAfterASecond() async throws {
         let fixture = try Fixture()
-        let owner = Owner()
-        let driver = driver(owner: owner)
-        driver.generation = 4
-        open("web/github.com", with: driver, fixture)
+        let owner = Recorder()
+        let driver = KeyTaskDriver()
+        open("web/github.com", with: driver, owner, fixture)
         await waitForStage(driver, .pin(triesLeft: 3, forgotten: false))
         driver.pin = Fixture.pin
         driver.continueWithPin()
         await waitForStage(driver, .done)
         XCTAssertEqual(owner.ends.count, 1)
-        guard case .done(.opened)? = owner.ends.first?.result else {
-            return XCTFail("The open should end done, it ended \(String(describing: owner.ends.first?.result))")
+        guard case .done(.opened)? = owner.ends.first else {
+            return XCTFail("The open should end done, it ended \(String(describing: owner.ends.first))")
         }
-        XCTAssertEqual(owner.ends.first?.purpose, .openEntry(entry: "web/github.com"))
-        XCTAssertEqual(owner.ends.first?.generation, 4)
+        XCTAssertEqual(driver.taskPurpose, .openEntry(entry: "web/github.com"))
         XCTAssertFalse(driver.isFollowing)
         XCTAssertEqual(driver.pendingTasks, 0)
+        XCTAssertTrue(driver.isShown, "Done shows")
 
-        await waitFor("Done to have shown for a second") { owner.doneShownCount == 1 }
+        await waitFor("Done to have shown for a second") { !driver.isShown }
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(owner.ends.count, 1, "Heard once")
         XCTAssertEqual(owner.lateEnds.count, 0)
-        XCTAssertEqual(owner.doneShownCount, 1)
+        XCTAssertEqual(owner.closedCount, 1)
     }
 
     func testATaskThatEndsAfterCancelIsHeardOnceAsLetGo() async throws {
         let fixture = try Fixture(touch: true)
-        let owner = Owner()
-        let driver = driver(owner: owner)
-        open("web/github.com", with: driver, fixture)
+        let owner = Recorder()
+        let driver = KeyTaskDriver()
+        open("web/github.com", with: driver, owner, fixture)
         await waitForStage(driver, .pin(triesLeft: 3, forgotten: false))
         driver.pin = Fixture.pin
         driver.continueWithPin()
@@ -170,15 +166,36 @@ final class KeyTaskDriverTests: XCTestCase {
         await waitFor("the cancelled task to end") { driver.pendingTasks == 0 }
         XCTAssertEqual(owner.ends.count, 0, "Nothing reaches the sheet after Cancel")
         XCTAssertEqual(owner.lateEnds.count, 1)
-        XCTAssertEqual(owner.doneShownCount, 0)
+        XCTAssertEqual(owner.lateEnds.first?.locked, false)
+        XCTAssertEqual(owner.closedCount, 1)
+        XCTAssertFalse(driver.isShown)
+    }
+
+    func testLockNowLetsGoOfEveryTaskAndSaysSoToEach() async throws {
+        let fixture = try Fixture(touch: true)
+        let owner = Recorder()
+        let driver = KeyTaskDriver()
+        open("web/github.com", with: driver, owner, fixture)
+        await waitForStage(driver, .pin(triesLeft: 3, forgotten: false))
+        driver.pin = Fixture.pin
+        driver.continueWithPin()
+        await waitFor("the touch") { driver.stage == .touch && fixture.key.waitingForTouch() }
+
+        driver.lockNow()
+        XCTAssertFalse(driver.isShown)
+        fixture.key.touch()
+        await waitFor("the let-go task to end") { driver.pendingTasks == 0 }
+        XCTAssertEqual(owner.ends.count, 0)
+        XCTAssertEqual(owner.lateEnds.count, 1)
+        XCTAssertEqual(owner.lateEnds.first?.locked, true, "Lock now came since it started")
     }
 
     func testCancelEndsTheTaskAtOnceWhileTheKeyStillWaitsForATouch() async throws {
         let fixture = try Fixture(touch: true)
-        let owner = Owner()
-        let driver = driver(owner: owner)
+        let owner = Recorder()
+        let driver = KeyTaskDriver()
         let port = fixture.model.keyPort
-        driver.start { listener in port.checkTouchTimeout(listener: listener) }
+        driver.start(owner.job { listener in port.checkTouchTimeout(listener: listener) })
         await waitForStage(driver, .pin(triesLeft: 3, forgotten: false))
         driver.pin = Fixture.pin
         driver.continueWithPin()
@@ -203,27 +220,26 @@ final class KeyTaskDriverTests: XCTestCase {
         XCTAssertEqual(owner.ends.count, 0)
     }
 
-    func testALateFinishAfterCancelIsHeardAsACancelThenAsLetGo() async throws {
+    func testALateFinishAfterCancelClosesTheSheetAndIsHeardOnceAsLetGo() async throws {
         let fixture = try Fixture()
-        let owner = Owner()
-        let driver = driver(owner: owner)
-        driver.simulatesLateCancelNext = true
-        open("web/github.com", with: driver, fixture)
+        let owner = Recorder()
+        let driver = KeyTaskDriver()
+        SimulatedLateCancel.armed = true
+        open("web/github.com", with: driver, owner, fixture)
         await waitForStage(driver, .pin(triesLeft: 3, forgotten: false))
         driver.pin = Fixture.pin
         driver.continueWithPin()
         await waitFor("the open to end") { driver.pendingTasks == 0 }
-        guard case .cancelled? = owner.ends.first?.result, owner.ends.count == 1 else {
-            return XCTFail("The sheet should hear one cancel, it heard \(owner.ends.map(\.result))")
-        }
-        guard case .done(.opened)? = owner.lateEnds.first?.result, owner.lateEnds.count == 1 else {
-            return XCTFail("The open should end late, once, it ended \(owner.lateEnds.map(\.result))")
+        XCTAssertFalse(driver.isShown, "The sheet closed as for a cancel")
+        XCTAssertEqual(owner.ends.count, 0, "Nothing reaches the sheet's own end")
+        guard case .done(.opened)? = owner.lateEnds.first?.end, owner.lateEnds.count == 1 else {
+            return XCTFail("The open should end late, once, it ended \(owner.lateEnds.map(\.end))")
         }
     }
 
     func testAKeyThatCannotBeReadShowsOnPlugInAndTryAgainReadsItAgain() async throws {
         let fixture = try Fixture()
-        let owner = Owner()
+        let owner = Recorder()
         let key = fixture.key
         let reads = FailingReads(1000)
         let port = KeyPort(clock: fixture.clock.asClock())
@@ -233,14 +249,13 @@ final class KeyTaskDriverTests: XCTestCase {
             }
             return key.asConnection()
         }
-        reader.watch(startsUnplugged: false)
+        reader.watch()
         let driver = KeyTaskDriver(reader: reader)
-        driver.owner = owner
         let couldNotRead = KeySheetStage.failed(
             problem: "paw couldn't read your key",
             nextStep: "The key didn't answer while it was being read. Try again, or unplug the key and plug it back in.")
 
-        driver.start { listener in port.checkTouchTimeout(listener: listener) }
+        driver.start(owner.job { listener in port.checkTouchTimeout(listener: listener) })
         await waitForStage(driver, couldNotRead)
         XCTAssertNotNil(driver.readProblem)
 

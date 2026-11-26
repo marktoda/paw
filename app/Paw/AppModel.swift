@@ -28,10 +28,11 @@ struct OpenSession: Identifiable {
     var hadCopy = false
 }
 
-/// The key sheet while it is up. `nil` in `AppModel.keyRequest` means no
-/// sheet; its stage is `AppModel.keyTask`'s.
+/// The key sheet while it is up, as `AppModel.keyRequest` says it from
+/// `AppModel.keyTask`; its stage is the driver's.
 struct KeyRequest: Identifiable {
-    let id = UUID()
+    /// The sheet's run: the same across Try again.
+    let id: UUID
     let entry: EntryRef
     /// The key plugged in is not the store's: the sheet shows "Replace key"
     /// as a way on that is not built yet.
@@ -73,7 +74,10 @@ final class AppModel {
     private(set) var recentPaths: [String] = []
     /// What the core says about each entry for the last key plugged in.
     private(set) var accessByPath: [String: Access] = [:]
-    var keyRequest: KeyRequest?
+    /// The entry the key sheet opens, while it is up.
+    private var keyEntry: EntryRef?
+    /// The key plugged in is not the store's.
+    private var keyIsDifferent = false
     private(set) var sessions: [UUID: OpenSession] = [:]
     /// Entries closed while on screen (2 minutes away, the iPhone locked,
     /// the Face ID time ended), by the id their route still carries.
@@ -103,9 +107,10 @@ final class AppModel {
         home = store.home()
         entryCount = Int(store.entryCount())
         self.notice = notice
-        keyTask.owner = self
-        session.reader.onRead = { [weak self] keySession in
-            self?.learnAccess(keySession)
+        session.reader.onRead = { [weak self] read in
+            if case .success(let keySession) = read {
+                self?.learnAccess(keySession)
+            }
         }
         session.live.changed.subscribe(self) { model, changed in
             model.storeChanged(changed)
@@ -141,10 +146,6 @@ final class AppModel {
     /// open entry's 2 minutes in the background are all measured on it.
     var clock: Clock {
         storeSession.clock
-    }
-
-    var simulator: SimulatorControls? {
-        storeSession.simulator
     }
 
     /// Adding, editing and deleting, and the unpushed changes; `nil` where
@@ -260,31 +261,31 @@ final class AppModel {
         }
     }
 
+    /// The key sheet while it is up.
+    var keyRequest: KeyRequest? {
+        guard let run = keyTask.shown, let keyEntry else { return nil }
+        return KeyRequest(id: run, entry: keyEntry, differentKey: keyIsDifferent)
+    }
+
     /// Opens with the key: says so first if the plugged-in key cannot open
     /// it, otherwise shows the key sheet at the first stage still needed.
     func openWithKey(_ entry: EntryRef) {
         notice = nil
-        guard keyRequest == nil else { return }
+        guard !keyTask.isShown else { return }
         closeSplitEntryForNextOpen()
         if keyPort.session() != nil, case .notForThisKey = accessByPath[entry.path] {
             show(.anotherKey(entry.path))
             return
         }
         pendingRoute = nil
-        keyRequest = KeyRequest(entry: entry)
-        let store = store
-        let copies = copies
-        let port = keyPort
-        keyTask.start { listener in
-            port.openEntry(
-                store: store, entry: entry.path, copies: copies, ttlSecs: FaceIdOpener.windowSecs, listener: listener)
-        }
+        keyEntry = entry
+        keyIsDifferent = false
+        keyTask.start(openJob(entry))
     }
 
     /// Cancel, or the sheet swiped away.
     func cancelKeyTask() {
         keyTask.cancel()
-        keyRequest = nil
     }
 
     /// The sheet went away, by a button, a swipe or by itself after Done.
@@ -464,17 +465,16 @@ final class AppModel {
     /// de-verifies the card on its own thread (no card traffic here), stops
     /// a PIN check already under way from holding the PIN again, and a
     /// cancelled task keeps no copy. A task past the point where cancel
-    /// works ends the copies again when it finishes (`letGoTaskEnded`).
+    /// works ends the copies again when it finishes (`openJob`'s `letGo`).
     func lockNow() {
         let ended = liveCopies.count
-        cancelKeyTask()
+        keyTask.lockNow()
         keyPort.session()?.forgetPin()
         do {
             try copies?.lockNow()
         } catch {
             copiesProblem = describe(error)
         }
-        keyTask.generation += 1
         // A Face ID open that started before this finishes into a locked
         // app: it leaves nothing behind.
         faceId.forget()
@@ -494,7 +494,6 @@ final class AppModel {
         case .background:
             backgroundedAtMs = clock.monotonicMs()
             keyPort.session()?.noteBackgrounded()
-            simulator?.timePassesInBackground()
         case .active:
             if let away = backgroundedAtMs {
                 backgroundedAtMs = nil
@@ -512,71 +511,70 @@ final class AppModel {
         }
     }
 
-    /// The simulated clock moved: copies may have ended.
-    func advanceSimulatedClock(hours: UInt64) {
-        simulator?.advanceClock(hours * 3_600_000)
+    /// Time moved on: copies may have ended, and with them open entries,
+    /// and a password on the clipboard may be due to go.
+    func timePassed() {
         Clipboard.clearIfExpired()
         refreshCopies()
     }
 }
 
-extension AppModel: KeyTaskOwner {
-    var keyWords: KeyErrorWords.Context {
-        KeyErrorWords.Context(entry: keyRequest?.entry.name ?? "")
+extension AppModel {
+    /// Opening `entry` with the key: the entry is pushed once the sheet has
+    /// gone. A key that is not the store's leaves "Replace key" on the
+    /// sheet; one that cannot open the entry says which keys can instead.
+    private func openJob(_ entry: EntryRef) -> KeyJob<Never> {
+        let store = store
+        let copies = copies
+        let port = keyPort
+        let words = KeyErrorWords.Context(entry: entry.name)
+        return KeyJob(
+            begin: { listener in
+                port.openEntry(
+                    store: store, entry: entry.path, copies: copies, ttlSecs: FaceIdOpener.windowSecs,
+                    listener: listener)
+            },
+            words: { words },
+            working: { progress in
+                (KeySheetWords.opening(entry.name), progress.map(\.counted))
+            },
+            ended: { [weak self] end in
+                guard let self else { return nil }
+                switch end {
+                case .done(let outcome):
+                    opened(outcome, entry: entry)
+                    return .done
+                case .failed(.DifferentKey):
+                    // Not this entry's problem: the key is not the store's.
+                    keyIsDifferent = true
+                    return end.standardStage(words)
+                case .failed(.NotForThisKey):
+                    showAnotherKey(entry)
+                    return nil
+                case .failed, .cancelled:
+                    return end.standardStage(words)
+                }
+            },
+            letGo: { [weak self] end, lockedSince in
+                self?.disposeOfLateOpen(end, entry: entry, lockedSince: lockedSince)
+            })
     }
 
-    func workingStage(_ progress: TaskProgress?) -> KeySheetStage {
-        .working(
-            message: "Opening \(keyRequest?.entry.name ?? "")\u{2026}",
-            progress: progress.map { "\($0.done) of \($0.total)" })
-    }
-
-    func keyTaskEnded(_ end: KeyTaskEnd) -> KeySheetStage? {
-        guard var request = keyRequest else {
-            letGoTaskEnded(end)
-            return nil
-        }
-        switch end.result {
-        case .done(let outcome):
-            opened(outcome, entry: request.entry)
-            return .done
-        case .failed(.DifferentKey):
-            // Not this entry's problem: the key is not the store's.
-            request.differentKey = true
-            keyRequest = request
-            return standardStage(end.result)
-        case .failed(.NotForThisKey):
-            keyRequest = nil
-            showAnotherKey(request.entry)
-            return nil
-        // An open never syncs or sets up.
-        case .cancelled, .syncFailed, .setupFailed:
-            keyRequest = nil
-            return nil
-        case .failed:
-            return standardStage(end.result)
-        }
-    }
-
-    func doneShown() {
-        keyRequest = nil
-    }
-
-    /// A task the sheet let go of. Cancel stops it before any copy is kept,
-    /// except in the last milliseconds of an open, after the card has
-    /// answered. Such a task still finishes with the entry open and its
-    /// copy kept: close the entry and remove that one copy. If Lock now
-    /// came since the task started, end every copy again instead, which
-    /// also deletes the seal key the late copy may have made.
-    func letGoTaskEnded(_ end: KeyTaskEnd) {
-        guard case .done(.opened(let entry, let faceIdUntilMs, _)) = end.result else { return }
-        entry.close()
-        guard faceIdUntilMs != nil, let copies, case .openEntry(let path) = end.purpose else { return }
+    /// An open the sheet let go of. Cancel stops it before any copy is
+    /// kept, except in the last milliseconds after the card has answered.
+    /// Such an open still finishes with the entry open and its copy kept:
+    /// close the entry and remove that one copy. If Lock now came since it
+    /// started, end every copy again instead, which also deletes the seal
+    /// key the late copy may have made.
+    private func disposeOfLateOpen(_ end: KeyTaskEnd<Never>, entry: EntryRef, lockedSince: Bool) {
+        guard case .done(.opened(let opened, let faceIdUntilMs, _)) = end else { return }
+        opened.close()
+        guard faceIdUntilMs != nil, let copies else { return }
         do {
-            if end.generation < keyTask.generation {
+            if lockedSince {
                 try copies.lockNow()
             } else {
-                try copies.forgetEntry(entry: path)
+                try copies.forgetEntry(entry: entry.path)
             }
         } catch {
             copiesProblem = describe(error)
@@ -592,24 +590,6 @@ extension AppModel: KeyTaskOwner {
         let session = OpenSession(ref: entry, entry: opened, view: opened.view(), hadCopy: faceIdUntilMs != nil)
         sessions[session.id] = session
         pendingRoute = .entry(session.id)
-    }
-}
-
-/// Hooks into the simulated hardware, for the debug controls.
-struct SimulatorControls {
-    let advanceClock: (UInt64) -> Void
-    /// Plugs the simulated key back in.
-    let plugIn: () -> Void
-    /// The simulated key is not plugged in at launch.
-    let startsUnplugged: Bool
-    /// Time that passes on the simulated clock each time paw goes to the
-    /// background, so a test can stay away for 15 minutes in a second.
-    let awayMs: UInt64
-
-    func timePassesInBackground() {
-        if awayMs > 0 {
-            advanceClock(awayMs)
-        }
     }
 }
 

@@ -296,11 +296,7 @@ private struct SyncModifier: ViewModifier {
                 }
             }
             #if DEBUG && targetEnvironment(simulator)
-            .background(alignment: .topLeading) {
-                if syncing != nil {
-                    SimRemoteSummary()
-                }
-            }
+            .modifier(SimRemoteWatch(model: model))
             #endif
     }
 }

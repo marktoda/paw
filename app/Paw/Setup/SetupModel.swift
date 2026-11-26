@@ -69,31 +69,9 @@ struct SetupSheet: Identifiable {
         case download, check
     }
 
-    let id = UUID()
+    /// The sheet's run: the same across Try again.
+    let id: UUID
     let purpose: Purpose
-}
-
-/// What the simulated host and key do for setup in the simulator. `nil` on
-/// a device.
-struct SetupSimulator {
-    /// The simulated host's address, for the debug control on the address screen.
-    let address: String
-    /// The person trusted the host's key.
-    let hostConfirmed: () -> Void
-    /// A download failed for a reason that was not the key's.
-    let downloadFailed: () -> Void
-    /// "Add the key on the host": the host accepts the key from now on.
-    let acceptKey: () -> Void
-    /// Puts the simulated key in.
-    let plugIn: () -> Void
-    /// The simulated key is out at launch.
-    let startsUnplugged: Bool
-}
-
-/// Reading the key failed before it was read: the session could not be
-/// opened (design.md 2.11).
-private struct SetupAttachFailure: Error {
-    let error: Error
 }
 
 /// Drives the core's `Setup` for the setup screens. The core decides every
@@ -123,7 +101,6 @@ final class SetupModel {
     let reader: KeyReader
     /// The key sheet's task: the download, or the check of the key.
     let keyTask: KeyTaskDriver
-    let simulator: SetupSimulator?
     private let finished: () -> Void
     private let startOver: () -> Void
 
@@ -139,27 +116,26 @@ final class SetupModel {
     /// A plain step under way, e.g. "Checking github.com…".
     private(set) var working: String?
     var addressText = ""
-    var sheet: SetupSheet?
+    /// What the key sheet does, while it is up.
+    private var sheetPurpose: SetupSheet.Purpose = .download
     private(set) var readiness: SetupWriteReadiness?
     private(set) var storeFacts: StoreFacts?
     /// Hex fingerprint of the key's SSH key, once read this launch.
     private(set) var sshFingerprint: String?
-    /// A download was cancelled while the key waited for its touch: the
-    /// key still waits. The simulator's download screen offers to time it
-    /// out; on a device the key's own timeout ends it.
-    private(set) var touchLeftWaiting = false
+    /// "Set up", Plug in or Try again asked for the key to be read: the
+    /// next read that works is setup's first step.
+    @ObservationIgnored private var readingKey = false
 
     private let workQueue = DispatchQueue(label: "paw-setup", qos: .userInitiated)
 
     init(setup: Setup, repoPath: String, keyPort: KeyPort, connect: @escaping KeyReader.Connect,
-         simulator: SetupSimulator?, finished: @escaping () -> Void, startOver: @escaping () -> Void) {
+         finished: @escaping () -> Void, startOver: @escaping () -> Void) {
         self.setup = setup
         self.repoPath = repoPath
         self.keyPort = keyPort
         let reader = KeyReader(port: keyPort, connect: connect)
         self.reader = reader
-        keyTask = KeyTaskDriver(reader: reader, waitsForLetGoTasks: true)
-        self.simulator = simulator
+        keyTask = KeyTaskDriver(reader: reader)
         self.finished = finished
         self.startOver = startOver
         let state = setup.state()
@@ -171,21 +147,18 @@ final class SetupModel {
         if case .done = state {
             learnAboutStore()
         }
-        keyTask.owner = self
-        reader.onPresent = { [weak self] in
-            self?.keyCameIn()
+        reader.onRead = { [weak self] read in
+            self?.keyWasRead(read)
         }
-        #if DEBUG && targetEnvironment(simulator)
-        if let simulator {
-            reader.plugsInSimulatedKey = simulator.plugIn
-        }
-        #endif
-        reader.watch(startsUnplugged: simulator?.startsUnplugged ?? true)
-        #if DEBUG && targetEnvironment(simulator)
-        // Before the key is read, reading it opens the session, and shows
-        // on Plug in if that fails.
+        reader.watch()
+        // Past the first step, the key sheet will want the key's session:
+        // a key already in is read now, and a failure shows on Plug in.
         if state != .readKey { reader.readIfNeeded() }
-        #endif
+    }
+
+    /// The key sheet while it is up.
+    var sheet: SetupSheet? {
+        keyTask.shown.map { SetupSheet(id: $0, purpose: sheetPurpose) }
     }
 
     /// A key is in (a reader is present, or the simulated key is plugged).
@@ -204,24 +177,29 @@ final class SetupModel {
         reader.problem.map { KeyErrorWords($0) }
     }
 
-    /// A key came in: on Plug in, reading it is the step; elsewhere (a
-    /// relaunch past the first step) its session is opened, so the key
-    /// sheet finds it.
-    private func keyCameIn() {
-        if screen == .plugIn, sheet == nil {
-            readKey()
-        } else {
-            reader.readIfNeeded()
+    /// The key was read, or reading it failed. On Plug in, a key read is
+    /// setup's first step: a key coming in, or "Set up", Plug in and Try
+    /// again asking for it. Elsewhere (a relaunch past the first step) the
+    /// session is only opened, so the key sheet finds it.
+    private func keyWasRead(_ read: Result<KeySession, Error>) {
+        let asked = readingKey
+        readingKey = false
+        switch read {
+        case .failure:
+            // The reader keeps the failure for Plug in to say.
+            if asked { working = nil }
+        case .success(let session):
+            guard screen == .plugIn, sheet == nil, asked || working == nil else { return }
+            stepThroughKey(session)
         }
     }
 
     /// "Try again" under the attach problem on Plug in.
     func retryAttach() {
-        reader.clearFailure()
         if screen == .plugIn {
             readKey()
         } else {
-            reader.readIfNeeded()
+            reader.retry()
         }
     }
 
@@ -300,29 +278,31 @@ final class SetupModel {
         readKey()
     }
 
-    /// Reads the plugged-in key from its session: no PIN, no touch.
+    /// Reads the plugged-in key: no PIN, no touch. A session already open
+    /// is kept, with the PIN it holds.
     func readKey() {
         guard keyPresent, working == nil else { return }
         problem = nil
-        reader.clearFailure()
         working = "Reading your key\u{2026}"
-        let reader = reader
+        readingKey = true
+        reader.retry()
+    }
+
+    /// Setup's first step, on the key's session.
+    private func stepThroughKey(_ session: KeySession) {
+        problem = nil
+        working = "Reading your key\u{2026}"
         let setup = setup
+        let handoff = Handoff(value: session)
         workQueue.async {
+            let session = handoff.value
             let result: Result<(SetupState, String?), Error> = Result {
-                let session: KeySession
-                do {
-                    session = try reader.openSession()
-                } catch {
-                    throw SetupAttachFailure(error: error)
-                }
-                let info = session.info()
-                return (try setup.readKeyFromSession(session: session), info.authenticationFingerprint)
+                (try setup.readKeyFromSession(session: session), session.info().authenticationFingerprint)
             }
-            let handoff = Handoff(value: result)
+            let read = Handoff(value: result)
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
-                    self?.keyRead(handoff.value)
+                    self?.keyRead(read.value)
                 }
             }
         }
@@ -335,9 +315,6 @@ final class SetupModel {
             self.state = state
             sshFingerprint = fingerprint
             keyConfirmed = false
-        case .failure(let failure as SetupAttachFailure):
-            state = setup.state()
-            reader.readFailed(failure.error)
         case .failure(let error):
             state = setup.state()
             show(error, during: .readingKey)
@@ -368,8 +345,6 @@ final class SetupModel {
         problem = nil
         run("Checking \(host)\u{2026}", during: .checkingHost) { setup in
             try setup.confirmHost(fingerprint: fingerprint)
-        } then: { [weak self] _ in
-            self?.simulator?.hostConfirmed()
         }
     }
 
@@ -524,42 +499,17 @@ final class SetupModel {
     }
 
     private func startSheet(_ purpose: SetupSheet.Purpose) {
-        guard sheet == nil else { return }
+        guard !keyTask.isShown else { return }
         problem = nil
-        sheet = SetupSheet(purpose: purpose)
-        let setup = setup
-        let port = keyPort
-        // A download stopped while the key waited for a touch is still
-        // being removed: the driver starts this one once it is.
-        keyTask.start { (listener: KeyTaskListener) -> KeyTask in
-            let task: KeyTask = switch purpose {
-            case .download: setup.downloadWithKey(port: port, listener: listener)
-            case .check: setup.testDecryptWithKey(port: port, listener: listener)
-            }
-            BackgroundTime.hold("Setup", while: task)
-            return task
-        }
+        sheetPurpose = purpose
+        keyTask.start(job(purpose))
     }
 
     /// Cancel always works. A download stopped part way leaves nothing: the
     /// core removes it and setup is back at the download step.
     func cancelSheet() {
-        if sheet != nil, keyTask.stage == .touch {
-            // The key's command can't be interrupted: it still waits.
-            touchLeftWaiting = true
-        }
         keyTask.cancel()
-        sheet = nil
     }
-
-    #if DEBUG && targetEnvironment(simulator)
-    /// The debug control on the download screen after a cancel during the
-    /// touch: the key's wait runs out now.
-    func simulatedTouchTimeout() {
-        touchLeftWaiting = false
-        SimulatedKeyHolder.shared.key.timeOutTouch()
-    }
-    #endif
 
     private var entryName: String {
         if case .checkKey(let entry?)? = keyTask.taskPurpose, !entry.isEmpty {
@@ -575,10 +525,6 @@ final class SetupModel {
         case .check:
             "Checking your key\u{2026}"
         }
-    }
-
-    private static func progressLine(_ progress: TaskProgress) -> String {
-        "\(Int(progress.done).formatted()) of \(Int(progress.total).formatted())"
     }
 
     /// "412 of 1,240 \u{00B7} 1.2 MB", once the host has said how many.
@@ -607,14 +553,9 @@ final class SetupModel {
 
     /// The task ended without its step done: `error` says why, if it was
     /// the setup's.
-    private func stopped(_ purpose: SetupSheet.Purpose, because error: SetupError?) {
+    private func stopped(_ purpose: SetupSheet.Purpose, because error: SetupError) {
         state = setup.state()
-        if let error {
-            show(error, during: purpose == .download ? .downloading : .checkingKey)
-        }
-        if purpose == .download {
-            simulator?.downloadFailed()
-        }
+        show(error, during: purpose == .download ? .downloading : .checkingKey)
     }
 
     // MARK: Words
@@ -643,62 +584,65 @@ final class SetupModel {
     }
 }
 
-extension SetupModel: KeyTaskOwner {
-    var keyWords: KeyErrorWords.Context {
-        KeyErrorWords.Context(entry: entryName, purpose: sheet?.purpose == .download ? .download : .check)
+extension SetupModel {
+    /// The download, or the check of the key, with the key.
+    private func job(_ purpose: SetupSheet.Purpose) -> KeyJob<SetupError> {
+        let setup = setup
+        let port = keyPort
+        return KeyJob(
+            begin: { listener in
+                let task: KeyTask = switch purpose {
+                case .download: setup.downloadWithKey(port: port, listener: listener)
+                case .check: setup.testDecryptWithKey(port: port, listener: listener)
+                }
+                BackgroundTime.hold("Setup", while: task)
+                return task
+            },
+            words: { [weak self] in
+                KeyErrorWords.Context(entry: self?.entryName ?? "your store", purpose: purpose == .download ? .download : .check)
+            },
+            working: { [weak self] progress in
+                self?.working(purpose, progress) ?? ("", nil)
+            },
+            ended: { [weak self] end in
+                self?.ended(end, purpose: purpose)
+            },
+            letGo: { [weak self] _, _ in
+                // Show where setup is.
+                guard let self else { return }
+                state = setup.state()
+            },
+            // A download stopped while the key waited for a touch is still
+            // being removed: this one starts once it is.
+            waitsForLetGoTasks: true)
     }
 
-    func workingStage(_ progress: TaskProgress?) -> KeySheetStage {
-        let purpose = sheet?.purpose ?? .check
+    private func working(_ purpose: SetupSheet.Purpose, _ progress: TaskProgress?) -> (message: String, progress: String?) {
         // Re-read on every change: objects and bytes, when known.
         let transfer = purpose == .download ? setup.transferProgress() : nil
-        let line = transfer.flatMap(Self.transferLine) ?? progress.map(Self.progressLine)
-        return .working(message: workingMessage(purpose, started: progress != nil || transfer != nil), progress: line)
+        let line = transfer.flatMap(Self.transferLine) ?? progress.map(\.counted)
+        return (workingMessage(purpose, started: progress != nil || transfer != nil), line)
     }
 
-    func keyStageShown(_ stage: KeySheetStage) {
-        if stage == .touch {
-            // A new command waits for a touch, so any cancelled one has ended.
-            touchLeftWaiting = false
-        }
-    }
-
-    func keyTaskEnded(_ end: KeyTaskEnd) -> KeySheetStage? {
-        guard let sheet else {
-            state = setup.state()
-            return nil
-        }
-        switch end.result {
+    private func ended(_ end: KeyTaskEnd<SetupError>, purpose: SetupSheet.Purpose) -> KeySheetStage? {
+        let words = KeyErrorWords.Context(entry: entryName, purpose: purpose == .download ? .download : .check)
+        switch end {
         case .done:
             succeeded()
             return .done
-        case .setupFailed(let error):
+        case .stepFailed(let error):
             // Not the key's problem: the host, the repository or the store.
-            self.sheet = nil
-            stopped(sheet.purpose, because: error)
+            stopped(purpose, because: error)
             return nil
-        case .cancelled, .syncFailed:
-            self.sheet = nil
+        case .cancelled:
             state = setup.state()
             return nil
         case .failed(.Reader), .failed(.Internal):
             // The sheet says what the key answered; setup is where it was.
             state = setup.state()
-            if sheet.purpose == .download {
-                simulator?.downloadFailed()
-            }
-            return standardStage(end.result)
+            return end.standardStage(words)
         case .failed:
-            return standardStage(end.result)
+            return end.standardStage(words)
         }
-    }
-
-    /// A task the sheet let go of has ended: show where setup is.
-    func letGoTaskEnded(_ end: KeyTaskEnd) {
-        state = setup.state()
-    }
-
-    func doneShown() {
-        sheet = nil
     }
 }

@@ -413,8 +413,7 @@ private struct AutoFillKeySheet: View {
         KeyTaskSheet(
             driver: model.keyTask,
             purpose: model.keyEntry.map(model.purpose) ?? "",
-            note: model.keepsCopies
-                ? Device.words("Then it fills with Face ID for \(FaceIdOpener.windowSecs / 3600) hours.") : nil,
+            note: model.keepsCopies ? Device.words(FaceIdWords.afterKey("fills")) : nil,
             onCancel: { model.cancelKey() })
             .background(PawColor.surface.ignoresSafeArea())
     }

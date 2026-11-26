@@ -92,6 +92,8 @@ enum WritableFixture {
                 path: "work/.gpg-id", contents: Data(lines.utf8), message: "Give work its own list of keys.")
             try finish(sync.refreshWithKey(port: port, listener: MainQueueTaskListener {}), pin: pin, "The refresh")
         }
+        // Only now: setup's own download must not be refused or cut off.
+        SimRemoteHandle.shared.storeReady(repoDir: storeRepoDir(stateDir: stateDir.path))
         return Prepared(
             repoDir: storeRepoDir(stateDir: stateDir.path),
             writing: StoreSession.Writing(

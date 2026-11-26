@@ -48,6 +48,7 @@ struct SetupFlowView: View {
             }
         }
         #if DEBUG && targetEnvironment(simulator)
+        .modifier(SimSetupHostWatch(model: model))
         .background(alignment: .topLeading) {
             KeyTasksSignal(tasks: model.keyTask.pendingTasks)
         }
@@ -133,7 +134,7 @@ private struct PlugInScreen: View {
         SetupPage(
             step: 1, title: "Plug in your YubiKey",
             message: "No PIN yet. Setup continues once it's in.",
-            identifier: "setup-plug-in", simulatorActions: simulatorActions
+            identifier: "setup-plug-in"
         ) {
             HStack {
                 Spacer()
@@ -164,13 +165,16 @@ private struct PlugInScreen: View {
             }
         }
         .onAppear { model.readKey() }
+        #if DEBUG && targetEnvironment(simulator)
+        .simulatorActions(simulatorActions)
+        #endif
     }
 
+    #if DEBUG && targetEnvironment(simulator)
     private var simulatorActions: [SimulatorAction] {
-        #if DEBUG && targetEnvironment(simulator)
         if !model.keyPresent {
             return [SimulatorAction(title: "plug in the key", identifier: "simulated-plug-in") {
-                model.reader.simulatedPlugIn()
+                SimulatedKeyHolder.shared.plugIn()
             }]
         }
         if model.problem != nil {
@@ -178,9 +182,9 @@ private struct PlugInScreen: View {
                 model.readKey()
             }]
         }
-        #endif
         return []
     }
+    #endif
 }
 
 private struct YourKeyScreen: View {
@@ -276,7 +280,7 @@ private struct AddressScreen: View {
             // With GitHub the choice comes first and the typed address is
             // the other way; without it, the address is the only way.
             message: gitHub == nil ? "Its SSH address, under Code \u{203A} SSH on your git host." : nil,
-            identifier: "setup-address", simulatorActions: simulatorActions
+            identifier: "setup-address"
         ) {
             if gitHub != nil {
                 GitHubChooseButton(model: model)
@@ -370,6 +374,9 @@ private struct AddressScreen: View {
                 .disabled(model.working != nil || model.addressText.trimmingCharacters(in: .whitespaces).isEmpty)
                 .accessibilityIdentifier("address-connect")
         }
+        #if DEBUG && targetEnvironment(simulator)
+        .simulatorActions(simulatorActions)
+        #endif
     }
 
     /// Where paw will connect, as the address reads now.
@@ -377,17 +384,14 @@ private struct AddressScreen: View {
         model.addressReading
     }
 
+    #if DEBUG && targetEnvironment(simulator)
     private var simulatorActions: [SimulatorAction] {
-        #if DEBUG && targetEnvironment(simulator)
-        if let simulator = model.simulator {
-            return [SimulatorAction(title: "use the simulated host", identifier: "simulated-address") {
-                model.addressText = simulator.address
-                model.addressProblem = nil
-            }]
-        }
-        #endif
-        return []
+        [SimulatorAction(title: "use the simulated host", identifier: "simulated-address") {
+            model.addressText = SimulatedHostHolder.shared.host?.address() ?? ""
+            model.addressProblem = nil
+        }]
     }
+    #endif
 
     private func connect() {
         guard model.working == nil, !model.addressText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
@@ -448,7 +452,7 @@ private struct KeyNotAcceptedScreen: View {
         SetupPage(
             step: 2, title: "\(host) doesn't know this key yet",
             message: "Add this SSH key to your account on \(host), then check again.",
-            identifier: "setup-key-not-accepted", simulatorActions: simulatorActions
+            identifier: "setup-key-not-accepted"
         ) {
             SetupCard {
                 Text("SSH key")
@@ -505,18 +509,18 @@ private struct KeyNotAcceptedScreen: View {
                 .accessibilityIdentifier("check-again")
         }
         .copyToast($toast)
+        #if DEBUG && targetEnvironment(simulator)
+        .simulatorActions(simulatorActions)
+        #endif
     }
 
+    #if DEBUG && targetEnvironment(simulator)
     private var simulatorActions: [SimulatorAction] {
-        #if DEBUG && targetEnvironment(simulator)
-        if let simulator = model.simulator {
-            return [SimulatorAction(title: "add the key on the host", identifier: "simulated-accept-key") {
-                simulator.acceptKey()
-            }]
-        }
-        #endif
-        return []
+        [SimulatorAction(title: "add the key on the host", identifier: "simulated-accept-key") {
+            SimulatedHostHolder.shared.acceptKey()
+        }]
     }
+    #endif
 }
 
 // MARK: S3 Download
@@ -529,7 +533,7 @@ private struct DownloadScreen: View {
         SetupPage(
             step: 3, title: "Download your store",
             message: "\(storeAddressHost(address: address)) accepts your key.",
-            identifier: "setup-download", simulatorActions: simulatorActions
+            identifier: "setup-download"
         ) {
             SetupCard {
                 Text(address)
@@ -560,17 +564,9 @@ private struct DownloadScreen: View {
                 .accessibilityIdentifier("download-start")
             }
         }
-    }
-
-    private var simulatorActions: [SimulatorAction] {
         #if DEBUG && targetEnvironment(simulator)
-        if model.touchLeftWaiting, model.sheet == nil {
-            return [SimulatorAction(title: "time out the key's touch", identifier: "simulated-time-out-touch") {
-                model.simulatedTouchTimeout()
-            }]
-        }
+        .modifier(SimTouchLeftWaiting(model: model))
         #endif
-        return []
     }
 }
 

@@ -11,10 +11,12 @@ import Foundation
 /// whose PIN KDF paw cannot follow.
 final class SimulatedKeyHolder: @unchecked Sendable {
     static let shared = SimulatedKeyHolder()
+    /// Posted on the main queue when the key goes in.
+    static let pluggedInNotification = Notification.Name("SimulatedKeyHolder.pluggedIn")
     let key: SimulatedKey
-    let startsUnplugged: Bool
     private let lock = NSLock()
     private var attachFailuresLeft: Int
+    private var plugged: Bool
 
     private init() {
         let pin = LaunchArgument.simPin.string ?? "123456"
@@ -29,9 +31,25 @@ final class SimulatedKeyHolder: @unchecked Sendable {
             key.setPinKdf(algorithm: 7)
         }
         attachFailuresLeft = max(LaunchArgument.simAttachFails.int ?? 0, 0)
-        startsUnplugged = LaunchArgument.simUnplugged.bool
-        if startsUnplugged {
+        plugged = !LaunchArgument.simUnplugged.bool
+        if !plugged {
             key.unplug()
+        }
+    }
+
+    /// The key is in: from launch, unless `-pawSimUnplugged`, or since
+    /// `plugIn`.
+    var isPluggedIn: Bool {
+        lock.withLock { plugged }
+    }
+
+    /// Puts the key in, as a person plugging it into the port does; every
+    /// reader watching hears of it.
+    func plugIn() {
+        key.plugIn()
+        lock.withLock { plugged = true }
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: Self.pluggedInNotification, object: nil)
         }
     }
 

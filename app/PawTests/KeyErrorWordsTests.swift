@@ -87,6 +87,14 @@ final class SharedWordsTests: XCTestCase {
                 + "Plug that one in and try again. No PIN try was used.")
     }
 
+    func testABusyStoreIsSaidAsBusyAndNotAsADamagedFile() {
+        for table in [WordTable.app, .autoFill] {
+            XCTAssertEqual(
+                KeyErrorWords.Context(entry: "github.com", table: table).words(.StoreBusy),
+                KeyErrorWords(problem: "The store is busy", nextStep: "Try again in a moment."))
+        }
+    }
+
     func testAKeyThatCannotBeReadSaysWhyAndWhatToDo() {
         XCTAssertEqual(
             KeyErrorWords(.failed(KeyError.KeyRemoved)),
@@ -107,19 +115,19 @@ final class SharedWordsTests: XCTestCase {
     }
 
     func testAutoFillSaysItMoreShortly() {
-        let autoFill = KeyErrorWords.Context(entry: "x", shownIn: .autoFill)
+        let autoFill = KeyErrorWords.Context(entry: "x", table: .autoFill)
         let presented = KeyIdentity(ident: "0006:1", decryptionFingerprint: nil, authenticationFingerprint: nil)
         XCTAssertEqual(
             autoFill.words(.DifferentKey(mismatch: KeyMismatch(enrolled: presented, presented: presented))),
             KeyErrorWords(problem: "This isn't your store's key", nextStep: "Plug in the key you set paw up with."))
         XCTAssertEqual(
-            KeyErrorWords(.failed(KeyError.KeyRemoved), shownIn: .autoFill).nextStep,
+            KeyErrorWords(.failed(KeyError.KeyRemoved), table: .autoFill).nextStep,
             "Unplug it, plug it back in, then try again.")
-        let locked = FaceIdWords.notice(PawError.FaceIdLockedOut, entry: "github.com", shownIn: .autoFill)
+        let locked = FaceIdWords.notice(PawError.FaceIdLockedOut, entry: "github.com", table: .autoFill)
         XCTAssertEqual(locked.problem, "Face ID is locked")
-        let other = FaceIdWords.notice(PawError.CopyUnavailable, entry: "github.com", shownIn: .autoFill)
+        let other = FaceIdWords.notice(PawError.CopyUnavailable, entry: "github.com", table: .autoFill)
         XCTAssertEqual(other.problem, "Face ID didn't open github.com")
         XCTAssertEqual(other.nextStep, "")
-        XCTAssertFalse(FaceIdWords.notice(PawError.StoreBusy, entry: "github.com", shownIn: .autoFill).offersKey)
+        XCTAssertFalse(FaceIdWords.notice(PawError.StoreBusy, entry: "github.com", table: .autoFill).offersKey)
     }
 }

@@ -56,25 +56,25 @@ final class SimulatedHostHolder: @unchecked Sendable {
         }
     }
 
-    /// Setup's hooks into the host and the key. They look the host up each
-    /// time rather than keep it.
-    func setupSimulator() -> SetupSimulator {
-        let key = SimulatedKeyHolder.shared
-        return SetupSimulator(
-            address: host?.address() ?? "",
-            hostConfirmed: {
-                if SetupLaunch.remoteMode == "changedHostKey" {
-                    SimRemoteHandle.shared.host?.setChangedHostKey(changed: true)
-                }
-            },
-            downloadFailed: {
-                if SetupLaunch.remoteMode == "dropMidClone" {
-                    SimRemoteHandle.shared.host?.setDropMidClone(drop: false)
-                }
-            },
-            acceptKey: { SimRemoteHandle.shared.host?.setRefuseKey(refuse: false) },
-            plugIn: { key.key.plugIn() },
-            startsUnplugged: key.startsUnplugged)
+    /// "Add the key on the host": the host accepts the key from now on.
+    func acceptKey() {
+        host?.setRefuseKey(refuse: false)
+    }
+
+    /// The person trusted the host's key: with `changedHostKey`, the host
+    /// presents another one from now on.
+    func hostConfirmed() {
+        if SetupLaunch.remoteMode == "changedHostKey" {
+            host?.setChangedHostKey(changed: true)
+        }
+    }
+
+    /// A download failed for a reason that was not the key's: with
+    /// `dropMidClone`, the next one goes through.
+    func downloadFailed() {
+        if SetupLaunch.remoteMode == "dropMidClone" {
+            host?.setDropMidClone(drop: false)
+        }
     }
 }
 #endif

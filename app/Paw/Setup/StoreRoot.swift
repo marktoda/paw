@@ -32,7 +32,6 @@ final class StoreRootModel {
     private let clock: Clock
     private let connect: KeyReader.Connect = { try KeyConnection.open() }
     #if DEBUG && targetEnvironment(simulator)
-    private let simulatedClock: SimClock
     let keystore = SimKeystore()
     #endif
 
@@ -42,9 +41,7 @@ final class StoreRootModel {
         if SetupLaunch.isRequested, !SetupLaunch.keepsState {
             try location.removeAll()
         }
-        let simulatedClock = SimClock(wallMs: Int64(Date().timeIntervalSince1970 * 1000))
-        let clock = simulatedClock.asClock()
-        self.simulatedClock = simulatedClock
+        let clock = SimulatedClockHolder.shared.clock.asClock()
         #else
         let clock: Clock = SystemClock()
         #endif
@@ -115,14 +112,8 @@ final class StoreRootModel {
     }
 
     private func makeSetup(_ setup: Setup) -> SetupModel {
-        #if DEBUG && targetEnvironment(simulator)
-        let simulator: SetupSimulator? = SimulatedHostHolder.shared.setupSimulator()
-        #else
-        let simulator: SetupSimulator? = nil
-        #endif
-        return SetupModel(
+        SetupModel(
             setup: setup, repoPath: location.repoDir.path, keyPort: keyPort, connect: connect,
-            simulator: simulator,
             finished: { [weak self] in self?.openHome() },
             startOver: { [weak self] in self?.startOver() })
     }
@@ -137,18 +128,15 @@ final class StoreRootModel {
             #if DEBUG && targetEnvironment(simulator)
             let copies: CopyCache? = CopyCache(
                 dir: location.copiesDir.path, keystore: keystore.asKeystore(), clock: clock)
-            let simulator: SimulatorControls? = .simulated(clock: simulatedClock, keyPort: keyPort)
             #else
             // Face ID copies in the Secure Enclave; `nil` where it can't be
             // used, and then every open uses the key (Settings says so).
             let copies = PlatformCopies.make(dir: location.copiesDir.path)
-            let simulator: SimulatorControls? = nil
             #endif
             // Setup pinned the key and accepted the recipients: saving
             // works from here with no further step.
             let session = try StoreSession(StoreSession.Parts(
                 repoDir: location.repoDir.path, copies: copies, clock: clock, keyPort: keyPort, connect: connect,
-                simulator: simulator,
                 writing: StoreSession.Writing(
                     writer: StoreWriter.open(stateDir: location.stateDir.path), sync: sync,
                     stateDir: location.stateDir.path),

@@ -293,6 +293,44 @@ final class SimRemotePanel {
     }
 }
 
+/// The simulated host follows sync as its screens show it: the launch's
+/// change once the store is on screen, and after each sync, its tip for
+/// the UI tests; a sync that failed stops a dropped connection from
+/// dropping again.
+struct SimRemoteWatch: ViewModifier {
+    let model: AppModel
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if let syncing = model.syncing {
+            content
+                .background(alignment: .topLeading) {
+                    SimRemoteSummary()
+                }
+                .onAppear {
+                    SimRemotePanel.shared.storeReady(repoDir: model.storeSession.live.repoDir)
+                }
+                .onChange(of: syncing.running == nil) { _, idle in
+                    guard idle else { return }
+                    if Self.failed(syncing) {
+                        SimRemotePanel.shared.syncFailed()
+                    } else {
+                        SimRemotePanel.shared.refresh()
+                    }
+                }
+        } else {
+            content
+        }
+    }
+
+    private static func failed(_ syncing: SyncModel) -> Bool {
+        if let failure = syncing.failure {
+            return failure.kind != .cancelled
+        }
+        guard case .key? = syncing.sheet?.mode, case .failed = syncing.keyTask.stage else { return false }
+        return true
+    }
+}
+
 /// The simulated host's tip, as an element UI tests read.
 struct SimRemoteSummary: View {
     var body: some View {

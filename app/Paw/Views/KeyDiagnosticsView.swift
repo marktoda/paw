@@ -20,7 +20,7 @@ struct KeyDiagnosticsView: View {
     /// What Copy diagnostics put on the pasteboard, shown below it.
     @State private var copiedReport: String?
     @State private var assembling = false
-    @State private var touchCheck = KeyTaskDriver()
+    @State private var touchCheck = TouchTimeoutCheck()
 
     /// The most lines shown; Copy log takes them all.
     private static let shownLines = 300
