@@ -527,7 +527,7 @@ core/                 paw-core
   tests/
 app/
   Shared/             compiled into the app and the AutoFill extension
-    KeyTaskDriver.swift, KeyReader.swift, KeyOpen.swift, UsbCardConnection.swift
+    KeyTaskDriver.swift, KeyReader.swift, KeyOpen.swift, FaceIdOpener.swift, UsbCardConnection.swift
     AutoFill/ Design/ Platform/ Store/ Words/
     Simulator/        DEBUG simulator builds only
   Paw/                the app: AppModel, StoreSession, Views/ Setup/ Sync/ Edit/ Settings/ GitHub/ AutoFill/ Design/ Words/
@@ -581,18 +581,18 @@ pub trait Clock: Send + Sync {
 
 | Seam | Device | Simulator and Linux |
 |---|---|---|
-| Card | `KeyReader` over `TKSmartCardSlotManager`, `UsbCardConnection`; later an NFC reader | `SimulatedKey` (Rust), held once per launch by `SimulatedKeyHolder` |
+| Card | `KeyReader` over `TKSmartCardSlotManager`, `UsbCardConnection`; later an NFC reader | `SimulatedKey` (Rust) behind a `SimulatedKeyConnector`; the launch's is `SimulatedKeyConnector.launched` |
 | Keystore and biometrics | `EnclaveKeystore` | `SimKeystore`: software P-256; `unwrap` blocks until `SimWorld::face_id(match)` |
 | Clock | system clocks | `SimClock`, with `SimWorld::advance(seconds)` and `SimWorld::reboot()` |
 | Network | `SshConnector` (russh) | `LocalConnector` to a bare repo, wrapped by `SimRemote` for faults; it demands and verifies a signature from the configured `SshSigner` and answers key queries |
 
 Notes:
-- `KeyReader` follows presence through the platform's `KeyConnector` (on a device, KVO on `TKSmartCardSlotManager.slotNames` and the first reader's card state; in the simulator, `SimulatedKeyHolder`) and reads a key that is in into the `KeyPort`'s session, the same way on both. Lifecycle reaches the session as `noteBackgrounded` / `noteForegrounded`.
+- `KeyReader` follows presence through the platform's `KeyConnector` (on a device, KVO on `TKSmartCardSlotManager.slotNames` and the first reader's card state; in the simulator, the `SimulatedKeyConnector`) and reads a key that is in into the `KeyPort`'s session, the same way on both. Lifecycle reaches the session as `noteBackgrounded` / `noteForegrounded`.
 - **Late session grant.** In today's `UsbCardConnection.init`, a `beginSession` that times out after 10 s stays queued. A late grant then gives an exclusive session to an object nobody holds, which produces "Another app is using the key" against paw itself. `UsbCardReader` must call `endSession` in the completion handler when the grant arrives after the timeout.
-- The hardware is one value, `Platform` (app/Shared/Platform/Platform.swift): the key source, the clock, the Face ID keystore and the process's name in the key log. It has two constructors, `Platform.device` and, under `#if DEBUG && targetEnvironment(simulator)`, `Platform.simulated`. Each entry point picks one and hands it down: the app's launch (`LaunchRoot`), the extension's request (`AutoFillSource.open`), and the fixture and AutoFill harness. Simulator-only Swift lives in `app/Shared/Simulator` and `app/Paw/Simulator`; real types carry no simulator members.
+- The hardware is one value, `Platform` (app/Shared/Platform/Platform.swift): the key source (a `KeyConnector`), the clock, the Face ID keystore, whether the iPhone's lock keeps the store's files from being read (`isProtectedDataAvailable`, `protectedDataRefusal`), whether launch removes the old store folder, and the process's name in the key log. It has two constructors, `Platform.device` and, under `#if DEBUG && targetEnvironment(simulator)`, `Platform.simulated`. Each entry point picks one and hands it down: the app's launch (`LaunchRoot`, with `LaunchedHardware.storeRoot` in the simulator), the extension's request (`StoreForAutoFill.platform`), and the fixture and AutoFill harness. Simulator-only Swift lives in `app/Shared/Simulator` and `app/Paw/Simulator`. Real types carry simulator members only under that guard: `Platform.simulated`, the drivers' `pendingTasks`, and `KeyTaskDriver.start`'s one call to `SimulatedKeyConnector.adapted` (finish an open after its Cancel).
 
 **Simulation controls.** Launch arguments, declared once each: the simulated key's in `KeyLaunchArgument` (app/Shared/LaunchArguments.swift, read by both processes), the rest in the app's `LaunchArgument` (app/Paw/AppLaunchArguments.swift); `scripts/launch-arguments.sh` checks every one the UI tests pass is declared and read: the simulated key (`-pawSimPin`, `-pawSimTouch`, `-pawSimTouchTimeoutMs`, `-pawSimPinTries`, `-pawSimUnplugged`, `-pawSimAttachFails`, `-pawSimKdf`), Face ID (`-pawSimFaceId`), the clock (`-pawSimAwayMs`), the git host (`-pawSimRemote…`), and the harnesses (`-pawFixture`, `-pawSetup`, `-pawHostProvider`, `-pawEnclaveCheck`). The simulated key, clock and host are one per launch.
-- Stand-ins for the hardware are drawn by `SimulatorStrip`, a dashed strip under a screen: the key sheet's (`simulated-touch`, `simulated-touch-timeout`, `simulated-plug-in`, `simulated-key-answers`, from `SimulatedKeyControls`), setup's, and Settings › Simulator (`sim-advance-1h`, `sim-advance-9h`, `sim-device-lock`, `sim-late-cancel-next`, …). They act on the simulated hardware; the app's models never call into the simulator, which observes them instead.
+- Stand-ins for the hardware are drawn by `SimulatorStrip`, a dashed strip under a screen: the key sheet's (`simulated-touch`, `simulated-touch-timeout`, `simulated-plug-in`, `simulated-key-answers`, from `SimulatedKeyControls`), setup's, and Settings › Simulator (`sim-advance-1h`, `sim-advance-9h`, `sim-device-lock`, `sim-late-cancel-next`, …). They act on the key the platform handed down, reached through the screen's own `KeyReader` (`KeyReader.simulated`), so a sheet on a fixture's or a test's hardware drives that key. The simulated git host observes the models (`SimRemoteWatch`, `SimSetupHostWatch`, one rule for a failed task: `SimTaskFailed`); the models never call it.
 
 **`SimulatedKey` is mostly new work.** Today's `core/src/sim.rs` (256 lines) is short-APDU only, has no authentication key, hard-codes the auth slot's touch policy to off (`D8 = 00`), and treats an empty VERIFY as a wrong PIN that burns a try. It needs:
 - an ed25519 auth slot with INTERNAL AUTHENTICATE and its own touch policy;
@@ -990,38 +990,13 @@ Behaviour is one function, `autofill::plan(row, reach) -> AutofillPlan`, tested 
 
 ### 3.12 Swift side
 
-```
-app/
-  Paw/           PawApp, AppModel, Router, PlatformFactory
-    Views/       HomeView, FolderView, EntryView, EntryEditor, SearchBar, QueueView, AttentionListView,
-                 KeptBothView, SetupFlowView, BackgroundUpdatesView, SettingsView,
-                 DiagnosticsView (today's SelfTestView plus the APDU script runner), SimStrip (simulator only)
-  PawAutoFill/   CredentialProviderViewController, AutofillModel, AutofillViews
-  Shared/        UsbCardReader (from UsbCardConnection), SecureEnclaveKeystore, Clipboard,
-                 IdentityStoreWriter, KeySheet, KeySheetHost, GoldDisc, KeyDrawing, Theme
-  Generated/     paw_core.swift (paw_sim.swift wrapped in #if targetEnvironment(simulator))
-```
+The layout is in 3.1; the hardware is `Platform` (3.2).
 
-```swift
-@MainActor @Observable final class AppModel: CoreObserver {
-    let core: PawCore
-    var home: HomeSnapshot
-    var sync: SyncStatus
-    var copies: CopiesStatus
-    var key: KeyStatus
-    var keyTask: KeyTaskModel?         // non-nil presents the key sheet
-    nonisolated func changed(what: Change) { Task { @MainActor in self.refresh(what) } }
-}
-enum Route: Hashable { case folder(FolderPath), entry(EntryPath), edit(EntryPath), newEntry(FolderPath), queue, attention, keptBoth(EntryPath), backgroundUpdates, settings }
-```
-
-- One `AppModel` in the environment, no per-screen view models, no Combine, no persistence in Swift.
-- **Presenting the key sheet over other sheets.** A single root `.sheet(item:)` cannot present while another sheet (the editor, a form sheet on iPad, the provider) is up, because UIKit refuses a second presentation from the same presenter. `KeySheetHost` is a view modifier, `.keySheetHost()`, applied at the root and at the root of every presented sheet. All instances bind to the one `keyTask`; only the topmost presents. `testSendNowFromInsideEditorSheet` covers it.
-- iPhone: `NavigationStack` with bottom search. iPad: `NavigationSplitView`. `RootView` picks by size class; `FolderView` and `EntryView` are shared.
-- There is no `paw://` URL scheme in v1. The extension hand-off uses a file in the shared container plus a Darwin notification.
-- Both targets need App Group `group.com.marktoda.paw` and a shared keychain access group; the app also needs an app-only group for the deploy key. None exist in `app/project.yml` today (it has only the smart-card and credential-provider entitlements). They are created in M1, because M2 and M3 already write into the container. **UNPROVEN:** that the App Group container and shared keychain group work in the simulator with `CODE_SIGNING_ALLOWED=NO`, which `scripts/ci-test.sh` passes. Fallback: ad-hoc signing (`CODE_SIGN_IDENTITY=-`) with entitlements in the simulator job.
-- Move to Swift 6 language mode now (`SWIFT_VERSION` is "5.0") while there is almost no Swift.
-- Keep `app/Shared` free of UIKit imports where possible, for a later Mac app.
+- **Key tasks.** A key sheet is a `KeyTaskDriver` following the core's `KeyTask`; whether a key sheet is up, and what it shows, is said there alone. `KeyTaskSheet` draws it and `.keySheetPresentation` presents it. A workflow starts it with a `KeyJob<Step>`: how to begin the task, its words (`KeyErrorWords.Context`), its Working line, what becomes of its end whether the sheet still follows it or let it go (Cancel, Lock now, Try again), and a hold (`BackgroundTime`) kept until the task really ends. The end is a `KeyTaskEnd<Step>`, `Step` being the workflow's own failure (`SyncError`, `SetupError`, or `Never`). Opening an entry is one job, `KeyOpen`, in the app and in AutoFill. A store's drivers all read the key through its one `KeyReader` (`KeyTaskDrivers`).
+- **Stores.** `StoreRootModel` (app/Paw/Setup/StoreRoot.swift) shows setup until a store is set up, then Home. `StoreSession` is everything one open store has, built complete from `StoreSession.Parts` (the set-up store and the simulator's fixture differ only there): `LiveStore` (the store as read now, and the one signal that it changed, which every writer announces on), the copies, the key port and reader, `StoreEdits`, `SyncModel`, the GitHub sign-in and AutoFill's suggestions. `AppModel` is the screens over one session: navigation, the key sheet that opens entries, the open entries.
+- **AutoFill.** `AutoFillProvider` makes one `AutoFillModel` per request on the store `StoreForAutoFill` opens; the app's harness (`-pawHostProvider`) runs the same code.
+- **Words.** Sentences live in words files by domain (app/Shared/Words, app/Paw/Words). What differs between the app and AutoFill is a `WordTable` (`.app`, `.autoFill`), which a workflow picks when it is made.
+- iPhone: `NavigationStack`. iPad: `NavigationSplitView` (`SplitRootView`). `RootView` picks by size class.
 
 ### 3.13 Threading, processes and cancellation
 
@@ -1336,7 +1311,7 @@ The simulated key's private scalar is a constant in a public repo. A device buil
 
 **Outcome (branch `core-setup`).** Smaller than the above. The simulated hardware (`SimulatedKey`, the fixture, `SimKeystore`, `SimClock`, and now `SimRemote`) stays in `paw-core`, in `src/sim`, behind a cargo feature `sim` that is on by default, so tests, the iOS simulator and Debug device builds keep it. `scripts/build-core.sh --release-device` also builds the device library without it, with Swift bindings generated from that library (UniFFI's Swift checks every function's checksum when it loads, so the default bindings cannot be linked against a library that lacks the simulation symbols), and `scripts/check-no-sim.sh` fails if a library has simulation symbols or the fixture's passwords. Not built: a Release configuration in the Xcode project that uses those outputs, `#if DEBUG` around the Swift that names Sim types, the check on the signed app binary, and the runtime denylist (layer 5).
 
-**Outcome (branch `release-build`).** The device build is Release, and its core has no `sim`. `scripts/build-core.sh` always builds the device library without the feature and the simulator library with it, and generates both sets of bindings: `Generated/paw_core_device.swift` inside `#if !targetEnvironment(simulator)` and `Generated/paw_core.swift` inside `#if targetEnvironment(simulator)`, matching the xcframework's slices (each with its own header), so a device build sees only the device bindings whatever its configuration. Swift that names a Sim type, and every harness, is under `#if DEBUG && targetEnvironment(simulator)`, in `app/Paw/Simulator` and `app/Shared/Simulator`; the launch arguments (`LaunchArgument`, one declared list), the gallery and the enclave check are under `#if DEBUG`. The PIN-taking exports (`decrypt`, `card_checks`, `card_touch_timeout_check`, `read_card`, `encrypt_to_card`, `PassStore.open_entry` and `open_entry_keeping_copy`, `Setup.download` and `test_decrypt`, `StoreSync.send` and `refresh`) and the spike's test screen are gone, and so is the Rust-only per-call path they used: the Rust tests drive the key tasks the app runs. The touch timeout check is a key task (`KeyPort.check_touch_timeout`) in Settings › Key diagnostics. `scripts/check-no-sim.sh` scans the device library, and with `--app` the Release app and extension binaries for the debug harnesses as well (every declared launch argument, every type in the simulator and debug folders, and every member their extensions declare); `--expect` runs it on the simulator library and the Debug simulator app, where every pattern must match. Settings › About shows the commit and configuration. Still not built: the runtime denylist (layer 5).
+**Outcome (branch `release-build`).** The device build is Release, and its core has no `sim`. `scripts/build-core.sh` always builds the device library without the feature and the simulator library with it, and generates both sets of bindings: `Generated/paw_core_device.swift` inside `#if !targetEnvironment(simulator)` and `Generated/paw_core.swift` inside `#if targetEnvironment(simulator)`, matching the xcframework's slices (each with its own header), so a device build sees only the device bindings whatever its configuration. Swift that names a Sim type, and every harness, is under `#if DEBUG && targetEnvironment(simulator)`, most of it in `app/Paw/Simulator` and `app/Shared/Simulator`; the launch arguments (two declared lists, `KeyLaunchArgument` and `LaunchArgument`), the gallery and the enclave check are under `#if DEBUG`. The PIN-taking exports (`decrypt`, `card_checks`, `card_touch_timeout_check`, `read_card`, `encrypt_to_card`, `PassStore.open_entry` and `open_entry_keeping_copy`, `Setup.download` and `test_decrypt`, `StoreSync.send` and `refresh`) and the spike's test screen are gone, and so is the Rust-only per-call path they used: the Rust tests drive the key tasks the app runs. The touch timeout check is a key task (`KeyPort.check_touch_timeout`) in Settings › Key diagnostics. `scripts/check-no-sim.sh` scans the device library, and with `--app` the Release app and extension binaries for the debug harnesses as well (every declared launch argument and every type the simulator and debug folders declare at top level, private ones included; not nested types, nor members their extensions add, whose names a stripped build drops); `--expect` runs it on the simulator library and the Debug simulator app, where every pattern must match. Settings › About shows the commit and configuration. Still not built: the runtime denylist (layer 5).
 
 `SimRemote` is an SSH server in the process on a loopback port, serving a fresh bare repository of the fixture store with git's upload-pack and receive-pack written on libgit2 (protocol v0, no `multi_ack`, no side-band, fast-forward pushes only). It starts no `git` program, so it can run inside the app in the iOS simulator; that has been reasoned, not tried. It can refuse the key, present another host key and drop the connection halfway through a pack.
 
