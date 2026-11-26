@@ -13,7 +13,7 @@ use openpgp_card::ocard::crypto::PublicKeyMaterial;
 use openpgp_card::state::{Open, Transaction};
 use openpgp_card_rpgp::CardSlot;
 
-use crate::PawError;
+use super::KeyError;
 use crate::ssh::SshPublicKey;
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -70,7 +70,7 @@ pub enum KeyTouch {
 
 /// A reader that fails while the card is read fails the read; a card that
 /// answers without a policy has an unknown one.
-fn key_touch(tx: &mut Card<Transaction<'_>>, slot: KeyType) -> Result<KeyTouch, PawError> {
+fn key_touch(tx: &mut Card<Transaction<'_>>, slot: KeyType) -> Result<KeyTouch, CardError> {
     use openpgp_card::ocard::data::TouchPolicy;
     Ok(match tx.user_interaction_flag(slot) {
         Ok(Some(uif)) => match uif.touch_policy() {
@@ -137,22 +137,31 @@ impl CardTransaction for Tx {
     }
 }
 
-fn card_err(e: openpgp_card::Error) -> PawError {
+/// Why reading the card failed: the reader, or the card's answer.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum CardError {
+    #[error("could not talk to the key: {0}")]
+    Transport(String),
+    #[error("card error: {0}")]
+    Card(String),
+}
+
+fn card_err(e: openpgp_card::Error) -> CardError {
     match e {
-        openpgp_card::Error::Smartcard(e) => PawError::Transport(e.to_string()),
-        other => PawError::Card(other.to_string()),
+        openpgp_card::Error::Smartcard(e) => CardError::Transport(e.to_string()),
+        other => CardError::Card(other.to_string()),
     }
 }
 
 /// The library's handle on the card behind `transport`; selects the
 /// OpenPGP application.
-pub(crate) fn open(transport: Arc<dyn CardConnection>) -> Result<Card<Open>, PawError> {
+pub(crate) fn open(transport: Arc<dyn CardConnection>) -> Result<Card<Open>, CardError> {
     let backend: Box<dyn CardBackend + Send + Sync> = Box::new(Backend(transport));
     Card::<Open>::new(backend).map_err(card_err)
 }
 
 /// Reads the card's identity and key state. Needs no PIN and no touch.
-pub(crate) fn card_info(transport: Arc<dyn CardConnection>) -> Result<CardInfo, PawError> {
+pub(crate) fn card_info(transport: Arc<dyn CardConnection>) -> Result<CardInfo, CardError> {
     let mut card = open(transport)?;
     let mut tx = card.transaction().map_err(card_err)?;
 
@@ -173,33 +182,57 @@ pub(crate) fn card_info(transport: Arc<dyn CardConnection>) -> Result<CardInfo, 
 }
 
 /// The public half of the card's decryption key. Needs no PIN.
-pub(crate) fn card_decryption_key(transport: Arc<dyn CardConnection>) -> Result<pgp::packet::PublicKey, PawError> {
+pub(crate) fn card_decryption_key(transport: Arc<dyn CardConnection>) -> Result<pgp::packet::PublicKey, CardError> {
     let mut card = open(transport)?;
     let mut tx = card.transaction().map_err(card_err)?;
     let slot = CardSlot::init_from_card(&mut tx, KeyType::Decryption, &|| {})
-        .map_err(|e| PawError::Card(e.to_string()))?;
+        .map_err(|e| CardError::Card(e.to_string()))?;
     Ok(slot.public_key().clone())
 }
 
 /// Reads the SSH public key of the card's authentication slot. Needs no PIN
-/// and no touch.
-pub(crate) fn card_ssh_public_key(transport: Arc<dyn CardConnection>) -> Result<SshPublicKey, PawError> {
+/// and no touch. The inner error says why the slot can't log in:
+/// `NoAuthenticationKey`, or `AuthenticationKeyNotEd25519`.
+pub(crate) fn card_ssh_public_key(
+    transport: Arc<dyn CardConnection>,
+) -> Result<Result<SshPublicKey, KeyError>, CardError> {
     let mut card = open(transport)?;
     let mut tx = card.transaction().map_err(card_err)?;
 
     if tx.fingerprint(KeyType::Authentication).map_err(card_err)?.is_none() {
-        return Err(PawError::NoSshKey("it has no authentication key".into()));
+        return Ok(Err(KeyError::NoAuthenticationKey));
     }
-    let PublicKeyMaterial::E(key) = tx
-        .public_key_material(KeyType::Authentication)
-        .map_err(card_err)?
-    else {
-        return Err(PawError::NoSshKey("its authentication key is RSA, not ed25519".into()));
+    let not_ed25519 = |algorithm: &str| Ok(Err(KeyError::AuthenticationKeyNotEd25519 { algorithm: algorithm.into() }));
+    let key = match tx.public_key_material(KeyType::Authentication).map_err(card_err)? {
+        PublicKeyMaterial::R(_) => return not_ed25519("RSA"),
+        PublicKeyMaterial::E(key) => key,
     };
-    let is_ed25519 =
-        matches!(key.algo(), AlgorithmAttributes::Ecc(ecc) if *ecc.curve() == Curve::Ed25519);
-    match <&[u8; 32]>::try_from(key.data()) {
-        Ok(public) if is_ed25519 => Ok(SshPublicKey::ed25519(public)),
-        _ => Err(PawError::NoSshKey("its authentication key is not ed25519".into())),
+    let curve = match key.algo() {
+        AlgorithmAttributes::Ecc(ecc) => ecc.curve().clone(),
+        AlgorithmAttributes::Rsa(_) => return not_ed25519("RSA"),
+        AlgorithmAttributes::Unknown(_) => return not_ed25519("an unknown kind of key"),
+    };
+    match (curve, <&[u8; 32]>::try_from(key.data())) {
+        (Curve::Ed25519, Ok(public)) => Ok(Ok(SshPublicKey::ed25519(public))),
+        (Curve::Ed25519, Err(_)) => not_ed25519("an Ed25519 key of the wrong length"),
+        (curve, _) => not_ed25519(curve_words(&curve)),
+    }
+}
+
+/// The name a person may know a curve by.
+fn curve_words(curve: &Curve) -> &'static str {
+    match curve {
+        Curve::NistP256r1 => "ECDSA P-256",
+        Curve::NistP384r1 => "ECDSA P-384",
+        Curve::NistP521r1 => "ECDSA P-521",
+        Curve::BrainpoolP256r1 => "Brainpool P-256",
+        Curve::BrainpoolP384r1 => "Brainpool P-384",
+        Curve::BrainpoolP512r1 => "Brainpool P-512",
+        Curve::Secp256k1 => "secp256k1",
+        Curve::Ed25519 => "Ed25519",
+        Curve::Curve25519 => "Curve25519",
+        Curve::Ed448 => "Ed448",
+        Curve::X448 => "X448",
+        Curve::Unknown(_) => "an unknown kind of key",
     }
 }

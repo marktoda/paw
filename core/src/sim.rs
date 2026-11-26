@@ -490,7 +490,7 @@ impl SimulatedKey {
 
     /// The public half of the decryption key, as a session reads it.
     pub fn decryption_key(self: &Arc<Self>) -> Result<pgp::packet::PublicKey, crate::PawError> {
-        crate::key::card::card_decryption_key(self.clone())
+        crate::key::card::card_decryption_key(self.clone()).map_err(|e| crate::PawError::Store(e.to_string()))
     }
 
     /// The raw ed25519 public key of the authentication slot.

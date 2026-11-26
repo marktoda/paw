@@ -106,7 +106,7 @@ pub fn other_key() -> Result<PublicKey, PawError> {
         params,
     )
     .and_then(PublicKey::from_inner)
-    .map_err(|e| PawError::Card(e.to_string()))
+    .map_err(|e| PawError::Store(e.to_string()))
 }
 
 fn hex_fingerprint(key: &PublicKey) -> String {
@@ -134,7 +134,7 @@ pub fn encrypt(keys: &[PublicKey], text: &[u8]) -> Result<Vec<u8>, WriteError> {
 
 fn seeded_encrypt(seed: u64, key: &PublicKey, contents: &str) -> Result<Vec<u8>, PawError> {
     crate::write::encrypt_with(StdRng::seed_from_u64(seed), std::slice::from_ref(key), contents.as_bytes())
-        .map_err(|e| PawError::Card(e.to_string()))
+        .map_err(|e| PawError::Store(e.to_string()))
 }
 
 /// Writes the fixture store into `dir`, creating it if need be. Files

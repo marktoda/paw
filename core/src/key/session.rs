@@ -26,7 +26,6 @@ use super::{FAST_REFUSAL, KeyError, MAX_PIN_LEN, MIN_PIN_LEN, PIN_BACKGROUND_LIM
 use crate::clock::Clock;
 use crate::ssh::SshPublicKey;
 use super::card::{self, CardConnection, CardInfo};
-use crate::PawError;
 
 /// A user PIN of a plausible length, wiped when dropped. It has no
 /// `Display`, and its `Debug` shows nothing of it.
@@ -78,7 +77,8 @@ impl From<KeyError> for Halt {
 struct Identity {
     info: CardInfo,
     decryption_key: Option<pgp::packet::PublicKey>,
-    ssh_key: Option<SshPublicKey>,
+    /// Or why its authentication slot can't log in.
+    ssh_key: Result<SshPublicKey, KeyError>,
     /// How VERIFY must carry the PIN.
     pin_kdf: PinKdf,
 }
@@ -123,7 +123,7 @@ pub(crate) struct PinPrompt {
     pub(crate) forgot_after_background: bool,
 }
 
-fn read_error(wire: &Wire, error: PawError) -> KeyError {
+fn read_error(wire: &Wire, error: card::CardError) -> KeyError {
     if wire.failed() {
         KeyError::KeyRemoved
     } else {
@@ -166,11 +166,7 @@ impl KeySession {
             Some(_) => Some(card::card_decryption_key(wire.clone()).map_err(|e| read_error(&wire, e))?),
             None => None,
         };
-        let ssh_key = match card::card_ssh_public_key(wire.clone()) {
-            Ok(key) => Some(key),
-            Err(PawError::NoSshKey(_)) => None,
-            Err(e) => return Err(read_error(&wire, e)),
-        };
+        let ssh_key = card::card_ssh_public_key(wire.clone()).map_err(|e| read_error(&wire, e))?;
         let pin_kdf = PinKdf::read(&wire)?;
         let tries_left = info.pin_tries_left;
         Ok(Arc::new_cyclic(|me| Self {
@@ -244,7 +240,7 @@ impl KeySession {
     }
 
     pub(crate) fn ssh_key(&self) -> Result<&SshPublicKey, KeyError> {
-        self.identity.ssh_key.as_ref().ok_or(KeyError::NoAuthenticationKey)
+        self.identity.ssh_key.as_ref().map_err(KeyError::clone)
     }
 
     pub(crate) fn wire(&self) -> &Arc<Wire> {

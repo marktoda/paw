@@ -245,6 +245,7 @@ pub(crate) fn error_name(error: &KeyError) -> String {
         KeyError::DifferentKey { .. } => "DifferentKey".into(),
         KeyError::NoDecryptionKey => "NoDecryptionKey".into(),
         KeyError::NoAuthenticationKey => "NoAuthenticationKey".into(),
+        KeyError::AuthenticationKeyNotEd25519 { .. } => "AuthenticationKeyNotEd25519".into(),
         KeyError::EntryUnreadable { .. } => "EntryUnreadable".into(),
         KeyError::DecryptFailed { .. } => "DecryptFailed".into(),
         KeyError::Reader { .. } => "Reader".into(),

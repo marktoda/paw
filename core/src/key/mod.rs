@@ -109,6 +109,10 @@ pub enum KeyError {
     NoDecryptionKey,
     #[error("this key has no authentication key for SSH")]
     NoAuthenticationKey,
+    /// The authentication key is `algorithm` ("RSA", "ECDSA P-256", …),
+    /// and paw logs in with Ed25519 only.
+    #[error("this key's authentication key is {algorithm}, not Ed25519")]
+    AuthenticationKeyNotEd25519 { algorithm: String },
     /// The entry file could not be read or parsed, or did not decrypt to
     /// text. `detail` never holds entry contents.
     #[error("the entry can't be read: {detail}")]

@@ -103,8 +103,7 @@ impl Setup {
     /// key whose PIN KDF paw does not support is refused here with
     /// `UnusableKey` (`PinKdfUnsupported`), before any PIN is asked.
     pub fn read_key_from_session(&self, session: Arc<KeySession>) -> Result<SetupState, SetupError> {
-        let ssh = session.ssh_key().ok().cloned();
-        self.flow().read_key_from(session.card_info(), ssh.as_ref(), session.pin_kdf())
+        self.flow().read_key_from(session.card_info(), session.ssh_key(), session.pin_kdf())
     }
 
     /// "Download your store" as a key task (sign-in, `Clone`): the PIN
