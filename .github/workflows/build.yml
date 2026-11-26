@@ -215,12 +215,7 @@ jobs:
           name: core
           path: app
       - name: Generate the Xcode project
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-          HOMEBREW_NO_INSTALL_CLEANUP: 1
-        run: |
-          brew install xcodegen || { sleep 30; brew install xcodegen; }
-          scripts/make-xcframework.sh
+        uses: ./.github/actions/xcode-project
       - name: Run the UI tests
         env:
           PAW_ONLY: ${{ matrix.only }}
@@ -259,12 +254,7 @@ jobs:
           name: core
           path: app
       - name: Generate the Xcode project
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-          HOMEBREW_NO_INSTALL_CLEANUP: 1
-        run: |
-          brew install xcodegen || { sleep 30; brew install xcodegen; }
-          scripts/make-xcframework.sh
+        uses: ./.github/actions/xcode-project
       - name: Build for devices in Release, unsigned
         env:
           COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
