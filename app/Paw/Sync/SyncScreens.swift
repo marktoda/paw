@@ -113,7 +113,7 @@ struct HeldBackScreen: View {
         return Section {
             detailRow(
                 "Encrypted for",
-                item.encryptedFor.isEmpty ? "Keys paw can't name" : item.encryptedFor.joined(separator: "\n"),
+                item.encryptedFor.isEmpty ? "Keys paw can't name" : item.encryptedFor.map(recipientWords).joined(separator: "\n"),
                 prose: item.encryptedFor.isEmpty,
                 identifier: "held-back-encrypted-for-\(entry.name)")
             detailRow(

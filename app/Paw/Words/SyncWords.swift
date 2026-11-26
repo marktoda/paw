@@ -339,3 +339,12 @@ extension ChangeQueue {
         "Send \(changeCount(unpushed.count))"
     }
 }
+
+/// A key an entry is encrypted for, as its file names it.
+func recipientWords(_ recipient: Recipient) -> String {
+    switch recipient {
+    case .keyId(let id): "key ID \(id)"
+    case .fingerprint(let fingerprint): "key \(fingerprint)"
+    case .hidden: "a hidden recipient"
+    }
+}

@@ -20,10 +20,10 @@ final class KeyErrorWordsTests: XCTestCase {
     }
 
     func testAnotherKeyNamesTheEntryAndCountsTheKeys() {
-        let one = KeyErrorWords(.NotForThisKey(recipients: ["0123456789ABCDEF"]), entry: "github.com")
+        let one = KeyErrorWords(.NotForThisKey(recipients: [.keyId(id: "0123456789ABCDEF")]), entry: "github.com")
         XCTAssertEqual(one.problem, "This key can't open github.com")
         XCTAssertEqual(one.nextStep, "It's encrypted for another key. Open it on a computer that has that key.")
-        let two = KeyErrorWords(.NotForThisKey(recipients: ["0123456789ABCDEF", "FEDCBA9876543210"]), entry: "x")
+        let two = KeyErrorWords(.NotForThisKey(recipients: [.keyId(id: "0123456789ABCDEF"), .keyId(id: "FEDCBA9876543210")]), entry: "x")
         XCTAssertEqual(two.nextStep, "It's encrypted for other keys. Open it on a computer that has one of them.")
     }
 
