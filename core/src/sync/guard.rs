@@ -4,19 +4,10 @@
 //! file system (APFS) treats names that differ in Unicode normalisation as
 //! one name. A tree that holds a link `café -> ..` and, later, a file
 //! `café/recipients` (the second name in NFD) would have checkout follow the
-//! link and write next to the store, over paw's own state. So, in layers:
-//!
-//! - [`check_tree`]: every tree is checked before it is checked out or
-//!   committed. Only folders and regular files are allowed; names must be
-//!   safe ([`crate::path`]); and no two paths may be the same name to a
-//!   case- or normalisation-insensitive file system.
-//! - [`open`] and [`init`]: every repository paw opens is configured so that
-//!   libgit2 itself writes no links (`core.symlinks=false`), refuses the
-//!   HFS+ and NTFS spellings of `.git` (`core.protectHFS`,
-//!   `core.protectNTFS`), and converts nothing on checkout whatever the
-//!   repository's `.gitattributes` say (`info/attributes`, which takes
-//!   precedence over them).
-//! - [`checkout`]: every checkout writes plain files, never executables.
+//! link and write next to the store, over paw's own state. So every tree
+//! is checked ([`check_tree`]) before it is checked out or committed, every
+//! repository is opened or created through [`open`] or [`init`], and every
+//! checkout is built from [`checkout`].
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -42,7 +33,6 @@ impl From<Refused> for super::SyncError {
     }
 }
 
-/// How many ways of comparing names [`folded`] gives.
 const SCHEMES: usize = 3;
 
 /// The names a case- and normalisation-insensitive file system (APFS,
@@ -80,31 +70,15 @@ const GITLINK: i32 = 0o160000;
 /// of thousands of entries is far below it; a few crafted tree objects
 /// that name one subtree many times at each level are far above it.
 const MAX_ENTRIES: usize = 100_000;
-/// Paths longer than this, in bytes, are refused.
 const MAX_PATH_BYTES: usize = 1024;
 /// The walk keeps every path (and its folded forms); past this many bytes
 /// of paths the tree is refused, so the check itself stays small.
 const MAX_TOTAL_PATH_BYTES: usize = 16 << 20;
 
 /// Every path in `tree` paw will not check out, sorted by path; empty if
-/// it may be checked out. Refused:
-///
-/// - links (mode 120000) and submodules (gitlinks, 160000), and any mode
-///   other than a folder or a regular file. Executable files are allowed
-///   and checked out as plain files (see [`checkout`]): `pass` keeps its
-///   extensions, which are executable, in the store;
-/// - names that are not UTF-8, contain a slash, or that [`unsafe_path`]
-///   refuses (`..`, `.git` in any spelling some file system accepts);
-/// - names some file system would take for `.gpg-id` that are not exactly
-///   `.gpg-id`, and a `.gpg-id` that is not a regular file;
-/// - two paths that are the same name once case (any of the ways in
-///   [`folded`]), Unicode normalisation and the code points HFS+ ignores
-///   are set aside, whether files or folders (so a file `A` and a folder
-///   `a/` collide), and a name that appears twice in one tree;
-/// - folders nested 32 deep or more, and paths over 1024 bytes;
-/// - the whole tree, when it has more than 100,000 files and folders or
-///   more than 16 MiB of paths. The walk stops there, so its time and
-///   memory are bounded whatever the repository holds.
+/// it may be checked out. Executable files are allowed and checked out as
+/// plain files (see [`checkout`]): `pass` keeps its extensions, which are
+/// executable, in the store.
 pub(crate) fn check_tree(repo: &Repository, tree: Oid) -> Result<Vec<RefusedPath>, git2::Error> {
     let mut refused = Vec::new();
     let mut refuse = |path: &str, reasons: Vec<RefusedReason>| {
@@ -192,14 +166,12 @@ pub(crate) fn check_tree(repo: &Repository, tree: Oid) -> Result<Vec<RefusedPath
     Ok(refused)
 }
 
-/// [`check_tree`] on the tree of `commit`, as an error.
 pub(crate) fn check_commit(repo: &Repository, commit: Oid) -> Result<(), CheckError> {
     let tree = repo.find_commit(commit)?.tree_id();
     let refused = check_tree(repo, tree)?;
     if refused.is_empty() { Ok(()) } else { Err(CheckError::Refused(Refused(refused))) }
 }
 
-/// Why [`check_commit`] did not pass.
 pub(crate) enum CheckError {
     Refused(Refused),
     Git(git2::Error),
@@ -244,8 +216,7 @@ const SETTINGS: [(&str, bool); 5] = [
 const ATTRIBUTES: &str = "# Written by paw: the store is ciphertext, so checkout converts nothing.\n\
 * -text -crlf -ident -filter\n";
 
-/// Applies paw's settings to `repo` (see the module comment). Writes only
-/// what differs.
+/// Applies [`SETTINGS`] and [`ATTRIBUTES`] to `repo`.
 pub(crate) fn harden(repo: &Repository) -> Result<(), PawError> {
     let config = repo.config().map_err(super::git_err)?;
     let mut local = config.open_level(ConfigLevel::Local).map_err(super::git_err)?;

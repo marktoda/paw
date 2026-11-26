@@ -29,7 +29,6 @@ pub struct QueueItem {
     pub when: i64,
 }
 
-/// The changes waiting to be sent, on the current branch.
 pub(crate) struct Waiting<'r> {
     pub(crate) branch: String,
     pub(crate) short: String,
@@ -178,7 +177,6 @@ pub(crate) fn waiting_files(dir: &Path) -> Result<(Oid, Vec<WaitingFile>), SyncE
 /// `None` to keep it; for [`rewrite_ciphertexts`].
 pub(crate) type Replace<'a> = &'a mut dyn FnMut(&str, Oid) -> Result<Option<Vec<u8>>, SyncError>;
 
-/// What [`rewrite_ciphertexts`] did.
 pub(crate) enum Rewritten {
     Done,
     /// The queue changed since its head was read: nothing was done.

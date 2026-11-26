@@ -1,17 +1,11 @@
 //! The address of a password store, as a person types or pastes it.
 //!
-//! paw speaks git over SSH only. It accepts the two forms git hosts show:
-//! `git@github.com:owner/repo.git` and `ssh://git@host[:port]/path`, and
-//! three short ways of naming a GitHub repository, each turned into its SSH
-//! address with a notice saying so: `owner/repo`, `github.com/owner/repo`
-//! and the repository's web address `https://github.com/owner/repo`. Spaces
-//! around the address and a slash at its end are ignored.
-//!
-//! Everything else is refused with an [`AddressProblem`], for the app to say
-//! what to do instead: in particular anything that could reach `ssh` or `git` as an option (a
-//! user, host or path starting with `-`), control characters, a password or
-//! token inside the address (never repeated back), and git's other
-//! transports (`file://`, `ext::`, `git://`).
+//! paw speaks git over SSH only. What it can't use is refused with an
+//! [`AddressProblem`], for the app to say what to do instead: in particular
+//! anything that could reach `ssh` or `git` as an option (a user, host or
+//! path starting with `-`), control characters, a password or token inside
+//! the address (never repeated back), and git's other transports
+//! (`file://`, `ext::`, `git://`).
 
 use std::path::Path;
 
@@ -184,7 +178,7 @@ fn github_short_form(text: &str) -> Result<Option<ParsedAddress>, AddressProblem
 }
 
 impl StoreAddress {
-    /// Reads an address as typed or pasted. Spaces around it are ignored.
+    /// Reads an address as typed or pasted.
     pub fn parse(text: &str) -> Result<ParsedAddress, AddressProblem> {
         let text = text.trim();
         if text.is_empty() {
@@ -380,7 +374,6 @@ pub fn store_address_host(address: String) -> String {
     StoreAddress::parse(&address).map(|parsed| parsed.address.connect_host().to_owned()).unwrap_or_default()
 }
 
-/// Whether a store address is a repository on GitHub.
 #[uniffi::export]
 pub fn is_github_address(address: String) -> bool {
     StoreAddress::parse(&address).is_ok_and(|parsed| parsed.address.github_name().is_some())

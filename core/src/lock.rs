@@ -83,7 +83,6 @@ enum Mode {
     Exclusive,
 }
 
-/// One lock: its in-process key and, if it has one, its lock file.
 #[derive(Clone, Debug)]
 struct Lock {
     key: PathBuf,
@@ -98,7 +97,6 @@ pub struct StoreLock {
     /// Where the lock files go; `None` for a folder that is not a git
     /// repository (nothing paw writes, so the in-process gate is enough).
     files: Option<PathBuf>,
-    /// The store's repository, for stale git locks.
     repo: PathBuf,
 }
 
@@ -131,7 +129,6 @@ impl StoreLock {
         Self { repo: root.clone(), root, files }
     }
 
-    /// The store's repository.
     pub fn repo(&self) -> &Path {
         &self.repo
     }
@@ -140,17 +137,15 @@ impl StoreLock {
         Lock { key: self.root.join("#store"), file: self.files.as_ref().map(|dir| dir.join(crate::files::layout::STORE_LOCK)) }
     }
 
-    /// A lock between this process's threads only.
     fn in_process(&self, kind: &str) -> Lock {
         Lock { key: self.root.join(format!("#{kind}")), file: None }
     }
 
-    /// Takes the store for changing it, waiting at most [`DEFAULT_WAIT`].
+    /// Takes the store for changing it.
     pub fn exclusive(&self) -> Result<Exclusive, PawError> {
         self.exclusive_within(DEFAULT_WAIT)
     }
 
-    /// [`Self::exclusive`], waiting at most `wait`.
     pub fn exclusive_within(&self, wait: Duration) -> Result<Exclusive, PawError> {
         let held = acquire(&self.store(), Mode::Exclusive, wait)?;
         if !held.nested {
@@ -159,13 +154,11 @@ impl StoreLock {
         Ok(Exclusive { held, store: self.clone() })
     }
 
-    /// Takes the store for reading it, waiting at most [`SHARED_WAIT`].
-    /// Readers share; none overlaps a writer.
+    /// Takes the store for reading it. Readers share; none overlaps a writer.
     pub fn shared(&self) -> Result<Shared, PawError> {
         self.shared_within(SHARED_WAIT)
     }
 
-    /// [`Self::shared`], waiting at most `wait`.
     pub fn shared_within(&self, wait: Duration) -> Result<Shared, PawError> {
         Ok(Shared { _held: acquire(&self.store(), Mode::Shared, wait)? })
     }
@@ -195,7 +188,7 @@ impl StoreLock {
     }
 
     /// Whether another thread holds the push lock now: a push is on the
-    /// network. Only tries; never waits.
+    /// network.
     pub(crate) fn push_in_flight(&self) -> bool {
         acquire(&self.in_process("push"), Mode::Exclusive, Duration::ZERO).is_err()
     }
@@ -227,12 +220,10 @@ pub struct Shared {
     _held: Held,
 }
 
-/// A store's fetch lock, held.
 pub(crate) struct Fetching {
     _held: Held,
 }
 
-/// A store's push lock, held.
 pub(crate) struct Pushing {
     _held: Held,
 }
@@ -266,7 +257,6 @@ fn gate(key: &Path) -> Arc<Gate> {
 }
 
 thread_local! {
-    /// The locks this thread holds, with how.
     static HELD: RefCell<Vec<(PathBuf, Mode)>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -339,7 +329,6 @@ fn enter(gate: &Gate, mode: Mode, deadline: Instant) -> Result<(), PawError> {
         if now >= deadline {
             if mode == Mode::Exclusive {
                 state.writers_waiting -= 1;
-                // Readers held back for this writer may go now.
                 gate.changed.notify_all();
             }
             return Err(PawError::StoreBusy);
@@ -365,10 +354,9 @@ fn leave(gate: &Gate, mode: Mode) {
     gate.changed.notify_all();
 }
 
-/// Opens `path` and takes its `flock`, trying until `deadline`. Each holder
-/// has its own open file, so a lock in this process conflicts with one in
-/// another exactly as two processes' would; the in-process gate already
-/// keeps this process's holders apart.
+/// Each holder has its own open file, so a lock in this process conflicts
+/// with one in another exactly as two processes' would; the in-process
+/// gate already keeps this process's holders apart.
 ///
 /// A reader that cannot create the lock file (a store it may not write,
 /// which no paw process can then change either) reads without it.
@@ -405,7 +393,6 @@ fn lock_file(path: &Path, mode: Mode, deadline: Instant) -> Result<Option<File>,
 
 impl Drop for Held {
     fn drop(&mut self) {
-        // Closing the file drops the flock; then the gate.
         drop(self.file.take());
         if let Some(gate) = self.gate.take() {
             leave(&gate, self.mode);
@@ -429,7 +416,6 @@ impl Drop for Held {
 /// refs of a fetch (`refs/paw/fetch/`) and `shallow.lock`, which are
 /// written under the fetch lock instead, and paw's own lock files
 /// (`.git/paw/`) are left alone.
-/// Returns what was removed.
 pub fn remove_stale_git_locks(repo: &Path) -> Vec<PathBuf> {
     let git = repo.join(".git");
     let mut removed = Vec::new();
@@ -438,7 +424,6 @@ pub fn remove_stale_git_locks(repo: &Path) -> Vec<PathBuf> {
     };
     for child in top.flatten() {
         let path = child.path();
-        // `shallow.lock` is a fetch's, written under the fetch lock alone.
         let fetchs = child.file_name() == SHALLOW_LOCK;
         if child.file_type().is_ok_and(|t| t.is_file()) && is_lock(&path) && !fetchs && std::fs::remove_file(&path).is_ok()
         {

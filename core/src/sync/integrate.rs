@@ -51,11 +51,8 @@ pub struct IntegrateReport {
     /// Entries deleted here but changed on the remote: the delete was dropped.
     pub dropped_deletes: Vec<String>,
     pub recipients_changed: Vec<RecipientsChange>,
-    /// Entries the store has now and did not have before.
     pub added: Vec<String>,
-    /// Entries whose file is different now.
     pub changed: Vec<String>,
-    /// Entries the store no longer has.
     pub removed: Vec<String>,
 }
 
@@ -95,8 +92,6 @@ impl IntegrateReport {
         }
     }
 
-    /// Notes which entries differ between the trees of `before` and
-    /// `after`.
     fn note_entries(&mut self, repo: &Repository, before: Oid, after: Oid) -> Result<(), SyncError> {
         if before == after {
             return Ok(());
@@ -159,7 +154,6 @@ fn tips(repo: &Repository) -> Result<Tips, SyncError> {
     Ok(Tips { branch, seen_ref, head, remote, seen })
 }
 
-/// What a fetch brought, as an integrate reads it.
 struct Fetched {
     remote: Oid,
     /// The remote's tip paw saw last. A copy cloned before paw kept that
@@ -169,7 +163,6 @@ struct Fetched {
     replaced: bool,
 }
 
-/// `None` when nothing was fetched.
 fn fetched(repo: &Repository, tips: &Tips) -> Result<Option<Fetched>, SyncError> {
     let Some(remote) = tips.remote else {
         return Ok(None);
@@ -184,7 +177,7 @@ fn fetched(repo: &Repository, tips: &Tips) -> Result<Option<Fetched>, SyncError>
 
 /// Integrates `origin/<branch>` into the current branch of the store at
 /// `dir`, taking the store's lock: tests' way to run the integrate step on
-/// its own. Run after [`super::fetch`].
+/// its own.
 ///
 /// If the remote's tip, or a commit rebuilt on it, holds something paw
 /// will not check out ([`super::refused_remote`]), this fails with
@@ -196,8 +189,6 @@ pub fn integrate(dir: &Path) -> Result<Integration, SyncError> {
     integrate_locked(&held, dir)
 }
 
-/// Integrates `origin/<branch>` into the current branch of the store at
-/// `dir`, with the store's lock already held.
 pub(crate) fn integrate_locked(held: &Exclusive, dir: &Path) -> Result<Integration, SyncError> {
     let repo = super::guard::open(dir)?;
     let tips = tips(&repo)?;
@@ -285,7 +276,6 @@ pub(crate) fn pending_recipients_changes(dir: &Path) -> Result<Vec<RecipientsCha
     }
 }
 
-/// Every `.gpg-id` that differs between `before` and `after`.
 fn recipients_changes(repo: &Repository, before: Oid, after: Oid) -> Result<Vec<RecipientsChange>, SyncError> {
     if before == after {
         return Ok(Vec::new());
@@ -293,7 +283,6 @@ fn recipients_changes(repo: &Repository, before: Oid, after: Oid) -> Result<Vec<
     let old = repo.find_commit(before).and_then(|c| c.tree()).map_err(git_err)?;
     let new = repo.find_commit(after).and_then(|c| c.tree()).map_err(git_err)?;
     let diff = repo.diff_tree_to_tree(Some(&old), Some(&new), None).map_err(git_err)?;
-    // A file that is gone, or not text, names no key.
     let lines = |path: &str, id: Oid| -> Vec<String> {
         if id.is_zero() {
             return Vec::new();
