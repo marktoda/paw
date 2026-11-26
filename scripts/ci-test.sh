@@ -36,7 +36,6 @@ for name in ${PAW_SKIP:-}; do
   only+=("-skip-testing:PawUITests/$name")
 done
 
-# Where the minutes go, so the loop can be made faster with evidence.
 timing="$report/timing.txt"
 mark() { echo "$(date +%s) $1" >> "$timing"; }
 
@@ -65,8 +64,6 @@ if [ $status -eq 0 ]; then
   mark tests-end
 fi
 
-
-# Compiler and linker errors, deduplicated, are the first thing to read.
 grep -E "(error:|ld: |Undefined symbols|\*\* (BUILD|TEST) )" "$report/xcodebuild.log" \
   | sed "s#$root/##g" | awk '!seen[$0]++' > "$report/errors.txt"
 grep -E "Test Case .* (passed|failed)" "$report/xcodebuild.log" > "$report/cases.txt" || true

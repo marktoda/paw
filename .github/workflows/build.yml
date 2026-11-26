@@ -116,9 +116,7 @@ jobs:
           import glob, json, os, re, subprocess, sys
           # Seconds a test of each class takes on a runner (scripts/ci-report.sh
           # prints them). Only the balance between parts depends on these.
-          # Measured on run 45500441073 (2026-11-24). Since then 3 AppTests and
-          # 4 LifecycleTests became unit tests (app/PawTests); each class's
-          # per-test weight stands.
+          # Measured on run 45500441073 (2026-11-24).
           weight = {"EditTests": 123, "SyncTests": 113, "LifecycleTests": 116, "SettingsRestTests": 78,
                     "KeyTests": 65, "EnclaveTests": 59, "BackgroundRefreshTests": 59, "GitHubTests": 55,
                     "AppTests": 53, "StoreTests": 52, "LicencesTests": 50, "SetupTests": 32,
@@ -144,7 +142,6 @@ jobs:
               only = ["PawTests"]
           parts = []
           if only:
-              # One machine per class named, at most 4.
               groups = {}
               for name in only:
                   groups.setdefault(name.split("/")[0], []).append(name)
@@ -155,13 +152,11 @@ jobs:
               for cls in sorted(groups, key=lambda c: -load(groups[c])):
                   min(bins, key=load).extend(groups[cls])
               n = len(bins)
-              # The first part runs the unit tests as well (PAW_UNIT).
               parts = [{"name": f"only-{i + 1}-of-{n}", "only": " ".join(b), "skip": "", "unit": "1" if i == 0 else ""}
                        for i, b in enumerate(bins)]
               if pad:
                   parts.append({"name": "ipad", "only": " ".join(pad), "skip": "", "family": "iPad"})
           else:
-              # Tests in class order, cut into 5 parts of about equal time.
               # The last part runs whatever the others do not name, so a test
               # this misses still runs.
               k = 5
@@ -178,7 +173,6 @@ jobs:
                   done += w(cls)
               names = []
               for b in bins:
-                  # A class wholly in one part is named once.
                   whole = [c for c in dict.fromkeys(c for c, _ in b) if len([1 for c2, _ in b if c2 == c]) == len(tests[c])]
                   names.append(whole + [f"{c}/{t}" for c, t in b if c not in whole])
               named = [n for b in names[:-1] for n in b]
@@ -187,7 +181,6 @@ jobs:
               if pad:
                   parts.append({"name": "ipad", "only": "IPadTests", "skip": "", "family": "iPad"})
           for p in parts:
-              # A part that names the iPad tests runs on an iPad.
               p.setdefault("family", "iPad" if "IPadTests" in p["only"] else "iPhone")
               print(p["name"], p["family"], "only:", p["only"] or "-", "skip:", p["skip"] or "-", file=sys.stderr)
           print("parts=" + json.dumps({"include": parts}))

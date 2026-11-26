@@ -73,9 +73,6 @@ if [[ "$ios" == yes ]]; then
   "$root/scripts/check-no-sim.sh" --expect "$out/ios-sim/libpaw_core.a"
 fi
 
-# Generates bindings from the host library $1 into $2 (the Swift) and $3
-# (the header and module map), the Swift wrapped in `#if $4`; $5 says
-# which build it is.
 bindings() {
   local lib="$1" swift="$2" headers="$3" condition="$4" which="$5" tmp="$out/bindings"
   rm -rf "$tmp" && mkdir -p "$tmp" "$headers"
