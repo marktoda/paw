@@ -306,7 +306,9 @@ pub fn clear_key_log(state_dir: String) -> Result<(), PawError> {
     let dir = Path::new(&state_dir);
     let Ok(entries) = std::fs::read_dir(dir) else { return Ok(()) };
     for entry in entries.filter_map(Result::ok) {
-        if entry.file_name().to_string_lossy().starts_with(crate::files::layout::KEY_LOG_PREFIX) {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // `.key-log.…tmp-…` is what a trim that never finished left.
+        if name.strip_prefix('.').unwrap_or(&name).starts_with(crate::files::layout::KEY_LOG_PREFIX) {
             match std::fs::remove_file(entry.path()) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}

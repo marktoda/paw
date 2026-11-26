@@ -24,7 +24,7 @@ use crate::sync::hosts::{KnownHosts, is_bundled};
 use crate::sync::queue::{self, QueueItem};
 use crate::sync::{IntegrateReport, SyncError, accept_replaced_remote};
 use crate::task::workflows;
-use crate::task::{KeyPurpose, KeyTask, KeyTaskListener, LoginPurpose};
+use crate::task::{KeyTask, KeyTaskListener, LoginPurpose};
 use crate::write::held_back::{self, HeldBack, ReencryptCheck};
 
 /// First-run setup; see [`crate::setup`]. Each call is one step and returns
@@ -247,15 +247,13 @@ impl StoreSync {
 
     /// "Send" as a key task (sign-in, `Push`): fetch, integrate and push on
     /// one login, with the session's PIN. Ends `Done` with `Synced` and the
-    /// report, or `SyncFailed`. A queue that can't be read fails it at once.
+    /// report, or `SyncFailed`. The sheet counts a queue that can't be read
+    /// as none waiting; the send then says what is wrong with it, or finds
+    /// the remote replaced, which is the way out of a history paw did not
+    /// make.
     pub fn send_with_key(self: Arc<Self>, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
-        match queue::unpushed(&self.repo()) {
-            Ok(items) => self.with_key(port, listener, LoginPurpose::Push { count: items.len() as u32 }),
-            Err(error) => {
-                let purpose = KeyPurpose::SignIn { login: LoginPurpose::Push { count: 0 } };
-                KeyTask::failed(purpose, listener, error.into())
-            }
-        }
+        let count = queue::unpushed(&self.repo()).map_or(0, |items| items.len() as u32);
+        self.with_key(port, listener, LoginPurpose::Push { count })
     }
 
     /// Fetch and integrate as a key task (sign-in, `Fetch`), pushing

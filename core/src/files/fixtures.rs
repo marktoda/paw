@@ -70,6 +70,23 @@ fn the_setup_step() {
 }
 
 #[test]
+fn a_setup_step_with_the_notice_an_earlier_paw_saved_in_words() {
+    use crate::setup::{SetupFlow, SetupState};
+    let bytes = format!(
+        "step=check-host\nident=0006:12345678\nssh_public_key={SSH_KEY}\ndecryption_fingerprint={FINGERPRINT}\n\
+         authentication_touch=cached\ndecryption_touch=each-use\naddress=ssh://git@ssh.github.com:443/you/store.git\n\
+         notice=Port 22 of github.com could not be reached, so paw will use ssh.github.com on port 443 instead.\n"
+    );
+    let dir = state();
+    put(dir.path(), layout::SETUP, bytes.as_bytes());
+    let flow = SetupFlow::open(dir.path()).unwrap();
+    assert_eq!(
+        flow.state(),
+        SetupState::CheckHost { address: "ssh://git@ssh.github.com:443/you/store.git".into(), notice: None }
+    );
+}
+
+#[test]
 fn a_finished_setup() {
     let dir = state();
     put(dir.path(), layout::SETUP, b"step=done\nident=0006:12345678\n");

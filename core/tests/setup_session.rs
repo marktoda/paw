@@ -185,6 +185,36 @@ fn after_setup_a_new_entry_saves_with_no_further_step() {
 }
 
 #[test]
+fn a_send_over_a_change_paw_did_not_make_still_finds_the_remote_replaced() {
+    let w = world();
+    full_setup(&w);
+    let repo = w.dir.path().join(paw_core::files::layout::REPO);
+    // Another tool commits two entries at once: not a change paw makes.
+    std::fs::write(repo.join("one.gpg"), "1").unwrap();
+    std::fs::write(repo.join("two.gpg"), "2").unwrap();
+    support::git(&repo, &["add", "one.gpg", "two.gpg"]);
+    support::git(&repo, &["commit", "--quiet", "-m", "Two at once, by another tool."]);
+    assert!(paw_core::sync::queue::unpushed(&repo).is_err());
+    // The desktop starts the remote over.
+    let desktop = w.server.desktop();
+    support::git(desktop.path(), &["checkout", "--quiet", "--orphan", "fresh"]);
+    support::git(desktop.path(), &["rm", "-r", "--quiet", "--cached", "."]);
+    std::fs::write(desktop.path().join(".gpg-id"), "AAAA1111\n").unwrap();
+    support::git(desktop.path(), &["add", ".gpg-id"]);
+    support::git(desktop.path(), &["commit", "--quiet", "-m", "Start over."]);
+    support::git(desktop.path(), &["push", "--quiet", "--force", "origin", "HEAD:refs/heads/main"]);
+
+    let sync = StoreSync::open(w.dir.path().to_string_lossy().into_owned()).unwrap();
+    let sending = Driver::helpful(PIN, &w.sim);
+    let task = sync.clone().send_with_key(w.port.clone(), sending.clone());
+    sending.drive(&task);
+    let state = finish(&task);
+
+    let KeyTaskState::Done { outcome: KeyOutcome::Synced { report } } = state else { panic!("{state:?}") };
+    assert!(matches!(report.state, paw_core::sync::operation::SyncState::RemoteReplaced { .. }), "{report:?}");
+}
+
+#[test]
 fn recipients_paw_has_no_key_for_leave_setup_done_but_say_saving_is_not_possible_yet() {
     let w = world();
     let other = other_key_fingerprint_hex().unwrap();

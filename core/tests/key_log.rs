@@ -417,10 +417,14 @@ fn clear_removes_every_process_file() {
     open_and_finish(&app, ENTRY);
     open_and_finish(&fill, ENTRY);
     std::fs::write(state.path().join(paw_core::files::layout::ENROLLED_KEY), "other state").unwrap();
+    // A trim the process did not live to finish.
+    let trim = state.path().join(format!(".{}app.tmp-0123", paw_core::files::layout::KEY_LOG_PREFIX));
+    std::fs::write(&trim, "1000\tkey plugged in\n").unwrap();
 
     clear_key_log(dir_string(&state)).unwrap();
 
     assert!(key_log(dir_string(&state), 0).is_empty());
+    assert!(!trim.exists());
     assert!(state.path().join(paw_core::files::layout::ENROLLED_KEY).exists(), "only the log is cleared");
     // It goes on from there.
     open_and_finish(&app, ENTRY);

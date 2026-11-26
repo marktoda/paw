@@ -79,6 +79,7 @@ impl Wire {
     /// Sends a command whose answer fits in one response, and splits off
     /// the status word.
     pub(crate) fn send(&self, apdu: &[u8]) -> Result<(Vec<u8>, u16), KeyError> {
+        // The one copy, moved to the connection (a VERIFY's holds the PIN).
         let mut response = self.transmit(apdu.to_vec()).map_err(|_| KeyError::KeyRemoved)?;
         let Some(split) = response.len().checked_sub(2) else {
             return Err(KeyError::Reader { detail: "the reader returned no status word".into() });
@@ -101,8 +102,14 @@ impl CardConnection for Wire {
         if let Some(hook) = &hook {
             hook.sent();
         }
+        // What the log and the record need, taken before the command (which
+        // may hold the PIN) is moved to the connection. The header only: the
+        // fifth byte would be the length of the data, which for a VERIFY is
+        // the PIN's.
+        let header: Option<[u8; 4]> = command.get(..4).and_then(|h| h.try_into().ok());
+        let has_data = apdu::has_data(&command);
         let sent = Instant::now();
-        let result = self.inner.transmit(command.clone());
+        let result = self.inner.transmit(command);
         let round_trip = sent.elapsed();
 
         let sw = {
@@ -113,9 +120,9 @@ impl CardConnection for Wire {
                     None
                 }
                 Ok(response) => {
-                    let ins = match command.get(1) {
-                        Some(&apdu::GET_RESPONSE) => record.last.map(|(ins, _)| ins),
-                        other => other.copied(),
+                    let ins = match header.map(|[_, ins, _, _]| ins) {
+                        Some(apdu::GET_RESPONSE) => record.last.map(|(ins, _)| ins),
+                        other => other,
                     };
                     let sw = match response.as_slice() {
                         [.., hi, lo] => Some(u16::from_be_bytes([*hi, *lo])),
@@ -126,11 +133,9 @@ impl CardConnection for Wire {
                 }
             }
         };
-        // After the answer and outside the record's lock. The header only:
-        // the fifth byte would be the length of the data, which for a
-        // VERIFY is the PIN's.
-        if let [cla, ins, p1, p2, ..] = command.as_slice() {
-            self.log.command([*cla, *ins, *p1, *p2], apdu::has_data(&command), sw, round_trip, sent);
+        // After the answer and outside the record's lock.
+        if let Some(header) = header {
+            self.log.command(header, has_data, sw, round_trip, sent);
         }
         // After the log line, so the log reads command, then stage.
         if let Some(hook) = &hook {
