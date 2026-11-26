@@ -11,6 +11,9 @@ use key_common::{PIN, signer};
 use paw_core::sim::remote::steps;
 use paw_core::sim::SimulatedKey;
 use paw_core::sim::remote::SimRemote;
+use paw_core::ffi::sync::Setup;
+use paw_core::files::layout::store_repo_dir;
+use paw_core::setup::SetupState;
 use paw_core::sync::Connection;
 
 fn key() -> Arc<SimulatedKey> {
@@ -77,4 +80,54 @@ fn a_host_started_without_a_folder_removes_its_repository() {
     assert!(bare.is_dir());
     drop(host);
     assert!(!bare.exists());
+}
+
+#[test]
+fn a_store_set_up_from_the_host_is_done_and_at_its_tip() {
+    let key = key();
+    let host = SimRemote::start(key.clone()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let state_dir = dir.path().to_string_lossy().into_owned();
+
+    host.set_up_store(key.clone(), PIN.into(), state_dir.clone()).unwrap();
+
+    assert!(matches!(Setup::open(state_dir.clone()).unwrap().state(), SetupState::Done { .. }));
+    let repo = git2::Repository::open(store_repo_dir(state_dir)).unwrap();
+    assert_eq!(repo.head().unwrap().target().map(|id| id.to_string()), host.tip());
+    assert_eq!(key.pin_tries_left(), 3);
+}
+
+#[test]
+fn a_set_up_store_downloads_the_list_of_keys_another_computer_gave_work() {
+    for missing_key in [false, true] {
+        let key = key();
+        let host = SimRemote::start(key.clone()).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let state_dir = dir.path().to_string_lossy().into_owned();
+        host.set_up_store(key.clone(), PIN.into(), state_dir.clone()).unwrap();
+
+        host.give_work_its_own_keys(key.clone(), PIN.into(), state_dir.clone(), missing_key).unwrap();
+
+        let repo = std::path::PathBuf::from(store_repo_dir(state_dir));
+        let lines = std::fs::read_to_string(repo.join("work/.gpg-id")).unwrap();
+        let mut expected = vec![key.fingerprint_hex()];
+        if missing_key {
+            expected.push(SimulatedKey::new_other(PIN.into(), false, 1000).fingerprint_hex());
+        }
+        assert_eq!(lines.lines().collect::<Vec<_>>(), expected);
+        let head = git2::Repository::open(&repo).unwrap().head().unwrap().target().map(|id| id.to_string());
+        assert_eq!(head, host.tip());
+    }
+}
+
+#[test]
+fn setting_up_with_the_wrong_pin_fails_without_locking_the_key() {
+    let key = key();
+    let host = SimRemote::start(key.clone()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+
+    let failed = host.set_up_store(key.clone(), "654321".into(), dir.path().to_string_lossy().into_owned());
+
+    assert!(failed.is_err());
+    assert_eq!(key.pin_tries_left(), 2);
 }
