@@ -57,12 +57,10 @@ func editProblem(_ error: WriteError, folder: String) -> EditProblem {
             nextStep: "Fix it, then save.")
     case .Policy(let message):
         return EditProblem(problem: "That password can't be generated", nextStep: message)
-    case .Failed(let message), .Certificate(let message):
+    case .Failed(let message):
         return EditProblem(problem: "Couldn't save this", nextStep: "Nothing was changed. Details: \(message)")
     case .StoreBusy:
         return EditProblem(problem: "Couldn't save this", nextStep: "Nothing was changed. Details: \(storeBusyText)")
-    case .NoEncryptionKey(_, let reason):
-        return EditProblem(problem: "A key for this folder can't encrypt", nextStep: reason)
     case .NotPinned:
         return EditProblem(problem: Device.words("A key for this folder isn't saved on this iPhone"), nextStep: "Nothing was changed.")
     }
