@@ -26,7 +26,6 @@ final class MainQueueTaskListener: KeyTaskListener, @unchecked Sendable {
 /// a sync, a setup step. `Never` for a workflow that is the key's part
 /// alone (an open, the touch check).
 protocol KeyStepError: Error {
-    /// The failure a task's final state carries, if it is this step's.
     static func failure(in state: KeyTaskState) -> Self?
 }
 
@@ -70,7 +69,6 @@ enum KeyTaskEnd<Step: KeyStepError> {
     case failed(KeyError)
     /// The key did its part and the workflow's own step after it failed.
     case stepFailed(Step)
-    /// Stopped by Cancel.
     case cancelled
 
     /// `nil` while the task is still under way.
@@ -124,7 +122,6 @@ enum KeyTaskEnd<Step: KeyStepError> {
 }
 
 extension KeyTaskState {
-    /// Done, failed or cancelled: nothing changes it any more.
     var isFinal: Bool {
         switch self {
         case .done, .failed, .syncFailed, .setupFailed, .cancelled: true
@@ -184,9 +181,7 @@ struct KeyJob<Step: KeyStepError> {
     var waitsForLetGoTasks = false
 }
 
-/// Drives the core's key tasks for one key sheet: starts a workflow's task
-/// with its listener, shows its state as the sheet's stage, hands the PIN
-/// over, Try again and Cancel, and closes the sheet. Whether a key sheet
+/// Drives the core's key tasks for one key sheet. Whether a key sheet
 /// is up, and what it shows, is said here alone. The PIN typed goes from
 /// `pin` straight to the core and is never kept.
 ///
@@ -270,12 +265,10 @@ final class KeyTaskDriver {
         self.reader = reader
     }
 
-    /// A key sheet is up.
     var isShown: Bool {
         shown != nil
     }
 
-    /// What the key sheet shows.
     var stage: KeySheetStage {
         if case .plugIn = mapped, let problem = reader?.problem, let job {
             let words = KeyErrorWords(problem, table: job.words().table)
@@ -290,7 +283,6 @@ final class KeyTaskDriver {
         return nil
     }
 
-    /// A task is under way for the sheet.
     var isFollowing: Bool {
         followed != nil
     }
@@ -358,8 +350,6 @@ final class KeyTaskDriver {
         }
     }
 
-    /// Starts the task now, or, for a workflow that asks, once every task
-    /// the sheet let go of has ended: on a start and on Try again alike.
     private func launchOrWait(_ job: Workflow) {
         if job.waitsForLetGoTasks, !tasks.isEmpty {
             startWaits = true
@@ -460,8 +450,6 @@ final class KeyTaskDriver {
         job?.stageShown(stage)
     }
 
-    /// Done shows for a second; then the sheet closes, if it still shows
-    /// this run's Done.
     private func closeAfterDone() {
         guard let run = shown else { return }
         Task { @MainActor [weak self] in

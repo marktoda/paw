@@ -240,8 +240,7 @@ private struct AutoFillList: View {
 /// An entry that is not this site's, or is this site's by name only and
 /// has not filled on this domain, was picked: say so before Face ID or the
 /// key, inline. Or it was opened and its `url:` line names another site:
-/// say so before it fills. One layout for every case: a headline, one
-/// line, the full address, then Cancel (the primary action) and Fill.
+/// say so before it fills.
 private struct AutoFillConfirm: View {
     let model: AutoFillModel
     let entry: EntryRef

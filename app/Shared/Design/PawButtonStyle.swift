@@ -3,12 +3,10 @@ import SwiftUI
 /// The two capsule buttons. A screen has at most one primary button.
 struct PawButtonStyle: ButtonStyle {
     enum Kind {
-        /// `onAction` on `action`: the one primary button on a screen.
+        /// The one primary button on a screen.
         case primary
-        /// `label` on `fill`.
         case secondary
-        /// `danger` on `dangerFill`: the step that loses something. It
-        /// asks before it acts.
+        /// The step that loses something. It asks before it acts.
         case destructive
     }
 

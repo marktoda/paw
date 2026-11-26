@@ -7,8 +7,8 @@ import Foundation
 ///
 /// The app writes here. The extension only reads the store (see
 /// `StoreForAutoFill`); what it writes is a Face ID copy in `copiesDir`
-/// and `site-pairings.json` in `stateDir`, each written by rename so two
-/// processes are safe.
+/// and `site-pairings.json` and `one-time-codes.json` in `stateDir`, each
+/// written by rename so two processes are safe.
 struct StoreLocation {
     /// The App Group both targets are signed with.
     static let appGroup = "group.com.marktoda.paw"
@@ -55,7 +55,6 @@ struct StoreLocation {
     /// The core's state directory: its files and the store itself.
     var stateDir: URL { root.appendingPathComponent("store", isDirectory: true) }
 
-    /// The repository inside the state directory.
     var repoDir: URL { URL(fileURLWithPath: storeRepoDir(stateDir: stateDir.path), isDirectory: true) }
 
     /// The Face ID copies, kept apart from the store so the store can be

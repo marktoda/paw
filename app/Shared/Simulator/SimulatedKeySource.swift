@@ -6,7 +6,6 @@ import Foundation
 /// in by the debug control, or a key of a test's or the gallery's own,
 /// always in.
 final class SimulatedKeySource: KeyConnector, @unchecked Sendable {
-    /// The launch's simulated key.
     static let launched = SimulatedKeySource(
         connect: { try SimulatedKeyHolder.shared.open() }, isIn: { SimulatedKeyHolder.shared.isPluggedIn })
 

@@ -48,27 +48,12 @@ struct AutoFillNotice: Equatable {
 /// Which entries a list offers for a site comes from names alone: nothing
 /// is decrypted to build a list or a suggestion (design.md 5.6 rule 6).
 /// The core does the matching (`PassStore.matchServices`,
-/// core/src/store/service.rs): an entry is offered when one part of its
-/// path is the site's host exactly, or a host with the same registrable
-/// domain by the Public Suffix List. Never a piece of a name, so
-/// `evil-example.com`, `example.com.evil.net` and `bob.github.io` are not
-/// `example.com`, `example.com` and `alice.github.io`.
-///
-/// An entry named without a domain (`bankofamerica`, `alaskaair/alice`)
-/// matches by name: a whole part of its path is the first label of the
-/// site's registrable domain. A name fits lookalikes too
-/// (`bankofamerica.co`), so the first fill on each domain asks, and the
-/// domains it has filled on are kept (`SitePairings`). One paired only
-/// with other domains of the same name is not offered at all.
-///
-/// Internationalised names: iOS reports a site in its `xn--` form, and the
-/// core compares hosts in that form on both sides (UTS-46), so the entries
-/// `bücher.example` and `xn--bcher-kva.example` both match it, and a site
-/// spelled with lookalike letters (`pаypal.com`, Cyrillic `а`) never
-/// matches an entry spelled with plain ones. Names are shown by the core's
-/// `displayHost`: always the `xn--` form. Name matches stay plain ASCII.
-/// paw offers nothing automatically for a site address that is not
-/// printable ASCII, or whose host has no dot. Search still finds every
+/// core/src/store/service.rs). A name-only entry (`bankofamerica`) fits
+/// lookalikes too (`bankofamerica.co`), so the first fill on each domain
+/// asks, and the domains it has filled on are kept (`SitePairings`). One
+/// paired only with other domains of the same name is not offered at all.
+/// iOS reports a site in its `xn--` form, and names are shown in that form
+/// (`displayHost`), so a lookalike spelling shows. Search still finds every
 /// entry.
 @MainActor @Observable
 final class AutoFillModel {
@@ -78,11 +63,8 @@ final class AutoFillModel {
         /// The entry is not one of this site's, or is by name only and not
         /// yet filled here: fill it anyway, or not.
         case confirm(EntryRef, AutoFillConfirmReason)
-        /// Face ID is up for this entry.
         case faceId(EntryRef)
-        /// The key sheet, for `keyEntry`.
         case key
-        /// Handed to the completion.
         case filled
         case noStore
         /// paw is using the store; Try again opens it again.
@@ -160,8 +142,6 @@ final class AutoFillModel {
         keyTask.isShown ? .key : page
     }
 
-    /// Opens the store off the main thread, then shows the list (or, for
-    /// a suggestion, goes straight to Face ID or the key).
     func start() {
         guard !started else { return }
         started = true

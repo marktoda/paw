@@ -7,13 +7,11 @@ struct AutoFillSource: @unchecked Sendable {
     /// `nil` where Face ID copies cannot be kept: every fill uses the key.
     let copies: CopyCache?
     let keyPort: KeyPort
-    /// Where the key comes from.
     let keys: any KeyConnector
     /// What a one-time code is made at.
     let clock: Clock
     /// The sites each name-only entry has filled on.
     let pairings: SitePairings
-    /// Which entries are known to have a one-time code.
     let codes: OneTimeCodeEntries
 }
 
@@ -64,9 +62,7 @@ enum StoreForAutoFill {
 
 extension AutoFillSource {
     /// Everything the AutoFill screens read, for the store set up at
-    /// `location`, in this order: the store's folder names, the key side
-    /// on `platform` (`StoreKeys`), the site pairings and the list of
-    /// entries with a code.
+    /// `location`.
     static func open(at location: StoreLocation, on platform: Platform) throws -> AutoFillSource {
         let stateDir = location.stateDir.path
         let store = try PassStore(dir: location.repoDir.path)

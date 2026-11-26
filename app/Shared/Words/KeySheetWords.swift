@@ -65,7 +65,6 @@ extension KeySheetStage {
         }
     }
 
-    /// The PIN tries the key has left, on the PIN stages.
     var triesLeft: Int? {
         switch self {
         case .pin(let triesLeft, _), .wrongPin(let triesLeft), .pinAgain(let triesLeft, _, _): triesLeft

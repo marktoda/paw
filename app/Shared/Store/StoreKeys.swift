@@ -23,7 +23,6 @@ struct StoreKeys {
         self.platform = platform
     }
 
-    /// Loads the enrolled key into the key port, then makes the copies.
     func openEnrolled() throws -> CopyCache? {
         _ = try keyPort.loadEnrolledKey(stateDir: location.stateDir.path)
         return platform.copies(in: location.copiesDir)

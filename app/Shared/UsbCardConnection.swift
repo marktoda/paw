@@ -22,7 +22,6 @@ final class UsbCardConnection: CardConnection, @unchecked Sendable {
 
     private let card: TKSmartCard
 
-    /// The names of the smart card readers the system sees right now.
     static func slotNames() -> [String] {
         TKSmartCardSlotManager.default?.slotNames ?? []
     }

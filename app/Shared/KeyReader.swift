@@ -16,9 +16,7 @@ enum KeyReadProblem {
 @MainActor @Observable
 final class KeyReader {
     let port: KeyPort
-    /// Where the key comes from.
     let source: any KeyConnector
-    /// A key is in, as the source last said.
     private(set) var present = false
     /// Why the last read failed; `nil` once one works.
     private(set) var failure: Error?
@@ -66,7 +64,6 @@ final class KeyReader {
         following = nil
     }
 
-    /// Reads the key if one is in and has no session yet.
     func readIfNeeded() {
         if present, port.session() == nil {
             read()

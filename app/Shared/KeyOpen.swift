@@ -12,7 +12,6 @@ struct KeyOpen {
     let copies: CopyCache?
     let table: WordTable
 
-    /// What an open brought.
     struct Opened {
         /// Open until closed: whoever takes it closes it.
         let entry: OpenedEntry

@@ -9,7 +9,6 @@ import Foundation
 /// and hands it down; nothing below an entry point picks either.
 struct Platform {
     let process: StoreProcess
-    /// Where the key comes from.
     let keys: any KeyConnector
     /// The copies' clock, the key port's and the clipboard's.
     let clock: Clock
@@ -45,8 +44,6 @@ struct Platform {
     }
 
     #if DEBUG && targetEnvironment(simulator)
-    /// Simulated hardware: the simulated key `keys`, `clock`, and Face ID
-    /// copies on `keystore` (a `SimKeystore`'s), or none without one.
     static func simulated(
         _ process: StoreProcess, keys: SimulatedKeySource, clock: Clock, keystore: DeviceKeystore?
     ) -> Platform {
@@ -158,7 +155,6 @@ private final class ReaderWatch {
         changed(present)
     }
 
-    /// KVO on the first reader's `TKSmartCardSlot.state`.
     private func watchSlotState() {
         guard let manager = TKSmartCardSlotManager.default, let name = manager.slotNames.first else { return }
         manager.getSlot(withName: name) { [weak self] slot in

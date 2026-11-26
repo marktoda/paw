@@ -68,8 +68,6 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         self.host = host
     }
 
-    // MARK: AutoFillAnswers
-
     func complete(with credential: AutoFillCredential) {
         switch credential {
         case .password(let user, let password):

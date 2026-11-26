@@ -27,7 +27,6 @@ import Security
 /// Stateless apart from a lock that serialises key creation in this
 /// process; safe to call from any thread.
 final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
-    /// What the keychain items are called.
     private let namespace: String
 
     init() {
@@ -61,8 +60,6 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
     /// The single record shared by both processes in earlier builds.
     private static let legacyEnrolmentAccount = "seal-key-enrolment"
 
-    // MARK: DeviceKeystore
-
     func seal(secret: Data) throws -> Data {
         try core { try sealDetailed(secret) }
     }
@@ -88,8 +85,6 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
             throw failure.error
         }
     }
-
-    // MARK: Seal
 
     #if DEBUG
     /// Finds or makes the seal key without sealing anything, for the check
@@ -150,8 +145,6 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
             return
         }
     }
-
-    // MARK: Unseal
 
     func unsealDetailed(_ sealed: Data, reason: String) throws -> Data {
         // The core calls from its own threads. Blocking the main thread on
@@ -265,8 +258,6 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
         "Face ID isn't available to paw. It may be turned off for paw in Settings > Face ID & Passcode > Other Apps. (LAError \(code))"
     }
 
-    // MARK: Index key
-
     func indexKeyDetailed() throws -> Data {
         let group = try KeychainGroup.shared()
         return try lock.withLock {
@@ -299,8 +290,6 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
             }
         }
     }
-
-    // MARK: Deleting the keys
 
     /// Deletes the seal key, the index key and the enrolment records, so
     /// every copy sealed so far can never open again: Lock now, and
@@ -417,8 +406,6 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
         }
     }
 
-    /// The seal key with this label, bound to `context` for its use, or nil
-    /// if there is none.
     private func findKey(label: Data, group: String, context: LAContext?) throws -> SecKey? {
         let probe = context ?? LAContext()
         defer { if context == nil { probe.invalidate() } }
@@ -505,10 +492,6 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
     }
 }
 
-// MARK: - Keychain access group
-
-/// Keychain access groups.
-///
 /// `shared()`: where every Face ID copy item lives, the App Group
 /// `group.com.marktoda.paw`. An App Group is also a keychain access group
 /// on iOS, and both paw and its AutoFill extension are signed with it, so a
@@ -593,8 +576,6 @@ enum KeychainGroup {
     }
 }
 
-// MARK: - Failures
-
 /// A keystore failure: what the core is told, and the raw codes behind it
 /// for the check screen. Never holds secret data.
 struct EnclaveFailure: Error {
@@ -650,10 +631,6 @@ struct EnclaveFailure: Error {
     }
 }
 
-// MARK: - Helpers
-
-/// A Security result as a `SecKey`, checked by its CF type rather than
-/// force-cast.
 private func asSecKey(_ object: AnyObject?) -> SecKey? {
     guard let object, CFGetTypeID(object) == SecKeyGetTypeID() else { return nil }
     return unsafeBitCast(object, to: SecKey.self)

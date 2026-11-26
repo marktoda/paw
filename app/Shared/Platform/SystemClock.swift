@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 
 /// The phone's clocks: the device half of the core's `Clock` seam
-/// (core/src/copies/seams.rs). Every call reads the system; nothing is
+/// (core/src/clock.rs). Every call reads the system; nothing is
 /// cached except constants (the tick rate).
 final class SystemClock: Clock, @unchecked Sendable {
     /// Milliseconds since 1970 by the phone's clock, which the person can
@@ -79,7 +79,6 @@ enum BootSession {
         return ("unknown-" + UUID().uuidString, "none (\(why.joined(separator: ", ")))")
     }
 
-    /// A string sysctl, or the errno that refused it.
     private static func sysctlString(_ name: String) -> Result<String, Int32Error> {
         var size = 0
         guard sysctlbyname(name, nil, &size, nil, 0) == 0 else { return .failure(Int32Error(errno)) }

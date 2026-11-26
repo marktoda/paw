@@ -21,7 +21,6 @@ enum Device {
         return String(decoding: bytes.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
     }()
 
-    /// "iPhone" or "iPad".
     static let name: String = model.hasPrefix("iPad") ? "iPad" : "iPhone"
 
     /// "Face ID" or "Touch ID", from the hardware; "Face ID" when there is
