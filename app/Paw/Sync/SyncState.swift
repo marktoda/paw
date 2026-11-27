@@ -37,6 +37,21 @@ struct SyncFailure: Equatable {
     /// Raw text from the host or the library, under "Details".
     var details: [String] = []
     let pill: String
+
+    /// The step the inline row offers after it.
+    enum Step: Equatable {
+        case tryAgain
+        case openSettings
+    }
+
+    /// `nil` after a cancel, which offers nothing.
+    var step: Step? {
+        switch kind {
+        case .hostKeyChanged: .openSettings
+        case .cancelled: nil
+        default: .tryAgain
+        }
+    }
 }
 
 enum SyncRoute: Hashable {

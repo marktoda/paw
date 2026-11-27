@@ -338,9 +338,9 @@ final class SyncModel {
     /// on its button): Try again does, but for a check the sign-in makes;
     /// Open Settings doesn't.
     func actionNeedsKey(after failure: SyncFailure) -> Bool {
-        switch failure.kind {
-        case .hostKeyChanged, .cancelled: false
-        default: failure.during != .refresh || checkNeedsKey
+        switch failure.step {
+        case .tryAgain?: failure.during != .refresh || checkNeedsKey
+        case .openSettings?, nil: false
         }
     }
 

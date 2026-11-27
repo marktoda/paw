@@ -162,13 +162,13 @@ extension SyncFailure {
         case .reencrypt: "Couldn't re-encrypt your changes"
         }
     }
+}
 
-    /// The step the inline row offers.
-    var actionTitle: String? {
-        switch kind {
-        case .hostKeyChanged: "Open Settings"
-        case .cancelled: nil
-        default: "Try again"
+extension SyncFailure.Step {
+    var title: String {
+        switch self {
+        case .tryAgain: "Try again"
+        case .openSettings: "Open Settings"
         }
     }
 }
