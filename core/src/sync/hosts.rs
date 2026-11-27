@@ -113,6 +113,7 @@ pub const BUNDLED: [(&str, u16, HostKeys); 4] = [
     ("bitbucket.org", 22, &BITBUCKET_HOST_KEYS),
 ];
 
+/// Whether `host:port` is `endpoint`; host names ignore case.
 fn is(endpoint: (&str, u16), host: &str, port: u16) -> bool {
     host.eq_ignore_ascii_case(endpoint.0) && port == endpoint.1
 }
@@ -217,7 +218,7 @@ impl KnownHosts {
         let lines: Vec<String> = self
             .read()?
             .into_iter()
-            .filter(|(h, p, _)| h.eq_ignore_ascii_case(host) && *p == port)
+            .filter(|(h, p, _)| is((h.as_str(), *p), host, port))
             .map(|(_, _, key)| key)
             .collect();
         if lines.is_empty() {
@@ -259,7 +260,7 @@ impl KnownHosts {
         }
         let _held = self.lock()?;
         let mut entries = self.read()?;
-        if entries.iter().any(|(h, p, _)| h.eq_ignore_ascii_case(host) && *p == port) {
+        if entries.iter().any(|(h, p, _)| is((h.as_str(), *p), host, port)) {
             return Err(PawError::Store(format!("{host} already has a saved key")).into());
         }
         entries.push((host.to_owned(), port, key_line.to_owned()));
@@ -294,7 +295,7 @@ impl KnownHosts {
         refuse_if_bundled(host, port)?;
         let _held = self.lock()?;
         let mut entries = self.read()?;
-        entries.retain(|(h, p, _)| !(h.eq_ignore_ascii_case(host) && *p == port));
+        entries.retain(|(h, p, _)| !is((h.as_str(), *p), host, port));
         Ok(self.write(&entries)?)
     }
 }

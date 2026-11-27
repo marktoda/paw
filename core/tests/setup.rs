@@ -170,7 +170,7 @@ fn setup_reads_the_key_checks_the_host_downloads_and_opens_one_entry() {
     // An unknown host: its key is shown before anything else happens.
     let SetupState::ConfirmHost { host, algorithm, fingerprint } = rig.setup.check_host().unwrap() else { panic!() };
     assert_eq!((host.as_str(), algorithm.as_str()), ("127.0.0.1", "ssh-ed25519"));
-    assert_eq!(fingerprint, server.remote().host_key.fingerprint());
+    assert_eq!(fingerprint, server.remote().host_key.fingerprints()[0]);
 
     let state = rig.setup.confirm_host(fingerprint).unwrap();
     assert_eq!(state, SetupState::NeedPin { address: address(&server), touch: TouchExpectation::Needed });
@@ -213,7 +213,7 @@ fn a_confirmed_host_is_pinned_and_not_asked_about_again() {
         .lookup("127.0.0.1", server.remote().port)
         .unwrap()
         .unwrap();
-    assert_eq!(pinned.fingerprint(), server.remote().host_key.fingerprint());
+    assert_eq!(pinned.fingerprints()[0], server.remote().host_key.fingerprints()[0]);
 
     // Back to CheckHost: now the host is known, so it goes straight on.
     rig.reopen();
@@ -581,7 +581,7 @@ fn every_bundled_key_parses_and_has_the_fingerprint_written_beside_it() {
         assert!(!keys.is_empty(), "{host}");
         for (line, fingerprint) in keys {
             let pin = HostKeyPin::parse(line).unwrap_or_else(|e| panic!("{host}: {line}: {e}"));
-            assert_eq!(pin.fingerprint(), *fingerprint, "{host}:{port}");
+            assert_eq!(pin.fingerprints()[0], *fingerprint, "{host}:{port}");
         }
         let pin = hosts::bundled(host, port).unwrap();
         assert_eq!(pin.fingerprints(), keys.iter().map(|(_, fp)| fp.to_string()).collect::<Vec<_>>());
@@ -636,7 +636,7 @@ fn a_known_hosts_entry_is_only_replaced_by_forgetting_it() {
     known.forget("git.example.org", 22).unwrap();
     known.add("git.example.org", 22, &support::ecdsa_host_key()).unwrap();
     let pin = known.lookup("git.example.org", 22).unwrap().unwrap();
-    assert_eq!(pin.lines(), [HostKeyPin::parse(&support::ecdsa_host_key()).unwrap().lines()[0].clone()]);
+    assert_eq!(pin.fingerprints(), HostKeyPin::parse(&support::ecdsa_host_key()).unwrap().fingerprints());
     assert!(known.lookup("git.example.org", 2222).unwrap().is_none());
 }
 

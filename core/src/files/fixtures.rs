@@ -106,18 +106,18 @@ fn the_remote() {
 #[test]
 fn the_github_link() {
     use crate::github::refresh::GitHubLink;
-    let bytes = b"repository=you/store\nid=42\nssh=git@github.com:you/store.git\n";
+    // Written before with the repository's `id`, which is no longer kept.
+    let older = b"repository=you/store\nid=42\nssh=git@github.com:you/store.git\n";
+    let bytes = b"repository=you/store\nssh=git@github.com:you/store.git\n";
     let dir = state();
-    put(dir.path(), layout::GITHUB_LINK, bytes);
+    put(dir.path(), layout::GITHUB_LINK, older);
     let link = GitHubLink::load(dir.path()).unwrap();
-    assert_eq!(
-        link,
-        GitHubLink { full_name: "you/store".into(), id: 42, ssh_address: "git@github.com:you/store.git".into() }
-    );
+    assert_eq!(link, GitHubLink { full_name: "you/store".into(), ssh_address: "git@github.com:you/store.git".into() });
 
     let again = state();
     link.save(again.path()).unwrap();
     assert_eq!(get(again.path(), layout::GITHUB_LINK), bytes);
+    assert_eq!(GitHubLink::load(again.path()), Some(link));
 }
 
 #[test]

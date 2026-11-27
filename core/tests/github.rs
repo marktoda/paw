@@ -219,7 +219,7 @@ fn sign_in_polls_at_githubs_interval_until_the_person_authorises() {
     let code = sign_in.code();
     assert_eq!(code.user_code, SIM_USER_CODE);
     assert_eq!(code.verification_uri, format!("{}/login/device", w.github.url()));
-    assert_eq!((code.interval, code.expires_in), (5, 900));
+    assert_eq!(code.expires_in, 900);
 
     assert_eq!(sign_in.poll().unwrap(), SignInState::Waiting);
     assert_eq!(sign_in.poll().unwrap(), SignInState::Waiting);
@@ -228,7 +228,6 @@ fn sign_in_polls_at_githubs_interval_until_the_person_authorises() {
     assert_eq!(sign_in.poll().unwrap(), SignInState::SignedIn);
 
     assert_eq!(w.clock.waits(), vec![secs(5), secs(10), secs(15)]);
-    assert_eq!(sign_in.polls(), 3);
     assert!(w.account.is_signed_in().unwrap());
     assert!(!format!("{sign_in:?}").contains("ghu_"));
 }
@@ -240,7 +239,6 @@ fn slow_down_adds_five_seconds_to_every_later_poll() {
     let sign_in = w.account.start_sign_in().unwrap();
 
     assert_eq!(sign_in.poll().unwrap(), SignInState::Waiting); // slow_down
-    assert_eq!(sign_in.interval(), secs(10));
     assert_eq!(sign_in.poll().unwrap(), SignInState::Waiting);
     assert_eq!(sign_in.poll().unwrap(), SignInState::SignedIn);
 
@@ -360,7 +358,6 @@ fn the_picker_lists_every_granted_repository_across_pages_with_the_store_first()
     assert_eq!(store.full_name, REPOSITORY);
     assert_eq!((store.owner.as_str(), store.name.as_str()), ("you", "password-store"));
     assert!(store.private);
-    assert_eq!(store.default_branch, "main");
     assert_eq!(store.pushed_at.as_deref(), Some("2026-11-20T09:12:00Z"));
     assert_eq!(store.ssh_address, w.remote.address());
     // Three pages of repositories, and nothing read from inside any of them.

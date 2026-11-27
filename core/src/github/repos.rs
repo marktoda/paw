@@ -25,14 +25,12 @@ pub struct GitHubRepository {
     pub owner: String,
     pub name: String,
     pub private: bool,
-    pub default_branch: String,
     /// What setup is given when this is picked, e.g.
     /// `git@github.com:you/password-store.git`.
     pub ssh_address: String,
     /// When something was last pushed, as GitHub writes it
     /// (`2026-11-20T09:12:00Z`), if ever.
     pub pushed_at: Option<String>,
-    pub installation_id: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -76,7 +74,6 @@ struct Repository {
     owner: Owner,
     #[serde(default)]
     private: bool,
-    default_branch: Option<String>,
     pushed_at: Option<String>,
 }
 
@@ -102,11 +99,6 @@ fn plausible_date(text: Option<String>) -> Option<String> {
     text.filter(|t| t.len() <= 40 && t.chars().all(|c| c.is_ascii_alphanumeric() || "-:+.".contains(c)))
 }
 
-fn plausible_branch(text: Option<String>) -> String {
-    text.filter(|t| !t.is_empty() && t.len() <= 255 && !t.chars().any(char::is_control))
-        .unwrap_or_else(|| "main".into())
-}
-
 /// Lists every repository granted, with `token`. Repositories whose names
 /// paw would not accept as an address are left out.
 pub(crate) fn list(http: &Http, token: &Secret) -> Result<RepositoryList, GitHubError> {
@@ -120,7 +112,7 @@ pub(crate) fn list(http: &Http, token: &Secret) -> Result<RepositoryList, GitHub
             found
                 .installations
                 .into_iter()
-                .filter(|i| i.app_slug.as_deref().is_none_or(|slug| slug == endpoints.app_slug())),
+                .filter(|i| i.app_slug.as_deref().is_none_or(|slug| slug == super::APP_SLUG)),
         );
         let total = found.total_count.unwrap_or(0) as usize;
         if count < PER_PAGE as usize || installations.len() >= total {
@@ -142,8 +134,6 @@ pub(crate) fn list(http: &Http, token: &Secret) -> Result<RepositoryList, GitHub
                 }
                 let owner = repository.owner.login;
                 let full_name = format!("{owner}/{}", repository.name);
-                // GitHub's own rules for the names; anything else is not
-                // offered, since it would not be accepted as an address.
                 let Some(ssh_address) = endpoints.ssh_address(&full_name) else {
                     continue;
                 };
@@ -153,10 +143,8 @@ pub(crate) fn list(http: &Http, token: &Secret) -> Result<RepositoryList, GitHub
                     owner,
                     name: repository.name,
                     private: repository.private,
-                    default_branch: plausible_branch(repository.default_branch),
                     ssh_address,
                     pushed_at: plausible_date(repository.pushed_at),
-                    installation_id: installation.id,
                 });
             }
             let total = found.total_count.unwrap_or(0) as usize;

@@ -54,7 +54,6 @@ pub const BACKGROUND_LOCK_WAIT: Duration = Duration::from_secs(3);
 pub struct GitHubLink {
     /// `owner/name`.
     pub full_name: String,
-    pub id: u64,
     /// The SSH address setup was given for it.
     pub ssh_address: String,
 }
@@ -63,9 +62,9 @@ impl GitHubLink {
     pub(crate) fn save(&self, state_dir: &Path) -> Result<(), Fault> {
         let failed = |e: std::io::Error| Fault::local(format!("could not save the chosen repository: {e}"));
         std::fs::create_dir_all(state_dir).map_err(failed)?;
-        let (full_name, id, ssh) =
-            (self.full_name.replace(['\n', '\r'], ""), self.id.to_string(), self.ssh_address.replace(['\n', '\r'], ""));
-        let pairs = [("repository", full_name.as_str()), ("id", id.as_str()), ("ssh", ssh.as_str())];
+        let (full_name, ssh) = (self.full_name.replace(['\n', '\r'], ""), self.ssh_address.replace(['\n', '\r'], ""));
+        // Files written before kept an `id` line too; it is not read.
+        let pairs = [("repository", full_name.as_str()), ("ssh", ssh.as_str())];
         values::write(&state_dir.join(layout::GITHUB_LINK), ".github.tmp-", pairs).map_err(failed)
     }
 
@@ -74,7 +73,7 @@ impl GitHubLink {
         let full_name = found.get("repository")?.to_owned();
         // The HTTPS path is built from it: GitHub's rules for names only.
         github_repository(&full_name)?;
-        Some(Self { full_name, id: found.get("id")?.parse().ok()?, ssh_address: found.get("ssh")?.to_owned() })
+        Some(Self { full_name, ssh_address: found.get("ssh")?.to_owned() })
     }
 
     fn is_store(&self, store: &StoreAddress) -> bool {
@@ -99,7 +98,7 @@ pub fn is_github_repository(address: String, full_name: String, ssh_address: Str
 }
 
 /// The steps of a token refresh, for stopping between them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshStep {
     /// Getting a usable access token (may refresh it: network).
     Token,

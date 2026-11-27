@@ -81,18 +81,13 @@ pub const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 /// bar does not stop short of the end. A repeat of the last report is never
 /// sent, and once [`Self::stop`] is called (the listener said stop, or the
 /// work was cancelled) nothing is.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ProgressThrottle {
-    interval: Duration,
     last: Option<(Instant, TransferProgress)>,
     stopped: bool,
 }
 
 impl ProgressThrottle {
-    pub fn new(interval: Duration) -> Self {
-        Self { interval, last: None, stopped: false }
-    }
-
     pub fn should_report(&mut self, now: Instant, update: TransferProgress) -> bool {
         if self.stopped {
             return false;
@@ -103,7 +98,7 @@ impl ProgressThrottle {
             Some((_, last)) if update.total_objects > 0 && update.received_objects == update.total_objects => {
                 last.received_objects != update.received_objects
             }
-            Some((at, _)) => now.saturating_duration_since(at) >= self.interval,
+            Some((at, _)) => now.saturating_duration_since(at) >= PROGRESS_INTERVAL,
         };
         if report {
             self.last = Some((now, update));
@@ -123,7 +118,7 @@ impl ProgressThrottle {
 /// libgit2's progress callback for `report`, throttled: `report` returning
 /// `false` stops the transfer, and it is not called again.
 fn throttled<'a>(report: TransferCallback<'a>) -> impl FnMut(git2::Progress<'_>) -> bool + 'a {
-    let mut throttle = ProgressThrottle::new(PROGRESS_INTERVAL);
+    let mut throttle = ProgressThrottle::default();
     move |stats| {
         if throttle.stopped() {
             return false;

@@ -30,8 +30,8 @@ pub struct SignOutReport {
 }
 
 /// When a kept GitHub sign-in stops working, seconds since 1970.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct SignInExpiry {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SignInExpiry {
     /// The access token; GitHub renews it with the renewal token.
     pub access_until_secs: Option<u64>,
     /// The renewal token: after this, sign in again.
@@ -107,7 +107,14 @@ impl GitHubAccount {
         }
     }
 
-
+    /// When the kept sign-in ends, for Copy diagnostics: `None` when
+    /// signed out. Reads the vault only; sends nothing, shows no token.
+    pub(crate) fn sign_in_expiry(&self) -> Result<Option<SignInExpiry>, GitHubError> {
+        Ok(self.keeper.load()?.map(|tokens| SignInExpiry {
+            access_until_secs: tokens.access_expires_at,
+            renewal_until_secs: tokens.refresh_expires_at,
+        }))
+    }
 }
 
 #[uniffi::export]
@@ -120,15 +127,6 @@ impl GitHubAccount {
     /// Whether a sign-in is kept. Reads the vault only; sends nothing.
     pub fn is_signed_in(&self) -> Result<bool, GitHubError> {
         self.keeper.signed_in()
-    }
-
-    /// When the kept sign-in ends, for Copy diagnostics: `None` when
-    /// signed out. Reads the vault only; sends nothing, shows no token.
-    pub fn sign_in_expiry(&self) -> Result<Option<SignInExpiry>, GitHubError> {
-        Ok(self.keeper.load()?.map(|tokens| SignInExpiry {
-            access_until_secs: tokens.access_expires_at,
-            renewal_until_secs: tokens.refresh_expires_at,
-        }))
     }
 
     /// Starts a device sign-in: one request to GitHub with paw's client
@@ -164,7 +162,7 @@ impl GitHubAccount {
             .iter()
             .find(|r| r.full_name.eq_ignore_ascii_case(full_name))
             .ok_or_else(|| GitHubError::NotListed { full_name: full_name.to_owned() })?;
-        let link = GitHubLink { full_name: chosen.full_name.clone(), id: chosen.id, ssh_address: chosen.ssh_address.clone() };
+        let link = GitHubLink { full_name: chosen.full_name.clone(), ssh_address: chosen.ssh_address.clone() };
         let _held = crate::lock::StoreLock::for_state_dir(&self.state_dir).exclusive()?;
         link.save(&self.state_dir)?;
         Ok(chosen.ssh_address.clone())
@@ -180,7 +178,6 @@ impl GitHubAccount {
     /// tokens are forgotten even if that request fails. The chosen
     /// repository is kept.
     pub fn sign_out(&self, revoke: bool) -> Result<SignOutReport, GitHubError> {
-        // After any refresh in this process, so none brings the pair back.
         let tokens = self.keeper.take()?;
         let manage_url = self.endpoints.authorizations_url();
         let mut revoked = false;
@@ -197,9 +194,5 @@ impl GitHubAccount {
             revoked = http.api_post_anonymous("/credentials/revoke", body.as_bytes()).is_ok_and(|a| a.status == 202);
         }
         Ok(SignOutReport { revoked, manage_url })
-    }
-
-    pub fn install_url(&self) -> String {
-        self.endpoints.install_url()
     }
 }

@@ -13,7 +13,6 @@ use super::hosts::{GITHUB_SSH, is_github};
 use crate::PawError;
 use crate::remote::PortFallback;
 
-/// Where a store lives, parsed.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct StoreAddress {
     pub user: String,
@@ -24,7 +23,6 @@ pub struct StoreAddress {
     pub path: String,
 }
 
-/// The result of reading what the person typed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedAddress {
     pub address: StoreAddress,
@@ -129,7 +127,7 @@ fn github_repo(name: &str) -> bool {
 
 /// The SSH address of the GitHub repository `owner/repo`, and the notice
 /// that says paw read it that way.
-fn github(owner: &str, repo: &str, notice: fn(String) -> AddressNotice) -> Result<ParsedAddress, AddressProblem> {
+fn github(owner: &str, repo: &str, notice: impl FnOnce(String) -> AddressNotice) -> Result<ParsedAddress, AddressProblem> {
     let address = github_address(owner, repo).ok_or(AddressProblem::NotGit)?;
     let notice = notice(address.display());
     Ok(ParsedAddress { address, notice: Some(notice) })
@@ -164,8 +162,7 @@ fn github_short_form(text: &str) -> Result<Option<ParsedAddress>, AddressProblem
     match parts.as_slice() {
         [owner, repo] if !owner.contains('.') => {
             let typed = |address| AddressNotice::GitHubShortForm { owner: owner.to_string(), repo: repo.to_string(), address };
-            let address = github_address(owner, repo).ok_or(AddressProblem::NotGit)?;
-            Ok(Some(ParsedAddress { notice: Some(typed(address.display())), address }))
+            github(owner, repo, typed).map(Some)
         }
         [host, owner, repo] if ["github.com", "www.github.com"].contains(&host.to_ascii_lowercase().as_str()) => {
             github(owner, repo, |address| AddressNotice::GitHubWithoutUser { address }).map(Some)

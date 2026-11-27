@@ -205,7 +205,7 @@ fn a_host_with_the_wrong_key_is_refused_before_login() {
     let card = card();
     let server = GitServer::start(&[authorised_line(&card)]);
     let mut remote = server.remote();
-    let real = remote.host_key.fingerprint();
+    let real = remote.host_key.fingerprints().remove(0);
     remote.host_key = HostKeyPin::parse(&support::some_other_host_key()).unwrap();
 
     let error = refusal(Connection::open(&remote, &signer(&card)));

@@ -101,11 +101,6 @@ impl HostKeyPin {
             .map_err(|e| PawError::Git(format!("not a host key: {e}")))
     }
 
-    /// The `SHA256:...` form of the first (preferred) key, shown to the user.
-    pub fn fingerprint(&self) -> String {
-        fingerprint_of(&self.0[0])
-    }
-
     /// The `SHA256:...` form of every pinned key, preferred first.
     pub fn fingerprints(&self) -> Vec<String> {
         self.0.iter().map(fingerprint_of).collect()
@@ -115,14 +110,6 @@ impl HostKeyPin {
     /// "RSA") and its `SHA256:...` fingerprint, preferred first.
     pub fn described(&self) -> Vec<(String, String)> {
         self.0.iter().map(|key| (key_type_words(key.algorithm().as_ref()), fingerprint_of(key))).collect()
-    }
-
-    /// The pinned keys as public key lines, preferred first.
-    pub fn lines(&self) -> Vec<String> {
-        self.0
-            .iter()
-            .filter_map(|key| key.to_openssh().ok())
-            .collect()
     }
 
     /// The host key algorithms to offer: the pinned keys' types, preferred
