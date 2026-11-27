@@ -506,7 +506,8 @@ final class EnclaveKeystore: DeviceKeystore, @unchecked Sendable {
 /// from the group the keychain gives an item stored without one: the first
 /// group in the signed entitlements.
 enum KeychainGroup {
-    /// The one place the group is named.
+    /// The app's own group without its team id, which `resolve()` puts
+    /// in front.
     static let name = "com.marktoda.paw"
 
     /// The group shared with the AutoFill extension. In the unsigned
@@ -620,8 +621,8 @@ struct EnclaveFailure: Error {
         default:
             failure = EnclaveFailure(.Failed(message: detail), detail)
         }
-        // errSecAuthFailed, errSecItemNotFound, errSecInteractionNotAllowed;
-        // TKError authenticationFailed, objectNotFound, authenticationNeeded.
+        // CryptoTokenKit's -5, -6 and -9: TKError authenticationFailed,
+        // objectNotFound, authenticationNeeded.
         let osRefusals = [errSecAuthFailed, errSecItemNotFound, errSecInteractionNotAllowed].map { Int($0) }
         failure.isAuthRefusal = (domain == NSOSStatusErrorDomain && osRefusals.contains(code))
             || (domain == "CryptoTokenKit" && [-5, -6, -9].contains(code))

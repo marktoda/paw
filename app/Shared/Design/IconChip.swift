@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// A tinted rounded square with a glyph: 30pt on rows, 52pt in headers.
+/// A tinted rounded square with a glyph, on rows (`regular`) and in
+/// headers (`large`).
 /// Decorative: the row or header it sits in carries the words.
 struct IconChip: View {
     enum Size {

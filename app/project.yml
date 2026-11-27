@@ -149,8 +149,6 @@ targets:
         GENERATE_INFOPLIST_FILE: "YES"
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/Paw.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Paw
         BUNDLE_LOADER: $(TEST_HOST)
-        # The core's C module comes from the app's xcframework, whose
-        # headers Xcode copies into the shared products folder.
 schemes:
   Paw:
     build:

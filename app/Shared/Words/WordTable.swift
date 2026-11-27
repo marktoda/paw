@@ -49,7 +49,7 @@ struct WordTable: Sendable {
             default: "Open \(entry) with your key."
             }
             let said = paw.flatMap(FaceIdWords.problem) ?? describe(error)
-            return FaceIdNotice(problem: Device.words(said), nextStep: Device.words(nextStep), offersKey: true)
+            return FaceIdNotice(problem: said, nextStep: nextStep, offersKey: true)
         })
 
     static let autoFill = WordTable(
@@ -67,7 +67,7 @@ struct WordTable: Sendable {
             default: ("Face ID didn't open \(entry)", "")
             }
             guard let short else { return WordTable.app.faceIdNotice(error, entry) }
-            return FaceIdNotice(problem: Device.words(short.problem), nextStep: Device.words(short.nextStep), offersKey: true)
+            return FaceIdNotice(problem: short.problem, nextStep: short.nextStep, offersKey: true)
         })
 }
 

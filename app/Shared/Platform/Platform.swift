@@ -111,7 +111,7 @@ protocol KeyConnector: Sendable {
 /// The YubiKey on the USB-C port, through the system's smart card support.
 struct UsbKeyConnector: KeyConnector {
     var readerNames: [String] {
-        UsbCardConnection.slotNames()
+        TKSmartCardSlotManager.default?.slotNames ?? []
     }
 
     func connect() throws -> CardConnection {

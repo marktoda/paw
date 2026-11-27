@@ -15,8 +15,7 @@ enum FaceIdWords {
         }
     }
 
-    /// The notice after tapping `entry` failed with `error`, in this
-    /// device's words. A busy store asks for another tap, never the key:
+    /// The notice after tapping `entry` failed with `error`. A busy store asks for another tap, never the key:
     /// the key would wait for the same store.
     static func notice(_ error: Swift.Error, entry: String, table: WordTable) -> FaceIdNotice {
         if isStoreBusy(error) {

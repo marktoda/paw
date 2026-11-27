@@ -1,7 +1,6 @@
 import Foundation
 import Observation
 
-/// Why the key could not be read.
 enum KeyReadProblem {
     /// The device has no smart card support at all.
     case unsupported

@@ -3,7 +3,6 @@ import SwiftUI
 /// SF Symbols names, one per concept. The key itself is never a symbol: it is `KeyDisc`.
 enum PawSymbol {
     static let plugIn = "cable.connector"
-    static let unplugged = "cable.connector.slash"
     static let keyLocked = "lock.fill"
     static let faceID = "faceid"
     static let folder = "folder.fill"
@@ -29,7 +28,6 @@ enum PawSymbol {
     /// Every symbol above with the concept it stands for, for the gallery.
     static let all: [(concept: String, name: String)] = [
         ("Plug in the key", plugIn),
-        ("Key unplugged", unplugged),
         ("Key locked", keyLocked),
         ("Face ID window", faceID),
         ("Folder", folder),

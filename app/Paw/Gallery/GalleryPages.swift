@@ -5,8 +5,7 @@ import UIKit
 struct ColoursPage: View {
     private static let neutrals: [(String, Color)] = [
         ("bg", PawColor.bg), ("surface", PawColor.surface),
-        ("surfaceRaised", PawColor.surfaceRaised), ("fill", PawColor.fill),
-        ("separator", PawColor.separator), ("label", PawColor.label),
+        ("fill", PawColor.fill), ("label", PawColor.label),
         ("labelSecondary", PawColor.labelSecondary), ("labelTertiary", PawColor.labelTertiary),
         ("action", PawColor.action), ("onAction", PawColor.onAction),
         ("panel", PawColor.panel), ("onPanel", PawColor.onPanel),
@@ -61,7 +60,7 @@ struct ColoursPage: View {
                         .frame(width: 36, height: 28)
                         .overlay {
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(PawColor.separator, lineWidth: 1)
+                                .strokeBorder(Color(uiColor: .separator), lineWidth: 1)
                         }
                     Text(name)
                         .font(PawFont.caption)
@@ -242,14 +241,6 @@ struct RowsPage: View {
                     .pawListRow()
             } header: {
                 PawSectionHeader("Recent, needs your key")
-            }
-            Section {
-                GallerySample.row(GallerySample.entries[5], match: "fast")
-                    .pawListRow()
-                GallerySample.row(GallerySample.entries[7], match: "fast")
-                    .pawListRow()
-            } header: {
-                PawSectionHeader("Search match for \u{201C}fast\u{201D}")
             }
             Section {
                 ForEach(GallerySample.folders, id: \.name) { folder in
@@ -495,9 +486,6 @@ struct EmptyPage: View {
                 message: "Add your first password, or download the ones you already keep in pass.",
                 primary: EmptyState.Action(title: "Add a password", identifier: "empty-add") {
                     lastTapped = "Tapped Add a password"
-                },
-                secondary: EmptyState.Action(title: "Download your store", identifier: "empty-download") {
-                    lastTapped = "Tapped Download your store"
                 })
             Text(lastTapped)
                 .font(PawFont.footnote)
