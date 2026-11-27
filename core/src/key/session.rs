@@ -378,8 +378,7 @@ impl KeySession {
         }
     }
 
-    /// Sends the de-verify on its own thread, then frees the card. The card
-    /// must already be marked busy.
+    /// The card must already be marked busy.
     fn deverify_in_background(&self) {
         let spawned = self.me.upgrade().map(|session| {
             std::thread::Builder::new().name("paw-card-forget".into()).spawn(move || session.deverify_and_release())

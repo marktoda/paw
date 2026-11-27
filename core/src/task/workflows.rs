@@ -1,8 +1,7 @@
 //! The workflows whose work after the key is someone else's: setup's
 //! download and what follows its key check, a send or refresh, and
 //! re-encrypting held-back changes. Each is one of the key tasks of
-//! [`super::start`] with its work after the key; the runner decides how
-//! every one of them ends once cancelled.
+//! [`super::start`] with its work after the key.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

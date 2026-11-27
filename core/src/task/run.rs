@@ -362,7 +362,7 @@ impl KeyTask {
 
     /// A task its workflow refused before it needed the key: it starts
     /// ended, with `failure`.
-    pub(crate) fn refused(purpose: KeyPurpose, listener: Arc<dyn KeyTaskListener>, failure: TaskFailure) -> Arc<Self> {
+    pub(super) fn refused(purpose: KeyPurpose, listener: Arc<dyn KeyTaskListener>, failure: TaskFailure) -> Arc<Self> {
         let task = Self::new(purpose, listener);
         task.core.begin(KeyTaskState::ended(Err(failure)));
         task
