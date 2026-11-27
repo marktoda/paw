@@ -830,7 +830,7 @@ fn every_mutating_entry_point_returns_even_when_its_thread_holds_the_lock() {
             let tag = if nested { "n" } else { "p" };
             let repo = w.store();
             let writer = w.writer();
-            let author = sync::Author { name: "t".into(), email: "t@example.com".into() };
+            let author = paw_core::write::Author { name: "t".into(), email: "t@example.com".into() };
             let mut results: Vec<(&'static str, Result<(), String>)> = Vec::new();
             let mut note = |what, result: Result<(), String>| results.push((what, result));
             let text = |e: &dyn std::fmt::Display| e.to_string();
@@ -842,7 +842,7 @@ fn every_mutating_entry_point_returns_even_when_its_thread_holds_the_lock() {
             note("discard", queue::discard(&repo, &saved.commits[0]).map(drop).map_err(|e| text(&e)));
             save_in(&writer, &format!("{tag}-d")).unwrap();
             note("undo_last", queue::undo_last(&repo).map(drop).map_err(|e| text(&e)));
-            note("commit", sync::commit(&repo, &format!("lock/{tag}-e.gpg"), b"x", "Add.", &author).map(drop).map_err(|e| text(&e)));
+            note("commit", steps::commit(&repo, &format!("lock/{tag}-e.gpg"), b"x", "Add.", &author).map(drop).map_err(|e| text(&e)));
             note("discard_all", queue::discard_all(&repo).map_err(|e| text(&e)));
             note("integrate", steps::integrate(&repo).map(drop).map_err(|e| text(&e)));
             note("accept_replaced_remote", sync::accept_replaced_remote(&repo, true).map(drop).map_err(|e| text(&e)));

@@ -724,8 +724,8 @@ fn a_replaced_history_is_parked_in_the_background_and_reported_as_over_ssh() {
 fn local_changes_are_replayed_onto_a_background_fetch() {
     let w = world();
     w.set_up();
-    let author = sync::Author { name: "iPhone".into(), email: "paw@localhost".into() };
-    sync::commit(&w.store(), "local/mine.gpg", b"mine", "Add given password for local/mine to store.", &author).unwrap();
+    let author = paw_core::write::Author { name: "iPhone".into(), email: "paw@localhost".into() };
+    steps::commit(&w.store(), "local/mine.gpg", b"mine", "Add given password for local/mine to store.", &author).unwrap();
     let remote_tip = w.remote.commit_file(NEW_ENTRY.into(), b"x".to_vec(), "Add.".into()).unwrap();
 
     let report = w.account.background_refresh(secs(25));

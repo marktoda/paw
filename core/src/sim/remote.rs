@@ -1031,7 +1031,9 @@ pub mod steps {
     use crate::key::SshSigner;
     use crate::lock::FETCH_WAIT;
     use crate::sync::operation::{self, SyncReport};
+    use crate::fault::Fault;
     use crate::sync::{self, Cloned, Connection, OpenStore, Remote, SyncError, git_err};
+    use crate::write::{Author, TreeEdit, commit_edits};
 
     /// Clones the remote's default branch into the store's repository,
     /// which must be empty or not exist yet, as setup's download does.
@@ -1046,6 +1048,14 @@ pub mod steps {
         let (_, _held) = sync::fetch_branches(connection, &store, None)?;
         let (_, short) = sync::current_branch(&store.repo)?;
         Ok(store.repo.refname_to_id(&refs::remote_tracking(&short)).map(|id| id.to_string()).map_err(git_err)?)
+    }
+
+    /// Commits `contents` as the file `path` (relative to the store, `/`
+    /// separated) on the current branch, and nothing else, as a save does
+    /// once it has encrypted the entry.
+    pub fn commit(store: &StoreDirs, path: &str, contents: &[u8], message: &str, author: &Author) -> Result<String, Fault> {
+        let held = store.exclusive()?;
+        commit_edits(&held, &OpenStore::open(store)?, &[TreeEdit::Write { path, contents }], message, author)
     }
 
     /// Integrates `origin/<branch>` into the current branch, as every

@@ -13,6 +13,7 @@
 //!
 //! [`EntryDoc`]: crate::entry::EntryDoc
 
+mod commit;
 pub mod draft;
 pub mod held_back;
 pub mod keyring;
@@ -23,7 +24,8 @@ use pgp::packet::PublicKey;
 use rand::rngs::OsRng;
 
 use crate::fault::Fault;
-use crate::sync::Author;
+pub use commit::Author;
+pub(crate) use commit::{TreeEdit, commit_edits};
 pub use draft::{DraftField, DraftProblem, EntryDraft};
 pub use keyring::{FolderRecipients, Keyring, LineStatus, RecipientLine};
 pub use ops::{Deleted, FollowUp, FollowUpFailure, Saved, WriteStore};

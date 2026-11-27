@@ -19,7 +19,8 @@ use paw_core::key::{SignFailure, SshSigner};
 use paw_core::ssh::SshPublicKey;
 use paw_core::fault::Fault;
 use paw_core::remote::RemoteFailure;
-use paw_core::sync::{self, Author, Cloned, Connection, HostKeyPin, SyncError};
+use paw_core::sync::{self, Cloned, Connection, HostKeyPin, SyncError};
+use paw_core::write::Author;
 use support::{GitServer, Phone, git};
 
 const ENTRY: &str = "web/example.com.gpg";
@@ -48,7 +49,7 @@ fn author() -> Author {
 }
 
 fn commit_entry(dir: &Phone) -> String {
-    sync::commit(&dir.store, ENTRY, b"ciphertext", MESSAGE, &author()).unwrap()
+    steps::commit(&dir.store, ENTRY, b"ciphertext", MESSAGE, &author()).unwrap()
 }
 
 /// `Connection` has no `Debug`, so `unwrap_err` is not available.
@@ -290,7 +291,7 @@ fn cloned(server: &GitServer, card: &Arc<SimulatedKey>) -> Phone {
 
 /// The reason `commit` gives for refusing `path`.
 fn refused_path(dir: &Phone, path: &str) -> String {
-    match sync::commit(&dir.store, path, b"x", MESSAGE, &author()) {
+    match steps::commit(&dir.store, path, b"x", MESSAGE, &author()) {
         Err(Fault::Local { detail }) => match detail.strip_prefix("not a safe name for an entry: ") {
             Some(why) => why.to_owned(),
             None => panic!("expected {path:?} to be refused as unsafe, got {detail:?}"),
@@ -345,7 +346,7 @@ fn commit_refuses_gits_own_directory_however_it_is_spelled() {
         assert!(said.contains("git's own directory"), "{path:?}: {said}");
     }
     // Names that merely resemble it are ordinary entries.
-    sync::commit(&dir.store, "web/.github.gpg", b"x", MESSAGE, &author()).unwrap();
+    steps::commit(&dir.store, "web/.github.gpg", b"x", MESSAGE, &author()).unwrap();
 
     assert_eq!(std::fs::read(dir.path().join(".git/config")).unwrap(), config);
     assert!(!dir.path().join("web/.git").exists());
@@ -407,7 +408,7 @@ fn an_entry_named_like_a_pattern_does_not_touch_other_entries() {
     // `pass` allows these characters in names; to git they are a pattern
     // that also matches the entry above.
     for name in ["web/*", "web/example?com.gpg", "web/[a-z]*.gpg", ":/web/example.com.gpg"] {
-        sync::commit(&dir.store, name, b"other", MESSAGE, &author()).unwrap();
+        steps::commit(&dir.store, name, b"other", MESSAGE, &author()).unwrap();
         assert_eq!(std::fs::read(dir.path().join(name)).unwrap(), b"other", "{name}");
     }
 

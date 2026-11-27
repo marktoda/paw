@@ -18,7 +18,8 @@ use paw_core::sim::remote::steps;
 use paw_core::sim::SimulatedKey;
 use paw_core::fault::Fault;
 use paw_core::remote::{RefusedPath, RefusedReason, RemoteFailure};
-use paw_core::sync::{self, Author, Cloned, Connection, SyncError, queue};
+use paw_core::sync::{self, Cloned, Connection, SyncError, queue};
+use paw_core::write::Author;
 use key_common::{PIN, signer};
 use paw_core::files::layout::StoreDirs;
 use support::{GitServer, Phone, git};
@@ -233,7 +234,7 @@ fn integrate_after(
     let connection = connect(&server, card);
     assert_eq!(steps::clone(&connection, &server.remote(), &dirs).unwrap(), Cloned::Store);
     if queued {
-        sync::commit(&dirs, "web/new.gpg", b"local ciphertext", "Add given password for web/new to store.", &author())
+        steps::commit(&dirs, "web/new.gpg", b"local ciphertext", "Add given password for web/new to store.", &author())
             .unwrap();
     }
     let head = git(&dir, &["rev-parse", "HEAD"]);
@@ -303,7 +304,7 @@ fn a_local_name_that_collides_with_a_remote_one_is_not_replayed() {
     let connection = connect(&server, &card);
     assert_eq!(steps::clone(&connection, &server.remote(), &dir.store).unwrap(), Cloned::Store);
     // This device saves `Bank.gpg`; the desktop, meanwhile, `bank.gpg`.
-    sync::commit(&dir.store, "web/Bank.gpg", b"mine", "Add given password for web/Bank to store.", &author()).unwrap();
+    steps::commit(&dir.store, "web/Bank.gpg", b"mine", "Add given password for web/Bank to store.", &author()).unwrap();
     let head = git(dir.path(), &["rev-parse", "HEAD"]);
     host_commit(&server, &store(vec![("web", Folder(vec![("bank.gpg", File(b"theirs"))]))]));
     steps::fetch(&connection, &dir.store).unwrap();
@@ -327,7 +328,7 @@ fn saving_a_name_that_collides_with_one_in_the_store_is_refused() {
     let head = git(dir.path(), &["rev-parse", "HEAD"]);
 
     for path in ["Web/x.gpg", "web/Example.com.gpg", "WEB"] {
-        let result = sync::commit(&dir.store, path, b"x", "Add.", &author());
+        let result = steps::commit(&dir.store, path, b"x", "Add.", &author());
         assert!(matches!(&result, Err(Fault::Refused { .. })), "{path}: {result:?}");
     }
     assert_eq!(git(dir.path(), &["rev-parse", "HEAD"]), head);
@@ -346,7 +347,7 @@ fn a_folder_turned_into_a_link_under_a_waiting_change_is_refused() {
     let dirs = StoreDirs::new(state.path());
     let connection = connect(&server, &card);
     assert_eq!(steps::clone(&connection, &server.remote(), &dirs).unwrap(), Cloned::Store);
-    sync::commit(&dirs, "web/new.gpg", b"mine", "Add given password for web/new to store.", &author()).unwrap();
+    steps::commit(&dirs, "web/new.gpg", b"mine", "Add given password for web/new to store.", &author()).unwrap();
 
     let repo = Repository::open_bare(server.bare()).unwrap();
     let tree = write_tree(

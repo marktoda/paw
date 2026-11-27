@@ -19,11 +19,11 @@ use paw_core::remote::RemoteFailure;
 use paw_core::sync::operation::SyncState;
 use paw_core::sync::queue;
 use paw_core::sync::{
-    self, Author, ChangeKind, Cloned, Connection, HostKeyPin, IntegrateReport, Integration, KeptBoth,
+    self, ChangeKind, Cloned, Connection, HostKeyPin, IntegrateReport, Integration, KeptBoth,
     RecipientsChange, SyncError,
 };
 use paw_core::files::layout::StoreDirs;
-use paw_core::write::WriteStore;
+use paw_core::write::{Author, WriteStore};
 use key_common::{PIN, signer, sync_failure};
 use support::{GitServer, git, move_entry};
 
@@ -68,7 +68,7 @@ fn phone(w: &World) -> &Path {
 
 fn phone_write(w: &World, path: &str, contents: &str) -> String {
     let message = format!("Edit password for {path} using paw.");
-    sync::commit(&w.store, path, contents.as_bytes(), &message, &author()).unwrap()
+    steps::commit(&w.store, path, contents.as_bytes(), &message, &author()).unwrap()
 }
 
 /// paw's delete, through its write API.

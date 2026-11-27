@@ -40,7 +40,8 @@ use crate::store::read::read_file;
 use crate::store::tree::StoreTree;
 use crate::lock::{Exclusive, Shared};
 use crate::path::{entry_file as file, folder_of, split};
-use crate::sync::{OpenStore, TreeEdit, commit_edits};
+use crate::sync::OpenStore;
+use super::{TreeEdit, commit_edits};
 
 /// What a write keeps in step with the entry after its commits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -321,7 +322,7 @@ impl WriteStore {
         from: &str,
         to: &str,
         reencrypt: Option<(&EntryDoc, &[pgp::packet::PublicKey])>,
-        author: &crate::sync::Author,
+        author: &super::Author,
     ) -> Result<(String, Option<Vec<u8>>), WriteError> {
         let message = format!("Rename {from} to {to}.");
         let (from_file, to_file) = (file(from), file(to));
