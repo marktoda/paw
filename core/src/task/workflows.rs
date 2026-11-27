@@ -1,12 +1,10 @@
 //! The workflows whose work after the key is someone else's: setup's
 //! download and what follows its key check, a send or refresh, and
 //! re-encrypting held-back changes. Each is one of the key tasks of
-//! [`super::start`] with its work after the key; the runner decides how
-//! every one of them ends once cancelled.
+//! [`super::start`] with its work after the key.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 use super::{After, DecryptWork, KeyOutcome, KeyPurpose, KeyTask, KeyTaskListener, LoginPurpose, TaskFailure, TaskProgress, Work};
 use crate::key::{Halt, KeyIdentity, KeyPort};
@@ -40,7 +38,6 @@ pub(crate) fn download(
                 });
             }
         };
-        locked(&flow).note_login();
         let mut progress = |update: TransferProgress| job.progress(update.into());
         let cloned = crate::sync::clone_with_transfer(&connection, &remote, &repo, Some(&mut progress));
         drop(connection);
@@ -68,7 +65,7 @@ pub(crate) fn check_key(
     let found = picked.and_then(|entry| Ok((entry, PassStore::open(repo.to_string_lossy().into_owned())?)));
     let (entry, store) = match found {
         Ok(found) => found,
-        Err(error) => return KeyTask::failed(KeyPurpose::CheckKey { entry: None }, listener, error.into()),
+        Err(error) => return KeyTask::refused(KeyPurpose::CheckKey { entry: None }, listener, error.into()),
     };
     let enrol = port.clone();
     let opened = entry.clone();
@@ -83,17 +80,15 @@ pub(crate) fn check_key(
 }
 
 /// A send (`login` is `Push`) or a refresh of the set-up store in
-/// `state_dir`, on one login. `last_login` is when the authentication
-/// slot last signed, for a cached touch policy.
+/// `state_dir`, on one login.
 pub(crate) fn sync(
     port: &Arc<KeyPort>,
     listener: Arc<dyn KeyTaskListener>,
     login: LoginPurpose,
     state_dir: PathBuf,
     address: StoreAddress,
-    last_login: Arc<Mutex<Option<Instant>>>,
 ) -> Arc<KeyTask> {
-    let push = matches!(login, LoginPurpose::Push { .. });
+    let push = matches!(login, LoginPurpose::Push);
     let work: Work = Box::new(move |job, signer| {
         let remote = KnownHosts::of(&state_dir)
             .remote(&address)
@@ -104,9 +99,6 @@ pub(crate) fn sync(
         let stop = || job.cancelled();
         let mut progress = |update: TransferProgress| job.progress(update.into());
         let report = operation::run_until::<TaskFailure>(&remote, &signer, &repo, &holds_back, push, &stop, Some(&mut progress))?;
-        if report.signatures > 0 {
-            *locked(&last_login) = Some(Instant::now());
-        }
         Ok(KeyOutcome::Synced { report })
     });
     let expected = port.expected();
@@ -121,10 +113,9 @@ pub(crate) fn reencrypt(
     state_dir: PathBuf,
 ) -> Arc<KeyTask> {
     let repo = crate::files::layout::repo_dir(&state_dir);
-    let count = match held_back::reencrypt_check(&repo, &state_dir) {
-        Ok(check) => check.ready,
-        Err(error) => return KeyTask::failed(KeyPurpose::Reencrypt { count: 0 }, listener, error.into()),
-    };
+    if let Err(error) = held_back::reencrypt_check(&repo, &state_dir) {
+        return KeyTask::refused(KeyPurpose::Reencrypt, listener, error.into());
+    }
     let work: DecryptWork = Box::new(move |job, opener| {
         let mut open = |_: &HeldBack, ciphertext: &[u8]| {
             opener(ciphertext).map_err(|halt| match halt {
@@ -138,5 +129,5 @@ pub(crate) fn reencrypt(
         let report = held_back::reencrypt_each(&repo, &state_dir, &mut open, &mut progress)?;
         Ok(KeyOutcome::Reencrypted { report })
     });
-    port.decrypt_then(KeyPurpose::Reencrypt { count }, listener, work)
+    port.decrypt_then(listener, work)
 }

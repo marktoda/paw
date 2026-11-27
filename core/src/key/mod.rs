@@ -18,14 +18,13 @@ mod wire;
 
 use std::time::Duration;
 
-pub use card::{CardConnection, CardInfo, ConnectionError, KeyTouch};
-pub use decrypt::MAX_DECIPHERS;
+pub use card::{CardConnection, CardInfo, ConnectionError, KeySlot, KeyTouch};
 pub use enrolment::{KeyIdentity, KeyMismatch};
 pub use kdf::PinKdfStatus;
 pub use keylog::{KeyLogLine, clear_key_log, key_log, key_log_text};
 pub use port::KeyPort;
 pub(crate) use decrypt::Plan;
-pub(crate) use session::{Halt, PinPrompt};
+pub(crate) use session::{FirstStage, Halt, PinPrompt};
 pub(crate) use signer::authenticate;
 pub(crate) use task::TaskSide;
 pub use session::KeySession;
@@ -45,10 +44,31 @@ pub const CACHED_TOUCH_GRACE: Duration = Duration::from_millis(400);
 /// about 15 seconds for a touch before it gives up.
 pub(crate) const FAST_REFUSAL: Duration = Duration::from_secs(1);
 
-/// The PIN lengths an OpenPGP card accepts for the user PIN. Anything
-/// outside is refused before it reaches the card, so it costs no try.
+/// The PIN lengths an OpenPGP card accepts for the user PIN, in bytes.
+/// Anything outside is refused before it reaches the card, so it costs no
+/// try.
 pub const MIN_PIN_LEN: usize = 6;
 pub const MAX_PIN_LEN: usize = 127;
+
+/// The PIN rules as the key sheet says and checks them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct PinRules {
+    /// [`MIN_PIN_LEN`] and [`MAX_PIN_LEN`]: the PIN's length in bytes as
+    /// typed (UTF-8), which is how it goes to the core.
+    pub min_length: u32,
+    pub max_length: u32,
+    /// [`PIN_BACKGROUND_LIMIT`], in minutes.
+    pub background_limit_minutes: u32,
+}
+
+#[uniffi::export]
+pub fn pin_rules() -> PinRules {
+    PinRules {
+        min_length: MIN_PIN_LEN as u32,
+        max_length: MAX_PIN_LEN as u32,
+        background_limit_minutes: (PIN_BACKGROUND_LIMIT.as_secs() / 60) as u32,
+    }
+}
 
 /// Why a key task did not do what was asked. Each variant is its own
 /// screen; none carries a PIN, plaintext or APDU data.
@@ -62,11 +82,12 @@ pub enum KeyError {
     HeldPinRejected { tries_left: u8 },
     #[error("the PIN is blocked; unblock it with the admin PIN")]
     PinBlocked,
-    /// Not 6 to 127 characters. It was not sent, so no try was used.
-    #[error("a PIN has 6 to 127 characters")]
+    /// Shorter than [`MIN_PIN_LEN`] or longer than [`MAX_PIN_LEN`]. It was
+    /// not sent, so no try was used.
+    #[error("a PIN has {} to {} characters", MIN_PIN_LEN, MAX_PIN_LEN)]
     PinFormat,
-    /// paw forgot the PIN (Lock now, or 15 minutes in the background)
-    /// while a git login was under way, when it can no longer ask. Also why
+    /// paw forgot the PIN (Lock now, or [`PIN_BACKGROUND_LIMIT`] in the
+    /// background) while a git login was under way, when it can no longer ask. Also why
     /// the PIN is asked again when the key turns out to have lost its
     /// verification during a decryption (or a signature fails for that):
     /// paw has then dropped the PIN, and no try was used.

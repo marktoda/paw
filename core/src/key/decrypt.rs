@@ -2,7 +2,6 @@
 
 use std::io::Read;
 use std::sync::Arc;
-use std::time::Instant;
 
 use openpgp_card::ocard::KeyType;
 use openpgp_card_rpgp::CardSlot;
@@ -13,21 +12,9 @@ use pgp::types::{DecryptionKey, EskType, Password};
 use zeroize::Zeroizing;
 
 use super::session::{CardJob, Halt, card_error};
-use super::apdu;
 use super::task::TaskSide;
-use super::touch::{self, TouchWatch};
-use super::KeyError;
+use super::{KeyError, KeySlot};
 use crate::recipients::{self, Access};
-
-/// How many recipient packets of one entry the card is asked to unwrap:
-/// one. It is the first packet that names the card's decryption key, or,
-/// if none names it, the first hidden (wildcard) packet. Each try can cost
-/// a touch, so a crafted entry with many packets for this key cannot make
-/// the person touch the key again and again. An entry whose only packets
-/// are hidden, for several recipients, opens only if this key's packet is
-/// the first: `gpg --throw-keyids` with several recipients is rare in
-/// password stores, and a failed open says the key could not decrypt it.
-pub const MAX_DECIPHERS: usize = 1;
 
 use crate::entry::MAX_PLAINTEXT_BYTES;
 
@@ -56,7 +43,15 @@ fn is_hidden(pkesk: &PublicKeyEncryptedSessionKey) -> bool {
 }
 
 pub(crate) struct Plan<'a> {
-    candidates: Vec<PublicKeyEncryptedSessionKey>,
+    /// The one recipient packet the card is asked to unwrap: the first that
+    /// names the card's decryption key, or, if none names it, the first
+    /// hidden (wildcard) packet. Each try can cost a touch, so a crafted
+    /// entry with many packets for this key cannot make the person touch the
+    /// key again and again. An entry whose only packets are hidden, for
+    /// several recipients, opens only if this key's packet is the first:
+    /// `gpg --throw-keyids` with several recipients is rare in password
+    /// stores, and a failed open says the key could not decrypt it.
+    packet: PublicKeyEncryptedSessionKey,
     edata: Edata<'a>,
 }
 
@@ -80,17 +75,15 @@ impl<'a> Plan<'a> {
             _ => None,
         });
         let (hidden, named): (Vec<_>, Vec<_>) = for_this_key.partition(is_hidden);
-        let mut candidates = if named.is_empty() { hidden } else { named };
-        candidates.truncate(MAX_DECIPHERS);
-        if candidates.is_empty() {
+        let Some(packet) = named.into_iter().next().or_else(|| hidden.into_iter().next()) else {
             // The headers name this key, yet the OpenPGP library finds no
             // packet for it: the file is not what its headers say.
             return Err(unreadable("its recipient packets do not match its headers"));
-        }
-        Ok(Self { candidates, edata })
+        };
+        Ok(Self { packet, edata })
     }
 
-    /// Asks the card to unwrap the session key. Shows `Touch` as each
+    /// Asks the card to unwrap the session key. Shows `Touch` as the
     /// command goes out, if the slot's policy can ask for one.
     pub(crate) fn decipher(
         &self,
@@ -100,48 +93,21 @@ impl<'a> Plan<'a> {
     ) -> Result<PlainSessionKey, Halt> {
         let session = job.session();
         let wire = session.wire().clone();
-        let policy = session.card_info().decryption_touch;
-        let touch_possible = touch::possible(policy);
         let mut tx = job.card.transaction().map_err(|e| card_error(&wire, "starting to decrypt", e))?;
         let slot = CardSlot::with_public_key(&mut tx, KeyType::Decryption, key.clone(), &|| {})
             .map_err(|e| card_error(&wire, "reading the decryption key", e))?;
-        let _watch = TouchWatch::arm(&wire, task, policy, "decryption");
-
-        let mut failure = KeyError::DecryptFailed { detail: "the key did not answer".into() };
-        for pkesk in &self.candidates {
-            if task.cancelled() {
-                return Err(Halt::Cancelled);
-            }
-            let version = match pkesk {
-                PublicKeyEncryptedSessionKey::V6 { .. } => EskType::V6,
-                _ => EskType::V3_4,
-            };
-            wire.clear_last();
-            let sent = Instant::now();
-            let unwrapped = pkesk
-                .values()
-                .and_then(|values| slot.decrypt(&Password::empty(), values, version))
-                .and_then(|inner| inner);
-            let error = match unwrapped {
-                Ok(session_key) => return Ok(session_key),
-                Err(e) => e,
-            };
-            if wire.failed() {
-                return Err(Halt::Fail(KeyError::KeyRemoved));
-            }
-            match wire.last() {
-                Some((apdu::PSO, sw)) if apdu::security_refusal(sw) => {
-                    return Err(session.refused(task.as_ref(), "decrypting", sw, touch_possible, sent.elapsed()));
-                }
-                Some((_, sw)) if sw != apdu::SW_OK => {
-                    return Err(Halt::Fail(apdu::unexpected("decrypting", sw)));
-                }
-                // The card answered; what it gave did not unwrap this
-                // packet.
-                _ => failure = KeyError::DecryptFailed { detail: error.to_string() },
-            }
+        if task.cancelled() {
+            return Err(Halt::Cancelled);
         }
-        Err(Halt::Fail(failure))
+        let version = match self.packet {
+            PublicKeyEncryptedSessionKey::V6 { .. } => EskType::V6,
+            _ => EskType::V3_4,
+        };
+        let unwrapped = session.touch_op(task, KeySlot::Decryption, || {
+            self.packet.values().and_then(|values| slot.decrypt(&Password::empty(), values, version)).and_then(|inner| inner)
+        })?;
+        // The card answered; what it gave did not unwrap the packet.
+        unwrapped.map_err(|error| Halt::Fail(KeyError::DecryptFailed { detail: error.to_string() }))
     }
 
     /// Decrypts the entry with the unwrapped session key. No card.

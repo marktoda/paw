@@ -37,10 +37,6 @@ impl TouchClock {
         Self { policy, last_use: None }
     }
 
-    pub fn policy(&self) -> KeyTouch {
-        self.policy
-    }
-
     /// Records a use that succeeded at `at`.
     pub fn used_at(&mut self, at: Instant) {
         self.last_use = Some(at);

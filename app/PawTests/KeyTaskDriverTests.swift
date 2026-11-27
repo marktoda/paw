@@ -115,7 +115,7 @@ final class KeyTaskDriverTests: XCTestCase {
         ]
         for state in running {
             XCTAssertNil(KeyTaskEnd<SyncError>(state), "\(state)")
-            XCTAssertFalse(state.isFinal, "\(state)")
+            XCTAssertFalse(state.isFinal(), "\(state)")
         }
         let rejected = SyncError.Fault(fault: .remote(failure: .keyNotAccepted(host: "h", publicKey: "k")))
         let ended: [KeyTaskState] = [
@@ -123,7 +123,7 @@ final class KeyTaskDriverTests: XCTestCase {
             .setupFailed(error: .EmptyRepository), .cancelled,
         ]
         for state in ended {
-            XCTAssertTrue(state.isFinal, "\(state)")
+            XCTAssertTrue(state.isFinal(), "\(state)")
         }
         guard case .stepFailed? = KeyTaskEnd<SyncError>(.syncFailed(error: rejected)),
               case .stepFailed? = KeyTaskEnd<SetupError>(.setupFailed(error: .EmptyRepository)) else {

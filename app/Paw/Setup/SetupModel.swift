@@ -214,9 +214,9 @@ final class SetupModel {
             return .address(notice: notice)
         case .confirmHost(let host, let algorithm, let fingerprint):
             return .confirmHost(host: host, algorithm: algorithm, fingerprint: fingerprint)
-        case .needPin(let address, _):
+        case .needPin(let address):
             return .download(address: address)
-        case .testDecrypt(let entries, _):
+        case .testDecrypt(let entries):
             return .check(entries: entries)
         case .done(let opened, let entries):
             return .done(opened: opened, entries: entries)
@@ -269,7 +269,7 @@ final class SetupModel {
     /// The address setup has, else the one typed.
     private var addressSet: String {
         switch state {
-        case .checkHost(let set, _), .needPin(let set, _): set
+        case .checkHost(let set, _), .needPin(let set): set
         default: addressText
         }
     }

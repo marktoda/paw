@@ -12,10 +12,8 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Instant;
 
-use crate::key::touch_clock::{TouchClock, TouchExpectation};
-use crate::key::{KeyPort, KeySession, KeyTouch};
+use crate::key::{KeyPort, KeySession};
 use crate::locked;
 use crate::remote::{RefusedPath, RemoteFailure};
 use crate::setup::{SetupError, SetupFlow, SetupState, SetupWriteReadiness};
@@ -126,8 +124,6 @@ impl Setup {
 pub struct StoreSync {
     state_dir: PathBuf,
     address: StoreAddress,
-    /// When the authentication slot last signed, for a cached touch policy.
-    last_login: Arc<Mutex<Option<Instant>>>,
 }
 
 impl StoreSync {
@@ -141,15 +137,7 @@ impl StoreSync {
 
     fn with_key(&self, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>, login: LoginPurpose) -> Arc<KeyTask> {
         let (state_dir, address) = (self.state_dir.clone(), self.address.clone());
-        workflows::sync(&port, listener, login, state_dir, address, self.last_login.clone())
-    }
-
-    fn clock(&self, policy: KeyTouch) -> TouchClock {
-        let mut clock = TouchClock::new(policy);
-        if let Some(at) = *locked(&self.last_login) {
-            clock.used_at(at);
-        }
-        clock
+        workflows::sync(&port, listener, login, state_dir, address)
     }
 }
 
@@ -178,7 +166,7 @@ impl StoreSync {
     pub fn open(state_dir: String) -> Result<Arc<Self>, SyncError> {
         let state_dir = PathBuf::from(state_dir);
         let address = saved_address(&state_dir)?;
-        Ok(Arc::new(Self { state_dir, address, last_login: Arc::default() }))
+        Ok(Arc::new(Self { state_dir, address }))
     }
 
     pub fn address(&self) -> String {
@@ -240,20 +228,11 @@ impl StoreSync {
         Ok(self.known_hosts().forget(self.address.connect_host(), self.address.port)?)
     }
 
-    /// Whether the next login will wait for a touch, given the slot's policy.
-    pub fn touch_expectation(&self, policy: KeyTouch) -> TouchExpectation {
-        self.clock(policy).expectation()
-    }
-
     /// "Send" as a key task (sign-in, `Push`): fetch, integrate and push on
     /// one login, with the session's PIN. Ends `Done` with `Synced` and the
-    /// report, or `SyncFailed`. The sheet counts a queue that can't be read
-    /// as none waiting; the send then says what is wrong with it, or finds
-    /// the remote replaced, which is the way out of a history paw did not
-    /// make.
+    /// report, or `SyncFailed`.
     pub fn send_with_key(self: Arc<Self>, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
-        let count = queue::unpushed(&self.repo()).map_or(0, |items| items.len() as u32);
-        self.with_key(port, listener, LoginPurpose::Push { count })
+        self.with_key(port, listener, LoginPurpose::Push)
     }
 
     /// Fetch and integrate as a key task (sign-in, `Fetch`), pushing

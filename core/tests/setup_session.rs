@@ -90,13 +90,11 @@ fn download(w: &World, driver: &Arc<Driver>) -> KeyTaskState {
 }
 
 /// Runs both key steps of setup. Returns their drivers and how many PIN
-/// stages the person saw in all (a task that opens at the PIN stage shows
-/// it without telling its listener).
+/// stages the person saw in all.
 fn full_setup(w: &World) -> (Arc<Driver>, Arc<Driver>, usize) {
     to_need_pin(w);
     let downloading = Driver::helpful(PIN, &w.sim);
     let task = w.setup.clone().download_with_key(w.port.clone(), downloading.clone());
-    let mut pins = usize::from(is_pin(&task.state()));
     downloading.drive(&task);
     let state = finish(&task);
     assert!(matches!(state, KeyTaskState::Done { outcome: KeyOutcome::SignedIn }), "{state:?}");
@@ -104,11 +102,10 @@ fn full_setup(w: &World) -> (Arc<Driver>, Arc<Driver>, usize) {
 
     let checking = Driver::helpful(PIN, &w.sim);
     let task = w.setup.clone().test_decrypt_with_key(w.port.clone(), checking.clone());
-    pins += usize::from(is_pin(&task.state()));
     checking.drive(&task);
     let state = finish(&task);
     assert!(matches!(state, KeyTaskState::Done { outcome: KeyOutcome::KeyChecked }), "{state:?}");
-    pins += downloading.count(is_pin) + checking.count(is_pin);
+    let pins = downloading.count(is_pin) + checking.count(is_pin);
     (downloading, checking, pins)
 }
 

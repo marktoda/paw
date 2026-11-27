@@ -26,7 +26,8 @@ use crate::write::held_back::ReencryptReport;
 
 pub use run::KeyTask;
 
-/// What a task is for. The sheet's title comes from this.
+/// What a task is for: the key log names it, and setup's key check says
+/// which entry it opens.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum KeyPurpose {
     OpenEntry { entry: String },
@@ -37,9 +38,9 @@ pub enum KeyPurpose {
     /// Key diagnostics: one signature nobody is meant to touch for, to see
     /// what the key answers when a touch times out.
     CheckTouchTimeout,
-    /// Opens `count` held-back changes, one touch each, to encrypt them
-    /// again for their folder's new list.
-    Reencrypt { count: u32 },
+    /// Opens held-back changes, one touch each, to encrypt them again for
+    /// their folder's new list.
+    Reencrypt,
 }
 
 /// Why a git login is being signed.
@@ -47,7 +48,7 @@ pub enum KeyPurpose {
 pub enum LoginPurpose {
     Clone,
     Fetch,
-    Push { count: u32 },
+    Push,
 }
 
 #[derive(Clone, uniffi::Enum)]
@@ -148,10 +149,10 @@ pub enum KeyTaskState {
     /// No key is connected. The task goes on by itself once one is.
     PlugIn,
     /// Ask for the PIN. `tries_left` is what the key says remain.
-    /// `forgot_after_background` adds "paw forgot your PIN after 15
-    /// minutes away." `last_error` is why the PIN is asked again (a wrong
-    /// PIN, a PIN that was not 6 to 127 characters, or a held PIN the key
-    /// no longer accepts).
+    /// `forgot_after_background`: paw forgot the PIN after
+    /// [`crate::key::PIN_BACKGROUND_LIMIT`] away. `last_error` is why the
+    /// PIN is asked again (a wrong PIN, one of a length no card takes, or a
+    /// held PIN the key no longer accepts).
     Pin { tries_left: u8, forgot_after_background: bool, last_error: Option<KeyError> },
     /// The key is finishing something else (an earlier command, perhaps a
     /// cancelled one still waiting for its touch). This task is queued.
@@ -170,6 +171,7 @@ pub enum KeyTaskState {
     Cancelled,
 }
 
+#[uniffi::export]
 impl KeyTaskState {
     /// Done, failed or cancelled: nothing changes it any more.
     pub fn is_final(&self) -> bool {
@@ -180,7 +182,9 @@ impl KeyTaskState {
             Self::PlugIn | Self::Pin { .. } | Self::Busy | Self::Touch | Self::Working { .. } => false,
         }
     }
+}
 
+impl KeyTaskState {
     fn ended(result: Result<KeyOutcome, TaskFailure>) -> Self {
         match result {
             Ok(outcome) => Self::Done { outcome },

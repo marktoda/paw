@@ -26,7 +26,7 @@ final class TouchTimeoutCheck {
     }
 
     /// Started and not yet ended. Cancel ends it at once, even while the
-    /// key still waits for a touch (`core/src/key/task.rs`).
+    /// key still waits for a touch (`core/src/task/run.rs`).
     var running: Bool {
         driver.isFollowing
     }
@@ -110,7 +110,7 @@ struct TouchTimeoutSection: View {
             KeyPinField(stage: stage, pin: Bindable(check.driver).pin) { check.driver.continueWithPin() }
             Button(stage.continueTitle) { check.driver.continueWithPin() }
                 .foregroundStyle(PawColor.label)
-                .disabled(check.driver.pin.count < 6)
+                .disabled(check.driver.pin.utf8.count < Int(pinRules().minLength))
                 .accessibilityIdentifier("pin-continue")
         case .touch:
             line("Don't touch your key. It should give up after 15 seconds.")

@@ -9,7 +9,6 @@
 
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use crate::files::values::{self, Values};
 use crate::files::{self, layout};
@@ -24,7 +23,6 @@ use crate::sync::{self, Cloned, Connection, PresentedHostKey};
 use crate::write::{Keyring, LineStatus};
 use crate::fault::Fault;
 use crate::remote::{PortFallback, RemoteFailure};
-use crate::key::touch_clock::{TouchClock, TouchExpectation};
 
 /// The key as setup shows it on "Your key". Public data only.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -52,9 +50,9 @@ pub enum SetupState {
     /// it pins the key and goes on.
     ConfirmHost { host: String, algorithm: String, fingerprint: String },
     /// Ask for the PIN; `download_with_key` clones the store with one login.
-    NeedPin { address: String, touch: TouchExpectation },
+    NeedPin { address: String },
     /// Cloned; `test_decrypt_with_key` opens one entry to prove the key works.
-    TestDecrypt { entries: u32, touch: TouchExpectation },
+    TestDecrypt { entries: u32 },
     Done { opened: String, entries: u32 },
 }
 
@@ -287,8 +285,6 @@ pub struct SetupFlow {
     /// The key a host presented that is waiting for the person's confirmation.
     /// Not saved: after a restart the host is asked again.
     unconfirmed: Option<PresentedHostKey>,
-    authentication: TouchClock,
-    decryption: TouchClock,
 }
 
 fn remove_dir(path: &Path, _held: &crate::lock::Exclusive) -> Result<(), SetupError> {
@@ -306,16 +302,7 @@ impl SetupFlow {
             Some(found) => Saved::from_values(&found),
             None => Saved::fresh(),
         };
-        let touch = |f: fn(&KeySummary) -> KeyTouch| {
-            TouchClock::new(saved.key.as_ref().map(f).unwrap_or(KeyTouch::Unknown))
-        };
-        let mut flow = Self {
-            dir: state_dir.to_path_buf(),
-            authentication: touch(|k| k.authentication_touch),
-            decryption: touch(|k| k.decryption_touch),
-            saved,
-            unconfirmed: None,
-        };
+        let mut flow = Self { dir: state_dir.to_path_buf(), saved, unconfirmed: None };
         let repo = flow.repo_dir();
         let cloned = repo.join(".git").is_dir() && layout::holds_store(&repo);
         match flow.saved.step {
@@ -381,13 +368,8 @@ impl SetupFlow {
             (Step::ReadKey, _) | (_, None) => SetupState::ReadKey,
             (Step::Address, Some(key)) => SetupState::Address { key: key.clone() },
             (Step::CheckHost, _) => SetupState::CheckHost { address, notice: self.saved.notice.clone() },
-            (Step::NeedPin | Step::Cloning, _) => {
-                SetupState::NeedPin { address, touch: self.authentication.expectation() }
-            }
-            (Step::TestDecrypt, _) => SetupState::TestDecrypt {
-                entries: self.entry_count(),
-                touch: self.decryption.expectation(),
-            },
+            (Step::NeedPin | Step::Cloning, _) => SetupState::NeedPin { address },
+            (Step::TestDecrypt, _) => SetupState::TestDecrypt { entries: self.entry_count() },
             (Step::Done, _) => SetupState::Done {
                 opened: self.saved.opened.clone().unwrap_or_default(),
                 entries: self.entry_count(),
@@ -480,8 +462,6 @@ impl SetupFlow {
             authentication_touch: info.authentication_touch,
             decryption_touch: info.decryption_touch,
         };
-        self.authentication = TouchClock::new(key.authentication_touch);
-        self.decryption = TouchClock::new(key.decryption_touch);
         self.saved.key = Some(key);
         self.go(Step::Address)
     }
@@ -585,11 +565,6 @@ impl SetupFlow {
         }
     }
 
-    /// The login signed: a cached touch holds for a while from now.
-    pub(crate) fn note_login(&mut self) {
-        self.authentication.used_at(Instant::now());
-    }
-
     /// A repository with no commits, or with no `.gpg-id` at the top, is
     /// the wrong address rather than a failed download: setup goes back to
     /// the address, with the address kept.
@@ -689,7 +664,6 @@ impl SetupFlow {
         keyring.accept_all_recipients_at_setup(&held, &repo).map_err(write_failed)?;
         save_enrolment(&self.dir, identity).map_err(SetupError::from)?;
         drop(held);
-        self.decryption.used_at(Instant::now());
         self.saved.opened = Some(entry);
         self.go(Step::Done)
     }

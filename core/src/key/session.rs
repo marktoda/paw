@@ -11,7 +11,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use openpgp_card::Card;
 use openpgp_card::state::Open;
@@ -21,11 +21,14 @@ use super::kdf::{self, PinKdf};
 use super::keylog::{self, KeyLog, Sink};
 use super::apdu::{self, Verify};
 use super::task::TaskSide;
+use super::touch::{self, TouchWatch};
+use super::touch_clock::{TouchClock, TouchExpectation};
 use super::wire::Wire;
 use super::{FAST_REFUSAL, KeyError, MAX_PIN_LEN, MIN_PIN_LEN, PIN_BACKGROUND_LIMIT};
 use crate::clock::Clock;
 use crate::ssh::SshPublicKey;
-use super::card::{self, CardConnection, CardInfo};
+use super::card::{self, CardConnection, CardInfo, KeySlot};
+use super::enrolment::{KeyIdentity, KeyMismatch};
 
 /// A user PIN of a plausible length, wiped when dropped. It has no
 /// `Display`, and its `Debug` shows nothing of it.
@@ -102,6 +105,18 @@ struct State {
     forgets: u64,
     /// Tasks to wake when the session ends.
     tasks: Vec<Weak<dyn TaskSide>>,
+    /// When each slot last answered the command that may wait for a touch.
+    decryption_touch: TouchClock,
+    authentication_touch: TouchClock,
+}
+
+impl State {
+    fn touch_clock(&mut self, slot: KeySlot) -> &mut TouchClock {
+        match slot {
+            KeySlot::Decryption => &mut self.decryption_touch,
+            KeySlot::Authentication => &mut self.authentication_touch,
+        }
+    }
 }
 
 /// One connected key, from plug-in to removal.
@@ -119,9 +134,19 @@ pub struct KeySession {
 }
 
 /// What the PIN stage shows.
+#[derive(Clone, Copy)]
 pub(crate) struct PinPrompt {
     pub(crate) tries_left: u8,
     pub(crate) forgot_after_background: bool,
+}
+
+/// The first stage a task's card work shows.
+pub(crate) enum FirstStage {
+    Pin(PinPrompt),
+    /// The PIN is held and another job has the card.
+    Busy,
+    /// The PIN is held.
+    Working,
 }
 
 fn read_error(wire: &Wire, error: card::CardError) -> KeyError {
@@ -134,16 +159,14 @@ fn read_error(wire: &Wire, error: card::CardError) -> KeyError {
 
 impl KeySession {
     /// Reads the key's identity, key slots and touch policies. No PIN, no
-    /// touch. Every command goes to a key log written to `sink`, if given;
-    /// `again` says the port had read a key before.
+    /// touch. Every command goes to a key log written to `sink`, if given.
     pub(crate) fn open(
         transport: Arc<dyn CardConnection>,
         uptime: Arc<dyn Clock>,
         sink: Option<Arc<Sink>>,
-        again: bool,
     ) -> Result<Arc<Self>, KeyError> {
         let log = KeyLog::new(sink);
-        log.line(if again { "session start (key read again)" } else { "session start" });
+        log.line("session start");
         let wire = Wire::logged(transport, log.clone());
         let opened = Self::read(wire, uptime);
         match &opened {
@@ -170,6 +193,8 @@ impl KeySession {
         let ssh_key = card::card_ssh_public_key(wire.clone()).map_err(|e| read_error(&wire, e))?;
         let pin_kdf = PinKdf::read(&wire)?;
         let tries_left = info.pin_tries_left;
+        let (decryption_touch, authentication_touch) =
+            (TouchClock::new(info.decryption_touch), TouchClock::new(info.authentication_touch));
         Ok(Arc::new_cyclic(|me| Self {
             me: me.clone(),
             wire,
@@ -185,6 +210,8 @@ impl KeySession {
                 deverify_pending: false,
                 forgets: 0,
                 tasks: Vec::new(),
+                decryption_touch,
+                authentication_touch,
             }),
             card_free: Condvar::new(),
         }))
@@ -252,14 +279,49 @@ impl KeySession {
         self.wire.log()
     }
 
-    pub(crate) fn card_busy(&self) -> bool {
-        self.lock().card_busy
-    }
-
-    pub(crate) fn pin_prompt(&self) -> PinPrompt {
+    fn pin_prompt(&self) -> PinPrompt {
         self.apply_background_limit();
         let state = self.lock();
         PinPrompt { tries_left: state.tries_left, forgot_after_background: state.forgot_after_background }
+    }
+
+    /// How this key differs from `expected`, or `None` if it is that key or
+    /// nothing is expected.
+    pub(crate) fn mismatch(&self, expected: Option<&KeyIdentity>) -> Option<KeyMismatch> {
+        expected.and_then(|expected| expected.check(&KeyIdentity::of(self.card_info())))
+    }
+
+    /// Where a task on this key starts, or why it is refused before any PIN
+    /// or touch: a card that is not `expected`, what the task's own `needs`
+    /// refuses (it gives the task what it found), and what
+    /// [`Self::first_stage`] refuses.
+    pub(crate) fn preflight<T>(
+        &self,
+        expected: Option<&KeyIdentity>,
+        needs: impl FnOnce(&Self) -> Result<T, KeyError>,
+    ) -> Result<(FirstStage, T), KeyError> {
+        if let Some(mismatch) = self.mismatch(expected) {
+            return Err(KeyError::DifferentKey { mismatch: Box::new(mismatch) });
+        }
+        let found = needs(self)?;
+        Ok((self.first_stage()?, found))
+    }
+
+    /// The first stage of card work with the PIN, or why it cannot start: a
+    /// card whose PIN KDF paw cannot follow would count any PIN as wrong,
+    /// and a blocked PIN takes none.
+    pub(crate) fn first_stage(&self) -> Result<FirstStage, KeyError> {
+        if let PinKdf::Unsupported(why) = &self.identity.pin_kdf {
+            return Err(kdf::unsupported(why));
+        }
+        if self.holds_pin_now() {
+            return Ok(if self.lock().card_busy { FirstStage::Busy } else { FirstStage::Working });
+        }
+        let prompt = self.pin_prompt();
+        if prompt.tries_left == 0 {
+            return Err(KeyError::PinBlocked);
+        }
+        Ok(FirstStage::Pin(prompt))
     }
 
     pub(crate) fn holds_pin_now(&self) -> bool {
@@ -316,8 +378,7 @@ impl KeySession {
         }
     }
 
-    /// Sends the de-verify on its own thread, then frees the card. The card
-    /// must already be marked busy.
+    /// The card must already be marked busy.
     fn deverify_in_background(&self) {
         let spawned = self.me.upgrade().map(|session| {
             std::thread::Builder::new().name("paw-card-forget".into()).spawn(move || session.deverify_and_release())
@@ -376,6 +437,48 @@ impl KeySession {
         self.lock().pin.as_ref().map(Pin::copy)
     }
 
+    /// Runs `op`, which sends `slot`'s command that may wait for a touch
+    /// (PSO:DECIPHER or INTERNAL AUTHENTICATE), in a card job: `Touch` is
+    /// shown as the slot's policy says, and the slot's touch clock notes an
+    /// answer. A failure the card explains ends in a [`Halt`]: the key went
+    /// away, refused for its security conditions ([`Self::refused`]), or
+    /// answered another status word. `Ok(Err(_))` is a failure of `op`
+    /// after the card said yes, or nothing.
+    pub(super) fn touch_op<T, E>(
+        &self,
+        task: &Arc<dyn TaskSide>,
+        slot: KeySlot,
+        op: impl FnOnce() -> Result<T, E>,
+    ) -> Result<Result<T, E>, Halt> {
+        let info = self.card_info();
+        let (policy, ins, step, name) = match slot {
+            KeySlot::Decryption => (info.decryption_touch, apdu::PSO, "decrypting", "decryption"),
+            KeySlot::Authentication => {
+                (info.authentication_touch, apdu::INTERNAL_AUTHENTICATE, "signing", "authentication")
+            }
+        };
+        let _watch = TouchWatch::arm(&self.wire, task, policy, name);
+        self.wire.clear_last();
+        let sent = Instant::now();
+        let error = match op() {
+            Ok(answer) => {
+                self.lock().touch_clock(slot).used_at(Instant::now());
+                return Ok(Ok(answer));
+            }
+            Err(error) => error,
+        };
+        if self.wire.failed() {
+            return Err(Halt::Fail(KeyError::KeyRemoved));
+        }
+        match self.wire.last() {
+            Some((last, sw)) if last == ins && apdu::security_refusal(sw) => {
+                Err(self.refused(task.as_ref(), step, sw, touch::possible(policy), sent.elapsed()))
+            }
+            Some((_, sw)) if sw != apdu::SW_OK => Err(Halt::Fail(apdu::unexpected(step, sw))),
+            _ => Ok(Err(error)),
+        }
+    }
+
     /// What it means that the card refused PSO:DECIPHER or INTERNAL
     /// AUTHENTICATE with `sw` (`6982` or `6985`) after `elapsed`.
     /// `touch_possible` says the slot's policy can ask for a touch. Called
@@ -400,7 +503,7 @@ impl KeySession {
     ///
     /// A card that cannot say whether the PIN is verified is judged on the
     /// time alone.
-    pub(crate) fn refused(&self, task: &dyn TaskSide, step: &str, sw: u16, touch_possible: bool, elapsed: Duration) -> Halt {
+    fn refused(&self, task: &dyn TaskSide, step: &str, sw: u16, touch_possible: bool, elapsed: Duration) -> Halt {
         let check = match self.wire.send(&apdu::CHECK_PIN) {
             Ok((_, check)) => check,
             Err(error) => return Halt::Fail(error),
@@ -484,7 +587,10 @@ impl KeySession {
     ) -> Result<T, Halt> {
         let mut last_error = None;
         loop {
-            let supplied = if self.holds_pin_now() { None } else { Some(self.ask_pin(task, last_error.take())?) };
+            let supplied = match self.first_stage()? {
+                FirstStage::Pin(prompt) => Some(self.ask_pin(task, prompt, last_error.take())?),
+                FirstStage::Busy | FirstStage::Working => None,
+            };
             match self.run(task, |job| {
                 job.unlock(supplied)?;
                 op(job)
@@ -496,12 +602,9 @@ impl KeySession {
     }
 
     /// Asks `task` for the PIN until one of a plausible length is typed.
-    fn ask_pin(&self, task: &dyn TaskSide, mut last_error: Option<KeyError>) -> Result<Pin, Halt> {
+    /// One that is not costs no try, so the prompt stays as it was.
+    fn ask_pin(&self, task: &dyn TaskSide, prompt: PinPrompt, mut last_error: Option<KeyError>) -> Result<Pin, Halt> {
         loop {
-            let prompt = self.pin_prompt();
-            if prompt.tries_left == 0 {
-                return Err(Halt::Fail(KeyError::PinBlocked));
-            }
             let mut typed = task.ask_pin(self, prompt, last_error.take())?;
             match Pin::new(std::mem::take(&mut *typed)) {
                 Ok(pin) => return Ok(pin),
@@ -600,11 +703,6 @@ impl<'a> CardJob<'a> {
     /// (read when it was plugged in) is sent the derived PIN.
     pub(crate) fn unlock(&mut self, supplied: Option<Pin>) -> Result<(), Halt> {
         let session = self.session;
-        // A card whose PIN KDF paw cannot follow would count any PIN as
-        // wrong: refuse before asking for one.
-        if let PinKdf::Unsupported(why) = &session.identity.pin_kdf {
-            return Err(Halt::Fail(kdf::unsupported(why)));
-        }
         if let Some(pin) = supplied {
             if session.lock().tries_left == 0 {
                 return Err(Halt::Fail(KeyError::PinBlocked));
@@ -691,18 +789,17 @@ impl KeySession {
         self.identity.pin_kdf.status()
     }
 
+    /// Whether `slot`'s next use will wait for a touch, by its policy and
+    /// when it last answered on this key: a cached touch lasts a while.
+    pub fn touch_expectation(&self, slot: KeySlot) -> TouchExpectation {
+        self.lock().touch_clock(slot).expectation()
+    }
+
     /// Whether paw holds the PIN, so the next task skips the PIN stage.
     /// Answered from memory: if the background limit has passed, the PIN
     /// is dropped and the card de-verified on another thread.
     pub fn holds_pin(&self) -> bool {
         self.holds_pin_now()
-    }
-
-    /// This session's key log, oldest line first, times at `utc_offset_secs`
-    /// from UTC: its last card commands (instruction, P1, P2, status word,
-    /// timings) and task and session events. No data, no PIN, no names.
-    pub fn diagnostics(&self, utc_offset_secs: i32) -> String {
-        self.log().text(utc_offset_secs)
     }
 
     /// Lock now: drops the PIN from memory before it returns, and

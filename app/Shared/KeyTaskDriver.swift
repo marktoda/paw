@@ -98,15 +98,6 @@ enum KeyTaskEnd<Step: KeyStepError> {
     }
 }
 
-extension KeyTaskState {
-    var isFinal: Bool {
-        switch self {
-        case .done, .failed, .syncFailed, .setupFailed, .cancelled: true
-        case .plugIn, .pin, .busy, .touch, .working: false
-        }
-    }
-}
-
 /// What the sheet does once the task it follows has ended.
 enum KeySheetAfterEnd {
     /// The end's standard stage, in the job's words
@@ -141,7 +132,7 @@ struct KeyJob<Step: KeyStepError> {
     /// A task the sheet let go of (Cancel, Lock now, Try again) ended;
     /// called once for each such task. An open can still finish after its
     /// Cancel, in the last milliseconds after the card answered
-    /// (`core/src/key/task.rs`): what it leaves is disposed of here.
+    /// (`core/src/task/run.rs`): what it leaves is disposed of here.
     var letGo: (KeyTaskEnd<Step>) -> Void = { _ in }
     /// Any task ended, followed or let go of: called once for each, after
     /// `ended` or `letGo`.
@@ -280,7 +271,7 @@ final class KeyTaskDriver {
     }
 
     /// Continue on a PIN stage. The PIN goes straight to the core, which
-    /// refuses one that is not 6 to 127 characters without using a try.
+    /// refuses one of a length no card takes without using a try.
     func continueWithPin() {
         guard let id = followed, let running = tasks[id], !pin.isEmpty, mapped.asksForPin else { return }
         running.task.supplyPin(pin: Data(pin.utf8))
@@ -346,8 +337,6 @@ final class KeyTaskDriver {
         tasks[id] = Running(task: task, job: job, hold: hold)
         taskPurpose = task.purpose()
         followed = id
-        // A task can start past Plug in; listeners hear only changes.
-        changed(id)
     }
 
     private func letGoOfFollowed() {
@@ -371,7 +360,7 @@ final class KeyTaskDriver {
         guard let running = tasks[id] else { return }
         let state = running.task.state()
         guard id == followed else {
-            if state.isFinal {
+            if state.isFinal() {
                 settle(id, running, state)
             }
             return
@@ -381,7 +370,7 @@ final class KeyTaskDriver {
             // there: read the key again, so Try again finds it.
             reader.read()
         }
-        guard state.isFinal else {
+        guard state.isFinal() else {
             show(stage(for: state, running.job))
             return
         }

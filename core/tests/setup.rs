@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use key_common::{Driver, PIN, WAIT, finish, is_touch, port_with};
 use paw_core::ffi::sync::Setup;
-use paw_core::key::{KeyError, KeyPort, KeyTouch};
+use paw_core::key::{KeyError, KeyPort, KeySlot, KeyTouch};
 use paw_core::task::KeyTaskState;
 use paw_core::sync::address::{AddressProblem, StoreAddress};
 use paw_core::remote::RemoteFailure;
@@ -173,14 +173,17 @@ fn setup_reads_the_key_checks_the_host_downloads_and_opens_one_entry() {
     assert_eq!(fingerprint, server.remote().host_key.fingerprint());
 
     let state = rig.setup.confirm_host(fingerprint).unwrap();
-    assert_eq!(state, SetupState::NeedPin { address: address(&server), touch: TouchExpectation::Needed });
+    assert_eq!(state, SetupState::NeedPin { address: address(&server) });
+    let session = rig.port.session().unwrap();
+    assert_eq!(session.touch_expectation(KeySlot::Authentication), TouchExpectation::Needed);
     // Checking the host and the key cost no signature and no PIN try.
     assert_eq!(sim.authentication_count(), 0);
     assert_eq!(server.logins(), 0);
 
     let downloading = Driver::helpful(PIN, &sim);
     let state = rig.result(rig.download_by(&downloading)).unwrap();
-    assert_eq!(state, SetupState::TestDecrypt { entries: 29, touch: TouchExpectation::Needed });
+    assert_eq!(state, SetupState::TestDecrypt { entries: 29 });
+    assert_eq!(session.touch_expectation(KeySlot::Decryption), TouchExpectation::Needed);
     assert_eq!(sim.authentication_count(), 1);
     assert!(downloading.saw(|s| matches!(s, KeyTaskState::Working { progress: Some(_) })));
     assert_eq!(git(&rig.repo(), &["rev-parse", "HEAD"]), server.tip());
@@ -488,7 +491,9 @@ fn a_second_login_within_the_cached_window_does_not_ask_for_a_touch() {
     let error = rig.result(rig.download_by(&first)).unwrap_err();
     assert!(matches!(error, SetupError::Fault { fault: paw_core::fault::Fault::Remote { failure: RemoteFailure::RepositoryMissing { .. } } }), "{error:?}");
     assert_eq!(first.count(is_touch), 1);
-    assert_eq!(rig.setup.state(), SetupState::NeedPin { address: address(&server), touch: TouchExpectation::NotNeeded });
+    assert_eq!(rig.setup.state(), SetupState::NeedPin { address: address(&server) });
+    let session = rig.port.session().unwrap();
+    assert_eq!(session.touch_expectation(KeySlot::Authentication), TouchExpectation::NotNeeded);
 
     let second = Driver::helpful(PIN, &sim);
     rig.result(rig.download_by(&second)).unwrap_err();

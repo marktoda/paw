@@ -44,7 +44,7 @@ extension KeySheetStage {
             return nil
         case .pin(_, let forgotten):
             return forgotten
-                ? "Asked again after 15 minutes away."
+                ? "Asked again after \(pinRules().backgroundLimitMinutes) minutes away."
                 : "Not your iPhone passcode."
         case .wrongPin(let triesLeft):
             return triesLeft == 1 ? "Not sure? Stop and check your PIN first." : nil

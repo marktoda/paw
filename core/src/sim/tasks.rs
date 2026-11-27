@@ -13,7 +13,7 @@ use crate::key::{KeyPort, SessionSigner, SignFailure};
 use crate::key::SshSigner;
 use crate::ssh::SshPublicKey;
 use crate::task::{
-    DecryptWork, KeyOutcome, KeyPurpose, KeyTask, KeyTaskListener, KeyTaskState, LoginPurpose, TaskFailure, Work,
+    DecryptWork, KeyOutcome, KeyTask, KeyTaskListener, KeyTaskState, LoginPurpose, TaskFailure, Work,
 };
 
 /// How long a test waits for a stage, or a task to end.
@@ -60,8 +60,8 @@ impl SimDriver {
         Arc::new(Self { toucher: Some(key.clone()), ..Self::default() })
     }
 
-    /// Lets the driver type the PIN, including at a PIN stage the task
-    /// started in (which the listener is not told about).
+    /// Lets the driver type the PIN, including at the PIN stage the task
+    /// started at, which it heard before it knew the task.
     pub fn drive(&self, task: &Arc<KeyTask>) {
         let _ = self.task.set(Arc::downgrade(task));
         if let state @ KeyTaskState::Pin { .. } = task.state() {
@@ -254,5 +254,5 @@ pub fn decipher(
         let _ = text_tx.send(open(&ciphertext)?);
         Ok(KeyOutcome::KeyChecked)
     });
-    (port.decrypt_then(KeyPurpose::Reencrypt { count: 1 }, listener, work), text_rx)
+    (port.decrypt_then(listener, work), text_rx)
 }
