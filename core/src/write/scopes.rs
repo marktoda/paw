@@ -109,8 +109,8 @@ pub fn recipient_scopes(_reading: &Shared, keyring: &Keyring) -> Result<Vec<Reci
     // `.gpg-id` files that govern no entry still say who could open one.
     let mut files: BTreeSet<String> = governed.keys().cloned().collect();
     files.insert(GPG_ID.into());
-    if let Ok(paths) = super::keyring::gpg_id_paths(root) {
-        files.extend(paths);
+    if let Ok(committed) = keyring.committed_gpg_ids() {
+        files.extend(committed.into_iter().map(|(path, _)| path));
     }
 
     let mut scopes = Vec::new();

@@ -81,7 +81,7 @@ pub(crate) fn entry_name(path: &str) -> String {
     path.strip_suffix(ENTRY_EXTENSION).unwrap_or(path).to_owned()
 }
 
-fn is_regular(mode: u32) -> bool {
+pub(crate) fn is_regular(mode: u32) -> bool {
     [FileMode::Blob, FileMode::BlobExecutable]
         .map(u32::from)
         .contains(&mode)
