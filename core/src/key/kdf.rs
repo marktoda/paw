@@ -55,13 +55,16 @@ fn next_tlv(bytes: &[u8]) -> Option<(u16, &[u8], &[u8])> {
 
 impl PinKdf {
     /// Reads the card's KDF data object. A card that has none (it answers
-    /// GET DATA with an error) takes the PIN as typed.
+    /// GET DATA that the data is not found) takes the PIN as typed. Any
+    /// other refusal leaves paw not knowing how to send the PIN, so it sends
+    /// none.
     pub(crate) fn read(wire: &Wire) -> Result<Self, KeyError> {
         let (body, sw) = wire.send(&apdu::READ_KDF)?;
-        if sw != apdu::SW_OK {
-            return Ok(Self::Plain);
-        }
-        Ok(Self::parse(&body))
+        Ok(match sw {
+            apdu::SW_OK => Self::parse(&body),
+            apdu::SW_DATA_NOT_FOUND | apdu::SW_NOT_FOUND => Self::Plain,
+            sw => Self::Unsupported(format!("the key's KDF setting could not be read ({sw:04X})")),
+        })
     }
 
     pub(crate) fn parse(body: &[u8]) -> Self {

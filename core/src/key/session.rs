@@ -26,6 +26,7 @@ use super::{FAST_REFUSAL, KeyError, MAX_PIN_LEN, MIN_PIN_LEN, PIN_BACKGROUND_LIM
 use crate::clock::Clock;
 use crate::ssh::SshPublicKey;
 use super::card::{self, CardConnection, CardInfo};
+use super::enrolment::{KeyIdentity, KeyMismatch};
 
 /// A user PIN of a plausible length, wiped when dropped. It has no
 /// `Display`, and its `Debug` shows nothing of it.
@@ -119,9 +120,19 @@ pub struct KeySession {
 }
 
 /// What the PIN stage shows.
+#[derive(Clone, Copy)]
 pub(crate) struct PinPrompt {
     pub(crate) tries_left: u8,
     pub(crate) forgot_after_background: bool,
+}
+
+/// The first stage a task's card work shows.
+pub(crate) enum FirstStage {
+    Pin(PinPrompt),
+    /// The PIN is held and another job has the card.
+    Busy,
+    /// The PIN is held.
+    Working,
 }
 
 fn read_error(wire: &Wire, error: card::CardError) -> KeyError {
@@ -252,14 +263,49 @@ impl KeySession {
         self.wire.log()
     }
 
-    pub(crate) fn card_busy(&self) -> bool {
-        self.lock().card_busy
-    }
-
-    pub(crate) fn pin_prompt(&self) -> PinPrompt {
+    fn pin_prompt(&self) -> PinPrompt {
         self.apply_background_limit();
         let state = self.lock();
         PinPrompt { tries_left: state.tries_left, forgot_after_background: state.forgot_after_background }
+    }
+
+    /// How this key differs from `expected`, or `None` if it is that key or
+    /// nothing is expected.
+    pub(crate) fn mismatch(&self, expected: Option<&KeyIdentity>) -> Option<KeyMismatch> {
+        expected.and_then(|expected| expected.check(&KeyIdentity::of(self.card_info())))
+    }
+
+    /// Where a task on this key starts, or why it is refused before any PIN
+    /// or touch: a card that is not `expected`, what the task's own `needs`
+    /// refuses (it gives the task what it found), and what
+    /// [`Self::first_stage`] refuses.
+    pub(crate) fn preflight<T>(
+        &self,
+        expected: Option<&KeyIdentity>,
+        needs: impl FnOnce(&Self) -> Result<T, KeyError>,
+    ) -> Result<(FirstStage, T), KeyError> {
+        if let Some(mismatch) = self.mismatch(expected) {
+            return Err(KeyError::DifferentKey { mismatch: Box::new(mismatch) });
+        }
+        let found = needs(self)?;
+        Ok((self.first_stage()?, found))
+    }
+
+    /// The first stage of card work with the PIN, or why it cannot start: a
+    /// card whose PIN KDF paw cannot follow would count any PIN as wrong,
+    /// and a blocked PIN takes none.
+    pub(crate) fn first_stage(&self) -> Result<FirstStage, KeyError> {
+        if let PinKdf::Unsupported(why) = &self.identity.pin_kdf {
+            return Err(kdf::unsupported(why));
+        }
+        if self.holds_pin_now() {
+            return Ok(if self.lock().card_busy { FirstStage::Busy } else { FirstStage::Working });
+        }
+        let prompt = self.pin_prompt();
+        if prompt.tries_left == 0 {
+            return Err(KeyError::PinBlocked);
+        }
+        Ok(FirstStage::Pin(prompt))
     }
 
     pub(crate) fn holds_pin_now(&self) -> bool {
@@ -484,7 +530,10 @@ impl KeySession {
     ) -> Result<T, Halt> {
         let mut last_error = None;
         loop {
-            let supplied = if self.holds_pin_now() { None } else { Some(self.ask_pin(task, last_error.take())?) };
+            let supplied = match self.first_stage()? {
+                FirstStage::Pin(prompt) => Some(self.ask_pin(task, prompt, last_error.take())?),
+                FirstStage::Busy | FirstStage::Working => None,
+            };
             match self.run(task, |job| {
                 job.unlock(supplied)?;
                 op(job)
@@ -496,12 +545,9 @@ impl KeySession {
     }
 
     /// Asks `task` for the PIN until one of a plausible length is typed.
-    fn ask_pin(&self, task: &dyn TaskSide, mut last_error: Option<KeyError>) -> Result<Pin, Halt> {
+    /// One that is not costs no try, so the prompt stays as it was.
+    fn ask_pin(&self, task: &dyn TaskSide, prompt: PinPrompt, mut last_error: Option<KeyError>) -> Result<Pin, Halt> {
         loop {
-            let prompt = self.pin_prompt();
-            if prompt.tries_left == 0 {
-                return Err(Halt::Fail(KeyError::PinBlocked));
-            }
             let mut typed = task.ask_pin(self, prompt, last_error.take())?;
             match Pin::new(std::mem::take(&mut *typed)) {
                 Ok(pin) => return Ok(pin),
@@ -600,11 +646,6 @@ impl<'a> CardJob<'a> {
     /// (read when it was plugged in) is sent the derived PIN.
     pub(crate) fn unlock(&mut self, supplied: Option<Pin>) -> Result<(), Halt> {
         let session = self.session;
-        // A card whose PIN KDF paw cannot follow would count any PIN as
-        // wrong: refuse before asking for one.
-        if let PinKdf::Unsupported(why) = &session.identity.pin_kdf {
-            return Err(Halt::Fail(kdf::unsupported(why)));
-        }
         if let Some(pin) = supplied {
             if session.lock().tries_left == 0 {
                 return Err(Halt::Fail(KeyError::PinBlocked));

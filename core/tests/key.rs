@@ -741,6 +741,35 @@ fn a_key_with_a_pin_kdf_paw_does_not_know_is_refused_before_the_pin() {
     assert_eq!(rig.sim.pin_tries_left(), 3);
 }
 
+/// The simulated key, answering the read of its KDF data object with an
+/// error that does not say the object is missing.
+struct KdfUnreadable(Arc<paw_core::sim::SimulatedKey>);
+
+impl CardConnection for KdfUnreadable {
+    fn transmit(&self, apdu: Vec<u8>) -> Result<Vec<u8>, paw_core::key::ConnectionError> {
+        if apdu.starts_with(&[0x00, 0xCA, 0x00, 0xF9]) {
+            return Ok(vec![0x6F, 0x00]);
+        }
+        self.0.transmit(apdu)
+    }
+}
+
+#[test]
+fn a_key_whose_kdf_setting_cannot_be_read_is_refused_before_the_pin() {
+    let rig = rig_unplugged(SimTouch::Off, SimTouch::Off);
+    rig.sim.set_pin_kdf(3);
+    rig.port.plugged_in(Arc::new(KdfUnreadable(rig.sim.clone()))).unwrap();
+    let driver = Driver::helpful(PIN, &rig.sim);
+
+    let task = open(&rig, ENTRY, &driver);
+    let error = failed(&finish(&task));
+
+    assert!(matches!(&error, KeyError::Reader { detail } if detail.contains("KDF")), "{error:?}");
+    assert!(!driver.saw(is_pin));
+    assert_eq!(rig.sim.verify_attempts(), 0);
+    assert_eq!(rig.sim.pin_tries_left(), 3);
+}
+
 // A refusal that may be a touch timeout, or a PIN the card lost.
 
 /// The simulated key behind a transport that, a set number of times, makes

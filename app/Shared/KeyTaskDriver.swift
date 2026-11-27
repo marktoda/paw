@@ -344,8 +344,6 @@ final class KeyTaskDriver {
         tasks[id] = Running(task: task, job: job, hold: hold)
         purpose = task.purpose()
         followed = id
-        // A task can start past Plug in; listeners hear only changes.
-        changed(id)
     }
 
     private func letGoOfFollowed() {

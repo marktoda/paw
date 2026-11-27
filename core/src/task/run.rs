@@ -140,6 +140,12 @@ impl TaskCore {
         self.set_again(new, false)
     }
 
+    /// The task's first stage, told to the listener like every later one
+    /// (even `PlugIn`, which a new task reads as until then).
+    pub(super) fn begin(&self, first: KeyTaskState) {
+        self.set_again(first, true);
+    }
+
     fn set_again(&self, new: KeyTaskState, again: bool) -> bool {
         let applied = {
             let mut inner = self.lock();
@@ -334,13 +340,8 @@ pub struct KeyTask {
 }
 
 impl KeyTask {
-    pub(super) fn start(
-        purpose: KeyPurpose,
-        listener: Arc<dyn KeyTaskListener>,
-        initial: KeyTaskState,
-        body: Body,
-    ) -> Arc<Self> {
-        let finished = initial.is_final();
+    /// A task that has no stage yet: [`TaskCore::begin`] gives it one.
+    pub(super) fn new(purpose: KeyPurpose, listener: Arc<dyn KeyTaskListener>) -> Arc<Self> {
         let core = Arc::new(TaskCore {
             id: NEXT_TASK.fetch_add(1, Ordering::Relaxed),
             pin_losses: AtomicU32::new(0),
@@ -349,7 +350,7 @@ impl KeyTask {
             cancelled: AtomicBool::new(false),
             panicked: AtomicBool::new(false),
             inner: Mutex::new(Inner {
-                state: initial,
+                state: KeyTaskState::PlugIn,
                 queue: VecDeque::new(),
                 draining: false,
                 supplied: None,
@@ -358,10 +359,24 @@ impl KeyTask {
             }),
             changed: Condvar::new(),
         });
-        let task = Arc::new(Self { core: core.clone(), thread: Mutex::new(None) });
-        if finished {
-            return task;
-        }
+        Arc::new(Self { core, thread: Mutex::new(None) })
+    }
+
+    /// A task its workflow refused before it needed the key: it starts
+    /// ended, with `failure`.
+    pub(crate) fn refused(purpose: KeyPurpose, listener: Arc<dyn KeyTaskListener>, failure: TaskFailure) -> Arc<Self> {
+        let task = Self::new(purpose, listener);
+        task.core.begin(KeyTaskState::ended(Err(failure)));
+        task
+    }
+
+    pub(super) fn core(&self) -> &Arc<TaskCore> {
+        &self.core
+    }
+
+    /// Runs `body` on the task's own thread; how it returns ends the task.
+    pub(super) fn run(&self, body: Body) {
+        let core = self.core.clone();
         let spawned = std::thread::Builder::new().name("paw-key-task".into()).spawn(move || {
             let result = std::panic::catch_unwind(AssertUnwindSafe(|| body(&core)));
             let end = match result {
@@ -374,25 +389,11 @@ impl KeyTask {
             core.set(end);
         });
         match spawned {
-            Ok(handle) => *task.thread.lock().unwrap_or_else(|p| p.into_inner()) = Some(handle),
+            Ok(handle) => *self.thread.lock().unwrap_or_else(|p| p.into_inner()) = Some(handle),
             Err(e) => {
-                task.core.set(KeyTaskState::Failed { error: KeyError::Internal { detail: e.to_string() } });
+                self.core.set(KeyTaskState::Failed { error: KeyError::Internal { detail: e.to_string() } });
             }
         }
-        task
-    }
-
-    pub(crate) fn failed(purpose: KeyPurpose, listener: Arc<dyn KeyTaskListener>, failure: TaskFailure) -> Arc<Self> {
-        Self::start(
-            purpose,
-            listener,
-            KeyTaskState::ended(Err(failure)),
-            Box::new(|_| unreachable!("a failed task never runs")),
-        )
-    }
-
-    pub(super) fn tag(&self) -> String {
-        self.core.tag()
     }
 
     /// Waits for the task's thread to end. `true` if it panicked (it then
@@ -450,6 +451,14 @@ mod tests {
         KeyTaskState::Pin { tries_left: 3, forgot_after_background: false, last_error: None }
     }
 
+    /// A task at the PIN stage, running `body`.
+    fn started(purpose: KeyPurpose, body: Body) -> Arc<KeyTask> {
+        let task = KeyTask::new(purpose, Arc::new(Quiet));
+        task.core.begin(at_pin());
+        task.run(body);
+        task
+    }
+
     /// A starter whose work shows `Busy` and progress before it asks for
     /// the PIN still finds the PIN typed at the task's first stage.
     #[test]
@@ -464,7 +473,7 @@ mod tests {
             held.send(task.lock().supplied.is_some()).unwrap();
             Ok(KeyOutcome::KeyChecked)
         });
-        let task = KeyTask::start(KeyPurpose::Reencrypt, Arc::new(Quiet), at_pin(), body);
+        let task = started(KeyPurpose::Reencrypt, body);
         task.supply_pin(b"123456".to_vec());
         typed.send(()).unwrap();
 
@@ -481,7 +490,7 @@ mod tests {
             let _ = wait_stop.recv();
             Err(KeyError::KeyRemoved.into())
         });
-        let task = KeyTask::start(KeyPurpose::CheckTouchTimeout, Arc::new(Quiet), at_pin(), body);
+        let task = started(KeyPurpose::CheckTouchTimeout, body);
         task.supply_pin(b"123456".to_vec());
         task.cancel();
         assert!(task.core.lock().supplied.is_none());

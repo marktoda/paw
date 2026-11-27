@@ -45,9 +45,9 @@ pub struct SessionSigner {
 }
 
 impl SessionSigner {
-    pub(crate) fn new(task: Arc<dyn TaskSide>, session: Arc<KeySession>) -> Result<Self, KeyError> {
-        let public_key = session.ssh_key()?.clone();
-        Ok(Self { task, session, public_key })
+    /// `public_key` is `session`'s authentication key.
+    pub(crate) fn new(task: Arc<dyn TaskSide>, session: Arc<KeySession>, public_key: SshPublicKey) -> Self {
+        Self { task, session, public_key }
     }
 }
 

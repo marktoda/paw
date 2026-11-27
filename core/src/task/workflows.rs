@@ -68,7 +68,7 @@ pub(crate) fn check_key(
     let found = picked.and_then(|entry| Ok((entry, PassStore::open(repo.to_string_lossy().into_owned())?)));
     let (entry, store) = match found {
         Ok(found) => found,
-        Err(error) => return KeyTask::failed(KeyPurpose::CheckKey { entry: None }, listener, error.into()),
+        Err(error) => return KeyTask::refused(KeyPurpose::CheckKey { entry: None }, listener, error.into()),
     };
     let enrol = port.clone();
     let opened = entry.clone();
@@ -122,7 +122,7 @@ pub(crate) fn reencrypt(
 ) -> Arc<KeyTask> {
     let repo = crate::files::layout::repo_dir(&state_dir);
     if let Err(error) = held_back::reencrypt_check(&repo, &state_dir) {
-        return KeyTask::failed(KeyPurpose::Reencrypt, listener, error.into());
+        return KeyTask::refused(KeyPurpose::Reencrypt, listener, error.into());
     }
     let work: DecryptWork = Box::new(move |job, opener| {
         let mut open = |_: &HeldBack, ciphertext: &[u8]| {

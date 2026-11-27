@@ -26,10 +26,6 @@ struct State {
     log: Option<Arc<Sink>>,
 }
 
-fn enrolment_check(expected: Option<&KeyIdentity>, session: &KeySession) -> Option<KeyMismatch> {
-    expected.and_then(|expected| expected.check(&KeyIdentity::of(session.card_info())))
-}
-
 #[derive(uniffi::Object)]
 pub struct KeyPort {
     uptime: Arc<dyn Clock>,
@@ -58,15 +54,10 @@ impl KeyPort {
         }
     }
 
-    pub(crate) fn refusal(expected: Option<&KeyIdentity>, session: &KeySession) -> Option<KeyError> {
-        enrolment_check(expected, session).map(|mismatch| KeyError::DifferentKey { mismatch: Box::new(mismatch) })
-    }
-
     /// How the plugged-in key differs from the enrolled one, or `None` if it
     /// is the enrolled key, no key is enrolled, or no key is plugged in.
     pub fn key_mismatch(&self) -> Option<KeyMismatch> {
-        let session = self.session()?;
-        enrolment_check(self.expected().as_ref(), &session)
+        self.session()?.mismatch(self.expected().as_ref())
     }
 
     pub(crate) fn key_log_dir(&self) -> Option<String> {

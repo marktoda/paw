@@ -92,7 +92,8 @@ fn a_pin_and_decipher_run_is_logged_with_no_pin_no_data_and_no_names() {
     println!("{merged}");
     for wanted in [
         "session start",
-        "task open: PIN held no, touch decryption each use, authentication off, starts at Pin",
+        "task open: PIN held no, touch decryption each use, authentication off",
+        "stage Pin",
         "→ VERIFY 00 82 (with PIN): 9000 ok",
         "touch watch at once (decryption slot: each use)",
         "→ PSO:DECIPHER: 9000 ok",
@@ -227,7 +228,7 @@ fn failures_are_logged_with_no_pin_no_data_and_no_names() {
         "stage Pin (again: PinForgotten)",
         "PIN check 9000: a touch timeout",
         "stage Failed(TouchTimeout)",
-        "starts at Failed(NotForThisKey)",
+        "stage Failed(NotForThisKey)",
         "the PIN lost a second time",
         "stage Failed(Reader)",
     ] {
@@ -317,7 +318,7 @@ fn the_pin_stage_and_the_verify_after_it_have_whole_second_times() {
     assert!(matches!(finish(&task), KeyTaskState::Done { .. }));
 
     let lines = key_log(dir_string(&state), 0);
-    let start = lines.iter().position(|l| l.text.contains("starts at Pin")).unwrap();
+    let start = lines.iter().position(|l| l.text.contains("stage Pin")).unwrap();
     let verify = lines.iter().position(|l| l.text.contains("VERIFY 00 82 (with PIN)")).unwrap();
     for line in &lines[start + 1..=verify] {
         assert_eq!(line.at_ms % 1000, 0, "{line:?}");

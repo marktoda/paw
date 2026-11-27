@@ -60,8 +60,8 @@ impl SimDriver {
         Arc::new(Self { toucher: Some(key.clone()), ..Self::default() })
     }
 
-    /// Lets the driver type the PIN, including at a PIN stage the task
-    /// started in (which the listener is not told about).
+    /// Lets the driver type the PIN, including at the PIN stage the task
+    /// started at, which it heard before it knew the task.
     pub fn drive(&self, task: &Arc<KeyTask>) {
         let _ = self.task.set(Arc::downgrade(task));
         if let state @ KeyTaskState::Pin { .. } = task.state() {

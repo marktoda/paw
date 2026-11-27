@@ -165,8 +165,8 @@ fn every_held_back_change_is_re_encrypted_for_the_new_list_with_a_touch_each_and
     assert_eq!(reencrypted(&task), ReencryptReport { reencrypted: 3, left: vec![] });
     assert_eq!(w.card.decipher_count(), 3);
     assert_eq!(driver.count(key_common::is_touch), 3, "{:?}", driver.states());
-    // Asked once, at the task's first stage, which the listener is not told about.
-    assert_eq!(driver.count(key_common::is_pin), 0, "{:?}", driver.states());
+    // Asked once, at the task's first stage.
+    assert_eq!(driver.count(key_common::is_pin), 1, "{:?}", driver.states());
     for (done, total) in [(0, 3), (1, 3), (2, 3), (3, 3)] {
         assert!(driver.saw(progress(done, total)), "{done} of {total}: {:?}", driver.states());
     }
@@ -376,7 +376,7 @@ fn a_pin_typed_at_the_first_stage_is_the_one_used() {
     let (task, driver) = reencrypt_typing_the_pin_once(&w);
 
     assert_eq!(reencrypted(&task), ReencryptReport { reencrypted: 3, left: vec![] });
-    assert_eq!(driver.count(key_common::is_pin), 0, "not asked again: {:?}", driver.states());
+    assert_eq!(driver.count(key_common::is_pin), 1, "not asked again: {:?}", driver.states());
     assert!(w.held().is_empty());
 }
 

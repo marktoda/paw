@@ -25,7 +25,7 @@ pub use kdf::PinKdfStatus;
 pub use keylog::{KeyLogLine, clear_key_log, key_log, key_log_text};
 pub use port::KeyPort;
 pub(crate) use decrypt::Plan;
-pub(crate) use session::{Halt, PinPrompt};
+pub(crate) use session::{FirstStage, Halt, PinPrompt};
 pub(crate) use signer::authenticate;
 pub(crate) use task::TaskSide;
 pub use session::KeySession;
