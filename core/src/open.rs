@@ -53,7 +53,7 @@ impl PassStore {
     ) -> Result<FaceIdOpen, PawError> {
         let current = content_id(&self.read_entry(&entry)?);
         match copies.open(&entry, &current, &reason) {
-            Ok(plaintext) => Ok(FaceIdOpen::Opened { entry: OpenedEntry::decrypted(plaintext, current)? }),
+            Ok(plaintext) => Ok(FaceIdOpen::Opened { entry: OpenedEntry::decrypted(&entry, plaintext, current)? }),
             Err(PawError::CopyUnavailable) => Ok(FaceIdOpen::NeedsKey),
             Err(e) => Err(e),
         }

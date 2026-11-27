@@ -55,6 +55,8 @@ impl std::fmt::Debug for OtpCode {
 /// letting go of the object.
 #[derive(uniffi::Object)]
 pub struct OpenedEntry {
+    /// The entry's path in the store, without `.gpg`.
+    path: String,
     doc: Mutex<Option<EntryDoc>>,
     /// The content id ([`crate::files::content_id`]) of the file the text
     /// was decrypted from.
@@ -75,13 +77,17 @@ fn field_views(doc: &EntryDoc) -> Vec<FieldView> {
 }
 
 impl OpenedEntry {
-    pub fn new(doc: EntryDoc, content_id: Vec<u8>) -> Arc<Self> {
-        Arc::new(Self { doc: Mutex::new(Some(doc)), content_id })
+    pub fn new(path: &str, doc: EntryDoc, content_id: Vec<u8>) -> Arc<Self> {
+        Arc::new(Self { path: path.to_owned(), doc: Mutex::new(Some(doc)), content_id })
     }
 
-    pub fn decrypted(plaintext: impl Into<Zeroizing<Vec<u8>>>, content_id: Vec<u8>) -> Result<Arc<Self>, PawError> {
+    pub fn decrypted(
+        path: &str,
+        plaintext: impl Into<Zeroizing<Vec<u8>>>,
+        content_id: Vec<u8>,
+    ) -> Result<Arc<Self>, PawError> {
         let mut plaintext = plaintext.into();
-        Ok(Self::new(EntryDoc::parse(std::mem::take(&mut *plaintext))?, content_id))
+        Ok(Self::new(path, EntryDoc::parse(std::mem::take(&mut *plaintext))?, content_id))
     }
 
     fn doc(&self) -> MutexGuard<'_, Option<EntryDoc>> {
@@ -102,6 +108,10 @@ impl OpenedEntry {
 
     pub(crate) fn content_id(&self) -> &[u8] {
         &self.content_id
+    }
+
+    pub(crate) fn path(&self) -> &str {
+        &self.path
     }
 }
 

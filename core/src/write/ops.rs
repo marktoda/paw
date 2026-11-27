@@ -137,10 +137,15 @@ impl WriteStore {
 
     /// The same store, keeping the Face ID copies in `copies` in step: an
     /// edited or moved entry's live copy is resealed with its new text for
-    /// the time it had left, a deleted or renamed one is forgotten, and a
-    /// new entry gets one for `new_copy_ttl` (zero keeps none).
-    pub fn with_copies(&self, copies: Option<Arc<CopyCache>>, new_copy_ttl: Duration) -> Self {
-        Self { copies, new_copy_ttl, ..self.clone() }
+    /// the time it had left, and a deleted or renamed one is forgotten.
+    pub fn with_copies(&self, copies: Option<Arc<CopyCache>>) -> Self {
+        Self { copies, ..self.clone() }
+    }
+
+    /// The same store, giving a new entry a Face ID copy for `ttl` (zero,
+    /// as at first, keeps none).
+    pub fn with_new_copy_ttl(&self, ttl: Duration) -> Self {
+        Self { new_copy_ttl: ttl, ..self.clone() }
     }
 
     /// The entry moved from `from` to `to`, or with `None` went: its site
@@ -242,7 +247,7 @@ impl WriteStore {
             })
         });
         Ok(Saved {
-            opened: Some(OpenedEntry::new(doc, content_id.clone())),
+            opened: Some(OpenedEntry::new(&entry, doc, content_id.clone())),
             entry,
             previous,
             content_id,
@@ -375,12 +380,11 @@ impl StoreWriter {
         EntryDraft::wrap(Draft::new(&folder))
     }
 
-    /// An edit form for `entry`, filled from `opened` (which must be that
-    /// entry). Saving is refused if the file changed since it was opened.
-    pub fn edit_draft(&self, opened: Arc<OpenedEntry>, entry: String) -> Result<Arc<EntryDraft>, WriteError> {
-        let doc = opened.duplicate_doc().ok_or_else(|| WriteError::from(crate::fault::Fault::local("the entry was closed")))?;
-        let content_id = opened.content_id().to_vec();
-        Ok(EntryDraft::wrap(Draft::edit(&entry, doc, content_id)))
+    /// An edit form for the entry `opened`, filled from it. Saving is
+    /// refused if the file changed since it was opened.
+    pub fn edit_draft(&self, opened: Arc<OpenedEntry>) -> Result<Arc<EntryDraft>, WriteError> {
+        let doc = opened.duplicate_doc().ok_or_else(|| WriteError::from(Fault::local("the entry was closed")))?;
+        Ok(EntryDraft::wrap(Draft::edit(opened.path(), doc, opened.content_id().to_vec())))
     }
 
     /// Saves `draft` as one commit (two if an edit also moved it). With
@@ -393,13 +397,13 @@ impl StoreWriter {
         copies: Option<Arc<CopyCache>>,
         new_copy_ttl_secs: u32,
     ) -> Result<Saved, WriteError> {
-        let store = self.store.with_copies(copies, Duration::from_secs(new_copy_ttl_secs.into()));
+        let store = self.store.with_copies(copies).with_new_copy_ttl(Duration::from_secs(new_copy_ttl_secs.into()));
         store.save(&draft.draft())
     }
 
     /// Deletes `entry` (it stays in the git history) and wipes its copy.
     pub fn delete(&self, entry: String, copies: Option<Arc<CopyCache>>) -> Result<Deleted, WriteError> {
-        self.store.with_copies(copies, Duration::ZERO).delete(&entry)
+        self.store.with_copies(copies).delete(&entry)
     }
 
     /// Which keys can open entries in `folder`, and whether paw can save

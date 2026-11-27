@@ -162,7 +162,7 @@ fn url_values_are_read_tolerantly() {
 }
 
 fn opened(text: &str) -> std::sync::Arc<OpenedEntry> {
-    OpenedEntry::decrypted(text.as_bytes().to_vec(), vec![0; 32]).unwrap()
+    OpenedEntry::decrypted("x", text.as_bytes().to_vec(), vec![0; 32]).unwrap()
 }
 
 fn differs(url: &str, site: &str) -> UrlCheck {

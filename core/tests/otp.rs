@@ -91,14 +91,14 @@ fn the_secret_is_never_in_debug_output() {
     let code = totp("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP");
     let debug = format!("{code:?}");
     assert!(!debug.contains("JBSW") && !debug.contains("72, 101"), "{debug}");
-    let opened = OpenedEntry::decrypted(b"pw\notpauth://totp/x?secret=JBSWY3DPEHPK3PXP\n".to_vec(), vec![0; 32]).unwrap();
+    let opened = OpenedEntry::decrypted("x", b"pw\notpauth://totp/x?secret=JBSWY3DPEHPK3PXP\n".to_vec(), vec![0; 32]).unwrap();
     let shown = opened.otp_code(1_700_000_000_000).unwrap();
     assert!(!format!("{shown:?}").contains("324550"));
 }
 
 #[test]
 fn an_opened_entry_makes_its_code_from_the_clock_it_is_given() {
-    let opened = OpenedEntry::decrypted(
+    let opened = OpenedEntry::decrypted("x", 
         b"pw\nlogin: you\notpauth://totp/GitHub:you?secret=JBSWY3DPEHPK3PXP&issuer=GitHub\n".to_vec(), vec![0; 32])
     .unwrap();
     assert!(opened.view().has_otp);
@@ -111,15 +111,15 @@ fn an_opened_entry_makes_its_code_from_the_clock_it_is_given() {
     assert_eq!(opened.otp_code(1_700_000_000_000), None);
 
     // The `key: address` form some tools write.
-    let keyed = OpenedEntry::decrypted(b"pw\notpauth: otpauth://totp/x?secret=JBSWY3DPEHPK3PXP\n".to_vec(), vec![0; 32]).unwrap();
+    let keyed = OpenedEntry::decrypted("x", b"pw\notpauth: otpauth://totp/x?secret=JBSWY3DPEHPK3PXP\n".to_vec(), vec![0; 32]).unwrap();
     assert_eq!(keyed.otp_code(1_700_000_000_000).unwrap().code, "324550");
 
-    let counter = OpenedEntry::decrypted(b"pw\notpauth://hotp/x?secret=JBSWY3DPEHPK3PXP&counter=3\n".to_vec(), vec![0; 32]).unwrap();
+    let counter = OpenedEntry::decrypted("x", b"pw\notpauth://hotp/x?secret=JBSWY3DPEHPK3PXP&counter=3\n".to_vec(), vec![0; 32]).unwrap();
     assert!(counter.view().has_otp);
     assert_eq!(counter.otp_code(1_700_000_000_000), None);
     assert_eq!(counter.otp_problem().as_deref(), Some("Counter-based codes aren't supported."));
 
-    let none = OpenedEntry::decrypted(b"pw\nlogin: you\n".to_vec(), vec![0; 32]).unwrap();
+    let none = OpenedEntry::decrypted("x", b"pw\nlogin: you\n".to_vec(), vec![0; 32]).unwrap();
     assert_eq!((none.otp_code(0), none.otp_problem()), (None, None));
 }
 
@@ -129,7 +129,7 @@ proptest! {
     /// the first code of the next period.
     #[test]
     fn a_step_of_seconds_left_lands_in_the_next_period(now_ms in 0i64..4_000_000_000_000) {
-        let opened = OpenedEntry::decrypted(b"pw\notpauth://totp/x?secret=JBSWY3DPEHPK3PXP\n".to_vec(), vec![0; 32]).unwrap();
+        let opened = OpenedEntry::decrypted("x", b"pw\notpauth://totp/x?secret=JBSWY3DPEHPK3PXP\n".to_vec(), vec![0; 32]).unwrap();
         let now = opened.otp_code(now_ms).unwrap();
         let next = opened.otp_code(now_ms + i64::from(now.seconds_left) * 1000 + 1).unwrap();
         let next_period = (now_ms / 1000 / 30 + 1) * 30;
