@@ -2,9 +2,10 @@
 //!
 //! Every character is drawn from the OS's cryptographic random number
 //! generator ([`OsRng`]), with an unbiased choice from the alphabet (see
-//! [`uniform_below`]). A policy can require each character class at least
+//! [`uniform_below`]). Lower and upper case letters and digits are always
+//! in it, symbols if the policy says, and every class appears at least
 //! once. That is done by rejection: a whole password is drawn uniformly
-//! from the alphabet and drawn again if a required class is missing. The
+//! from the alphabet and drawn again if a class is missing. The
 //! result is uniform over every password that meets the policy, so the
 //! requirement costs only the few bits [`entropy_bits`] reports, and no
 //! position or class is favoured the way "put one digit somewhere, fill
@@ -34,15 +35,10 @@ pub const LOOK_ALIKES: &str = "0O1lIo";
 pub struct PasswordPolicy {
     /// Characters, from [`MIN_LENGTH`] to [`MAX_LENGTH`].
     pub length: u32,
-    pub lowercase: bool,
-    pub uppercase: bool,
-    pub digits: bool,
     /// From [`SYMBOLS`].
     pub symbols: bool,
     /// Leave out `0 O 1 l I o`.
     pub exclude_look_alikes: bool,
-    /// Every class that is on appears at least once.
-    pub require_each_class: bool,
 }
 
 impl Default for PasswordPolicy {
@@ -60,15 +56,7 @@ impl Default for PasswordPolicy {
     /// for the same reason, and because sites differ on which symbols they
     /// allow.
     fn default() -> Self {
-        Self {
-            length: 20,
-            lowercase: true,
-            uppercase: true,
-            digits: true,
-            symbols: true,
-            exclude_look_alikes: true,
-            require_each_class: true,
-        }
+        Self { length: 20, symbols: true, exclude_look_alikes: true }
     }
 }
 
@@ -76,37 +64,24 @@ impl Default for PasswordPolicy {
 pub enum PolicyError {
     #[error("a password must be {MIN_LENGTH} to {MAX_LENGTH} characters long")]
     Length,
-    #[error("choose at least one kind of character")]
-    NoClasses,
 }
 
 fn classes(policy: &PasswordPolicy) -> Vec<Vec<char>> {
-    [
-        (policy.lowercase, LOWERCASE),
-        (policy.uppercase, UPPERCASE),
-        (policy.digits, DIGITS),
-        (policy.symbols, SYMBOLS),
-    ]
-    .into_iter()
-    .filter(|(on, _)| *on)
-    .map(|(_, chars)| {
-        chars
-            .chars()
-            .filter(|c| !(policy.exclude_look_alikes && LOOK_ALIKES.contains(*c)))
-            .collect()
-    })
-    .collect()
+    let symbols = if policy.symbols { SYMBOLS } else { "" };
+    [LOWERCASE, UPPERCASE, DIGITS, symbols]
+        .into_iter()
+        .filter(|chars| !chars.is_empty())
+        .map(|chars| chars.chars().filter(|c| !(policy.exclude_look_alikes && LOOK_ALIKES.contains(*c))).collect())
+        .collect()
 }
 
+/// The classes `policy` draws from, if its length leaves room for one of
+/// each: there are at most four, and [`MIN_LENGTH`] is four.
 fn check(policy: &PasswordPolicy) -> Result<Vec<Vec<char>>, PolicyError> {
     if !(MIN_LENGTH..=MAX_LENGTH).contains(&policy.length) {
         return Err(PolicyError::Length);
     }
-    let classes = classes(policy);
-    if classes.is_empty() {
-        return Err(PolicyError::NoClasses);
-    }
-    Ok(classes)
+    Ok(classes(policy))
 }
 
 /// The alphabet a policy draws from, in a fixed order.
@@ -143,17 +118,13 @@ pub fn generate_with<R: RngCore + CryptoRng + ?Sized>(
     let alphabet: Vec<char> = classes.concat();
     let n = alphabet.len() as u32;
     let length = policy.length as usize;
-    // A class can only be required when the password has room for all.
-    let required = policy.require_each_class && classes.len() <= length;
     loop {
         // Sized up front, so it never reallocates and leaves copies behind.
         let mut password = Zeroizing::new(String::with_capacity(length * 4));
         for _ in 0..length {
             password.push(alphabet[uniform_below(rng, n) as usize]);
         }
-        let complete = !required
-            || classes.iter().all(|class| password.chars().any(|c| class.contains(&c)));
-        if complete {
+        if classes.iter().all(|class| password.chars().any(|c| class.contains(&c))) {
             return Ok(password);
         }
     }
@@ -162,17 +133,14 @@ pub fn generate_with<R: RngCore + CryptoRng + ?Sized>(
 /// How many bits of entropy a password from `policy` has: log2 of the
 /// number of passwords the policy allows, all equally likely.
 ///
-/// With classes required, that number is counted by inclusion and
-/// exclusion over the classes left out: the sum over every set S of
-/// classes of (-1)^|S| * (alphabet minus S)^length.
+/// That number is counted by inclusion and exclusion over the classes
+/// left out: the sum over every set S of classes of
+/// (-1)^|S| * (alphabet minus S)^length.
 pub fn entropy_bits(policy: &PasswordPolicy) -> Result<f64, PolicyError> {
     let classes = check(policy)?;
     let total: usize = classes.iter().map(Vec::len).sum();
     let length = f64::from(policy.length);
     let all = length * (total as f64).log2();
-    if !policy.require_each_class || classes.len() as u32 > policy.length {
-        return Ok(all);
-    }
     // Each term as a fraction of total^length, so nothing overflows.
     let mut fraction = 0.0f64;
     for set in 0u32..(1 << classes.len()) {

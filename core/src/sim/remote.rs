@@ -446,12 +446,6 @@ impl SimRemote {
             .map(|key| key.fingerprint(HashAlg::Sha256).to_string())
             .unwrap_or_default()
     }
-
-    pub fn authorise(&self, line: String) -> Result<(), PawError> {
-        let key = PublicKey::from_openssh(line.trim()).map_err(|e| failed("read the key", e))?;
-        locked(&self.shared.authorised).push(key);
-        Ok(())
-    }
 }
 
 impl Drop for SimRemote {
@@ -565,7 +559,6 @@ impl server::Handler for Connection {
 
 enum Ended {
     Done,
-    /// The connection was dropped on purpose.
     Dropped,
 }
 
@@ -721,6 +714,14 @@ pub(crate) fn advertisement(refs: &[(Oid, String)], head: Option<&str>, capabili
     out
 }
 
+/// The commit a `want <id> [capabilities]` line asks for, or the line's
+/// `have <id>`, by `word`.
+pub(crate) fn negotiation_oid(line: &str, word: &str) -> Result<Oid, String> {
+    let rest = line.strip_prefix(word).and_then(|rest| rest.strip_prefix(' '));
+    let rest = rest.ok_or_else(|| format!("unsupported request: {line}"))?;
+    parse_oid(rest.split(' ').next().unwrap_or_default())
+}
+
 pub(crate) fn parse_oid(text: &str) -> Result<Oid, String> {
     if text.len() != 40 {
         return Err(format!("not an object id: {text}"));
@@ -768,11 +769,7 @@ async fn upload_pack(
             None => return Ok(Ended::Done),
             Some(Pkt::Flush) => break,
             Some(Pkt::Line(line)) => {
-                let line = String::from_utf8_lossy(&line);
-                let Some(rest) = line.trim_end().strip_prefix("want ") else {
-                    return Err(format!("unsupported request: {}", line.trim_end()));
-                };
-                let id = parse_oid(rest.split(' ').next().unwrap_or_default())?;
+                let id = negotiation_oid(String::from_utf8_lossy(&line).trim_end(), "want")?;
                 if !refs.iter().any(|(tip, _)| *tip == id) {
                     return Err(format!("not our ref {id}"));
                 }
@@ -796,11 +793,9 @@ async fn upload_pack(
                 let line = line.trim_end();
                 if line == "done" {
                     true
-                } else if let Some(id) = line.strip_prefix("have ") {
-                    haves.push(parse_oid(id)?);
-                    continue;
                 } else {
-                    return Err(format!("unsupported request: {line}"));
+                    haves.push(negotiation_oid(line, "have")?);
+                    continue;
                 }
             }
         };

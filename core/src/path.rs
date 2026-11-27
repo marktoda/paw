@@ -52,10 +52,6 @@ pub(crate) fn listed_entry(file: &str) -> Option<&str> {
     entry_of_file(file)
 }
 
-pub(crate) fn is_entry_file(file: &str) -> bool {
-    file.ends_with(ENTRY_EXTENSION)
-}
-
 pub(crate) fn gpg_id_in(folder: &str) -> String {
     join(folder, GPG_ID)
 }
@@ -127,7 +123,6 @@ pub(crate) fn unsafe_part(path: &str) -> Option<UnsafePart> {
     None
 }
 
-/// [`unsafe_part`] in words.
 pub(crate) fn unsafe_path(path: &str) -> Option<&'static str> {
     unsafe_part(path).map(UnsafePart::words)
 }
@@ -158,56 +153,46 @@ pub(crate) enum NameRefusal {
     Unsafe(&'static str),
 }
 
-/// Why an entry name (no `/`) is refused for saving, checked in this order.
-pub(crate) fn name_refusal(name: &str) -> Option<NameRefusal> {
-    if name.trim().is_empty() {
-        return Some(NameRefusal::Blank);
+/// The longest file name the phone's file system takes, in bytes.
+const MAX_FILE_NAME_BYTES: usize = 255;
+
+/// Why one part of a path is refused for saving, checked in this order.
+/// `file_name` is the part as a file name: `name.gpg` for an entry.
+fn part_refusal(part: &str, file_name: &str) -> Option<NameRefusal> {
+    if part.trim().is_empty() {
+        Some(NameRefusal::Blank)
+    } else if is_hidden(part) {
+        Some(NameRefusal::LeadingDot)
+    } else if part.trim() != part {
+        Some(NameRefusal::OuterSpace)
+    } else if part.chars().any(char::is_control) {
+        Some(NameRefusal::Control)
+    } else if part.contains('\\') {
+        Some(NameRefusal::Backslash)
+    } else if file_name.len() > MAX_FILE_NAME_BYTES {
+        Some(NameRefusal::TooLong)
+    } else {
+        None
     }
-    if name.contains('/') {
-        return Some(NameRefusal::Slash);
-    }
-    if is_hidden(name) {
-        return Some(NameRefusal::LeadingDot);
-    }
-    if name.trim() != name {
-        return Some(NameRefusal::OuterSpace);
-    }
-    if name.chars().any(char::is_control) {
-        return Some(NameRefusal::Control);
-    }
-    if name.contains('\\') {
-        return Some(NameRefusal::Backslash);
-    }
-    if entry_file(name).len() > 255 {
-        return Some(NameRefusal::TooLong);
-    }
-    unsafe_path(name).map(NameRefusal::Unsafe)
 }
 
-/// Why a folder path (empty for the top) is refused for saving. Control
-/// characters and backslashes are one refusal here.
+/// Why an entry name (no `/`) is refused for saving, checked in this order.
+pub(crate) fn name_refusal(name: &str) -> Option<NameRefusal> {
+    if !name.trim().is_empty() && name.contains('/') {
+        return Some(NameRefusal::Slash);
+    }
+    part_refusal(name, &entry_file(name)).or_else(|| unsafe_path(name).map(NameRefusal::Unsafe))
+}
+
+/// Why a folder path (empty for the top) is refused for saving.
 pub(crate) fn folder_refusal(folder: &str) -> Option<NameRefusal> {
     if folder.is_empty() {
         return None;
     }
-    for component in folder.split('/') {
-        if component.trim().is_empty() {
-            return Some(NameRefusal::Blank);
-        }
-        if is_hidden(component) {
-            return Some(NameRefusal::LeadingDot);
-        }
-        if component.trim() != component {
-            return Some(NameRefusal::OuterSpace);
-        }
-        if component.chars().any(char::is_control) || component.contains('\\') {
-            return Some(NameRefusal::Control);
-        }
-        if component.len() > 255 {
-            return Some(NameRefusal::TooLong);
-        }
-    }
-    unsafe_path(folder).map(NameRefusal::Unsafe)
+    folder
+        .split('/')
+        .find_map(|component| part_refusal(component, component))
+        .or_else(|| unsafe_path(folder).map(NameRefusal::Unsafe))
 }
 
 /// How a file system that ignores letter case and Unicode normalisation

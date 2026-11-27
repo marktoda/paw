@@ -6,11 +6,11 @@
 //! never followed: a link in a cloned repository can point anywhere on the
 //! device, so links are left out and listed in [`StoreTree::skipped`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::PawError;
-use crate::path::{is_hidden, join, listed_entry, unsafe_path};
+use crate::path::{entry_of_file, is_hidden, join, unsafe_path};
 
 /// Deeper folders than this are left out. No real store comes close, and a
 /// hostile one cannot make the walk run out of stack.
@@ -130,7 +130,7 @@ impl StoreTree {
                     Err(_) => self.skipped.push(path),
                 }
             } else if kind.is_file()
-                && let Some(stem) = listed_entry(&name)
+                && let Some(stem) = entry_of_file(&name)
             {
                 count += 1;
                 listing.entries.push(EntryRef {
@@ -159,6 +159,11 @@ impl StoreTree {
     /// Every entry in the store, sorted by path.
     pub fn entries(&self) -> &[EntryRef] {
         &self.entries
+    }
+
+    /// The path of every entry in the store.
+    pub(crate) fn entry_paths(&self) -> HashSet<&str> {
+        self.entries.iter().map(|entry| entry.path.as_str()).collect()
     }
 
     /// Every folder that holds entries, sorted by path; not the top.

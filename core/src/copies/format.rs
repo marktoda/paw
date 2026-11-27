@@ -40,8 +40,6 @@ use zeroize::Zeroizing;
 
 pub const MAGIC: &[u8; 8] = b"PAWCOPY1";
 pub const SUFFIX: &str = ".copy";
-/// No copy file is larger. Entries are at most 1 MiB (`store::read`).
-pub const MAX_FILE_BYTES: u64 = 2 << 20;
 
 const NONCE_LEN: usize = 24;
 const TAG_LEN: usize = 16;
@@ -53,6 +51,14 @@ const MAX_ID_BYTES: usize = 255;
 const MAX_WRAPPED_BYTES: usize = 4096;
 /// A copy holds an entry's text, so no more than an entry may hold.
 const MAX_TEXT_BYTES: usize = crate::entry::MAX_PLAINTEXT_BYTES as usize;
+/// The longest metadata [`Meta::encode`] gives: the entry, the two ids
+/// with their lengths, and three times.
+const MAX_META_BYTES: usize = 2 + MAX_ENTRY_BYTES + 2 * (1 + MAX_ID_BYTES) + 3 * 8;
+const MAX_SEALED_META: usize = MAX_META_BYTES.div_ceil(META_BUCKET) * META_BUCKET + TAG_LEN;
+const MAX_SEALED_BODY: usize = (4 + MAX_TEXT_BYTES).div_ceil(BODY_BUCKET) * BODY_BUCKET + TAG_LEN;
+/// No copy file paw writes is larger.
+pub const MAX_FILE_BYTES: u64 =
+    (MAGIC.len() + NONCE_LEN + 4 + MAX_SEALED_META + 4 + MAX_WRAPPED_BYTES + NONCE_LEN + MAX_SEALED_BODY) as u64;
 
 /// Something is wrong with a copy: it was not written by paw with these
 /// keys, or it was changed since. Deliberately says nothing more.
@@ -312,7 +318,7 @@ impl CopyFile {
             return Err(Invalid);
         }
         let meta_nonce: [u8; NONCE_LEN] = r.array()?;
-        let mut meta = r.u32_len(MAX_ENTRY_BYTES + 4 * META_BUCKET)?.to_vec();
+        let mut meta = r.u32_len(MAX_SEALED_META)?.to_vec();
         let wrapped_key = r.u32_len(MAX_WRAPPED_BYTES)?.to_vec();
         let body_nonce: [u8; NONCE_LEN] = r.array()?;
         let body = r.0.to_vec();

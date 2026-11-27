@@ -20,6 +20,10 @@ fn io_err(relative: &str, e: std::io::Error) -> PawError {
     PawError::Store(format!("could not read {relative}: {e}"))
 }
 
+fn too_large_err(relative: &str) -> PawError {
+    PawError::Store(format!("{relative} is too large to be an entry"))
+}
+
 /// Reads the regular file `relative` (`/` separated) under `root`. `None` if
 /// it, or a folder on the way, does not exist.
 pub(crate) fn read_file(root: &Path, relative: &str) -> Result<Option<Vec<u8>>, PawError> {
@@ -49,14 +53,14 @@ pub(crate) fn read_file(root: &Path, relative: &str) -> Result<Option<Vec<u8>>, 
                 return Err(unsafe_path_err(relative, "it is not a file"));
             }
             if found.len() > MAX_FILE_BYTES {
-                return Err(PawError::Store(format!("{relative} is too large to be an entry")));
+                return Err(too_large_err(relative));
             }
         }
     }
 
     // The limit again: the size above was only what the file system said.
     match read_bounded(&on_disk, MAX_FILE_BYTES) {
-        Err(e) if too_large(&e) => Err(PawError::Store(format!("{relative} is too large to be an entry"))),
+        Err(e) if too_large(&e) => Err(too_large_err(relative)),
         Err(e) => Err(io_err(relative, e)),
         Ok(None) => Err(io_err(relative, std::io::ErrorKind::NotFound.into())),
         Ok(bytes) => Ok(bytes),

@@ -9,49 +9,36 @@
 //! carries the pack. `git-receive-pack` is refused before anything is
 //! sent: the token never pushes.
 //!
-//! What the host sends is counted as it arrives against the same cap as
-//! SSH ([`DOWNLOAD_LIMIT`] unless lowered), over the whole fetch, and the
+//! What the host sends over the whole fetch is counted against the same
+//! cap as SSH (`git_transport::DOWNLOAD_LIMIT` unless lowered), and the
 //! transfer stops past it before libgit2 writes the pack.
 
-use std::cell::RefCell;
 use std::io::{self, Read, Write};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Mutex};
 
-use git2::transport::{Service, SmartSubtransport, SmartSubtransportStream, Transport};
+use git2::transport::{Service, SmartSubtransportStream};
 
 use super::http::Http;
 use super::{GitHubError, Secret};
 use crate::PawError;
+use crate::git_transport::{self, Carrier, DOWNLOAD_LIMIT, DownloadCap};
 use crate::remote::RemoteFailure;
-use crate::sync::{DOWNLOAD_LIMIT, SyncError};
 
-/// The URL libgit2 is given; the real one is in [`ACTIVE`].
-const TRANSPORT_URL: &str = "paw-https://github";
 /// The most one negotiation request may be: wants and haves are a few KiB.
 const REQUEST_LIMIT: usize = 1 << 20;
-
-#[derive(Debug, Clone)]
-pub(crate) enum Failure {
-    TooBig(u64),
-    GitHub(GitHubError),
-}
 
 struct Shared {
     http: Http,
     repo_url: String,
     token: Secret,
-    limit: u64,
-    received: AtomicU64,
-    failure: Mutex<Option<Failure>>,
+    cap: DownloadCap,
+    /// The first failure of GitHub's, which libgit2 reports only as text.
+    failure: Mutex<Option<GitHubError>>,
 }
 
 impl Shared {
-    fn fail(&self, failure: Failure) -> io::Error {
-        let message = match &failure {
-            Failure::TooBig(_) => "the git host sent too much".to_owned(),
-            Failure::GitHub(e) => e.to_string(),
-        };
+    fn fail(&self, failure: GitHubError) -> io::Error {
+        let message = failure.to_string();
         let mut slot = self.failure.lock().unwrap_or_else(|p| p.into_inner());
         if slot.is_none() {
             *slot = Some(failure);
@@ -59,7 +46,7 @@ impl Shared {
         io::Error::other(message)
     }
 
-    fn git_error(&self, failure: Failure) -> git2::Error {
+    fn git_error(&self, failure: GitHubError) -> git2::Error {
         git2::Error::from_str(&self.fail(failure).to_string())
     }
 }
@@ -77,8 +64,7 @@ impl HttpsRemote {
                 http,
                 repo_url,
                 token,
-                limit: limit.unwrap_or(DOWNLOAD_LIMIT),
-                received: AtomicU64::new(0),
+                cap: DownloadCap::new(limit.unwrap_or(DOWNLOAD_LIMIT)),
                 failure: Mutex::new(None),
             }),
         }
@@ -88,100 +74,53 @@ impl HttpsRemote {
         &self,
         repo: &git2::Repository,
         operation: impl FnOnce(&mut git2::Remote<'_>) -> Result<T, git2::Error>,
-    ) -> Result<T, SyncError> {
-        register_transport();
-        ACTIVE.with(|active| *active.borrow_mut() = Some(self.shared.clone()));
-        let result = repo
-            .remote_anonymous(TRANSPORT_URL)
-            .and_then(|mut remote| operation(&mut remote));
-        ACTIVE.with(|active| *active.borrow_mut() = None);
-        result.map_err(|e| explain(e, self.shared.failure.lock().unwrap_or_else(|p| p.into_inner()).take()))
+    ) -> Result<T, GitHubError> {
+        git_transport::with_remote(repo, self.shared.clone(), operation, |e| {
+            let failure = self.shared.failure.lock().unwrap_or_else(|p| p.into_inner()).take();
+            failure.unwrap_or_else(|| PawError::Git(e.message().to_owned()).into())
+        })
     }
 }
 
-fn explain(error: git2::Error, failure: Option<Failure>) -> SyncError {
-    match failure {
-        Some(Failure::TooBig(limit)) => PawError::Git(format!(
-            "the git host sent more than {} MiB, far more than a password store; paw stopped the download",
-            limit >> 20
-        ))
-        .into(),
-        Some(Failure::GitHub(error)) => error.into(),
-        None => PawError::Git(error.message().to_owned()).into(),
+impl Carrier for Shared {
+    fn stateless(&self) -> bool {
+        // One request per round, as HTTP is.
+        true
     }
-}
 
-thread_local! {
-    /// The connection the libgit2 call on this thread uses; see the SSH
-    /// transport for why a thread-local.
-    static ACTIVE: RefCell<Option<Arc<Shared>>> = const { RefCell::new(None) };
-}
-
-fn register_transport() {
-    static REGISTERED: Once = Once::new();
-    REGISTERED.call_once(|| {
-        let factory = |remote: &git2::Remote<'_>| {
-            let shared = ACTIVE
-                .with(|active| active.borrow().clone())
-                .ok_or_else(|| git2::Error::from_str("no GitHub connection is open for this call"))?;
-            // `true`: stateless, one request per round, as HTTP is.
-            Transport::smart(remote, true, Subtransport(shared))
-        };
-        // SAFETY: as for the SSH transport: `Once` serialises registration,
-        // and every transport of this scheme is created by `with_remote`,
-        // which calls this first.
-        if let Err(e) = unsafe { git2::transport::register("paw-https", factory) } {
-            // Only possible if the scheme were registered twice, which
-            // `Once` prevents; a fetch then fails with "unsupported URL".
-            debug_assert!(false, "registering the HTTPS transport: {e}");
-        }
-    });
-}
-
-struct Subtransport(Arc<Shared>);
-
-impl SmartSubtransport for Subtransport {
-    fn action(&self, _url: &str, service: Service) -> Result<Box<dyn SmartSubtransportStream>, git2::Error> {
-        let shared = self.0.clone();
+    fn open(self: Arc<Self>, service: Service) -> Result<Box<dyn SmartSubtransportStream>, git2::Error> {
         match service {
             Service::UploadPackLs => {
-                let url = format!("{}/info/refs?service=git-upload-pack", shared.repo_url);
-                let body = request(&shared, &url, None, "application/x-git-upload-pack-advertisement")?;
-                Ok(Box::new(Stream { shared, request: None, body: Some(body) }))
+                let url = format!("{}/info/refs?service=git-upload-pack", self.repo_url);
+                let body = request(&self, &url, None, "application/x-git-upload-pack-advertisement")?;
+                Ok(Box::new(Stream { shared: self, request: None, body: Some(body) }))
             }
-            Service::UploadPack => Ok(Box::new(Stream { shared, request: Some(Vec::new()), body: None })),
+            Service::UploadPack => Ok(Box::new(Stream { shared: self, request: Some(Vec::new()), body: None })),
             Service::ReceivePackLs | Service::ReceivePack => {
                 Err(git2::Error::from_str("paw never pushes with its GitHub sign-in"))
             }
         }
     }
 
-    fn close(&self) -> Result<(), git2::Error> {
-        Ok(())
+    fn cap(&self) -> &DownloadCap {
+        &self.cap
     }
 }
 
 type Body = Box<dyn Read + Send>;
 
-fn request(shared: &Arc<Shared>, url: &str, post: Option<&[u8]>, expected_type: &str) -> Result<Body, git2::Error> {
+fn request(shared: &Shared, url: &str, post: Option<&[u8]>, expected_type: &str) -> Result<Body, git2::Error> {
     let post = post.map(|body| ("application/x-git-upload-pack-request", body));
-    let response = shared.http.git(url, &shared.token, post).map_err(|e| shared.git_error(Failure::GitHub(e)))?;
+    let response = shared.http.git(url, &shared.token, post).map_err(|e| shared.git_error(e))?;
     let status = response.status().as_u16();
     match status {
         200 => {}
-        401 | 403 => return Err(shared.git_error(Failure::GitHub(RemoteFailure::Unauthorised.into()))),
+        401 | 403 => return Err(shared.git_error(RemoteFailure::Unauthorised.into())),
         404 => {
             let message = "GitHub says the repository is not there, or paw's access to it was removed";
-            return Err(shared.git_error(Failure::GitHub(GitHubError::refused(message))));
+            return Err(shared.git_error(GitHubError::refused(message)));
         }
-        500.. => {
-            let message = format!("GitHub answered {status}");
-            return Err(shared.git_error(Failure::GitHub(GitHubError::network(message))));
-        }
-        other => {
-            let message = format!("GitHub answered {other}");
-            return Err(shared.git_error(Failure::GitHub(GitHubError::refused(message))));
-        }
+        other => return Err(shared.git_error(GitHubError::answered(other))),
     }
     let content_type = response
         .headers()
@@ -192,10 +131,11 @@ fn request(shared: &Arc<Shared>, url: &str, post: Option<&[u8]>, expected_type: 
     if !content_type.starts_with(expected_type) {
         // A "dumb" server, or a login page: nothing paw speaks.
         let message = "GitHub did not answer as a git server";
-        return Err(shared.git_error(Failure::GitHub(GitHubError::refused(message))));
+        return Err(shared.git_error(GitHubError::refused(message)));
     }
-    // ureq stops at the cap too; paw's own count below names it.
-    let reader = response.into_body().into_with_config().limit(shared.limit.saturating_add(1)).reader();
+    // ureq stops past the cap too; paw's own count below stops first and
+    // names it.
+    let reader = response.into_body().into_with_config().limit(shared.cap.limit().saturating_add(1)).reader();
     Ok(Box::new(reader))
 }
 
@@ -218,22 +158,13 @@ impl Read for Stream {
         let Some(body) = self.body.as_mut() else {
             return Ok(0);
         };
-        let n = body.read(buf).map_err(|e| {
-            if self.shared.received.load(Ordering::SeqCst) >= self.shared.limit {
-                self.shared.fail(Failure::TooBig(self.shared.limit))
-            } else {
-                self.shared.fail(Failure::GitHub(GitHubError::network(e.to_string())))
-            }
-        })?;
-        let total = self.shared.received.fetch_add(n as u64, Ordering::SeqCst) + n as u64;
-        if total > self.shared.limit {
-            return Err(self.shared.fail(Failure::TooBig(self.shared.limit)));
-        }
+        let n = body.read(buf).map_err(|e| self.shared.fail(self.shared.http.cut_off(e.to_string())))?;
+        self.shared.cap.count(n)?;
         Ok(n)
     }
 }
 
-fn request_io(shared: &Arc<Shared>, url: &str, body: &[u8]) -> io::Result<Body> {
+fn request_io(shared: &Shared, url: &str, body: &[u8]) -> io::Result<Body> {
     request(shared, url, Some(body), "application/x-git-upload-pack-result").map_err(|e| io::Error::other(e.message().to_owned()))
 }
 
@@ -271,7 +202,7 @@ mod tests {
         let http = Http::new(&Endpoints::github(), Some(std::time::Instant::now()));
         let remote = HttpsRemote::new(http, "you/store", Secret::new("ghu_test".into()), None);
         let pushed = remote.with_remote(&repo, |r| r.push(&["refs/heads/main:refs/heads/main"], None));
-        let Err(SyncError::Fault { fault: crate::fault::Fault::Local { detail } }) = pushed else { panic!("{pushed:?}") };
+        let Err(GitHubError::Fault { fault: crate::fault::Fault::Local { detail } }) = pushed else { panic!("{pushed:?}") };
         assert!(detail.contains("never pushes"), "{detail}");
     }
 }

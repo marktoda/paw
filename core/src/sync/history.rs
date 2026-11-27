@@ -17,7 +17,7 @@ use git2::{
 use super::guard;
 use super::{SyncError, git_err};
 use crate::PawError;
-use crate::path::{ENTRY_EXTENSION, is_entry_file, unsafe_path, unsafe_path_err};
+use crate::path::{ENTRY_EXTENSION, unsafe_path, unsafe_path_err};
 
 /// What one paw commit did, as the queue screen names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -135,7 +135,7 @@ pub(crate) fn classify<'r>(repo: &'r Repository, commit: Commit<'r>) -> Result<P
         // recipients re-encrypts it (as `pass mv` does), so the blob
         // differs; it is still one entry, moved.
         ([(to, blob)], [(from, old)], [])
-            if blob.0 == old.0 || (is_entry_file(from) && is_entry_file(to)) =>
+            if blob.0 == old.0 || (from.ends_with(ENTRY_EXTENSION) && to.ends_with(ENTRY_EXTENSION)) =>
         (
             Change::Rename { from: from.clone(), to: to.clone(), blob: *blob },
             ChangeKind::Renamed,

@@ -81,15 +81,6 @@ pub enum RemoteFailure {
     GitHubRefused { message: String },
 }
 
-/// An error that may say why the remote failed.
-pub(crate) trait AboutRemote {
-    fn remote_failure(&self) -> Option<&RemoteFailure>;
-
-    fn is_unauthorised(&self) -> bool {
-        matches!(self.remote_failure(), Some(RemoteFailure::Unauthorised))
-    }
-}
-
 /// A path in a repository that paw will not check out, and why.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct RefusedPath {

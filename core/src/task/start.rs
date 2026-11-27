@@ -239,7 +239,7 @@ impl KeyPort {
                 // The late answer of a cancelled task is wiped on drop.
                 Job::of(task).commit()?;
                 let plaintext = plan.finish(session_key)?;
-                let opened = crate::open::opened(plaintext, content_id(&ciphertext)).map_err(entry_unreadable)?;
+                let opened = crate::entry::opened::OpenedEntry::decrypted(plaintext, content_id(&ciphertext)).map_err(entry_unreadable)?;
                 let copies = match then {
                     Then::Keep(copies) => copies,
                     Then::Check(after) => {

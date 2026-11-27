@@ -30,6 +30,9 @@ pub(crate) const MAX_FILE_BYTES: u64 = 1 << 20;
 /// A temporary file this old belongs to a writer that died mid-write.
 const STALE_TEMP: Duration = Duration::from_secs(60);
 
+/// What names a temporary file, after the dot and the name it will become.
+const TEMP_MARK: &str = ".tmp-";
+
 #[derive(Debug)]
 struct TooLarge;
 
@@ -59,13 +62,15 @@ pub(crate) fn read_bounded(path: &Path, max: u64) -> std::io::Result<Option<Vec<
     Ok(Some(bytes))
 }
 
-pub(crate) fn write_atomic(path: &Path, temp_prefix: &str, bytes: &[u8]) -> std::io::Result<()> {
+/// Writes `bytes` to `path` through `.<name>.tmp-<random>` beside it.
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
-    sweep(dir, temp_prefix);
+    let name = path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default();
+    let _ = remove_temps(dir, false);
     let mut tag = [0u8; 12];
     OsRng.fill_bytes(&mut tag);
     let tag: String = tag.iter().map(|b| format!("{b:02x}")).collect();
-    let temp = dir.join(format!("{temp_prefix}{tag}"));
+    let temp = dir.join(format!(".{name}{TEMP_MARK}{tag}"));
     let written = (|| {
         let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&temp)?;
         file.write_all(bytes)?;
@@ -80,14 +85,10 @@ pub(crate) fn write_atomic(path: &Path, temp_prefix: &str, bytes: &[u8]) -> std:
     written
 }
 
-fn sweep(dir: &Path, temp_prefix: &str) {
-    let _ = remove_temps(dir, temp_prefix, false);
-}
-
-/// Removes the temporary files named `temp_prefix…` in `dir` that a writer
+/// Removes the temporary files of [`write_atomic`] in `dir` that a writer
 /// which died left behind, and with `all` those of writers still running
 /// too. An absent `dir` has none.
-pub(crate) fn remove_temps(dir: &Path, temp_prefix: &str, all: bool) -> std::io::Result<()> {
+pub(crate) fn remove_temps(dir: &Path, all: bool) -> std::io::Result<()> {
     let listing = match std::fs::read_dir(dir) {
         Ok(listing) => listing,
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
@@ -95,7 +96,7 @@ pub(crate) fn remove_temps(dir: &Path, temp_prefix: &str, all: bool) -> std::io:
     };
     for child in listing {
         let child = child?;
-        if !child.file_name().to_str().is_some_and(|n| n.starts_with(temp_prefix)) {
+        if !child.file_name().to_str().is_some_and(|n| n.starts_with('.') && n.contains(TEMP_MARK)) {
             continue;
         }
         let old = || {

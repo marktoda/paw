@@ -902,11 +902,11 @@ fn the_ffi_draft_reports_problems_and_a_name_already_used() {
 
 #[test]
 fn site_pairings_follow_a_rename_a_move_and_an_edit_and_go_with_a_delete() {
-    use paw_core::store::pairings::PairingFile;
+    use paw_core::store::pairings::SitePairings;
     let s = store();
-    let pairings = PairingFile::new(&s.state);
+    let pairings = SitePairings::new(&s.state);
     let paired = || {
-        let mut all = pairings.load().into_iter().map(|p| (p.entry, p.sites)).collect::<Vec<_>>();
+        let mut all = pairings.pairings().into_iter().map(|p| (p.entry, p.sites)).collect::<Vec<_>>();
         all.sort();
         all
     };
@@ -935,9 +935,9 @@ fn site_pairings_follow_a_rename_a_move_and_an_edit_and_go_with_a_delete() {
 
 #[test]
 fn one_time_code_marks_follow_saves_renames_and_deletes() {
-    use paw_core::store::codes::CodeFile;
+    use paw_core::store::codes::OneTimeCodeEntries;
     let s = store();
-    let codes = CodeFile::new(&s.state);
+    let codes = OneTimeCodeEntries::new(&s.state);
 
     // Off by default: a save with a code keeps nothing.
     let draft = writer(&s).new_draft("Work".into());

@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use paw_core::PawError;
 use paw_core::copies::format::{CopyFile, IndexKeys};
-use paw_core::copies::{CopyCache, CopyStatus, LiveCopy, MAX_TTL};
+use paw_core::copies::{CopyCache, CopyStatus, DeviceKeystore, LiveCopy, MAX_TTL};
 
 /// How long the tests keep a copy: the app's 8 hours.
 const TTL: std::time::Duration = std::time::Duration::from_secs(8 * 60 * 60);

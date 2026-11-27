@@ -97,9 +97,8 @@ impl Sink {
         let text = read_text(path)?;
         let lines: Vec<&str> = text.lines().collect();
         let kept = &lines[lines.len().saturating_sub(KEEP_LINES)..];
-        let temp_prefix = format!(".{}{}.tmp-", crate::files::layout::KEY_LOG_PREFIX, self.process);
         let text: String = kept.iter().map(|l| format!("{l}\n")).collect();
-        crate::files::write_atomic(path, &temp_prefix, text.as_bytes())
+        crate::files::write_atomic(path, text.as_bytes())
     }
 }
 

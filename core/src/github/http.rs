@@ -60,9 +60,9 @@ fn origin_of(url: &str) -> Option<Origin> {
     Some(Origin { scheme, host, port })
 }
 
-/// A request that went wrong before an answer could be read.
-pub(crate) fn network(error: ureq::Error) -> GitHubError {
-    let message = match error {
+/// What went wrong with a request before an answer could be read.
+fn words(error: ureq::Error) -> String {
+    match error {
         ureq::Error::Timeout(_) => "it took too long".to_owned(),
         ureq::Error::HostNotFound => "no such host; is the iPhone online?".to_owned(),
         ureq::Error::ConnectionFailed => "could not connect".to_owned(),
@@ -72,8 +72,7 @@ pub(crate) fn network(error: ureq::Error) -> GitHubError {
         // Built from paw's own URLs and GitHub's answer, never a token:
         // tokens are only ever sent in headers and bodies.
         other => other.to_string(),
-    };
-    GitHubError::network(message)
+    }
 }
 
 pub(crate) struct Answer {
@@ -117,13 +116,24 @@ impl Http {
             None => Ok(cap),
             Some(deadline) => {
                 let left = deadline.saturating_duration_since(Instant::now());
-                if left.is_zero() {
-                    Err(GitHubError::network("out of time"))
-                } else {
-                    Ok(left.min(cap))
-                }
+                if left.is_zero() { Err(GitHubError::OutOfTime) } else { Ok(left.min(cap)) }
             }
         }
+    }
+
+    /// A request or an answer cut off by `detail`: out of time once past the
+    /// deadline (the request's timeout is the time left), else GitHub
+    /// unreachable.
+    pub(crate) fn cut_off(&self, detail: impl Into<String>) -> GitHubError {
+        if self.deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            GitHubError::OutOfTime
+        } else {
+            GitHubError::network(detail)
+        }
+    }
+
+    fn failed(&self, error: ureq::Error) -> GitHubError {
+        self.cut_off(words(error))
     }
 
     fn base(&self, host: Host) -> &str {
@@ -183,8 +193,8 @@ impl Http {
             .timeout_global(Some(self.time_left(REQUEST_TIMEOUT)?))
             .build()
             .send(body.as_bytes())
-            .map_err(network)?;
-        read_answer(response, FORM_LIMIT)
+            .map_err(|e| self.failed(e))?;
+        self.read_answer(response, FORM_LIMIT)
     }
 
     pub(crate) fn api_get(&self, path_and_query: &str, token: &Secret) -> Result<Answer, GitHubError> {
@@ -203,8 +213,8 @@ impl Http {
             .timeout_global(Some(self.time_left(REQUEST_TIMEOUT)?))
             .build()
             .call()
-            .map_err(network)?;
-        read_answer(response, API_LIMIT)
+            .map_err(|e| self.failed(e))?;
+        self.read_answer(response, API_LIMIT)
     }
 
     /// POSTs `json` to `path` on the REST API with no credentials at all.
@@ -223,8 +233,18 @@ impl Http {
             .timeout_global(Some(self.time_left(REQUEST_TIMEOUT)?))
             .build()
             .send(json)
-            .map_err(network)?;
-        read_answer(response, FORM_LIMIT)
+            .map_err(|e| self.failed(e))?;
+        self.read_answer(response, FORM_LIMIT)
+    }
+
+    fn read_answer(&self, response: Response<ureq::Body>, limit: u64) -> Result<Answer, GitHubError> {
+        let status = response.status().as_u16();
+        let mut reader = response.into_body().into_with_config().limit(limit).reader();
+        let mut body = Zeroizing::new(Vec::new());
+        reader
+            .read_to_end(&mut body)
+            .map_err(|e| self.cut_off(format!("the answer was cut short or too large: {e}")))?;
+        Ok(Answer { status, body })
     }
 
     /// One git smart-HTTP request with the token as basic auth (user
@@ -272,7 +292,7 @@ impl Http {
                     .build()
                     .send(body),
             }
-            .map_err(network)?;
+            .map_err(|e| self.failed(e))?;
             let status = response.status().as_u16();
             if !(300..400).contains(&status) {
                 return Ok(response);
@@ -295,15 +315,6 @@ impl Http {
     }
 }
 
-fn read_answer(response: Response<ureq::Body>, limit: u64) -> Result<Answer, GitHubError> {
-    let status = response.status().as_u16();
-    let mut reader = response.into_body().into_with_config().limit(limit).reader();
-    let mut body = Zeroizing::new(Vec::new());
-    reader
-        .read_to_end(&mut body)
-        .map_err(|e| GitHubError::network(format!("the answer was cut short or too large: {e}")))?;
-    Ok(Answer { status, body })
-}
 
 /// `application/x-www-form-urlencoded` for one name or value.
 fn form_encode(text: &str) -> String {

@@ -692,9 +692,9 @@ fn a_sync_with_a_key_the_host_does_not_know_stops_before_the_pin() {
 fn a_sync_to_a_host_with_another_key_is_refused_with_both_fingerprints() {
     let w = world();
     let mut remote = w.server.remote();
-    let real = remote.host_key.fingerprint();
+    let real = remote.host_key.fingerprints().remove(0);
     remote.host_key = HostKeyPin::parse(&support::some_other_host_key()).unwrap();
-    let pinned = remote.host_key.fingerprint();
+    let pinned = remote.host_key.fingerprints().remove(0);
 
     let error = sync_failure(steps::sync(&remote, &signer(&w.card), &w.store, true).unwrap_err());
 

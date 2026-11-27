@@ -37,7 +37,7 @@ use super::{GitHubError, Secret};
 use crate::fault::Fault;
 use crate::files::layout::StoreDirs;
 use crate::files::{layout, values};
-use crate::remote::{AboutRemote, RemoteFailure};
+use crate::remote::RemoteFailure;
 use crate::lock::{Exclusive, Shared};
 use crate::sync::address::{StoreAddress, github_repository, saved_address};
 use crate::sync::integrate::{self, IntegrateReport, RecipientsChange, Replaced};
@@ -56,7 +56,6 @@ pub const BACKGROUND_LOCK_WAIT: Duration = Duration::from_secs(3);
 pub struct GitHubLink {
     /// `owner/name`.
     pub full_name: String,
-    pub id: u64,
     /// The SSH address setup was given for it.
     pub ssh_address: String,
 }
@@ -65,10 +64,10 @@ impl GitHubLink {
     pub(crate) fn save(&self, state_dir: &Path) -> Result<(), Fault> {
         let failed = |e: std::io::Error| Fault::local(format!("could not save the chosen repository: {e}"));
         std::fs::create_dir_all(state_dir).map_err(failed)?;
-        let (full_name, id, ssh) =
-            (self.full_name.replace(['\n', '\r'], ""), self.id.to_string(), self.ssh_address.replace(['\n', '\r'], ""));
-        let pairs = [("repository", full_name.as_str()), ("id", id.as_str()), ("ssh", ssh.as_str())];
-        values::write(&state_dir.join(layout::GITHUB_LINK), ".github.tmp-", pairs).map_err(failed)
+        let (full_name, ssh) = (self.full_name.replace(['\n', '\r'], ""), self.ssh_address.replace(['\n', '\r'], ""));
+        // Files written before kept an `id` line too; it is not read.
+        let pairs = [("repository", full_name.as_str()), ("ssh", ssh.as_str())];
+        values::write(&state_dir.join(layout::GITHUB_LINK), pairs).map_err(failed)
     }
 
     pub(crate) fn load(state_dir: &Path) -> Option<Self> {
@@ -76,7 +75,7 @@ impl GitHubLink {
         let full_name = found.get("repository")?.to_owned();
         // The HTTPS path is built from it: GitHub's rules for names only.
         github_repository(&full_name)?;
-        Some(Self { full_name, id: found.get("id")?.parse().ok()?, ssh_address: found.get("ssh")?.to_owned() })
+        Some(Self { full_name, ssh_address: found.get("ssh")?.to_owned() })
     }
 
     fn is_store(&self, store: &StoreAddress) -> bool {
@@ -101,7 +100,7 @@ pub fn is_github_repository(address: String, full_name: String, ssh_address: Str
 }
 
 /// The steps of a background refresh, for stopping between them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshStep {
     /// Getting a usable access token (may refresh it: network).
     Token,
@@ -188,13 +187,14 @@ impl GitHubAccount {
         store_wait: &dyn Fn() -> Duration,
         mut progress: Option<crate::sync::TransferCallback<'_>>,
     ) -> Result<Exclusive, SyncError> {
-        let fetch = |token: Secret| {
-            let progress = progress.as_mut().map(|p| &mut **p as crate::sync::TransferCallback<'_>);
-            let remote = HttpsRemote::new(http.clone(), &link.full_name, token, self.download_limit());
-            let transfer = |repo: &git2::Repository| remote.with_remote(repo, |r| crate::sync::fetch_connected(r, progress));
-            crate::sync::fetch_into(store, fetch_wait, store_wait, transfer)
+        let transfer = |repo: &git2::Repository| {
+            self.with_token(http, |token: Secret| {
+                let progress = progress.as_mut().map(|p| &mut **p as crate::sync::TransferCallback<'_>);
+                let remote = HttpsRemote::new(http.clone(), &link.full_name, token, self.download_limit());
+                remote.with_remote(repo, |r| crate::sync::fetch_connected(r, progress))
+            })
         };
-        Ok(self.with_token(http, fetch)?.1)
+        Ok(crate::sync::fetch_into::<_, GitHubError>(store, fetch_wait, store_wait, transfer)?.1)
     }
 
     /// The background refresh: see the module comment. Ends by `budget`
@@ -214,10 +214,6 @@ impl GitHubAccount {
         let lock_wait = || BACKGROUND_LOCK_WAIT.min(deadline.saturating_duration_since(Instant::now()));
         let out_of_time = || BackgroundRefreshReport::ended(BackgroundOutcome::OutOfTime);
         let failed = |e: SyncError| {
-            let unreachable = matches!(e.remote_failure(), Some(RemoteFailure::Unreachable { .. }));
-            if unreachable && Instant::now() >= deadline {
-                return out_of_time();
-            }
             let fault = match e {
                 SyncError::Fault { fault } => fault,
                 own => Fault::local(own),
@@ -238,8 +234,10 @@ impl GitHubAccount {
             return out_of_time();
         }
         let http = Http::new(&self.endpoints, Some(deadline));
-        if let Err(e) = self.keeper.access_token(&http, None) {
-            return failed(e.into());
+        match self.keeper.access_token(&http, None) {
+            Ok(_) => {}
+            Err(GitHubError::OutOfTime) => return out_of_time(),
+            Err(e) => return failed(e.into()),
         }
         if stopping(RefreshStep::Fetch) {
             return out_of_time();

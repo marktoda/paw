@@ -7,9 +7,12 @@ license = "MIT"
 [lib]
 crate-type = ["lib", "staticlib"]
 
+# Generates the Swift bindings (scripts/build-core.sh). Behind its own
+# feature, so its dependencies are not the library's.
 [[bin]]
 name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
 
 [features]
 # The simulated key, the fixture store, the software keystore and clock, and
@@ -18,14 +21,16 @@ path = "src/bin/uniffi-bindgen.rs"
 # `--no-default-features` and `scripts/check-no-sim.sh` proves they are gone
 # (design.md 5.5).
 default = ["sim"]
-sim = ["dep:flate2", "tokio/io-util"]
+sim = ["dep:ed25519-dalek", "dep:flate2", "dep:sha1", "dep:x25519-dalek", "tokio/io-util"]
+bindgen = ["uniffi/cli", "uniffi/cargo-metadata"]
 
 [dependencies]
 base64 = "0.22"
 card-backend = "0.2.0"
 # Seals Face ID copies (see src/copies/format.rs).
 chacha20poly1305 = "0.10"
-ed25519-dalek = "2"
+# The simulated key's authentication key.
+ed25519-dalek = { version = "2", optional = true }
 # Only the simulated git host uses it, to find where a pushed pack ends.
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"], optional = true }
 # libgit2 is compiled from the vendored source with no TLS and no libssh2:
@@ -43,13 +48,14 @@ pgp = "0.21.1"
 psl = "2"
 rand = "0.8"
 # GitHub sign-in (src/github): JSON from GitHub's API. Already in the tree
-# through uniffi.
+# through pgp.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # No RSA, no compression, and ring rather than aws-lc: ring builds with the
 # C compiler alone, aws-lc also wants cmake on some targets.
 russh = { version = "0.65.4", default-features = false, features = ["ring"] }
-sha1 = "0.11.0"
+# The simulated key's OpenPGP fingerprints.
+sha1 = { version = "0.11.0", optional = true }
 # One-time codes (src/otp.rs): the SHA-1 that hmac 0.12 takes. Already in the
 # tree through pgp.
 sha1_hmac = { package = "sha1", version = "0.10" }
@@ -59,13 +65,14 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "time"] }
 unicode-normalization = "0.1"
 # Full Unicode case folding, for names that are one name on an iPhone.
 unicase = "2.9"
-uniffi = { version = "0.32.2", features = ["cli"] }
+uniffi = { version = "0.32.2", default-features = false }
 # GitHub sign-in (src/github): a small blocking HTTP/1.1 client over rustls
 # with ring (already here through russh) and the Mozilla roots compiled in
 # (webpki-roots). No OpenSSL, no aws-lc, no platform verifier, no gzip, no
 # new C. Only github.com and api.github.com are ever contacted with it.
 ureq = { version = "3", default-features = false, features = ["rustls"] }
-x25519-dalek = { version = "2", features = ["static_secrets"] }
+# The simulated key's decryption key.
+x25519-dalek = { version = "2", features = ["static_secrets"], optional = true }
 zeroize = "1"
 
 [dev-dependencies]

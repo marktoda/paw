@@ -106,18 +106,18 @@ fn the_remote() {
 #[test]
 fn the_github_link() {
     use crate::github::refresh::GitHubLink;
-    let bytes = b"repository=you/store\nid=42\nssh=git@github.com:you/store.git\n";
+    // Written before with the repository's `id`, which is no longer kept.
+    let older = b"repository=you/store\nid=42\nssh=git@github.com:you/store.git\n";
+    let bytes = b"repository=you/store\nssh=git@github.com:you/store.git\n";
     let dir = state();
-    put(dir.path(), layout::GITHUB_LINK, bytes);
+    put(dir.path(), layout::GITHUB_LINK, older);
     let link = GitHubLink::load(dir.path()).unwrap();
-    assert_eq!(
-        link,
-        GitHubLink { full_name: "you/store".into(), id: 42, ssh_address: "git@github.com:you/store.git".into() }
-    );
+    assert_eq!(link, GitHubLink { full_name: "you/store".into(), ssh_address: "git@github.com:you/store.git".into() });
 
     let again = state();
     link.save(again.path()).unwrap();
     assert_eq!(get(again.path(), layout::GITHUB_LINK), bytes);
+    assert_eq!(GitHubLink::load(again.path()), Some(link));
 }
 
 #[test]
@@ -198,12 +198,12 @@ fn pinned_recipients_with_a_key_from_a_certificate_still_read() {
 
 #[test]
 fn the_site_pairings() {
-    use crate::store::pairings::{Pairing, PairingFile};
+    use crate::store::pairings::{Pairing, SitePairings};
     let bytes = br#"{"version":1,"pairings":[{"entry":"bank","sites":["bank.com"]}]}"#;
     let dir = state();
     put(dir.path(), layout::SITE_PAIRINGS, bytes);
-    let file = PairingFile::new(dir.path());
-    assert_eq!(file.load(), [Pairing { entry: "bank".into(), sites: vec!["bank.com".into()] }]);
+    let file = SitePairings::new(dir.path());
+    assert_eq!(file.pairings(), [Pairing { entry: "bank".into(), sites: vec!["bank.com".into()] }]);
 
     file.record("bank", "bank.com", None).unwrap();
     assert_eq!(get(dir.path(), layout::SITE_PAIRINGS), bytes);
@@ -211,11 +211,11 @@ fn the_site_pairings() {
 
 #[test]
 fn the_one_time_code_list() {
-    use crate::store::codes::CodeFile;
+    use crate::store::codes::OneTimeCodeEntries;
     let dir = state();
     put(dir.path(), layout::ONE_TIME_CODES_ON, b"");
     put(dir.path(), layout::ONE_TIME_CODES, br#"{"version":1,"entries":["web/github.com"]}"#);
-    let file = CodeFile::new(dir.path());
+    let file = OneTimeCodeEntries::new(dir.path());
     assert!(file.enabled());
     assert_eq!(file.load(), ["web/github.com"]);
 

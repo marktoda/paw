@@ -12,7 +12,7 @@ fn update(received: u32, total: u32) -> TransferProgress {
 #[test]
 fn a_thousand_updates_in_a_second_are_reported_at_most_eleven_times_with_the_end() {
     let start = Instant::now();
-    let mut throttle = ProgressThrottle::new(PROGRESS_INTERVAL);
+    let mut throttle = ProgressThrottle::default();
     let mut reported = Vec::new();
     for received in 1..=1000u32 {
         let at = start + Duration::from_millis(u64::from(received));
@@ -37,7 +37,7 @@ fn a_thousand_updates_in_a_second_are_reported_at_most_eleven_times_with_the_end
 #[test]
 fn a_report_is_not_repeated_and_nothing_follows_a_stop() {
     let start = Instant::now();
-    let mut throttle = ProgressThrottle::new(PROGRESS_INTERVAL);
+    let mut throttle = ProgressThrottle::default();
     assert!(throttle.should_report(start, update(0, 0)));
     // The same counts a while later: nothing new to say.
     assert!(!throttle.should_report(start + Duration::from_secs(1), update(0, 0)));
@@ -53,7 +53,7 @@ fn a_report_is_not_repeated_and_nothing_follows_a_stop() {
 #[test]
 fn bytes_alone_moving_are_reported_on_the_interval() {
     let start = Instant::now();
-    let mut throttle = ProgressThrottle::new(PROGRESS_INTERVAL);
+    let mut throttle = ProgressThrottle::default();
     let at = |ms| start + Duration::from_millis(ms);
     let bytes = |n| TransferProgress { received_objects: 3, total_objects: 10, received_bytes: n };
     assert!(throttle.should_report(at(0), bytes(1)));

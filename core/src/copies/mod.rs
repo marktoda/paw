@@ -34,6 +34,7 @@ use format::{CopyFile, IndexKeys, Invalid, Meta};
 pub use seams::{DeviceKeystore, KeystoreError};
 
 use crate::clock::Clock;
+use crate::files::remove_if_there;
 
 /// No copy lives longer, whatever the caller asks for.
 pub const MAX_TTL: Duration = Duration::from_secs(12 * 60 * 60);
@@ -139,9 +140,8 @@ impl CopyCache {
 
     /// Every entry with a live copy, soonest to end first. Never prompts.
     pub fn list(&self) -> Result<Vec<LiveCopy>, PawError> {
-        let keys = self.keys()?;
-        let mut live: Vec<LiveCopy> = self
-            .scan(&keys)?
+        let (_, live) = self.scan()?;
+        let mut live: Vec<LiveCopy> = live
             .into_iter()
             .map(|found| LiveCopy { entry: found.file.meta.entry, until_ms: found.until_ms })
             .collect();
@@ -152,8 +152,7 @@ impl CopyCache {
     /// Wipes every copy that has ended. Every other call does this too;
     /// call it on launch and on each return to the foreground.
     pub fn sweep(&self) -> Result<(), PawError> {
-        let keys = self.keys()?;
-        self.scan(&keys)?;
+        self.scan()?;
         dir::remove_stale_temps(&self.dir).map_err(io_err)
     }
 
@@ -185,7 +184,7 @@ impl CopyCache {
             // While the marker is there nothing reads it; wipe it before the
             // marker goes, or it would be live again.
             dir::wipe(&self.dir).map_err(io_err)?;
-            return dir::remove(&marker).map_err(io_err);
+            return remove_if_there(&marker).map_err(io_err);
         }
         // The marker first: a copy another process seals in between is
         // wiped by its next read and was sealed under keys reset below. If
@@ -200,9 +199,8 @@ impl CopyCache {
     /// moved. Never prompts and never resets the keystore. Copies that have
     /// ended are wiped too, as by every call.
     pub fn forget_entry(&self, entry: String) -> Result<(), PawError> {
-        self.scan(&self.keys()?)?;
-        let keys = self.keys()?;
-        dir::remove(&self.path(&keys, &entry)).map_err(io_err)
+        let (keys, _) = self.scan()?;
+        remove_if_there(&self.path(&keys, &entry)).map_err(io_err)
     }
 }
 
@@ -238,45 +236,65 @@ impl CopyCache {
     }
 
     /// Reads every copy, applies the rules in the module comment, and
-    /// returns the copies still live. The clocks are read after the files,
-    /// so a copy another process has just written is never "from the
-    /// future".
-    fn scan(&self, keys: &IndexKeys) -> Result<Vec<Found>, PawError> {
-        // Turned off: nothing is live, and anything written since goes.
+    /// returns the copies still live, with the index keys as they are
+    /// afterwards: ending every copy resets the keystore, and a copy
+    /// written under the old keys would be unreadable, and lost, at once.
+    /// The clocks are read after the files, so a copy another process has
+    /// just written is never "from the future".
+    fn scan(&self) -> Result<(IndexKeys, Vec<Found>), PawError> {
+        let keys = self.keys()?;
         if self.off() {
             dir::wipe(&self.dir).map_err(io_err)?;
-            return Ok(Vec::new());
+            return Ok((keys, Vec::new()));
         }
         let mut files = Vec::new();
         for (stem, path) in dir::copy_files(&self.dir).map_err(io_err)? {
             let Some(bytes) = dir::read(&path).map_err(io_err)? else { continue };
-            match CopyFile::parse(keys, &bytes) {
+            match CopyFile::parse(&keys, &bytes) {
                 Ok(file) if keys.file_stem(&file.meta.entry) == stem => files.push((path, file)),
                 // Not ours, damaged, sealed under keys since reset, or
                 // moved from another entry's name.
-                _ => dir::remove(&path).map_err(io_err)?,
+                _ => remove_if_there(&path).map_err(io_err)?,
             }
         }
 
         let now = self.now();
         if files.iter().any(|(_, file)| now.ends_all(&file.meta)) {
             self.end_all()?;
-            return Ok(Vec::new());
+            return Ok((self.keys()?, Vec::new()));
         }
         let mut live = Vec::new();
         for (path, file) in files {
             match now.until(&file.meta) {
                 Some(until_ms) => live.push(Found { path, file, until_ms }),
-                None => dir::remove(&path).map_err(io_err)?,
+                None => remove_if_there(&path).map_err(io_err)?,
             }
         }
-        Ok(live)
+        Ok((keys, live))
     }
 
     /// The live copy of `entry`, if any, with every other copy checked.
-    fn find(&self, keys: &IndexKeys, entry: &str) -> Result<Option<Found>, PawError> {
-        let path = self.path(keys, entry);
-        Ok(self.scan(keys)?.into_iter().find(|found| found.path == path))
+    fn find(&self, entry: &str) -> Result<(IndexKeys, Option<Found>), PawError> {
+        let (keys, live) = self.scan()?;
+        let path = self.path(&keys, entry);
+        let found = live.into_iter().find(|found| found.path == path);
+        Ok((keys, found))
+    }
+
+    /// `entry`'s live copy if it was made from the ciphertext `content_id`,
+    /// with every other copy checked. Else why not: none, or a stale copy,
+    /// which is wiped.
+    fn current(&self, entry: &str, content_id: &[u8]) -> Result<(IndexKeys, Result<Found, CopyStatus>), PawError> {
+        let (keys, found) = self.find(entry)?;
+        let current = match found {
+            None => Err(CopyStatus::NeedsKey),
+            Some(found) if found.file.meta.content_id != content_id => {
+                remove_if_there(&found.path).map_err(io_err)?;
+                Err(CopyStatus::Stale)
+            }
+            Some(found) => Ok(found),
+        };
+        Ok((keys, current))
     }
 
     /// Keeps a copy of `text`, just decrypted with the key, for `ttl` from
@@ -290,14 +308,10 @@ impl CopyCache {
         content_id: &[u8],
         ttl: Duration,
     ) -> Result<Option<i64>, PawError> {
-        // Applies the end-all rules before anything new is added. Ending
-        // everything (a reboot, a clock set back) resets the keystore, so
-        // the index keys are derived again afterwards: a copy written under
-        // the old ones would be unreadable, and lost, at once.
-        self.scan(&self.keys()?)?;
-        let keys = self.keys()?;
+        // Applies the end-all rules before anything new is added.
+        let (keys, _) = self.scan()?;
         if ttl.is_zero() || self.off() {
-            dir::remove(&self.path(&keys, entry)).map_err(io_err)?;
+            remove_if_there(&self.path(&keys, entry)).map_err(io_err)?;
             return Ok(None);
         }
         let ttl_ms = ttl.min(MAX_TTL).as_millis() as i64;
@@ -326,13 +340,10 @@ impl CopyCache {
     /// Whether `entry`, whose current ciphertext has `content_id`, can be
     /// opened by Face ID. Never prompts. A stale copy is wiped.
     pub fn status(&self, entry: &str, content_id: &[u8]) -> Result<CopyStatus, PawError> {
-        let keys = self.keys()?;
-        let Some(found) = self.find(&keys, entry)? else { return Ok(CopyStatus::NeedsKey) };
-        if found.file.meta.content_id != content_id {
-            dir::remove(&found.path).map_err(io_err)?;
-            return Ok(CopyStatus::Stale);
-        }
-        Ok(CopyStatus::Available { until_ms: found.until_ms })
+        Ok(match self.current(entry, content_id)?.1 {
+            Ok(found) => CopyStatus::Available { until_ms: found.until_ms },
+            Err(status) => status,
+        })
     }
 
     /// Opens `entry`'s copy with Face ID, showing `reason`. A copy that has
@@ -345,12 +356,7 @@ impl CopyCache {
         content_id: &[u8],
         reason: &str,
     ) -> Result<Zeroizing<Vec<u8>>, PawError> {
-        let keys = self.keys()?;
-        let Some(found) = self.find(&keys, entry)? else { return Err(PawError::CopyUnavailable) };
-        if found.file.meta.content_id != content_id {
-            dir::remove(&found.path).map_err(io_err)?;
-            return Err(PawError::CopyUnavailable);
-        }
+        let (keys, Ok(found)) = self.current(entry, content_id)? else { return Err(PawError::CopyUnavailable) };
 
         let data_key = self
             .keystore
@@ -373,11 +379,11 @@ impl CopyCache {
             return Err(PawError::CopyUnavailable);
         }
         if !unchanged || now.until(&found.file.meta).is_none() {
-            dir::remove(&found.path).map_err(io_err)?;
+            remove_if_there(&found.path).map_err(io_err)?;
             return Err(PawError::CopyUnavailable);
         }
         found.file.open_text(&data_key).or_else(|_| {
-            dir::remove(&found.path).map_err(io_err)?;
+            remove_if_there(&found.path).map_err(io_err)?;
             Err(PawError::CopyUnavailable)
         })
     }
@@ -420,10 +426,9 @@ impl CopyCache {
         text: &[u8],
         content_id: &[u8],
     ) -> Result<Option<i64>, PawError> {
-        let keys = self.keys()?;
-        let Some(found) = self.find(&keys, from)? else { return Ok(None) };
+        let (_, Some(found)) = self.find(from)? else { return Ok(None) };
         let left = found.until_ms.saturating_sub(self.now().wall_ms);
-        dir::remove(&found.path).map_err(io_err)?;
+        remove_if_there(&found.path).map_err(io_err)?;
         if left <= 0 {
             return Ok(None);
         }

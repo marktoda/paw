@@ -13,19 +13,18 @@
 //! thread blocks on it. None of this may be called from inside another async
 //! runtime.
 
-use std::cell::RefCell;
 use std::io::{self, Read, Write};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use git2::transport::{Service, SmartSubtransport, SmartSubtransportStream, Transport};
+use git2::transport::{Service, SmartSubtransportStream};
 use russh::client::{self, AuthResult};
 use russh::keys::agent::AgentIdentity;
 use russh::keys::{Algorithm, HashAlg, PublicKey, PublicKeyOrCertificate};
 use russh::{Channel, ChannelMsg, Disconnect};
 
 use crate::fault::Fault;
+use crate::git_transport::{self, Carrier, DOWNLOAD_LIMIT, DownloadCap};
 use crate::PawError;
 use crate::key::KeyError;
 use crate::remote::RemoteFailure;
@@ -37,13 +36,6 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 /// A connection that carries nothing for this long is treated as dead, so a
 /// phone that lost its network does not hang in the middle of a fetch.
 const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(60);
-/// The URL libgit2 is given. It only selects our transport; the connection
-/// itself comes from [`ACTIVE`].
-const TRANSPORT_URL: &str = "paw-ssh://connection";
-/// The most one git service may send, by default: 256 MiB. A password
-/// store with years of history is a few MiB; a host sending more is broken
-/// or hostile, and is stopped as it goes, before the pack is on disk.
-pub const DOWNLOAD_LIMIT: u64 = 256 << 20;
 const STDERR_LIMIT: usize = 2048;
 
 fn no_connection(host: &str, port: u16, why: &str) -> Fault {
@@ -109,11 +101,6 @@ impl HostKeyPin {
             .map_err(|e| PawError::Git(format!("not a host key: {e}")))
     }
 
-    /// The `SHA256:...` form of the first (preferred) key, shown to the user.
-    pub fn fingerprint(&self) -> String {
-        fingerprint_of(&self.0[0])
-    }
-
     /// The `SHA256:...` form of every pinned key, preferred first.
     pub fn fingerprints(&self) -> Vec<String> {
         self.0.iter().map(fingerprint_of).collect()
@@ -123,14 +110,6 @@ impl HostKeyPin {
     /// "RSA") and its `SHA256:...` fingerprint, preferred first.
     pub fn described(&self) -> Vec<(String, String)> {
         self.0.iter().map(|key| (key_type_words(key.algorithm().as_ref()), fingerprint_of(key))).collect()
-    }
-
-    /// The pinned keys as public key lines, preferred first.
-    pub fn lines(&self) -> Vec<String> {
-        self.0
-            .iter()
-            .filter_map(|key| key.to_openssh().ok())
-            .collect()
     }
 
     /// The host key algorithms to offer: the pinned keys' types, preferred
@@ -229,7 +208,7 @@ struct Shared {
     /// What the remote printed on stderr and how the connection failed, kept
     /// because libgit2 reports either only as "early EOF".
     diagnostics: Mutex<Diagnostics>,
-    download_limit: AtomicU64,
+    cap: DownloadCap,
 }
 
 #[derive(Default)]
@@ -238,8 +217,6 @@ struct Diagnostics {
     fetching: bool,
     stderr: Vec<u8>,
     network: Option<String>,
-    /// The service sent more than this many bytes and was stopped.
-    too_big: Option<u64>,
 }
 
 /// Accepts the pinned host key and nothing else.
@@ -478,7 +455,7 @@ impl Connection {
                 host: remote.host.clone(),
                 path: remote.path.clone(),
                 diagnostics: Mutex::default(),
-                download_limit: AtomicU64::new(DOWNLOAD_LIMIT),
+                cap: DownloadCap::new(DOWNLOAD_LIMIT),
             }),
         })
     }
@@ -506,12 +483,12 @@ impl Connection {
         if accepted { Ok(()) } else { Err(not_accepted(remote, key)) }
     }
 
-    /// Sets the most one git service on this connection may send, in
-    /// bytes, in place of [`DOWNLOAD_LIMIT`]. A fetch or clone that would
+    /// Sets the most one fetch, clone or push on this connection may
+    /// receive, in bytes, in place of [`DOWNLOAD_LIMIT`]. One that would
     /// receive more stops saying so.
     #[cfg(feature = "sim")]
     pub fn set_download_limit(&self, bytes: u64) {
-        self.shared.download_limit.store(bytes, Ordering::SeqCst);
+        self.shared.cap.set_limit(bytes);
     }
 
     /// Runs `operation` against a libgit2 remote whose transport is this
@@ -521,16 +498,8 @@ impl Connection {
         repo: &git2::Repository,
         operation: impl FnOnce(&mut git2::Remote<'_>) -> Result<T, git2::Error>,
     ) -> Result<T, Fault> {
-        register_transport();
         *self.shared.diagnostics.lock().unwrap() = Diagnostics::default();
-
-        ACTIVE.with(|active| *active.borrow_mut() = Some(self.shared.clone()));
-        let result = repo
-            .remote_anonymous(TRANSPORT_URL)
-            .and_then(|mut remote| operation(&mut remote));
-        ACTIVE.with(|active| *active.borrow_mut() = None);
-
-        result.map_err(|e| self.shared.explain(e))
+        git_transport::with_remote(repo, self.shared.clone(), operation, |e| self.shared.explain(e))
     }
 }
 
@@ -585,13 +554,6 @@ impl Drop for Connection {
 impl Shared {
     fn explain(&self, error: git2::Error) -> Fault {
         let mut diagnostics = self.diagnostics.lock().unwrap();
-        if let Some(limit) = diagnostics.too_big.take() {
-            return PawError::Git(format!(
-                "the git host sent more than {} MiB, far more than a password store; paw stopped the download",
-                limit >> 20
-            ))
-            .into();
-        }
         if let Some(network) = diagnostics.network.take() {
             return unreachable(&self.host, network);
         }
@@ -619,41 +581,13 @@ impl Shared {
     }
 }
 
-thread_local! {
-    /// The connection the libgit2 call running on this thread should use.
-    /// libgit2 picks a transport by URL scheme through a process-wide table,
-    /// which has no room for a per-call value; the call is synchronous, so
-    /// the calling thread carries it instead.
-    static ACTIVE: RefCell<Option<Arc<Shared>>> = const { RefCell::new(None) };
-}
+impl Carrier for Shared {
+    fn stateless(&self) -> bool {
+        // One channel per service, kept open for the whole exchange.
+        false
+    }
 
-fn register_transport() {
-    static REGISTERED: Once = Once::new();
-    REGISTERED.call_once(|| {
-        let factory = |remote: &git2::Remote<'_>| {
-            let shared = ACTIVE
-                .with(|active| active.borrow().clone())
-                .ok_or_else(|| git2::Error::from_str("no SSH connection is open for this call"))?;
-            // `false`: the protocol is stateful, one channel per service.
-            Transport::smart(remote, false, Subtransport(shared))
-        };
-        // SAFETY: libgit2 requires that no other thread creates a transport
-        // while the table changes. `Once` serialises registration, and every
-        // transport in this process is created by `with_remote`, which calls
-        // this first.
-        unsafe { git2::transport::register("paw-ssh", factory) }
-            .expect("registering the SSH transport with libgit2");
-    });
-}
-
-struct Subtransport(Arc<Shared>);
-
-impl SmartSubtransport for Subtransport {
-    fn action(
-        &self,
-        _url: &str,
-        service: Service,
-    ) -> Result<Box<dyn SmartSubtransportStream>, git2::Error> {
+    fn open(self: Arc<Self>, service: Service) -> Result<Box<dyn SmartSubtransportStream>, git2::Error> {
         let program = match service {
             Service::UploadPackLs => "git-upload-pack",
             Service::ReceivePackLs => "git-receive-pack",
@@ -662,26 +596,23 @@ impl SmartSubtransport for Subtransport {
                 return Err(git2::Error::from_str("unexpected second stream for one service"));
             }
         };
-        let command = format!("{program} {}", shell_quote(&self.0.path));
-        self.0.diagnostics.lock().unwrap().fetching = program == "git-upload-pack";
+        let command = format!("{program} {}", shell_quote(&self.path));
+        self.diagnostics.lock().unwrap().fetching = program == "git-upload-pack";
 
-        let shared = self.0.clone();
-        let channel = shared
+        let channel = self
             .runtime
             .block_on(async {
-                let channel = shared.session.channel_open_session().await?;
+                let channel = self.session.channel_open_session().await?;
                 channel.exec(true, command).await?;
                 Ok(channel)
             })
-            .map_err(|e| git2::Error::from_str(&shared.network_failure(e).to_string()))?;
+            .map_err(|e| git2::Error::from_str(&self.network_failure(e).to_string()))?;
 
-        Ok(Box::new(ServiceStream { shared, channel, unread: Vec::new(), received: 0 }))
+        Ok(Box::new(ServiceStream { shared: self, channel, unread: Vec::new() }))
     }
 
-    fn close(&self) -> Result<(), git2::Error> {
-        // The channel closes when its stream is dropped. The connection stays
-        // open for the next service.
-        Ok(())
+    fn cap(&self) -> &DownloadCap {
+        &self.cap
     }
 }
 
@@ -707,7 +638,6 @@ struct ServiceStream {
     channel: Channel<client::Msg>,
     /// Received bytes libgit2 has not asked for yet.
     unread: Vec<u8>,
-    received: u64,
 }
 
 impl Read for ServiceStream {
@@ -715,12 +645,7 @@ impl Read for ServiceStream {
         while self.unread.is_empty() {
             match self.shared.runtime.block_on(self.channel.wait()) {
                 Some(ChannelMsg::Data { data }) => {
-                    self.received += data.len() as u64;
-                    let limit = self.shared.download_limit.load(Ordering::SeqCst);
-                    if self.received > limit {
-                        self.shared.diagnostics.lock().unwrap().too_big = Some(limit);
-                        return Err(io::Error::other("the git host sent too much"));
-                    }
+                    self.shared.cap.count(data.len())?;
                     self.unread = data.to_vec();
                 }
                 Some(ChannelMsg::ExtendedData { data, .. }) => {

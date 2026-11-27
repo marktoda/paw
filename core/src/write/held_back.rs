@@ -94,7 +94,7 @@ fn survey(reading: &Shared, store: &OpenStore) -> Result<Survey, SyncError> {
     let (head, files) = waiting_files(reading, store)?;
     let mut held = Vec::new();
     for file in files {
-        if !crate::path::is_entry_file(&file.path) {
+        if crate::path::entry_of_file(&file.path).is_none() {
             continue;
         }
         let folder = crate::path::folder_of(&file.path);

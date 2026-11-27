@@ -35,8 +35,6 @@ pub struct DeviceCode {
     pub verification_uri: String,
     /// How long the code lasts, in seconds from `start`.
     pub expires_in: u32,
-    /// The seconds between polls GitHub asked for at the start.
-    pub interval: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -133,7 +131,6 @@ struct Progress {
     interval: Duration,
     next_poll: Duration,
     finished: Option<SignInState>,
-    polls: u32,
 }
 
 #[derive(uniffi::Object)]
@@ -154,10 +151,6 @@ impl std::fmt::Debug for DeviceSignIn {
     }
 }
 
-fn refused(message: &str) -> GitHubError {
-    GitHubError::refused(message)
-}
-
 /// Codes GitHub shows are short letters, digits and a hyphen; anything else
 /// is not shown to the person.
 fn plausible_user_code(code: &str) -> bool {
@@ -171,18 +164,16 @@ impl DeviceSignIn {
         let client_id = endpoints.client_id().to_owned();
         let answer = http.post_form("/login/device/code", &[("client_id", &client_id)])?;
         let started = clock.now();
-        if answer.status >= 500 {
-            return Err(GitHubError::network(format!("GitHub answered {}", answer.status)));
-        }
+        GitHubError::unless_down(answer.status)?;
         let mut parsed: CodeAnswer =
-            serde_json::from_slice(&answer.body).map_err(|_| refused("GitHub's sign-in answer was not readable"))?;
+            serde_json::from_slice(&answer.body).map_err(|_| GitHubError::refused("GitHub's sign-in answer was not readable"))?;
         match parsed.error.as_deref() {
             None => {}
             Some("device_flow_disabled") => return Err(GitHubError::DeviceFlowDisabled),
-            Some(_) => return Err(refused("GitHub did not start the sign-in")),
+            Some(_) => return Err(GitHubError::refused("GitHub did not start the sign-in")),
         }
-        let device_code = Secret::new(parsed.device_code.take().ok_or_else(|| refused("GitHub sent no device code"))?);
-        let user_code = parsed.user_code.take().filter(|c| plausible_user_code(c)).ok_or_else(|| refused("GitHub sent no code to show"))?;
+        let device_code = Secret::new(parsed.device_code.take().ok_or_else(|| GitHubError::refused("GitHub sent no device code"))?);
+        let user_code = parsed.user_code.take().filter(|c| plausible_user_code(c)).ok_or_else(|| GitHubError::refused("GitHub sent no code to show"))?;
         // Shown to the person: it must be GitHub's own page.
         let verification_uri = parsed
             .verification_uri
@@ -190,44 +181,23 @@ impl DeviceSignIn {
             .filter(|uri| http.may_carry_credentials(uri, super::http::Host::Web))
             .unwrap_or_else(|| format!("{}/login/device", endpoints.web()));
         if !device_code.well_formed() {
-            return Err(refused("GitHub's device code was not usable"));
+            return Err(GitHubError::refused("GitHub's device code was not usable"));
         }
         let expires_in = parsed.expires_in.unwrap_or(900).clamp(1, 3600);
-        let interval = parsed.interval.unwrap_or(DEFAULT_INTERVAL).clamp(MIN_INTERVAL, 600);
-        let interval_duration = Duration::from_secs(interval);
+        let interval = Duration::from_secs(parsed.interval.unwrap_or(DEFAULT_INTERVAL).clamp(MIN_INTERVAL, 600));
         Ok(Self {
             http,
             keeper,
             clock,
             cancel: Cancel::default(),
             device_code,
-            code: DeviceCode {
-                user_code,
-                verification_uri,
-                expires_in: expires_in as u32,
-                interval: interval as u32,
-            },
+            code: DeviceCode { user_code, verification_uri, expires_in: expires_in as u32 },
             expires_at: started + Duration::from_secs(expires_in),
-            progress: Mutex::new(Progress {
-                interval: interval_duration,
-                next_poll: started + interval_duration,
-                finished: None,
-                polls: 0,
-            }),
+            progress: Mutex::new(Progress { interval, next_poll: started + interval, finished: None }),
         })
-    }
-
-    pub fn interval(&self) -> Duration {
-        self.progress.lock().unwrap_or_else(|p| p.into_inner()).interval
-    }
-
-    pub fn polls(&self) -> u32 {
-        self.progress.lock().unwrap_or_else(|p| p.into_inner()).polls
     }
 }
 
-/// One device sign-in, as the GitHub picker drives it: `poll` in a loop on
-/// a background thread while it returns `Waiting`; `cancel` from any thread.
 #[uniffi::export]
 impl DeviceSignIn {
     pub fn code(&self) -> DeviceCode {
@@ -258,7 +228,6 @@ impl DeviceSignIn {
             progress.finished = Some(SignInState::Expired);
             return Ok(SignInState::Expired);
         }
-        progress.polls += 1;
         progress.next_poll = self.clock.now() + progress.interval;
         let client_id = self.http.endpoints().client_id().to_owned();
         let answer = self.http.post_form(
@@ -269,9 +238,7 @@ impl DeviceSignIn {
                 ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ],
         )?;
-        if answer.status >= 500 {
-            return Err(GitHubError::network(format!("GitHub answered {}", answer.status)));
-        }
+        GitHubError::unless_down(answer.status)?;
         let parsed = parse_token_answer(&answer.body)?;
         let state = match parsed.error.as_deref() {
             Some("authorization_pending") => SignInState::Waiting,
@@ -292,11 +259,11 @@ impl DeviceSignIn {
                 // `incorrect_client_credentials`, `incorrect_device_code`,
                 // `unsupported_grant_type`: paw's own mistake; never retried.
                 progress.finished = Some(SignInState::Expired);
-                return Err(refused("GitHub refused the sign-in request"));
+                return Err(GitHubError::refused("GitHub refused the sign-in request"));
             }
             None => {
                 let now = self.keeper.now();
-                let tokens = Tokens::from_answer(parsed, now).ok_or_else(|| refused("GitHub's sign-in was not usable"))?;
+                let tokens = Tokens::from_answer(parsed, now).ok_or_else(|| GitHubError::refused("GitHub's sign-in was not usable"))?;
                 if self.cancel.is_set() {
                     progress.finished = Some(SignInState::Cancelled);
                     return Ok(SignInState::Cancelled);

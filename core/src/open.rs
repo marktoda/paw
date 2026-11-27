@@ -11,17 +11,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use zeroize::Zeroizing;
 
 use crate::PawError;
 use crate::copies::{CopyCache, CopyStatus};
 use crate::entry::opened::OpenedEntry;
 use crate::files::content_id;
 use crate::store::PassStore;
-
-pub(crate) fn opened(mut plaintext: Zeroizing<Vec<u8>>, content_id: Vec<u8>) -> Result<Arc<OpenedEntry>, PawError> {
-    OpenedEntry::decrypted(std::mem::take(&mut *plaintext), content_id)
-}
 
 /// Keeps a Face ID copy of `opened`, the entry named `name`, for `ttl`.
 /// `Ok` with when it ends (wall clock), or `None` if the cache kept none.
@@ -58,7 +53,7 @@ impl PassStore {
     ) -> Result<FaceIdOpen, PawError> {
         let current = content_id(&self.read_entry(&entry)?);
         match copies.open(&entry, &current, &reason) {
-            Ok(plaintext) => Ok(FaceIdOpen::Opened { entry: opened(plaintext, current)? }),
+            Ok(plaintext) => Ok(FaceIdOpen::Opened { entry: OpenedEntry::decrypted(plaintext, current)? }),
             Err(PawError::CopyUnavailable) => Ok(FaceIdOpen::NeedsKey),
             Err(e) => Err(e),
         }

@@ -94,7 +94,7 @@ private final class HarnessWorld: @unchecked Sendable {
     func open() -> AutoFillOpening {
         lock.withLock {
             if let clock {
-                let behind = Int64(Date().timeIntervalSince1970 * 1000) - clock.wallMs()
+                let behind = Int64(Date().timeIntervalSince1970 * 1000) - clock.asClock().wallMs()
                 clock.advanceMs(ms: UInt64(max(behind, 0)))
             }
             if busyOnce {

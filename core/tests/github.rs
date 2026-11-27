@@ -21,7 +21,7 @@ use paw_core::ffi::sync::Setup;
 use paw_core::task::{KeyOutcome, KeyTaskState};
 use paw_core::setup::SetupState;
 use paw_core::sim::SimulatedKey;
-use paw_core::sim::github::{SIM_USER_CODE, SimBystander, SimDeviceOutcome, SimGitHub, SimPollClock, SimTokenVault};
+use paw_core::sim::github::{SIM_CLIENT_ID, SIM_USER_CODE, SimBystander, SimDeviceOutcome, SimGitHub, SimPollClock, SimTokenVault};
 use paw_core::sim::remote::SimRemote;
 use paw_core::sync::operation::{self, SyncState};
 use paw_core::fault::Fault;
@@ -52,7 +52,7 @@ fn unix_now() -> u64 {
 fn world() -> World {
     let key = SimulatedKey::new(PIN.into(), false, 1000);
     let remote = SimRemote::start(key.clone()).unwrap();
-    let github = SimGitHub::start_for(&remote, REPOSITORY).unwrap();
+    let github = SimGitHub::start(remote.clone(), REPOSITORY.into()).unwrap();
     let vault = SimTokenVault::new();
     let clock = SimPollClock::new();
     let wall = Arc::new(AtomicU64::new(unix_now()));
@@ -224,7 +224,7 @@ fn sign_in_polls_at_githubs_interval_until_the_person_authorises() {
     let code = sign_in.code();
     assert_eq!(code.user_code, SIM_USER_CODE);
     assert_eq!(code.verification_uri, format!("{}/login/device", w.github.url()));
-    assert_eq!((code.interval, code.expires_in), (5, 900));
+    assert_eq!(code.expires_in, 900);
 
     assert_eq!(sign_in.poll().unwrap(), SignInState::Waiting);
     assert_eq!(sign_in.poll().unwrap(), SignInState::Waiting);
@@ -233,7 +233,6 @@ fn sign_in_polls_at_githubs_interval_until_the_person_authorises() {
     assert_eq!(sign_in.poll().unwrap(), SignInState::SignedIn);
 
     assert_eq!(w.clock.waits(), vec![secs(5), secs(10), secs(15)]);
-    assert_eq!(sign_in.polls(), 3);
     assert!(w.account.is_signed_in().unwrap());
     assert!(!format!("{sign_in:?}").contains("ghu_"));
 }
@@ -245,7 +244,6 @@ fn slow_down_adds_five_seconds_to_every_later_poll() {
     let sign_in = w.account.start_sign_in().unwrap();
 
     assert_eq!(sign_in.poll().unwrap(), SignInState::Waiting); // slow_down
-    assert_eq!(sign_in.interval(), secs(10));
     assert_eq!(sign_in.poll().unwrap(), SignInState::Waiting);
     assert_eq!(sign_in.poll().unwrap(), SignInState::SignedIn);
 
@@ -337,7 +335,7 @@ fn signing_in_sends_the_client_id_and_device_code_only_and_says_paw() {
     let requests = w.github.requests();
     assert_eq!(requests.len(), 2);
     let start = String::from_utf8_lossy(&requests[0].body).into_owned();
-    assert_eq!(start, format!("client_id={}", w.github.client_id()));
+    assert_eq!(start, format!("client_id={}", SIM_CLIENT_ID));
     let poll = String::from_utf8_lossy(&requests[1].body).into_owned();
     let fields: Vec<&str> = poll.split('&').map(|f| f.split('=').next().unwrap()).collect();
     assert_eq!(fields, vec!["client_id", "device_code", "grant_type"]);
@@ -365,7 +363,6 @@ fn the_picker_lists_every_granted_repository_across_pages_with_the_store_first()
     assert_eq!(store.full_name, REPOSITORY);
     assert_eq!((store.owner.as_str(), store.name.as_str()), ("you", "password-store"));
     assert!(store.private);
-    assert_eq!(store.default_branch, "main");
     assert_eq!(store.pushed_at.as_deref(), Some("2026-11-20T09:12:00Z"));
     assert_eq!(store.ssh_address, w.remote.address());
     // Three pages of repositories, and nothing read from inside any of them.
