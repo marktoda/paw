@@ -27,8 +27,8 @@ fn other_key() -> Arc<SimulatedKey> {
 fn identity(sim: &SimulatedKey, serial: &str) -> KeyIdentity {
     KeyIdentity {
         ident: format!("0006:{serial}"),
-        decryption_fingerprint: Some(sim.fingerprint_hex()),
-        authentication_fingerprint: Some(sim.authentication_fingerprint_hex()),
+        decryption_fingerprint: paw_core::fingerprint::Fingerprint::parse(&sim.fingerprint_hex()),
+        authentication_fingerprint: paw_core::fingerprint::Fingerprint::parse(&sim.authentication_fingerprint_hex()),
     }
 }
 

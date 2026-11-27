@@ -235,8 +235,8 @@ fn setup_records_the_key_and_gives_it_to_the_port() {
     let w = world();
     full_setup(&w);
     let recorded = enrolment::load_enrolment(&paw_core::lock::StoreDirs::new(w.dir.path())).unwrap().unwrap();
-    assert_eq!(recorded.decryption_fingerprint.as_deref(), Some(w.sim.fingerprint_hex().as_str()));
-    assert_eq!(recorded.authentication_fingerprint.as_deref(), Some(w.sim.authentication_fingerprint_hex().as_str()));
+    assert_eq!(recorded.decryption_fingerprint.as_ref().map(|f| f.as_str()), Some(w.sim.fingerprint_hex().as_str()));
+    assert_eq!(recorded.authentication_fingerprint.as_ref().map(|f| f.as_str()), Some(w.sim.authentication_fingerprint_hex().as_str()));
     assert_eq!(recorded.serial(), "12345678");
     assert!(w.port.key_matches_enrolment());
     // The port now holds out for that key: another one is not it.
@@ -361,8 +361,8 @@ fn another_key_plugged_in_mid_setup_is_refused_before_the_pin() {
     let KeyTaskState::Failed { error: KeyError::DifferentKey { mismatch } } = state else { panic!("{state:?}") };
     assert_eq!(mismatch.presented, KeyIdentity {
         ident: "0006:87654321".into(),
-        decryption_fingerprint: Some(other.fingerprint_hex()),
-        authentication_fingerprint: Some(other.authentication_fingerprint_hex()),
+        decryption_fingerprint: paw_core::fingerprint::Fingerprint::parse(&other.fingerprint_hex()),
+        authentication_fingerprint: paw_core::fingerprint::Fingerprint::parse(&other.authentication_fingerprint_hex()),
     });
     assert_eq!(other.verify_attempts() + other.pin_queries(), 0);
 }

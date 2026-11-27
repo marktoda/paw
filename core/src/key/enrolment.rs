@@ -32,8 +32,8 @@ pub fn key_serial(ident: String) -> String {
 pub struct KeyIdentity {
     /// Manufacturer and serial, e.g. "0006:12345678".
     pub ident: String,
-    pub decryption_fingerprint: Option<String>,
-    pub authentication_fingerprint: Option<String>,
+    pub decryption_fingerprint: Option<Fingerprint>,
+    pub authentication_fingerprint: Option<Fingerprint>,
 }
 
 /// A card other than the enrolled one was plugged in. For "This is a
@@ -43,14 +43,6 @@ pub struct KeyMismatch {
     pub enrolled: KeyIdentity,
     /// The key plugged in now.
     pub presented: KeyIdentity,
-}
-
-fn same(a: &Option<String>, b: &Option<String>) -> bool {
-    match (a, b) {
-        (Some(a), Some(b)) => Fingerprint::parse(a).is_some_and(|a| Fingerprint::parse(b) == Some(a)),
-        (None, None) => true,
-        _ => false,
-    }
 }
 
 impl KeyIdentity {
@@ -67,9 +59,9 @@ impl KeyIdentity {
     }
 
     pub(crate) fn accepts(&self, presented: &KeyIdentity) -> bool {
-        same(&self.decryption_fingerprint, &presented.decryption_fingerprint)
+        self.decryption_fingerprint == presented.decryption_fingerprint
             && (self.authentication_fingerprint.is_none()
-                || same(&self.authentication_fingerprint, &presented.authentication_fingerprint))
+                || self.authentication_fingerprint == presented.authentication_fingerprint)
     }
 
     pub(crate) fn check(&self, presented: &KeyIdentity) -> Option<KeyMismatch> {
@@ -81,8 +73,8 @@ impl KeyIdentity {
     pub fn describe(&self) -> String {
         let tail = self
             .decryption_fingerprint
-            .clone()
-            .map(|fpr| format!(", decryption key ending {}", crate::fingerprint::fingerprint_tail(fpr).join(" ")))
+            .as_ref()
+            .map(|fpr| format!(", decryption key ending {}", crate::fingerprint::fingerprint_tail(fpr.to_string()).join(" ")))
             .unwrap_or_default();
         format!("serial {}{tail}", self.serial())
     }
@@ -90,16 +82,16 @@ impl KeyIdentity {
     fn pairs(&self) -> Vec<(&'static str, &str)> {
         let mut pairs = vec![("ident", self.ident.as_str())];
         if let Some(fpr) = &self.decryption_fingerprint {
-            pairs.push(("decryption_fingerprint", fpr));
+            pairs.push(("decryption_fingerprint", fpr.as_str()));
         }
         if let Some(fpr) = &self.authentication_fingerprint {
-            pairs.push(("authentication_fingerprint", fpr));
+            pairs.push(("authentication_fingerprint", fpr.as_str()));
         }
         pairs
     }
 
     fn from_values(values: &Values) -> Option<Self> {
-        let fingerprint = |name: &str| values.get(name).and_then(Fingerprint::parse).map(|fpr| fpr.to_string());
+        let fingerprint = |name: &str| values.get(name).and_then(Fingerprint::parse);
         let identity = Self {
             ident: values.get("ident")?.to_owned(),
             decryption_fingerprint: fingerprint("decryption_fingerprint"),
@@ -116,11 +108,7 @@ fn io(what: &str, e: std::io::Error) -> PawError {
 }
 
 pub fn save_enrolment(store: &StoreDirs, _held: &Exclusive, identity: &KeyIdentity) -> Result<(), PawError> {
-    if identity.ident.contains(['\n', '\r'])
-        || [&identity.decryption_fingerprint, &identity.authentication_fingerprint]
-            .iter()
-            .any(|fpr| fpr.as_deref().is_some_and(|f| Fingerprint::parse(f).is_none()))
-    {
+    if identity.ident.contains(['\n', '\r']) {
         return Err(PawError::Store("not a key identity".into()));
     }
     values::write(&store.state_dir().join(crate::files::layout::ENROLLED_KEY), identity.pairs()).map_err(|e| io("save", e))

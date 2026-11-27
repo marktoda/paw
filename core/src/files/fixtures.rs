@@ -34,8 +34,8 @@ fn the_enrolled_key() {
     put(dir.path(), layout::ENROLLED_KEY, bytes.as_bytes());
     let key = load_enrolment(&dirs(&dir)).unwrap().unwrap();
     assert_eq!(key.ident, "0006:12345678");
-    assert_eq!(key.decryption_fingerprint.as_deref(), Some(FINGERPRINT));
-    assert_eq!(key.authentication_fingerprint.as_deref(), Some(AUTH_FINGERPRINT));
+    assert_eq!(key.decryption_fingerprint.as_ref().map(|f| f.as_str()), Some(FINGERPRINT));
+    assert_eq!(key.authentication_fingerprint.as_ref().map(|f| f.as_str()), Some(AUTH_FINGERPRINT));
 
     let again = state();
     let store = dirs(&again);

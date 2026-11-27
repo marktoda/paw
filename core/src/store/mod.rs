@@ -17,6 +17,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::PawError;
+use crate::fingerprint::Fingerprint;
 use crate::lock::StoreDirs;
 use crate::recipients::Access;
 use search::SearchHit;
@@ -117,6 +118,14 @@ impl PassStore {
     pub fn read_entry(&self, entry: &str) -> Result<Vec<u8>, PawError> {
         let _reading = self.store.shared()?;
         read::read_entry(self.store.repo_dir(), entry)
+    }
+
+    /// [`Self::access`] for a fingerprint already read.
+    pub(crate) fn key_access(&self, entry: &str, card: &Fingerprint) -> Access {
+        match self.read_entry(entry) {
+            Ok(bytes) => crate::recipients::key_access(&bytes, Some(card)),
+            Err(e) => Access::Unreadable { reason: e.to_string() },
+        }
     }
 
     /// Every entry, sorted by path.

@@ -419,7 +419,7 @@ fn diagnostics_say_what_they_should_and_name_nothing() {
     never.push(fingerprint[32..].to_owned());
     never.push(info.ident.clone());
     never.extend(info.ident.split(':').filter(|part| part.len() >= 6).map(str::to_owned));
-    if let Some(ssh) = &info.authentication_fingerprint {
+    if let Some(ssh) = info.authentication_fingerprint.as_ref().map(|f| f.to_string()) {
         never.push(ssh.clone());
         never.push(ssh[ssh.len() - 8..].to_owned());
     }

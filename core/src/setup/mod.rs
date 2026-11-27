@@ -34,7 +34,7 @@ pub struct KeySummary {
     pub ident: String,
     /// The SSH public key line to add to the git host.
     pub ssh_public_key: String,
-    pub decryption_fingerprint: String,
+    pub decryption_fingerprint: Fingerprint,
     pub authentication_touch: KeyTouch,
     pub decryption_touch: KeyTouch,
 }
@@ -191,7 +191,7 @@ impl SetupKey {
         KeySummary {
             ident: self.ident.clone(),
             ssh_public_key: self.ssh.authorized_key(),
-            decryption_fingerprint: self.decryption.to_string(),
+            decryption_fingerprint: self.decryption.clone(),
             authentication_touch: self.authentication_touch,
             decryption_touch: self.decryption_touch,
         }
@@ -509,7 +509,7 @@ impl SetupFlow {
             return Err(SetupError::UnusableKey { reason: UnusableKeyReason::PinKdfUnsupported { detail: pin_kdf.detail } });
         }
         // A key with neither is named by its missing decryption key.
-        let Some(decryption) = info.decryption_fingerprint.as_deref().and_then(Fingerprint::parse) else {
+        let Some(decryption) = info.decryption_fingerprint.clone() else {
             return Err(SetupError::UnusableKey { reason: UnusableKeyReason::NoDecryptionKey });
         };
         let ssh = ssh.map_err(|error| SetupError::UnusableKey {
@@ -656,13 +656,13 @@ impl SetupFlow {
     /// else the first it might (hidden recipients).
     pub(crate) fn pick_test_entry(&self) -> Result<String, SetupError> {
         let reached = self.reached(&[Step::TestDecrypt], "test the key")?;
-        let fingerprint = reached.key.decryption.to_string();
+        let fingerprint = &reached.key.decryption;
         let store = self.open_store()?;
 
         let mut maybe = None;
         let mut sure = None;
         for entry in store.entries() {
-            match store.access(entry.path.clone(), fingerprint.clone()) {
+            match store.key_access(&entry.path, fingerprint) {
                 Access::CanOpen => {
                     sure = Some(entry.path.clone());
                     break;
@@ -692,7 +692,7 @@ impl SetupFlow {
     ) -> Result<SetupState, SetupError> {
         let reached = self.reached(&[Step::TestDecrypt], "finish the key check")?;
         let read = &reached.key.decryption;
-        if identity.decryption_fingerprint.as_deref().and_then(Fingerprint::parse).as_ref() != Some(read) {
+        if identity.decryption_fingerprint.as_ref() != Some(read) {
             return Err(SetupError::UnusableKey { reason: UnusableKeyReason::NotTheKeyRead });
         }
         // The key about to be trusted for every future save must be the very
@@ -739,7 +739,7 @@ impl SetupFlow {
     pub(crate) fn expected_key(&self) -> Option<KeyIdentity> {
         self.saved.key().map(|key| KeyIdentity {
             ident: key.ident.clone(),
-            decryption_fingerprint: Some(key.decryption.to_string()),
+            decryption_fingerprint: Some(key.decryption.clone()),
             authentication_fingerprint: None,
         })
     }
@@ -862,13 +862,13 @@ mod tests {
     fn a_card_key_its_fingerprint_does_not_name_is_never_pinned() {
         let card = crate::sim::SimulatedKey::new("123456".into(), false, 1_000);
         let other = crate::sim::SimulatedKey::new_other("123456".into(), false, 1_000);
-        let fingerprint = card.fingerprint_hex();
+        let fingerprint = Fingerprint::parse(&card.fingerprint_hex()).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let mut flow = SetupFlow::open(dir.path()).unwrap();
         let key = SetupKey {
             ident: "0006:1".into(),
             ssh: SshPublicKey::ed25519(&card.authentication_public_key()),
-            decryption: Fingerprint::parse(&fingerprint).unwrap(),
+            decryption: fingerprint.clone(),
             authentication_touch: KeyTouch::Unknown,
             decryption_touch: KeyTouch::Unknown,
         };
