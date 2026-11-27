@@ -18,7 +18,6 @@ use git2::{Oid, Repository};
 
 use super::guard::{self, check_commit};
 use super::history::{KeptBoth, PawCommit, Replay, ReplayNotes, commits_between, ensure_clean, move_branch, paw_commits};
-use super::queue::waiting;
 use super::{OpenStore, SyncError, current_branch, git_err};
 use crate::fault::Fault;
 use crate::files::refs;
@@ -163,6 +162,15 @@ struct Fetched {
     replaced: bool,
 }
 
+impl Fetched {
+    /// The changes on `head` waiting to be sent, as the queue lists them
+    /// ([`super::queue::waiting`]): the paw commits neither the fetched tip
+    /// nor the one seen last contains.
+    fn waiting<'r>(&self, repo: &'r Repository, head: Oid) -> Result<Vec<PawCommit<'r>>, SyncError> {
+        paw_commits(repo, head, &[self.remote, self.seen])
+    }
+}
+
 fn fetched(repo: &Repository, tips: &Tips) -> Result<Option<Fetched>, SyncError> {
     let Some(remote) = tips.remote else {
         return Ok(None);
@@ -218,7 +226,7 @@ pub(crate) fn plan(_reading: &Shared, store: &OpenStore) -> Result<Plan, SyncErr
 pub(crate) fn apply(held: &Exclusive, store: &OpenStore, plan: Plan) -> Result<Integration, SyncError> {
     let repo = &store.repo;
     let Plan { tips, fetched, refused, recipients_changes, replaced } = plan;
-    let Some(Fetched { remote, seen, .. }) = fetched else {
+    let Some(fetched) = fetched else {
         return Ok(Integration::Integrated(IntegrateReport::default()));
     };
     if !refused.is_empty() {
@@ -228,7 +236,8 @@ pub(crate) fn apply(held: &Exclusive, store: &OpenStore, plan: Plan) -> Result<I
         return Ok(Integration::RemoteReplaced(replaced));
     }
 
-    let local = paw_commits(repo, tips.head, &[remote, seen])?;
+    let remote = fetched.remote;
+    let local = fetched.waiting(repo, tips.head)?;
     let mut report = IntegrateReport { recipients_changed: recipients_changes, ..Default::default() };
     let remote_is_in_head =
         tips.head == remote || repo.graph_descendant_of(tips.head, remote).map_err(git_err)?;
@@ -276,11 +285,12 @@ pub fn accept_replaced_remote(dirs: &StoreDirs, keep_changes: bool) -> Result<In
     let store = OpenStore::open(dirs)?;
     let repo = &store.repo;
     let tips = tips(repo)?;
-    let Some(Fetched { remote, seen, .. }) = fetched(repo, &tips)? else {
+    let Some(fetched) = fetched(repo, &tips)? else {
         return Ok(IntegrateReport::default());
     };
+    let Fetched { remote, seen, .. } = fetched;
     check_commit(repo, remote)?;
-    let local = if keep_changes { waiting(&held, &store)?.commits } else { Vec::new() };
+    let local = if keep_changes { fetched.waiting(repo, tips.head)? } else { Vec::new() };
     let report = IntegrateReport { recipients_changed: recipients_changes(repo, seen, remote)?, ..Default::default() };
     land(&held, &store, &tips, remote, remote, &local, report, "paw: take replaced remote")
 }
