@@ -93,7 +93,7 @@ pub(crate) fn sync(
     address: StoreAddress,
     last_login: Arc<Mutex<Option<Instant>>>,
 ) -> Arc<KeyTask> {
-    let push = matches!(login, LoginPurpose::Push { .. });
+    let push = matches!(login, LoginPurpose::Push);
     let work: Work = Box::new(move |job, signer| {
         let remote = KnownHosts::of(&state_dir)
             .remote(&address)
@@ -121,10 +121,9 @@ pub(crate) fn reencrypt(
     state_dir: PathBuf,
 ) -> Arc<KeyTask> {
     let repo = crate::files::layout::repo_dir(&state_dir);
-    let count = match held_back::reencrypt_check(&repo, &state_dir) {
-        Ok(check) => check.ready,
-        Err(error) => return KeyTask::failed(KeyPurpose::Reencrypt { count: 0 }, listener, error.into()),
-    };
+    if let Err(error) = held_back::reencrypt_check(&repo, &state_dir) {
+        return KeyTask::failed(KeyPurpose::Reencrypt, listener, error.into());
+    }
     let work: DecryptWork = Box::new(move |job, opener| {
         let mut open = |_: &HeldBack, ciphertext: &[u8]| {
             opener(ciphertext).map_err(|halt| match halt {
@@ -138,5 +137,5 @@ pub(crate) fn reencrypt(
         let report = held_back::reencrypt_each(&repo, &state_dir, &mut open, &mut progress)?;
         Ok(KeyOutcome::Reencrypted { report })
     });
-    port.decrypt_then(KeyPurpose::Reencrypt { count }, listener, work)
+    port.decrypt_then(listener, work)
 }

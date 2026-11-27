@@ -188,16 +188,11 @@ impl KeyPort {
     /// with the key and hands each one's text to `work` (re-encrypting
     /// held-back changes). Refused before the PIN on a key with no
     /// decryption key.
-    pub(crate) fn decrypt_then(
-        self: &Arc<Self>,
-        purpose: KeyPurpose,
-        listener: Arc<dyn KeyTaskListener>,
-        work: DecryptWork,
-    ) -> Arc<KeyTask> {
+    pub(crate) fn decrypt_then(self: &Arc<Self>, listener: Arc<dyn KeyTaskListener>, work: DecryptWork) -> Arc<KeyTask> {
         let expected = self.expected();
         start(
             self,
-            purpose,
+            KeyPurpose::Reencrypt,
             listener,
             expected,
             |session| session.decryption_key().map(drop),

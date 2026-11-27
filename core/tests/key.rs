@@ -77,7 +77,7 @@ fn pin_is_held_across_an_entry_open_and_an_ssh_login() {
     open_ok(&rig);
 
     let driver = Driver::helpful(PIN, &rig.sim);
-    let login = login(&rig.port, LoginPurpose::Push { count: 2 }, &driver);
+    let login = login(&rig.port, LoginPurpose::Push, &driver);
     let signer = login.signer().unwrap();
     let message: Vec<u8> = (0..146u8).collect();
     let signature = signer.sign(&message).unwrap();
@@ -883,7 +883,7 @@ fn a_slow_refusal_with_the_pin_still_verified_is_a_touch_timeout() {
 fn a_pin_lost_before_a_signature_fails_it_with_pin_forgotten() {
     let (rig, wrapped) = rig_losing_pin(SimTouch::EachUse, SimTouch::EachUse);
     let driver = Driver::helpful(PIN, &rig.sim);
-    let login = login(&rig.port, LoginPurpose::Push { count: 1 }, &driver);
+    let login = login(&rig.port, LoginPurpose::Push, &driver);
     let signer = login.signer().unwrap();
     wrapped.losses.store(1, Ordering::SeqCst);
 

@@ -65,9 +65,9 @@ pub(super) fn purpose_words(purpose: &KeyPurpose) -> &'static str {
         KeyPurpose::CheckKey { .. } => "setup check",
         KeyPurpose::SignIn { login: LoginPurpose::Clone } => "sign in to download",
         KeyPurpose::SignIn { login: LoginPurpose::Fetch } => "sign in to check for changes",
-        KeyPurpose::SignIn { login: LoginPurpose::Push { .. } } => "sign in to send",
+        KeyPurpose::SignIn { login: LoginPurpose::Push } => "sign in to send",
         KeyPurpose::CheckTouchTimeout => "touch timeout check",
-        KeyPurpose::Reencrypt { .. } => "re-encrypt",
+        KeyPurpose::Reencrypt => "re-encrypt",
     }
 }
 
@@ -464,7 +464,7 @@ mod tests {
             held.send(task.lock().supplied.is_some()).unwrap();
             Ok(KeyOutcome::KeyChecked)
         });
-        let task = KeyTask::start(KeyPurpose::Reencrypt { count: 3 }, Arc::new(Quiet), at_pin(), body);
+        let task = KeyTask::start(KeyPurpose::Reencrypt, Arc::new(Quiet), at_pin(), body);
         task.supply_pin(b"123456".to_vec());
         typed.send(()).unwrap();
 

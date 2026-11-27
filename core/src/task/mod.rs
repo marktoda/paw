@@ -26,7 +26,8 @@ use crate::write::held_back::ReencryptReport;
 
 pub use run::KeyTask;
 
-/// What a task is for. The sheet's title comes from this.
+/// What a task is for: the key log names it, and setup's key check says
+/// which entry it opens.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum KeyPurpose {
     OpenEntry { entry: String },
@@ -37,9 +38,9 @@ pub enum KeyPurpose {
     /// Key diagnostics: one signature nobody is meant to touch for, to see
     /// what the key answers when a touch times out.
     CheckTouchTimeout,
-    /// Opens `count` held-back changes, one touch each, to encrypt them
-    /// again for their folder's new list.
-    Reencrypt { count: u32 },
+    /// Opens held-back changes, one touch each, to encrypt them again for
+    /// their folder's new list.
+    Reencrypt,
 }
 
 /// Why a git login is being signed.
@@ -47,7 +48,7 @@ pub enum KeyPurpose {
 pub enum LoginPurpose {
     Clone,
     Fetch,
-    Push { count: u32 },
+    Push,
 }
 
 #[derive(Clone, uniffi::Enum)]

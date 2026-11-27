@@ -247,13 +247,9 @@ impl StoreSync {
 
     /// "Send" as a key task (sign-in, `Push`): fetch, integrate and push on
     /// one login, with the session's PIN. Ends `Done` with `Synced` and the
-    /// report, or `SyncFailed`. The sheet counts a queue that can't be read
-    /// as none waiting; the send then says what is wrong with it, or finds
-    /// the remote replaced, which is the way out of a history paw did not
-    /// make.
+    /// report, or `SyncFailed`.
     pub fn send_with_key(self: Arc<Self>, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
-        let count = queue::unpushed(&self.repo()).map_or(0, |items| items.len() as u32);
-        self.with_key(port, listener, LoginPurpose::Push { count })
+        self.with_key(port, listener, LoginPurpose::Push)
     }
 
     /// Fetch and integrate as a key task (sign-in, `Fetch`), pushing
