@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use super::session::{CardJob, Halt, KeySession, card_error};
+use super::session::{CardJob, CardStop, Halt, KeySession, card_error};
 use super::task::TaskSide;
 use super::{KeyError, KeySlot};
 use crate::ssh::SshPublicKey;
@@ -48,7 +48,7 @@ impl SessionSigner {
     }
 }
 
-pub(crate) fn authenticate(job: &mut CardJob<'_>, task: &Arc<dyn TaskSide>, data: &[u8]) -> Result<Vec<u8>, Halt> {
+pub(crate) fn authenticate(job: &mut CardJob<'_>, task: &Arc<dyn TaskSide>, data: &[u8]) -> Result<Vec<u8>, CardStop> {
     let session = job.session();
     let wire = session.wire().clone();
     let mut tx = job.card.transaction().map_err(|e| card_error(&wire, "starting to sign", e))?;
@@ -56,10 +56,11 @@ pub(crate) fn authenticate(job: &mut CardJob<'_>, task: &Arc<dyn TaskSide>, data
     // fails with `PinForgotten` (see `sign`).
     match session.touch_op(task, KeySlot::Authentication, || tx.card().internal_authenticate(data.to_vec()))? {
         Ok(signature) if signature.len() == 64 => Ok(signature),
-        Ok(signature) => Err(Halt::Fail(KeyError::Reader {
+        Ok(signature) => Err(KeyError::Reader {
             detail: format!("expected a 64-byte signature, the key returned {} bytes", signature.len()),
-        })),
-        Err(error) => Err(Halt::Fail(KeyError::Reader { detail: format!("signing: {error}") })),
+        }
+        .into()),
+        Err(error) => Err(KeyError::Reader { detail: format!("signing: {error}") }.into()),
     }
 }
 
@@ -82,9 +83,9 @@ impl SshSigner for SessionSigner {
                 self.task.show_working();
                 Ok(signature)
             }
-            Err(Halt::AskPin(Some(error)) | Halt::Fail(error)) => Err(error.into()),
-            Err(Halt::AskPin(None)) => Err(KeyError::PinForgotten.into()),
-            Err(Halt::Cancelled) => Err(SignFailure::Cancelled),
+            Err(CardStop::AskPin(Some(error)) | CardStop::Halt(Halt::Fail(error))) => Err(error.into()),
+            Err(CardStop::AskPin(None)) => Err(KeyError::PinForgotten.into()),
+            Err(CardStop::Halt(Halt::Cancelled)) => Err(SignFailure::Cancelled),
         }
     }
 }
