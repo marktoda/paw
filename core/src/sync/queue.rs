@@ -39,9 +39,10 @@ pub(crate) struct Waiting<'r> {
 /// The changes waiting to be sent: this device's commits that neither the
 /// remote's fetched tip nor the tip paw last saw of it contains. Each is
 /// one change paw made; a commit another tool made is refused
-/// ([`SyncError::NotPawHistory`]). A store with no remote has none. This is
-/// what the queue lists, a send pushes and every count of waiting changes
-/// counts.
+/// ([`SyncError::NotPawHistory`]). A store that has never fetched has
+/// none. This is what the queue lists and integrate replays; only a
+/// replaced history counts its local commits otherwise
+/// ([`super::Replaced::unpushed`]).
 pub(crate) fn waiting<'r>(_reading: &Shared, store: &'r OpenStore) -> Result<Waiting<'r>, SyncError> {
     let repo = &store.repo;
     let (branch, short) = current_branch(repo)?;

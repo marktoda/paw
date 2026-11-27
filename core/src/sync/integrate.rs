@@ -17,7 +17,7 @@ use std::path::Path;
 use git2::{Oid, Repository};
 
 use super::guard::{self, check_commit};
-use super::history::{KeptBoth, Replay, ReplayNotes, commits_between, ensure_clean, move_branch, paw_commits};
+use super::history::{KeptBoth, PawCommit, Replay, ReplayNotes, commits_between, ensure_clean, move_branch};
 use super::queue::waiting;
 use super::{OpenStore, SyncError, current_branch, git_err};
 use crate::files::layout::StoreDirs;
@@ -229,26 +229,44 @@ pub(crate) fn apply(held: &Exclusive, store: &OpenStore, plan: Plan) -> Result<I
         return Ok(Integration::RemoteReplaced(replaced));
     }
 
-    let local = paw_commits(repo, tips.head, &[remote])?;
-    ensure_clean(repo)?;
+    let local = waiting(held, store)?.commits;
     let mut report = IntegrateReport { recipients_changed: recipients_changes, ..Default::default() };
     let remote_is_in_head =
         tips.head == remote || repo.graph_descendant_of(tips.head, remote).map_err(git_err)?;
-    let new_head = if remote_is_in_head {
-        tips.head
+    let (onto, local) = if remote_is_in_head {
+        (tips.head, &[][..])
     } else {
         report.fast_forwarded = commits_between(repo, remote, &[tips.head])?.len() as u32;
-        let mut replay = Replay::onto(repo, remote)?;
-        for commit in &local {
-            replay.apply(commit)?;
-        }
-        let tip = replay.tip();
-        report.note(replay.notes);
-        tip
+        (remote, &local[..])
     };
-    report.note_entries(repo, tips.head, new_head)?;
-    move_branch(held, store, &tips.branch, tips.head, new_head, Some((&tips.seen_ref, remote)), "paw: integrate")?;
-    Ok(Integration::Integrated(report))
+    Ok(Integration::Integrated(land(held, store, &tips, onto, remote, local, report, "paw: integrate")?))
+}
+
+/// Rebuilds `local` on `onto`, then moves the branch, index and working
+/// copy there together, and last-seen to `remote`. Returns `report` with
+/// what that did.
+#[allow(clippy::too_many_arguments)]
+fn land(
+    held: &Exclusive,
+    store: &OpenStore,
+    tips: &Tips,
+    onto: Oid,
+    remote: Oid,
+    local: &[PawCommit<'_>],
+    mut report: IntegrateReport,
+    why: &str,
+) -> Result<IntegrateReport, SyncError> {
+    let repo = &store.repo;
+    ensure_clean(repo)?;
+    let mut replay = Replay::onto(repo, onto)?;
+    for commit in local {
+        replay.apply(commit)?;
+    }
+    let tip = replay.tip();
+    report.note(replay.notes);
+    report.note_entries(repo, tips.head, tip)?;
+    move_branch(held, store, &tips.branch, tips.head, tip, Some((&tips.seen_ref, remote)), why)?;
+    Ok(report)
 }
 
 /// After [`Integration::RemoteReplaced`], takes the remote's new history:
@@ -259,26 +277,13 @@ pub fn accept_replaced_remote(dirs: &StoreDirs, keep_changes: bool) -> Result<In
     let store = OpenStore::open(dirs)?;
     let repo = &store.repo;
     let tips = tips(repo)?;
-    let Some(remote) = tips.remote else {
+    let Some(Fetched { remote, seen, .. }) = fetched(repo, &tips)? else {
         return Ok(IntegrateReport::default());
     };
     check_commit(repo, remote)?;
-    let seen = tips.seen.unwrap_or(remote);
     let local = if keep_changes { waiting(&held, &store)?.commits } else { Vec::new() };
-    ensure_clean(repo)?;
-    let mut report = IntegrateReport {
-        recipients_changed: recipients_changes(repo, seen, remote)?,
-        ..Default::default()
-    };
-    let mut replay = Replay::onto(repo, remote)?;
-    for commit in &local {
-        replay.apply(commit)?;
-    }
-    let tip = replay.tip();
-    report.note(replay.notes);
-    report.note_entries(repo, tips.head, tip)?;
-    move_branch(&held, &store, &tips.branch, tips.head, tip, Some((&tips.seen_ref, remote)), "paw: take replaced remote")?;
-    Ok(report)
+    let report = IntegrateReport { recipients_changed: recipients_changes(repo, seen, remote)?, ..Default::default() };
+    land(&held, &store, &tips, remote, remote, &local, report, "paw: take replaced remote")
 }
 
 fn recipients_changes(repo: &Repository, before: Oid, after: Oid) -> Result<Vec<RecipientsChange>, SyncError> {
