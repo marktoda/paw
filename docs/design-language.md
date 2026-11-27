@@ -23,15 +23,13 @@ paw has one brand colour, gold, and it means the key. Ordinary interactive eleme
 
 ### Neutrals and ink
 
-Use the system colour in code; the hex is for reference. "Worst" is the lowest ratio over `bg`, `surface` and `surfaceRaised`.
+Use the system colour in code; the hex is for reference. "Worst" is the lowest ratio over `bg` and `surface`.
 
 | Token | Light | Dark | Role | Contrast |
 |---|---|---|---|---|
 | `bg` | #F2F2F7 | #000000 | `systemGroupedBackground` | |
 | `surface` | #FFFFFF | #1C1C1E | Rows, cards: `secondarySystemGroupedBackground` | |
-| `surfaceRaised` | #F2F2F7 | #2C2C2E | Inside sheets: `tertiarySystemGroupedBackground` | |
 | `fill` | #767680 at 12% | #767680 at 24% | Pills, bars, secondary buttons: `tertiarySystemFill` | `labelSecondary` on it 5.2 / 4.5 |
-| `separator` | system | system | Hairlines: `separator` | decoration |
 | `label` | #000000 | #FFFFFF | Text: `.primary` | worst 18.8 / 13.9 |
 | `labelSecondary` | #5C5C66 | #A9A8B6 | Subtitles, headers, footers. Custom: the system secondary label measures 3.3 on light `bg` | worst 5.9 / 5.9 |
 | `labelTertiary` | #8B8A96 | #7E7D8A | Chevrons, placeholders. Never meaningful text | worst 3.0 / 3.4 |
@@ -64,7 +62,7 @@ Each status always comes with a glyph or a word. The three differ in lightness a
 | `dangerFill` | #FEE9E9 | #3B1C1D | Error banner, wrong-PIN field; `danger` glyph 6.7 / 5.3 | `label` 18.1 / 15.3 |
 
 - `warning` is a red-orange on purpose. System orange is 7 to 9 OKLab units from the gold, too close to tell apart; this value is 10 or more away in both themes.
-- **Not yet pushed** has no colour: `label` on `fill` with `arrow.up.circle`. It is not an error. It becomes `warning` only when a push was refused.
+- **Not yet pushed** has no colour: `arrow.up.circle` in `label` on the banner's `surface`. It is not an error. A send that failed is said by the sync pill, on `warningFill`.
 - **Face ID window open** has no colour: `label` on `fill` with `faceid` and the closing time. Green would claim protection it does not have, gold is the key's, red would scold a choice the person made.
 
 ### Password characters
@@ -129,7 +127,7 @@ SF Symbols, one per concept. Every name below was checked against the SFSafeSymb
 | Concept | Symbol |
 |---|---|
 | Key needed, key present | The gold disc, never a symbol |
-| Plug in the key | `cable.connector` (unplugged: `cable.connector.slash`) |
+| Plug in the key | `cable.connector` |
 | Key locked | `lock.fill` in `danger` inside a `labelTertiary` ring |
 | Face ID window | `faceid` |
 | Folder | `folder.fill` |
@@ -173,8 +171,8 @@ Each is drawn in every state in the artifact.
 | Password field | Label `.footnote` over value; eye and copy at 44; min 64 | `label`, `passwordDigit`, `passwordSymbol` | Hidden (always 16 dots); shown; large type | "Password, hidden". Large type: "Capital O, 9 of 12" |
 | Copy confirmation | Capsule, check, one sentence; 2 s | `panel`, `onPanel` | Secret (says when it clears); not secret | Announcement, not focusable |
 | Bottom search and Add | Search capsule and round Add, 50 high, system glass: `DefaultToolbarItem(kind: .search, placement: .bottomBar)`, `ToolbarSpacer`, button | system | Resting; searching (Add becomes close) | "Search passwords", "Add a password" |
-| Sync pill | 30pt capsule, 14pt glyph, `.footnote` | `fill`, `success`, `warningFill` | Up to date; checking or sending; last checked (changes wait: the banner counts them); offline; failed | "Sync status: Checked 2 min ago" |
-| Unpushed banner | Card radius 20, leading mark, title, one line, chevron; not dismissable; the only place Home counts unsent changes | `surface`, `warningFill` | Waiting for key (36pt disc); offline; refused | Title and line as one element |
+| Sync pill | 30pt capsule, 14pt glyph, `.footnote` | `fill`, `success`, `warningFill` | Up to date; checking or sending; last checked (changes wait: the banner counts them); offline; failed; needs the key (the 14pt gold disc in place of the glyph) | "Sync status: Checked 2 min ago" |
+| Unpushed banner | Card radius 20, leading mark, title, one line, chevron; not dismissable; the only place Home counts unsent changes | `surface` | One look, with `arrow.up.circle` as the mark; why the changes wait is said by the sync pill and the sync sheet | Title and line as one element |
 | Face ID window bar | 44pt bar, `faceid`, closing time, "Lock now" | `fill`, `label` | Open; absent when closed | "Opens with Face ID until 6:40 PM. Lock now, button" |
 | Empty state | `ContentUnavailableView`: 52pt slate chip, `.title2` rounded, one or two sentences, up to two buttons | `labelSecondary`, `action` | No passwords; no matches | Title, sentence, buttons |
 | Error row | 22pt glyph, `.body` problem, `.footnote` next step, one action | `danger`, `warning`, fills | Error; warning; banner | "Error: Couldn't reach your git remote…" |
@@ -273,7 +271,6 @@ enum PawColor {
     // System
     static let bg = Color(.systemGroupedBackground)
     static let surface = Color(.secondarySystemGroupedBackground)
-    static let surfaceRaised = Color(.tertiarySystemGroupedBackground)
     static let fill = Color(.tertiarySystemFill)
     static let label = Color.primary
     // Custom
@@ -368,7 +365,7 @@ enum PawMetrics {
 - Contrast: [WCAG 2.2](https://www.w3.org/TR/WCAG22/#contrast-minimum), 1.4.3 and 1.4.11. APCA was not used: it is not part of WCAG 2.2, and the WCAG 3 draft has not chosen an algorithm. Colours were built in OKLCH ([oklch.com](https://oklch.com)); colour-blind simulation uses the Machado 2009 matrices.
 - Lessons borrowed from other apps: one brand hue with status kept separate ([Bitwarden](https://bitwarden.com/en-gb/brand.md)); design the mark at form-field size first ([Proton Pass](https://proton.me/blog/pass-logo-story)); warmth beside the brand colour, no scare tactics ([1Password](https://1password.com/blog/1password-brand-refresh)); one signature control carries the identity ([Things](https://culturedcode.com/things/blog/2025/09/things-for-os-26/)); borrow a real-world convention for rows ([Flighty](https://developer.apple.com/news/?id=970ncww4)); hierarchy by visual weight ([Halide](https://lux.camera/halide-mark-iii/)).
 - Trademark notes are research, not legal advice: [Yubico's terms](https://yubico.com/support/terms-conditions/yubico-website-terms-conditions) claim its names and graphics, so write "YubiKey" only descriptively and never draw its logo; Jack Wolfskin's paw disputes are documented [here](https://netzpolitik.org/2009/abwahnsinn-jack-wolfskin-mahnt-bastelcommunity-ab/).
-- **Not verified:** anything on a real device (SF Rounded and SF Mono shapes, glass, the dark-mode look of the tints); the exact values of system `label`, `separator` and background colours on iOS 26, which Apple does not publish; iOS 27 API changes; whether deprecated symbol names still resolve; whether a hand-written `.icon` file compiles in CI; other apps' haptics and empty states, which their makers do not document.
+- **Not verified:** anything on a real device (SF Rounded and SF Mono shapes, glass, the dark-mode look of the tints); the exact values of system `label` and background colours on iOS 26, which Apple does not publish; iOS 27 API changes; whether deprecated symbol names still resolve; whether a hand-written `.icon` file compiles in CI; other apps' haptics and empty states, which their makers do not document.
 
 ## Implementation notes
 
@@ -380,7 +377,7 @@ enum PawMetrics {
 - **Tint rule.** The FNV-1a assignment matches values worked out independently: bank cocoa, dev blue, email sky, home teal, shopping olive, and "café" gets the same tint composed or decomposed.
 - **Fixed sizes and Dynamic Type.** Chips and the small discs scale with `@ScaledMetric` but stop at 1.5 times, so that at the largest text sizes the width goes to the name. Row names get three lines at accessibility sizes, not two: two lines cut "Checking account" short at the largest size.
 - **Home title.** The mock Home draws "Passwords" as rounded large-title text in the list, under a system toolbar that holds only the settings button, because a navigation bar title cannot be set in SF Rounded without UIKit appearance overrides. It does not collapse into the bar on scroll.
-- **Not-yet-pushed banner.** Waiting for the key is drawn on `panel` with the 36pt disc, as in the Keyring 2 mock-up; offline is on `surface`; refused is on `warningFill`. Section 7 lists only `surface` and `warningFill`.
+- **Not-yet-pushed banner.** One look: `arrow.up.circle` in `label` on `surface`. The mock-up's variants (waiting for the key on `panel` with the 36pt disc, refused on `warningFill`) are not built.
 - **Touch stage.** The hero is the 92pt disc with its halo inside a thin outline of a key, following design.md 2.3 ("the gold disc glyph alone is never used as the touch prompt"). The halo reaches 1.74 times the disc, not the mock-up's 1.91, so the stage fits the 480pt detent. The 15-second ring is not built.
 - **PIN stages** use the 36pt disc so the field and both buttons stay above the keyboard.
 - **Bottom search.** The system search field's VoiceOver label is the prompt ("Search 332 passwords"), not "Search passwords". While searching, the system replaces Add with its own close button.

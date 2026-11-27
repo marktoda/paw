@@ -87,7 +87,7 @@ Status words: **done** (on main, green on GitHub), **in progress** (a branch exi
 
 | Item | Status |
 |---|---|
-| AutoFill extension: list for the site, matching by registered domain and by name, fill with Face ID or the key, suggestions above the keyboard, confirm before filling another site, `url` cross-check, international names shown as `xn--`, store in the App Group | done; waiting on the owner's device checks. Not built: saving from the extension (needs iOS 26.2), one-time codes in the extension |
+| AutoFill extension: list for the site, matching by registered domain and by name, fill with Face ID or the key, suggestions above the keyboard, confirm before filling another site, `url` cross-check, international names shown as `xn--`, store in the App Group | done, with one-time codes (batch 6); waiting on the owner's device checks. Not built: saving from the extension (needs iOS 26.2), the hand-off to the app |
 
 ### M8 Settings and finish
 
@@ -124,7 +124,7 @@ Things that are easy to lose track of because nothing fails when they are missin
 
 Merged 2026-11-24: plain repository list in the picker; per-process Face ID enrolment record; name matching with remembered site pairings (`site-pairings.json`, no screen to view or clear them yet); a lost PIN told apart from a missed touch; the key log.
 
-Merged 2026-11-24, batch 3 (one build, run 45500441073, all green): Release device build without the simulated key, scanned in CI; legacy PIN-taking exports and the test screen removed; background refresh scheduled (skips while the iPhone is locked: the store is unreadable then); held-back re-encryption in the core (no UI yet); Settings: who can open, Face ID switch, sites used, server keys with forget, copy diagnostics, licences, build stamp; AutoFill: `url` cross-check, international names (always shown as `xn--`), username from the body; the paw icon; Sync, Gallery and Enclave tests on the shared helpers; iPad three-column layout with its own CI part.
+Merged 2026-11-24, batch 3 (one build, run 45500441073, all green): Release device build without the simulated key, scanned in CI; legacy PIN-taking exports and the test screen removed; background refresh scheduled (skips while the iPhone is locked: the store is unreadable then); held-back re-encryption in the core (its button came in batch 5); Settings: who can open, Face ID switch, sites used, server keys with forget, copy diagnostics, licences, build stamp; AutoFill: `url` cross-check, international names (always shown as `xn--`), username from the body; the paw icon; Sync, Gallery and Enclave tests on the shared helpers; iPad three-column layout with its own CI part.
 
 Merged 2026-11-24, batch 4 (main `1231999`, installed on the iPhone as run 45525329289): fixes from two reviews (a locked background launch no longer offers to delete the store; server-key change warning; whole fingerprints; iPad folder selection; held-back flip-flop; Face ID switch ordering; clipboard expiry); a copy pass over Settings, sync, AutoFill and diagnostics; Swift unit tests (`PawTests`) in CI, and the seven UI tests they replace removed.
 
@@ -132,7 +132,7 @@ Batch 5 (2026-11-24): one-time codes (pass-otp compatible: a code row with a cou
 
 Batch 6 (2026-11-25): one-time codes in AutoFill (same matching and confirm rules as passwords; suggestions need Settings › AutoFill › "Suggest one-time codes", off by default, because it keeps a list of which passwords have a code); the new-password form no longer reads the store while typing or in the folder picker, and Save waits for the folder's keys; simulator tests for "Re-encrypt N changes". Reviewed before the build; findings fixed.
 
-Not built: saving a password from the extension (needs iOS 26.2; minimum is 26.0); replace key (design only: both keys in turn, one touch per password); "iPad"/"Touch ID" wording on iPad. libgit2's bundled xdiff is LGPL: decide before any App Store listing.
+Not built: saving a password from the extension (needs iOS 26.2; minimum is 26.0); replace key (design only: both keys in turn, one touch per password). libgit2's bundled xdiff is LGPL: decide before any App Store listing.
 
 
 | Check | Status |
@@ -165,4 +165,4 @@ Not built: saving a password from the extension (needs iOS 26.2; minimum is 26.0
 1. Ink-only buttons, or an indigo accent? Decided 2026-11-24: ink.
 2. Paw icon or plain gold disc? Decided 2026-11-24: the paw.
 3. Rent a Mac or pay for larger GitHub machines? Decided 2026-11-24: neither; the standard runners are fine for now.
-4. Sheets: decided 2026-11-24: opaque. "Lock this password" shortened to "Lock": done. Still open: build a "forget server key" option?
+4. Sheets: decided 2026-11-24: opaque. "Lock this password" shortened to "Lock": done. "Forget server key" is built (Settings › Store).
