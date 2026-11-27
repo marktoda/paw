@@ -41,7 +41,8 @@ final class StoreEdits {
     private(set) var form: EntryFormPurpose?
     /// The open entry whose delete is waiting for its inline confirm.
     private(set) var confirmingDelete: UUID?
-    private(set) var undoOffer: UndoOffer?
+    /// The last delete's Undo, until it is taken or its toast goes.
+    private var offered: UndoOffer?
 
     @ObservationIgnored private let live: LiveStore
     @ObservationIgnored private let copies: LiveCopies
@@ -54,10 +55,6 @@ final class StoreEdits {
         self.live = live
         self.copies = copies
         self.requests = requests
-        // Made before this, the queue has read itself again by now.
-        live.changed.subscribe(self) { edits, _ in
-            edits.dropStaleUndoOffer()
-        }
     }
 
     // MARK: The form
@@ -146,20 +143,21 @@ final class StoreEdits {
         if let notice = followUpNotice(deleted.followUpFailures) {
             requests.send(.notice(notice))
         }
-        if queue != nil {
-            undoOffer = UndoOffer(
-                message: "Deleted \(session.ref.name).", entryName: session.ref.name, change: deleted.commit)
-        }
+        offered = UndoOffer(
+            message: "Deleted \(session.ref.name).", entryName: session.ref.name, change: deleted.commit)
     }
 
-    /// Undo on the delete toast: only if that change is still the newest.
+    /// Undo is offered while its change is the newest one waiting: a change
+    /// undone, discarded, sent or made after it ends the offer.
+    var undoOffer: UndoOffer? {
+        guard let offered, queue?.unpushed.first?.id == offered.change else { return nil }
+        return offered
+    }
+
+    /// Undo on the delete toast.
     func undo(_ offer: UndoOffer) {
-        guard let queue else { return }
-        undoOffer = nil
-        guard queue.unpushed.first?.id == offer.change else {
-            requests.send(.toast("Not undone: other changes came after it."))
-            return
-        }
+        guard let queue, undoOffer?.id == offer.id else { return }
+        offered = nil
         if queue.undoLast() {
             requests.send(.toast("\(offer.entryName) is back."))
         } else {
@@ -168,16 +166,8 @@ final class StoreEdits {
     }
 
     func undoOfferEnded(_ offer: UndoOffer) {
-        if undoOffer?.id == offer.id {
-            undoOffer = nil
-        }
-    }
-
-    /// Undo is offered while its change is the newest one waiting: a change
-    /// undone, discarded, sent or made after it ends the offer.
-    private func dropStaleUndoOffer() {
-        if let offer = undoOffer, queue?.unpushed.first?.id != offer.change {
-            undoOffer = nil
+        if offered?.id == offer.id {
+            offered = nil
         }
     }
 }
