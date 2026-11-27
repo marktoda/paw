@@ -8,10 +8,7 @@ struct UnpushedSection: View {
     var body: some View {
         if let queue = model.storeSession.syncing?.queue, !queue.unpushed.isEmpty {
             Section {
-                UnpushedBanner(
-                    reason: .waiting, title: queue.bannerTitle,
-                    detail: "Saved on this iPhone."
-                ) {
+                UnpushedBanner(title: queue.bannerTitle, detail: "Saved on this iPhone.") {
                     model.show(.unpushed)
                 }
                 .listRowInsets(EdgeInsets())

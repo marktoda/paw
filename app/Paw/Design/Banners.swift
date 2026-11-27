@@ -2,17 +2,6 @@ import SwiftUI
 
 /// "Not yet pushed": changes that are only on this iPhone. Not dismissable.
 struct UnpushedBanner: View {
-    enum Reason {
-        /// Sending needs the key: the banner carries the gold disc.
-        case waitingForKey
-        case offline
-        /// Saved here, nothing tried yet.
-        case waiting
-        /// The git remote refused the push. The only state that is a warning.
-        case refused
-    }
-
-    let reason: Reason
     let title: String
     let detail: String
     var action: () -> Void = {}
@@ -26,12 +15,11 @@ struct UnpushedBanner: View {
                 VStack(alignment: .leading, spacing: PawMetrics.Spacing.xxs) {
                     Text(Device.words(title))
                         .font(PawFont.headline)
-                        .foregroundStyle(reason == .waitingForKey ? PawColor.onPanel : PawColor.label)
+                        .foregroundStyle(PawColor.label)
                     if !detail.isEmpty {
                         Text(Device.words(detail))
                             .font(PawFont.footnote)
-                            .foregroundStyle(
-                                reason == .waitingForKey ? PawColor.onPanelSecondary : PawColor.labelSecondary)
+                            .foregroundStyle(PawColor.labelSecondary)
                     }
                 }
                 .multilineTextAlignment(.leading)
@@ -41,14 +29,14 @@ struct UnpushedBanner: View {
                 if !typeSize.isAccessibilitySize {
                     Image(systemName: PawSymbol.disclosure)
                         .font(PawFont.footnote.weight(.semibold))
-                        .foregroundStyle(reason == .waitingForKey ? PawColor.onPanelSecondary : PawColor.labelTertiary)
+                        .foregroundStyle(PawColor.labelTertiary)
                         .accessibilityHidden(true)
                 }
             }
             .padding(.horizontal, PawMetrics.Spacing.l)
             .padding(.vertical, PawMetrics.Spacing.m)
             .frame(minHeight: PawMetrics.rowField)
-            .background(ground, in: RoundedRectangle(cornerRadius: PawMetrics.cardRadius, style: .continuous))
+            .background(PawColor.surface, in: RoundedRectangle(cornerRadius: PawMetrics.cardRadius, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: PawMetrics.cardRadius, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -56,39 +44,15 @@ struct UnpushedBanner: View {
         .accessibilityIdentifier("unpushed-banner")
     }
 
-    @ViewBuilder private var mark: some View {
-        switch reason {
-        case .waitingForKey:
-            KeyDisc(size: .banner)
-        case .waiting:
-            Image(systemName: PawSymbol.notPushed)
-                .font(.title2)
-                .foregroundStyle(PawColor.label)
-                .frame(minWidth: PawMetrics.discBanner)
-        case .offline:
-            Image(systemName: PawSymbol.offline)
-                .font(.title2)
-                .foregroundStyle(PawColor.label)
-                .frame(minWidth: PawMetrics.discBanner)
-        case .refused:
-            Image(systemName: PawSymbol.warning)
-                .font(.title2)
-                .foregroundStyle(PawColor.warning)
-                .frame(minWidth: PawMetrics.discBanner)
-        }
-    }
-
-    private var ground: Color {
-        switch reason {
-        case .waitingForKey: PawColor.panel
-        case .offline, .waiting: PawColor.surface
-        case .refused: PawColor.warningFill
-        }
+    private var mark: some View {
+        Image(systemName: PawSymbol.notPushed)
+            .font(.title2)
+            .foregroundStyle(PawColor.label)
+            .frame(minWidth: PawMetrics.discBanner)
     }
 
     private var spokenLabel: String {
-        let words = detail.isEmpty ? "\(title)." : "\(title). \(detail)"
-        return Device.words(reason == .waitingForKey ? "\(words) Needs your key." : words)
+        Device.words(detail.isEmpty ? "\(title)." : "\(title). \(detail)")
     }
 }
 

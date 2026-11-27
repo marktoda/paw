@@ -3,7 +3,7 @@ import SwiftUI
 /// The sync status as a 30pt capsule: a glyph and a few words, never a bare dot.
 struct SyncPill: View {
     enum Status {
-        case synced, syncing, notPushed, offline, failed
+        case synced, syncing, offline, failed
         /// When paw last checked, with nothing to say about the result.
         case checked
         /// The next tap asks for the key: the gold disc, not a glyph.
@@ -11,7 +11,7 @@ struct SyncPill: View {
     }
 
     let status: Status
-    /// What to say, e.g. "Synced 2 minutes ago" or "1 change not pushed".
+    /// What to say, e.g. "Up to date · checked 2 min ago".
     let text: String
 
     var body: some View {
@@ -40,7 +40,6 @@ struct SyncPill: View {
         switch status {
         case .synced: PawSymbol.synced
         case .syncing: PawSymbol.syncing
-        case .notPushed: PawSymbol.notPushed
         case .checked: PawSymbol.checked
         case .offline: PawSymbol.offline
         case .failed: PawSymbol.warning
@@ -52,8 +51,8 @@ struct SyncPill: View {
         switch status {
         case .synced: PawColor.success
         case .failed: PawColor.warning
-        // Not pushed and offline are not errors, so they take no colour.
-        case .syncing, .notPushed, .checked, .offline, .needsKey: PawColor.label
+        // Offline is not an error, so it takes no colour.
+        case .syncing, .checked, .offline, .needsKey: PawColor.label
         }
     }
 }
