@@ -149,7 +149,7 @@ struct HomeScreen: View {
                         EntryRowFor(model: model, entry: entry, subtitle: "")
                     }
                 } header: {
-                    PawSectionHeader("Not in a folder")
+                    PawSectionHeader(FolderWords.top)
                 }
             }
             if model.storeSession.live.entryCount == 0 {

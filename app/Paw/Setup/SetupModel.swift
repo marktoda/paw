@@ -529,7 +529,7 @@ final class SetupModel {
         if case .checkKey(let entry?)? = keyTask.taskPurpose, !entry.isEmpty {
             return EntryRef(path: entry).name
         }
-        return "your store"
+        return StoreWords.asEntry
     }
 
     /// Setup's step after a key task: the core may have moved on, or put
@@ -610,7 +610,7 @@ extension SetupModel {
                 }
             },
             words: { [weak self] in
-                KeyErrorWords.Context(entry: self?.entryName ?? "your store")
+                KeyErrorWords.Context(entry: self?.entryName ?? StoreWords.asEntry)
             },
             working: { [weak self] progress in
                 self?.working(purpose, progress) ?? ("", nil)

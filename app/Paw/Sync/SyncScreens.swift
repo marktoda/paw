@@ -276,7 +276,7 @@ struct ReplacedScreen: View {
             if syncing.unpushed > 0 {
                 Section {
                     ForEach(syncing.queue.unpushed.prefix(namedAtMost), id: \.id) { item in
-                        Text(UnpushedScreen.title(item))
+                        Text(item.title)
                             .font(PawFont.body)
                             .foregroundStyle(PawColor.label)
                             .frame(minHeight: PawMetrics.rowOneLine, alignment: .leading)

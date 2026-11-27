@@ -69,7 +69,7 @@ struct GitHubSettingsSection: View {
 
     private func status(_ gitHub: GitHubAccess) -> some View {
         LabeledContent {
-            Text(gitHub.link?.fullName ?? "No store chosen")
+            Text(gitHub.link?.fullName ?? GitHubWords.noStoreChosen)
                 .foregroundStyle(PawColor.labelSecondary)
                 .multilineTextAlignment(.trailing)
         } label: {

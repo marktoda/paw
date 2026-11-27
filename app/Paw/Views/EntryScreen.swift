@@ -258,7 +258,7 @@ struct EntryHeader: View {
                     .lineLimit(3)
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("entry-title")
-                Text(entry.folder.isEmpty ? "Not in a folder" : entry.folder)
+                Text(FolderWords.place(entry.folder))
                     .font(PawFont.subheadline)
                     .foregroundStyle(PawColor.labelSecondary)
                     .accessibilityIdentifier("entry-folder")

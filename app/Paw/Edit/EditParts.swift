@@ -113,24 +113,6 @@ struct RecipientsFooter: View {
     }
 }
 
-extension RecipientLine {
-    /// "your key", or "key 9A1C 03F2" by the last 8 hex digits.
-    var spokenName: String {
-        switch status {
-        case .ready: return "your key"
-        default: return "key \(RecipientLineWords.ending(line))"
-        }
-    }
-
-    /// How this line is satisfied, in words.
-    var statusWords: String {
-        switch status {
-        case .ready: return "Your key"
-        case .missing: return "paw doesn't have this key"
-        }
-    }
-}
-
 /// "Review who can open this folder": the accepted list and the list now,
 /// line by line, with Accept. Accepting never drops a key: paw then
 /// encrypts for everyone on the new list, or says which key it lacks.

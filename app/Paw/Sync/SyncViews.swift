@@ -200,7 +200,7 @@ struct SyncSummarySection: View {
     private func recipientsRow(_ folder: String) -> some View {
         return ErrorRow(
             kind: .warning, problem: whoCanOpenChanged(folder),
-            nextStep: "Review the new list before saving there.",
+            nextStep: reviewBeforeSaving(here: false),
             actionTitle: "Review"
         ) {
             model.show(.sync(.review(folder: folder)))

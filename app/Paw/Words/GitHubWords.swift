@@ -3,6 +3,9 @@ import Foundation
 /// The words for a GitHub step that failed: one short line and the next
 /// step.
 enum GitHubWords {
+    /// Signed in, with no repository picked for the store.
+    static let noStoreChosen = "No store chosen"
+
     static func problem(_ error: Error) -> String {
         guard let error = error as? GitHubError else { return "Something went wrong. \(describe(error))" }
         switch error {

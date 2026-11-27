@@ -181,7 +181,7 @@ private struct EntryFormView: View {
             Button {
                 form.chooseFolder("")
             } label: {
-                FolderChoiceLabel(title: "Not in a folder", chosen: form.newFolder == nil && form.folder.isEmpty)
+                FolderChoiceLabel(title: FolderWords.top, chosen: form.newFolder == nil && form.folder.isEmpty)
             }
             ForEach(form.folders, id: \.self) { folder in
                 let writable = form.folderOpenable[folder] ?? true
@@ -192,7 +192,7 @@ private struct EntryFormView: View {
                         FolderChoiceLabel(title: folder, chosen: form.newFolder == nil && form.folder == folder)
                     } else {
                         Text(folder)
-                        Text("Needs a key paw doesn't have")
+                        Text(MissingKeyWords.folder)
                     }
                 }
                 .disabled(!writable)
@@ -233,7 +233,7 @@ private struct EntryFormView: View {
 
     private var folderTitle: String {
         if form.newFolder != nil { return "New folder" }
-        return form.folder.isEmpty ? "Not in a folder" : form.folder
+        return FolderWords.place(form.folder)
     }
 
     private var loginSection: some View {

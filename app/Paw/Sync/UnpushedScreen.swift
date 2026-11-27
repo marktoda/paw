@@ -63,10 +63,10 @@ struct UnpushedScreen: View {
                     ForEach(items, id: \.id) { item in
                         if confirming == .one(item.id) {
                             InlineConfirmRow(
-                                question: "Discard \u{201C}\(Self.title(item))\u{201D}?",
-                                detail: Self.discardDetail(item),
+                                question: "Discard \u{201C}\(item.title)\u{201D}?",
+                                detail: item.discardDetail,
                                 confirmTitle: "Discard", cancelTitle: "Keep",
-                                identifier: "unpushed-discard-\(Self.name(item.entry))",
+                                identifier: "unpushed-discard-\(EntryRef(path: item.entry).name)",
                                 onConfirm: {
                                     confirming = nil
                                     queue?.discard(item.id)
@@ -110,47 +110,6 @@ struct UnpushedScreen: View {
         .navigationTitle("Not sent yet")
         .navigationBarTitleDisplayMode(.large)
     }
-
-    static func name(_ path: String) -> String {
-        EntryRef(path: path).name
-    }
-
-    /// "Added github.com", "Renamed vpn to vpn-old".
-    static func title(_ item: QueueItem) -> String {
-        let name = name(item.entry)
-        switch item.kind {
-        case .added: return "Added \(name)"
-        case .edited: return "Edited \(name)"
-        case .deleted: return "Deleted \(name)"
-        case .renamed:
-            guard let previous = item.previous else { return "Renamed \(name)" }
-            let before = EntryRef(path: previous)
-            let after = EntryRef(path: item.entry)
-            return before.folder == after.folder
-                ? "Renamed \(before.name) to \(after.name)"
-                : "Moved \(after.name) to \(after.folder.isEmpty ? "the top" : after.folder)"
-        }
-    }
-
-    static func discardDetail(_ item: QueueItem) -> String {
-        let name = name(item.entry)
-        switch item.kind {
-        case .added: return "\(name) is removed from this \(Device.name)."
-        case .edited: return "\(name) goes back to how it was."
-        case .deleted: return "\(name) comes back."
-        case .renamed: return "\(name) gets its old name back."
-        }
-    }
-
-    /// "14:02" today, "yesterday", "Mon" this week, else "3 Nov".
-    static func when(_ seconds: Int64, now: Date = Date()) -> String {
-        let date = Date(timeIntervalSince1970: TimeInterval(seconds))
-        let day = pastDay(date, now: now)
-        if !day.today, Calendar.current.isDateInYesterday(date) {
-            return "yesterday"
-        }
-        return day.words
-    }
 }
 
 private struct QueueRow: View {
@@ -162,7 +121,7 @@ private struct QueueRow: View {
         HStack(spacing: PawMetrics.Spacing.m) {
             IconChip(symbol: Self.symbol(item.kind), tint: FolderTint(folder: entry.topFolder))
             VStack(alignment: .leading, spacing: 0) {
-                Text(UnpushedScreen.title(item))
+                Text(item.title)
                     .font(PawFont.body)
                     .foregroundStyle(PawColor.label)
                     .fixedSize(horizontal: false, vertical: true)
@@ -181,7 +140,7 @@ private struct QueueRow: View {
                 .frame(minHeight: PawMetrics.pill)
                 .background(PawColor.fill, in: Capsule())
                 .frame(minHeight: PawMetrics.tapMin)
-                .accessibilityLabel("Discard \(UnpushedScreen.title(item))")
+                .accessibilityLabel("Discard \(item.title)")
                 .accessibilityIdentifier("unpushed-discard-button-\(entry.name)")
         }
         .padding(.vertical, PawMetrics.Spacing.s)
@@ -190,8 +149,7 @@ private struct QueueRow: View {
     }
 
     private func subtitle(_ entry: EntryRef) -> String {
-        let place = entry.folder.isEmpty ? "Not in a folder" : entry.folder
-        return "\(place) \u{00B7} \(UnpushedScreen.when(item.when))"
+        "\(FolderWords.place(entry.folder)) \u{00B7} \(savedWhen(item.when))"
     }
 
     private static func symbol(_ kind: ChangeKind) -> String {
