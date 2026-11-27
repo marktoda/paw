@@ -43,11 +43,7 @@ struct SetupFlowView: View {
             SetupKeySheet(model: model)
         }
         .onChange(of: scenePhase) {
-            switch scenePhase {
-            case .background: model.reader.backgrounded()
-            case .active: model.foregrounded()
-            default: break
-            }
+            model.scenePhaseChanged(scenePhase)
         }
         #if DEBUG && targetEnvironment(simulator)
         .modifier(SimSetupHostWatch(model: model))

@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 
 enum KeyReadProblem {
     /// The device has no smart card support at all.
@@ -43,6 +44,11 @@ final class KeyReader {
         return failure.map { .failed($0) }
     }
 
+    /// `problem` in `table`'s words.
+    func problemWords(table: WordTable) -> KeyErrorWords? {
+        problem.map { KeyErrorWords($0, table: table) }
+    }
+
     /// Starts following the key, once. A key that is in is read now, and
     /// whenever one comes in: a session already open is kept, with the
     /// PIN it holds, and heard of again (`onRead`).
@@ -63,22 +69,35 @@ final class KeyReader {
         following = nil
     }
 
-    /// paw went to the background: the key's session counts its time away
-    /// from now, for the core's PIN timeout.
-    func backgrounded() {
-        port.session()?.noteBackgrounded()
-    }
-
-    /// paw is back: the key's session hears it, and may drop a PIN held
-    /// too long.
-    func foregrounded() {
-        port.session()?.noteForegrounded()
+    /// paw went to the background or came back. Away, the key's session
+    /// counts its time from now, for the core's PIN timeout; back, it hears
+    /// so and may drop a PIN held too long, and a key that is in but has no
+    /// session is read: by `readKey` when given, else by `read()`.
+    func scenePhaseChanged(_ phase: ScenePhase, readKey: (() -> Void)? = nil) {
+        switch phase {
+        case .background:
+            port.session()?.noteBackgrounded()
+        case .active:
+            port.session()?.noteForegrounded()
+            guard needsRead else { return }
+            if let readKey {
+                readKey()
+            } else {
+                read()
+            }
+        default:
+            break
+        }
     }
 
     func readIfNeeded() {
-        if present, port.session() == nil {
+        if needsRead {
             read()
         }
+    }
+
+    private var needsRead: Bool {
+        present && port.session() == nil
     }
 
     /// Reads the key. A session already open is kept, with the PIN it

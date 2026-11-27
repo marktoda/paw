@@ -168,7 +168,7 @@ final class SetupModel {
     /// Why the key in could not be read (its session not opened), or that
     /// this iPhone can't read one, for the Plug in screen.
     var attachProblem: KeyErrorWords? {
-        reader.problem.map { KeyErrorWords($0, table: .app) }
+        reader.problemWords(table: .app)
     }
 
     /// The key was read, or reading it failed. On Plug in, a key read is
@@ -188,16 +188,17 @@ final class SetupModel {
         }
     }
 
-    /// The setup flow is back in the foreground: the session hears of it
-    /// (it may drop a PIN held too long), and a key that is in but was not
-    /// read is read again.
-    func foregrounded() {
-        reader.foregrounded()
-        guard keyPresent, keyPort.session() == nil, !busy else { return }
-        if screen == .plugIn, sheet == nil {
-            readKey()
-        } else if started || state != .readKey {
-            reader.read()
+    /// The setup flow went to the background or came back (`KeyReader`).
+    /// A key that is in but was not read is read on coming back: on Plug
+    /// in as setup's first step, and not on the welcome screen.
+    func scenePhaseChanged(_ phase: ScenePhase) {
+        reader.scenePhaseChanged(phase) { [self] in
+            guard !busy else { return }
+            if screen == .plugIn, sheet == nil {
+                readKey()
+            } else if started || state != .readKey {
+                reader.read()
+            }
         }
     }
 

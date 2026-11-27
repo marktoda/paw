@@ -161,10 +161,11 @@ final class AppModel {
 
     // MARK: Plugging the key in and out
 
-    /// Why the key could not be read the last time paw tried, as the
-    /// sheet's Plug in stage says it. `nil` once a read works.
+    /// Why the key that is in could not be read, or that this iPhone can't
+    /// read keys, for Key diagnostics; `nil` once a read works or the key
+    /// is out.
     var attachProblem: KeyErrorWords? {
-        reader.problem.map { KeyErrorWords($0, table: .app) }
+        reader.problemWords(table: .app)
     }
 
     private func keyRead(_ session: KeySession) {
@@ -440,10 +441,10 @@ final class AppModel {
     /// away, on the same clock (design 2.5). Coming back also reads a key
     /// whose earlier read failed.
     func scenePhaseChanged(_ phase: ScenePhase) {
+        reader.scenePhaseChanged(phase)
         switch phase {
         case .background:
             backgroundedAtMs = clock.monotonicMs()
-            reader.backgrounded()
         case .active:
             if let away = backgroundedAtMs {
                 backgroundedAtMs = nil
@@ -451,11 +452,9 @@ final class AppModel {
                     closeAllSessions(because: .away)
                 }
             }
-            reader.foregrounded()
             storeSession.cameForward()
             storeSession.clipboard.clearIfExpired()
             copies.change { try $0.sweep() }
-            reader.readIfNeeded()
         default:
             break
         }

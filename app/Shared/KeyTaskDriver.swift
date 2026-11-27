@@ -229,8 +229,9 @@ final class KeyTaskDriver {
     /// What the sheet shows. A key that could not be read shows as the
     /// failed stage, with Try again, while its task still waits at Plug in.
     var stage: KeySheetStage {
-        guard let problem = readProblem, let job else { return mapped }
-        let words = KeyErrorWords(problem, table: job.words().table)
+        guard readProblem != nil, let job, let words = reader?.problemWords(table: job.words().table) else {
+            return mapped
+        }
         return .failed(problem: words.problem, nextStep: words.nextStep)
     }
 
