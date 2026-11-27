@@ -211,7 +211,7 @@ impl KnownHosts {
             .iter()
             .map(|(host, port, key)| format!("{host} {port} {key}\n"))
             .collect();
-        crate::files::write_atomic(&self.path(), ".known_hosts.tmp-", text.as_bytes()).map_err(io_err)
+        crate::files::write_atomic(&self.path(), text.as_bytes()).map_err(io_err)
     }
 
     pub fn lookup(&self, host: &str, port: u16) -> Result<Option<HostKeyPin>, Fault> {

@@ -23,7 +23,7 @@ use paw_core::report::{DiagnosticsFacts, LastSyncState, diagnostics_text};
 use paw_core::sim::SimulatedKey;
 use paw_core::sim::copies::{SimClock, SimKeystore};
 use paw_core::sim::fixture::{encrypt, other_key};
-use paw_core::store::pairings::{PairingFile, SitePairings};
+use paw_core::store::pairings::SitePairings;
 use paw_core::write::{Keyring, LineStatus};
 use key_common::PIN;
 use support::git;
@@ -274,7 +274,7 @@ fn turning_copies_on_wipes_a_copy_sealed_while_they_were_off() {
 #[test]
 fn forgetting_one_site_keeps_the_others() {
     let dir = tempfile::tempdir().unwrap();
-    let file = PairingFile::new(dir.path());
+    let file = SitePairings::new(dir.path());
     file.record("finance/northwind", "northwind.com", None).unwrap();
     file.record("finance/northwind", "northwind.co.uk", None).unwrap();
     file.record("contoso/alice", "contoso.com", None).unwrap();

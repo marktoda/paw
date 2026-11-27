@@ -13,9 +13,6 @@ use std::path::{Path, PathBuf};
 use super::format::{MAX_FILE_BYTES, SUFFIX};
 use crate::files::{read_bounded, remove_if_there, remove_temps, too_large};
 
-/// Prefix of a copy being written. A dot keeps it out of [`copy_files`].
-const TEMP_PREFIX: &str = ".tmp-";
-
 fn not_found(e: &std::io::Error) -> bool {
     e.kind() == ErrorKind::NotFound
 }
@@ -56,18 +53,14 @@ pub fn read(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
     }
 }
 
-pub fn remove(path: &Path) -> std::io::Result<()> {
-    remove_if_there(path)
-}
-
 pub fn write_atomic(dir: &Path, stem: &str, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
-    crate::files::write_atomic(&dir.join(format!("{stem}{SUFFIX}")), TEMP_PREFIX, bytes)
+    crate::files::write_atomic(&dir.join(format!("{stem}{SUFFIX}")), bytes)
 }
 
 /// Removes temporary files more than a minute old.
 pub fn remove_stale_temps(dir: &Path) -> std::io::Result<()> {
-    remove_temps(dir, TEMP_PREFIX, false)
+    remove_temps(dir, false)
 }
 
 /// Creates `dir/<name>` (empty) and flushes it and the directory entry to
@@ -83,7 +76,7 @@ pub fn write_marker(dir: &Path, name: &str) -> std::io::Result<()> {
 /// too (their copies are being ended). Anything else in `dir` is left.
 pub fn wipe(dir: &Path) -> std::io::Result<()> {
     for (_, path) in copy_files(dir)? {
-        remove(&path)?;
+        remove_if_there(&path)?;
     }
-    remove_temps(dir, TEMP_PREFIX, true)
+    remove_temps(dir, true)
 }

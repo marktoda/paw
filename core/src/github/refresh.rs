@@ -65,7 +65,7 @@ impl GitHubLink {
         let (full_name, ssh) = (self.full_name.replace(['\n', '\r'], ""), self.ssh_address.replace(['\n', '\r'], ""));
         // Files written before kept an `id` line too; it is not read.
         let pairs = [("repository", full_name.as_str()), ("ssh", ssh.as_str())];
-        values::write(&state_dir.join(layout::GITHUB_LINK), ".github.tmp-", pairs).map_err(failed)
+        values::write(&state_dir.join(layout::GITHUB_LINK), pairs).map_err(failed)
     }
 
     pub(crate) fn load(state_dir: &Path) -> Option<Self> {

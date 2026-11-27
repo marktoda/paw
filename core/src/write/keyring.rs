@@ -54,7 +54,6 @@ use crate::files::{MAX_FILE_BYTES, read_bounded, write_atomic};
 use crate::lock::{Exclusive, StoreLock};
 
 const HEADER: &str = "# paw pinned recipients, version 1";
-const TEMP_PREFIX: &str = ".recipients.tmp-";
 
 /// A public key paw may encrypt to: the card's decryption key.
 #[derive(Clone)]
@@ -293,7 +292,7 @@ impl Keyring {
         }
         let dir = self.file.parent().unwrap_or(Path::new("."));
         std::fs::create_dir_all(dir).map_err(|e| failed("save", e))?;
-        write_atomic(&self.file, TEMP_PREFIX, text.as_bytes()).map_err(|e| failed("save", e))
+        write_atomic(&self.file, text.as_bytes()).map_err(|e| failed("save", e))
     }
 
     pub fn keys(&self) -> &[PinnedKey] {

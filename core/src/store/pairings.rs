@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use super::PassStore;
 use super::service::{MatchKind, NamePairing, host_of, match_site, names_site, registrable, site_name};
-use crate::files::list::{ListFile, ListItem, ListKind, MAX_PATH_BYTES};
+use crate::files::list::{ListFile, ListItem, ListKind};
 use crate::PawError;
 
 pub const MAX_ENTRIES: usize = 300;
@@ -29,7 +29,6 @@ pub const MAX_SITES: usize = 4;
 static LIST: ListKind = ListKind {
     file: crate::files::layout::SITE_PAIRINGS,
     key: "pairings",
-    temp_prefix: ".site-pairings.tmp-",
     max_items: MAX_ENTRIES,
     on_marker: None,
     writing: Mutex::new(()),
@@ -48,6 +47,8 @@ impl ListItem for Pairing {
         &self.entry
     }
 
+    /// Valid sites only, each once, the most recent [`MAX_SITES`]; none
+    /// leaves the pairing out.
     fn clean(mut self) -> Option<Self> {
         let mut sites = HashSet::new();
         self.sites.retain(|s| valid_site(s) && sites.insert(s.clone()));
@@ -68,11 +69,20 @@ fn valid_site(site: &str) -> bool {
     site.len() <= 253 && host_of(site).as_deref() == Some(site) && registrable(site) == Some(site)
 }
 
-pub struct PairingFile {
-    list: ListFile,
+fn failed(e: std::io::Error) -> PawError {
+    PawError::Store(format!("could not keep the site pairings: {e}"))
 }
 
-impl PairingFile {
+/// The pairings of one store, for the app and the extension. A missing,
+/// unreadable or malformed file has none; malformed items are left out.
+/// Every change refuses if the state directory is gone (the store was
+/// removed): it is never made again here.
+#[derive(uniffi::Object)]
+pub struct SitePairings {
+    list: ListFile<Pairing>,
+}
+
+impl SitePairings {
     pub fn new(state_dir: &Path) -> Self {
         Self { list: ListFile::new(state_dir, &LIST) }
     }
@@ -81,95 +91,49 @@ impl PairingFile {
         self.list.path()
     }
 
-    /// Every pairing, least recently filled first. A missing, unreadable
-    /// or malformed file has none; malformed items are left out.
-    pub fn load(&self) -> Vec<Pairing> {
-        self.list.load()
-    }
-
-    /// `change` says whether it changed anything; nothing is written if
-    /// not. Refuses if the state directory is gone (the store was removed):
-    /// it is never made again here.
-    fn update(&self, change: impl FnOnce(&mut Vec<Pairing>) -> bool) -> std::io::Result<()> {
-        self.list.update(change).map(|_| ())
-    }
-
     /// Keeps that `entry` was filled on `site` (a registrable domain), as
     /// the most recent pairing. Entries not in `existing` are dropped
-    /// while at it, if given.
+    /// while at it, if given. A pairing paw does not keep (no entry, a
+    /// site that is not a registrable domain) changes nothing.
     pub fn record(&self, entry: &str, site: &str, existing: Option<&HashSet<&str>>) -> std::io::Result<()> {
-        if entry.is_empty() || entry.len() > MAX_PATH_BYTES || !valid_site(site) {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "not a pairing paw keeps"));
-        }
-        self.update(|pairings| {
-            if let Some(existing) = existing {
-                pairings.retain(|p| existing.contains(p.entry.as_str()));
-            }
-            let mut sites = match pairings.iter().position(|p| p.entry == entry) {
-                Some(at) => pairings.remove(at).sites,
-                None => Vec::new(),
-            };
-            sites.retain(|s| s != site);
-            sites.push(site.to_owned());
-            let extra = sites.len().saturating_sub(MAX_SITES);
-            sites.drain(..extra);
-            pairings.push(Pairing { entry: entry.to_owned(), sites });
-            true
-        })
+        self.list
+            .update(|pairings| {
+                if let Some(existing) = existing {
+                    pairings.retain(|p| existing.contains(p.entry.as_str()));
+                }
+                let mut sites = match pairings.iter().position(|p| p.entry == entry) {
+                    Some(at) => pairings.remove(at).sites,
+                    None => Vec::new(),
+                };
+                sites.retain(|s| s != site);
+                sites.push(site.to_owned());
+                pairings.push(Pairing { entry: entry.to_owned(), sites });
+            })
+            .map(|_| ())
     }
 
     pub fn moved(&self, from: &str, to: &str) -> std::io::Result<()> {
         if from == to {
             return Ok(());
         }
-        self.update(|pairings| {
-            let Some(at) = pairings.iter().position(|p| p.entry == from) else { return false };
-            let mut moving = pairings.remove(at);
-            pairings.retain(|p| p.entry != to);
-            if to.len() <= MAX_PATH_BYTES {
+        self.list
+            .update(|pairings| {
+                let Some(at) = pairings.iter().position(|p| p.entry == from) else { return };
+                let mut moving = pairings.remove(at);
+                pairings.retain(|p| p.entry != to);
                 moving.entry = to.to_owned();
                 pairings.insert(at.min(pairings.len()), moving);
-            }
-            true
-        })
-    }
-
-    /// Forgets that `entry` filled on `site`, and the entry altogether if
-    /// that was its last site.
-    pub fn forget_site(&self, entry: &str, site: &str) -> std::io::Result<()> {
-        self.update(|pairings| {
-            let mut changed = false;
-            for pairing in pairings.iter_mut().filter(|p| p.entry == entry) {
-                let before = pairing.sites.len();
-                pairing.sites.retain(|s| s != site);
-                changed |= pairing.sites.len() != before;
-            }
-            pairings.retain(|p| !p.sites.is_empty());
-            changed
-        })
+            })
+            .map(|_| ())
     }
 
     /// Forgets one entry's pairings, or with `None` every pairing.
     pub fn clear(&self, entry: Option<&str>) -> std::io::Result<()> {
         match entry {
-            Some(entry) => self.update(|pairings| {
-                let before = pairings.len();
-                pairings.retain(|p| p.entry != entry);
-                pairings.len() != before
-            }),
+            Some(entry) => self.list.update(|pairings| pairings.retain(|p| p.entry != entry)).map(|_| ()),
             None => self.list.clear(),
         }
     }
-}
-
-fn failed(e: std::io::Error) -> PawError {
-    PawError::Store(format!("could not keep the site pairings: {e}"))
-}
-
-/// The pairings of one store, for the app and the extension.
-#[derive(uniffi::Object)]
-pub struct SitePairings {
-    file: PairingFile,
 }
 
 #[uniffi::export]
@@ -177,7 +141,7 @@ impl SitePairings {
     /// Reads nothing until asked.
     #[uniffi::constructor]
     pub fn open(state_dir: String) -> Arc<Self> {
-        Arc::new(Self { file: PairingFile::new(Path::new(&state_dir)) })
+        Arc::new(Self::new(Path::new(&state_dir)))
     }
 
     /// Keeps that `entry` has just filled on `service`. Call only after a
@@ -189,44 +153,48 @@ impl SitePairings {
     /// and a fill there never makes it trusted. Clearing the entry's
     /// pairings is the only way to trust a second domain of one name.
     pub fn record_pairing(&self, store: Arc<PassStore>, entry: String, service: String) -> Result<bool, PawError> {
-        let entries = store.entries();
-        let Some(found) = entries.iter().find(|e| e.path == entry) else { return Ok(false) };
-        let matched = match_site(std::slice::from_ref(found), &service, &self.file.load()).into_iter().next();
+        let Some(found) = store.entries().iter().find(|e| e.path == entry) else { return Ok(false) };
+        let matched = match_site(std::slice::from_ref(found), &service, &self.pairings()).into_iter().next();
         let Some(site) = matched.and_then(|m| match m.kind {
             MatchKind::Name { pairing: NamePairing::Paired | NamePairing::Unpaired } => Some(m.site),
             _ => None,
         }) else {
             return Ok(false);
         };
-        let existing: HashSet<&str> = entries.iter().map(|e| e.path.as_str()).collect();
-        self.file.record(&entry, &site, Some(&existing)).map_err(failed)?;
+        self.record(&entry, &site, Some(&store.tree().entry_paths())).map_err(failed)?;
         Ok(true)
     }
 
     /// Every pairing, least recently filled first.
     pub fn pairings(&self) -> Vec<Pairing> {
-        self.file.load()
+        self.list.load()
     }
 
     /// Forgets the pairings of `entry`, or with `None` all of them.
     pub fn clear_pairings(&self, entry: Option<String>) -> Result<(), PawError> {
-        self.file.clear(entry.as_deref()).map_err(failed)
+        self.clear(entry.as_deref()).map_err(failed)
     }
 
     /// Settings › AutoFill › Sites used: forgets that `entry` filled on
     /// `site`. The next fill there asks again.
     pub fn forget_site(&self, entry: String, site: String) -> Result<(), PawError> {
-        self.file.forget_site(&entry, &site).map_err(failed)
+        self.list
+            .update(|pairings| {
+                for pairing in pairings.iter_mut().filter(|p| p.entry == entry) {
+                    pairing.sites.retain(|s| *s != site);
+                }
+            })
+            .map(|_| ())
+            .map_err(failed)
     }
 
     /// The pairings that still hold in `store`: the entry is there and
     /// still matches the site by name. For the suggestions above the
     /// keyboard, one per entry and site, sorted by entry.
     pub fn paired_sites(&self, store: Arc<PassStore>) -> Vec<PairedSite> {
-        let existing: HashSet<&str> = store.entries().iter().map(|e| e.path.as_str()).collect();
+        let existing = store.tree().entry_paths();
         let mut out: Vec<PairedSite> = self
-            .file
-            .load()
+            .pairings()
             .into_iter()
             .filter(|p| existing.contains(p.entry.as_str()))
             .flat_map(|p| {

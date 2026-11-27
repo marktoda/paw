@@ -20,8 +20,6 @@ use super::CardInfo;
 use crate::PawError;
 use crate::files::values::{self, Values};
 
-const TEMP_PREFIX: &str = ".enrolled-key.tmp-";
-
 /// The serial printed on a key, from its `ident` ("0006:12345678" is
 /// "12345678"). The screens group its digits for reading.
 #[uniffi::export]
@@ -130,7 +128,7 @@ pub fn save_enrolment(state_dir: &Path, identity: &KeyIdentity) -> Result<(), Pa
     {
         return Err(PawError::Store("not a key identity".into()));
     }
-    values::write(&state_dir.join(crate::files::layout::ENROLLED_KEY), TEMP_PREFIX, identity.pairs()).map_err(|e| io("save", e))
+    values::write(&state_dir.join(crate::files::layout::ENROLLED_KEY), identity.pairs()).map_err(|e| io("save", e))
 }
 
 /// The key the store in `state_dir` was set up with, if setup recorded one.

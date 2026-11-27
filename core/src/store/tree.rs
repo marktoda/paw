@@ -6,7 +6,7 @@
 //! never followed: a link in a cloned repository can point anywhere on the
 //! device, so links are left out and listed in [`StoreTree::skipped`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::PawError;
@@ -159,6 +159,11 @@ impl StoreTree {
     /// Every entry in the store, sorted by path.
     pub fn entries(&self) -> &[EntryRef] {
         &self.entries
+    }
+
+    /// The path of every entry in the store.
+    pub(crate) fn entry_paths(&self) -> HashSet<&str> {
+        self.entries.iter().map(|entry| entry.path.as_str()).collect()
     }
 
     /// Every folder that holds entries, sorted by path; not the top.

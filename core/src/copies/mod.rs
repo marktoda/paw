@@ -34,6 +34,7 @@ use format::{CopyFile, IndexKeys, Invalid, Meta};
 pub use seams::{DeviceKeystore, KeystoreError};
 
 use crate::clock::Clock;
+use crate::files::remove_if_there;
 
 /// No copy lives longer, whatever the caller asks for.
 pub const MAX_TTL: Duration = Duration::from_secs(12 * 60 * 60);
@@ -185,7 +186,7 @@ impl CopyCache {
             // While the marker is there nothing reads it; wipe it before the
             // marker goes, or it would be live again.
             dir::wipe(&self.dir).map_err(io_err)?;
-            return dir::remove(&marker).map_err(io_err);
+            return remove_if_there(&marker).map_err(io_err);
         }
         // The marker first: a copy another process seals in between is
         // wiped by its next read and was sealed under keys reset below. If
@@ -202,7 +203,7 @@ impl CopyCache {
     pub fn forget_entry(&self, entry: String) -> Result<(), PawError> {
         self.scan(&self.keys()?)?;
         let keys = self.keys()?;
-        dir::remove(&self.path(&keys, &entry)).map_err(io_err)
+        remove_if_there(&self.path(&keys, &entry)).map_err(io_err)
     }
 }
 
@@ -254,7 +255,7 @@ impl CopyCache {
                 Ok(file) if keys.file_stem(&file.meta.entry) == stem => files.push((path, file)),
                 // Not ours, damaged, sealed under keys since reset, or
                 // moved from another entry's name.
-                _ => dir::remove(&path).map_err(io_err)?,
+                _ => remove_if_there(&path).map_err(io_err)?,
             }
         }
 
@@ -267,7 +268,7 @@ impl CopyCache {
         for (path, file) in files {
             match now.until(&file.meta) {
                 Some(until_ms) => live.push(Found { path, file, until_ms }),
-                None => dir::remove(&path).map_err(io_err)?,
+                None => remove_if_there(&path).map_err(io_err)?,
             }
         }
         Ok(live)
@@ -297,7 +298,7 @@ impl CopyCache {
         self.scan(&self.keys()?)?;
         let keys = self.keys()?;
         if ttl.is_zero() || self.off() {
-            dir::remove(&self.path(&keys, entry)).map_err(io_err)?;
+            remove_if_there(&self.path(&keys, entry)).map_err(io_err)?;
             return Ok(None);
         }
         let ttl_ms = ttl.min(MAX_TTL).as_millis() as i64;
@@ -329,7 +330,7 @@ impl CopyCache {
         let keys = self.keys()?;
         let Some(found) = self.find(&keys, entry)? else { return Ok(CopyStatus::NeedsKey) };
         if found.file.meta.content_id != content_id {
-            dir::remove(&found.path).map_err(io_err)?;
+            remove_if_there(&found.path).map_err(io_err)?;
             return Ok(CopyStatus::Stale);
         }
         Ok(CopyStatus::Available { until_ms: found.until_ms })
@@ -348,7 +349,7 @@ impl CopyCache {
         let keys = self.keys()?;
         let Some(found) = self.find(&keys, entry)? else { return Err(PawError::CopyUnavailable) };
         if found.file.meta.content_id != content_id {
-            dir::remove(&found.path).map_err(io_err)?;
+            remove_if_there(&found.path).map_err(io_err)?;
             return Err(PawError::CopyUnavailable);
         }
 
@@ -373,11 +374,11 @@ impl CopyCache {
             return Err(PawError::CopyUnavailable);
         }
         if !unchanged || now.until(&found.file.meta).is_none() {
-            dir::remove(&found.path).map_err(io_err)?;
+            remove_if_there(&found.path).map_err(io_err)?;
             return Err(PawError::CopyUnavailable);
         }
         found.file.open_text(&data_key).or_else(|_| {
-            dir::remove(&found.path).map_err(io_err)?;
+            remove_if_there(&found.path).map_err(io_err)?;
             Err(PawError::CopyUnavailable)
         })
     }
@@ -423,7 +424,7 @@ impl CopyCache {
         let keys = self.keys()?;
         let Some(found) = self.find(&keys, from)? else { return Ok(None) };
         let left = found.until_ms.saturating_sub(self.now().wall_ms);
-        dir::remove(&found.path).map_err(io_err)?;
+        remove_if_there(&found.path).map_err(io_err)?;
         if left <= 0 {
             return Ok(None);
         }

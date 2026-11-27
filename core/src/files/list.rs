@@ -4,6 +4,7 @@
 
 use std::collections::HashSet;
 use std::io::ErrorKind;
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
@@ -21,10 +22,10 @@ pub(crate) const MAX_PATH_BYTES: usize = 512;
 const VERSION: u32 = 1;
 
 /// One item of a [`ListFile`]: about one entry, by its path.
-pub(crate) trait ListItem: Serialize + DeserializeOwned {
+pub(crate) trait ListItem: Serialize + DeserializeOwned + Clone + PartialEq {
     fn entry(&self) -> &str;
 
-    /// The item as read from the file, made valid; `None` leaves it out.
+    /// The item made valid, as it is kept; `None` leaves it out.
     fn clean(self) -> Option<Self> {
         Some(self)
     }
@@ -39,7 +40,6 @@ impl ListItem for String {
 pub(crate) struct ListKind {
     pub file: &'static str,
     pub key: &'static str,
-    pub temp_prefix: &'static str,
     pub max_items: usize,
     /// A list with a switch is kept only while this file is beside it.
     pub on_marker: Option<&'static str>,
@@ -51,14 +51,15 @@ pub(crate) struct ListKind {
 /// malformed file has none and is replaced on the next write; past
 /// `max_items` the least recent are dropped. A list with a switch that is
 /// off has none and keeps none.
-pub(crate) struct ListFile {
+pub(crate) struct ListFile<T> {
     state_dir: PathBuf,
     kind: &'static ListKind,
+    items: PhantomData<fn() -> T>,
 }
 
-impl ListFile {
+impl<T: ListItem> ListFile<T> {
     pub fn new(state_dir: &Path, kind: &'static ListKind) -> Self {
-        Self { state_dir: state_dir.to_path_buf(), kind }
+        Self { state_dir: state_dir.to_path_buf(), kind, items: PhantomData }
     }
 
     pub fn path(&self) -> PathBuf {
@@ -89,7 +90,7 @@ impl ListFile {
                 return Err(gone());
             }
             remove_if_there(&self.path())?;
-            return write_atomic(&marker, self.kind.temp_prefix, b"");
+            return write_atomic(&marker, b"");
         }
         let unmarked = remove_if_there(&marker);
         let removed = remove_if_there(&self.path());
@@ -97,24 +98,15 @@ impl ListFile {
     }
 
     /// Every item, least recent first.
-    pub fn load<T: ListItem>(&self) -> Vec<T> {
+    pub fn load(&self) -> Vec<T> {
         if !self.enabled() {
             return Vec::new();
         }
         let Ok(Some(bytes)) = read_bounded(&self.path(), MAX_FILE_BYTES) else { return Vec::new() };
-        let Some(items) = self.decode::<T>(&bytes) else { return Vec::new() };
-        let mut seen = HashSet::new();
-        let mut items: Vec<T> = items
-            .into_iter()
-            .filter(|item| !item.entry().is_empty() && item.entry().len() <= MAX_PATH_BYTES)
-            .filter(|item| seen.insert(item.entry().to_owned()))
-            .filter_map(ListItem::clean)
-            .collect();
-        self.bound(&mut items);
-        items
+        self.decode(&bytes).map(|items| self.kept(items)).unwrap_or_default()
     }
 
-    fn decode<T: ListItem>(&self, bytes: &[u8]) -> Option<Vec<T>> {
+    fn decode(&self, bytes: &[u8]) -> Option<Vec<T>> {
         let mut book: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(bytes).ok()?;
         let version: u32 = serde_json::from_value(book.remove("version")?).ok()?;
         if version != VERSION {
@@ -123,17 +115,29 @@ impl ListFile {
         serde_json::from_value(book.remove(self.kind.key)?).ok()
     }
 
-    fn bound<T>(&self, items: &mut Vec<T>) {
+    /// What of `items` is kept, read or written: items about an entry path
+    /// that is not empty and at most [`MAX_PATH_BYTES`], the first for each
+    /// entry, each made valid ([`ListItem::clean`]), and the most recent
+    /// `max_items`.
+    fn kept(&self, items: Vec<T>) -> Vec<T> {
+        let mut seen = HashSet::new();
+        let mut items: Vec<T> = items
+            .into_iter()
+            .filter(|item| !item.entry().is_empty() && item.entry().len() <= MAX_PATH_BYTES)
+            .filter(|item| seen.insert(item.entry().to_owned()))
+            .filter_map(ListItem::clean)
+            .collect();
         let extra = items.len().saturating_sub(self.kind.max_items);
         items.drain(..extra);
+        items
     }
 
-    /// Reads, changes and writes the file. Nothing is written if `change`
-    /// says it changed nothing, or while the list is off (asked again after
-    /// the write, which is undone if another process switched it off
+    /// Reads, changes and writes the file. Nothing is written if what is
+    /// kept did not change, or while the list is off (asked again after the
+    /// write, which is undone if another process switched it off
     /// meanwhile). True if written. Refuses if the state directory is gone:
     /// it is never made again here.
-    pub fn update<T: ListItem>(&self, change: impl FnOnce(&mut Vec<T>) -> bool) -> std::io::Result<bool> {
+    pub fn update(&self, change: impl FnOnce(&mut Vec<T>)) -> std::io::Result<bool> {
         let _turn = self.turn();
         if !self.state_dir.is_dir() {
             return Err(gone());
@@ -141,15 +145,17 @@ impl ListFile {
         if !self.enabled() {
             return Ok(false);
         }
-        let mut items = self.load();
-        if !change(&mut items) {
+        let before = self.load();
+        let mut items = before.clone();
+        change(&mut items);
+        let items = self.kept(items);
+        if items == before {
             return Ok(false);
         }
-        self.bound(&mut items);
         let list = serde_json::to_string(&items).map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))?;
         let key = serde_json::to_string(self.kind.key).map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))?;
         let bytes = format!("{{\"version\":{VERSION},{key}:{list}}}");
-        write_atomic(&self.path(), self.kind.temp_prefix, bytes.as_bytes())?;
+        write_atomic(&self.path(), bytes.as_bytes())?;
         if !self.enabled() {
             remove_if_there(&self.path())?;
             return Ok(false);

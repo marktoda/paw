@@ -338,7 +338,7 @@ impl SetupFlow {
     fn save(&self) -> Result<(), SetupError> {
         let pairs = self.saved.pairs();
         let pairs = pairs.iter().map(|(name, value)| (*name, value.as_str()));
-        values::write(&self.dir.join(layout::SETUP), ".setup.tmp-", pairs).map_err(failed)
+        values::write(&self.dir.join(layout::SETUP), pairs).map_err(failed)
     }
 
     fn go(&mut self, step: Step) -> Result<SetupState, SetupError> {
@@ -611,7 +611,7 @@ impl SetupFlow {
         {
             let _held = self.exclusive()?;
             let remote = self.dir.join(layout::REMOTE);
-            files::write_atomic(&remote, ".remote.tmp-", format!("{address}\n").as_bytes()).map_err(failed)?;
+            files::write_atomic(&remote, format!("{address}\n").as_bytes()).map_err(failed)?;
         }
         self.go(Step::TestDecrypt)
     }

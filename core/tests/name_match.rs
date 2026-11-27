@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use paw_core::store::PassStore;
 use paw_core::files::layout::SITE_PAIRINGS;
-use paw_core::store::pairings::{MAX_ENTRIES, MAX_SITES, PairedSite, Pairing, PairingFile, SitePairings};
+use paw_core::store::pairings::{MAX_ENTRIES, MAX_SITES, PairedSite, Pairing, SitePairings};
 use paw_core::store::service::{MatchKind, NamePairing, match_site, name_key, site_name};
 use paw_core::store::tree::EntryRef;
 
@@ -341,12 +341,12 @@ fn recording_again_moves_a_site_to_the_end_and_keeps_few_sites() {
     // The file itself, under the core's checks: a second domain of one name
     // is refused by `record_pairing`, so these are names of several sites.
     let dir = tempfile::tempdir().unwrap();
-    let file = PairingFile::new(dir.path());
+    let file = SitePairings::new(dir.path());
     let sites = ["github.com", "gitlab.com", "bitbucket.org", "codeberg.org", "sourcehut.org", "github.com"];
     for site in sites {
         file.record("code", site, None).unwrap();
     }
-    let kept = file.load();
+    let kept = file.pairings();
     assert_eq!(kept.len(), 1);
     assert_eq!(kept[0].sites.len(), MAX_SITES);
     assert_eq!(kept[0].sites, vec!["bitbucket.org", "codeberg.org", "sourcehut.org", "github.com"]);
@@ -355,11 +355,11 @@ fn recording_again_moves_a_site_to_the_end_and_keeps_few_sites() {
 #[test]
 fn the_file_keeps_at_most_the_most_recent_entries() {
     let dir = tempfile::tempdir().unwrap();
-    let file = PairingFile::new(dir.path());
+    let file = SitePairings::new(dir.path());
     for i in 0..MAX_ENTRIES + 25 {
         file.record(&format!("site{i:04}"), &format!("site{i:04}.com"), None).unwrap();
     }
-    let kept = file.load();
+    let kept = file.pairings();
     assert_eq!(kept.len(), MAX_ENTRIES);
     assert_eq!(kept[0].entry, "site0025");
     assert_eq!(kept.last().unwrap().entry, format!("site{:04}", MAX_ENTRIES + 24));
@@ -369,7 +369,7 @@ fn the_file_keeps_at_most_the_most_recent_entries() {
 #[test]
 fn entries_no_longer_in_the_store_are_dropped_on_the_next_record() {
     let (dir, store, pairings) = state_with(&["github", "alaskaair"]);
-    PairingFile::new(dir.path()).record("deleted/elsewhere", "deleted.com", None).unwrap();
+    SitePairings::new(dir.path()).record("deleted/elsewhere", "deleted.com", None).unwrap();
     pairings.record_pairing(store, "alaskaair".into(), "https://alaskaair.com".into()).unwrap();
     assert_eq!(pairings.pairings(), vec![pairing("alaskaair", &["alaskaair.com"])]);
 }
@@ -418,7 +418,7 @@ fn writes_are_atomic_and_threads_lose_nothing() {
         .map(|w| {
             let path = path.clone();
             std::thread::spawn(move || {
-                let file = PairingFile::new(&path);
+                let file = SitePairings::new(&path);
                 for i in 0..40 {
                     file.record(&format!("w{w}/entry{i}"), &format!("entry{i}.com"), None).unwrap();
                 }
@@ -439,7 +439,7 @@ fn writes_are_atomic_and_threads_lose_nothing() {
         writer.join().unwrap();
     }
     reader.join().unwrap();
-    let kept = PairingFile::new(&path).load();
+    let kept = SitePairings::new(&path).pairings();
     assert_eq!(kept.len(), 80);
     // No temporary file is left behind.
     assert!(temps(&path).is_empty());
@@ -456,7 +456,7 @@ fn a_stale_temporary_file_is_cleaned_and_a_fresh_one_is_left() {
     std::fs::write(&stale, "half").unwrap();
     let old = std::time::SystemTime::now() - std::time::Duration::from_secs(120);
     std::fs::File::options().write(true).open(&stale).unwrap().set_modified(old).unwrap();
-    PairingFile::new(dir.path()).record("alaskaair", "alaskaair.com", None).unwrap();
+    SitePairings::new(dir.path()).record("alaskaair", "alaskaair.com", None).unwrap();
     assert!(fresh.exists());
     assert!(!stale.exists());
 }
@@ -491,18 +491,28 @@ fn nothing_is_recorded_once_the_store_is_removed() {
 #[test]
 fn moving_an_entry_keeps_its_pairings_and_forgetting_drops_them() {
     let dir = tempfile::tempdir().unwrap();
-    let file = PairingFile::new(dir.path());
+    let file = SitePairings::new(dir.path());
     file.record("bank/bankofamerica", "bankofamerica.com", None).unwrap();
     file.record("alaskaair", "alaskaair.com", None).unwrap();
     file.moved("bank/bankofamerica", "finance/bankofamerica").unwrap();
     assert_eq!(
-        file.load(),
+        file.pairings(),
         vec![pairing("finance/bankofamerica", &["bankofamerica.com"]), pairing("alaskaair", &["alaskaair.com"])]
     );
     // Moving something with no pairings changes nothing.
     file.moved("nothing", "else").unwrap();
     file.clear(Some("alaskaair")).unwrap();
-    assert_eq!(file.load(), vec![pairing("finance/bankofamerica", &["bankofamerica.com"])]);
+    assert_eq!(file.pairings(), vec![pairing("finance/bankofamerica", &["bankofamerica.com"])]);
+}
+
+#[test]
+fn a_pairing_moved_to_no_path_is_not_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = SitePairings::new(dir.path());
+    file.record("bank/bankofamerica", "bankofamerica.com", None).unwrap();
+    file.moved("bank/bankofamerica", "").unwrap();
+    assert!(file.pairings().is_empty());
+    assert!(!std::fs::read_to_string(file.path()).unwrap().contains("\"entry\":\"\""));
 }
 
 #[test]
@@ -511,7 +521,7 @@ fn paired_sites_are_only_those_that_still_match_by_name() {
     // there: no suggestion is ever published for them.
     let (dir, store, pairings) =
         state_with(&["bankofamerica", "travel/alaska", "contoso/alice", "alaskaair", "github"]);
-    let file = PairingFile::new(dir.path());
+    let file = SitePairings::new(dir.path());
     file.record("bankofamerica", "bankofamerica.com", None).unwrap();
     file.record("bankofamerica", "bankofamerica.co", None).unwrap();
     // Renamed since: no longer matches its pairing.

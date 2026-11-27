@@ -32,8 +32,8 @@ use crate::fault::Fault;
 use crate::files::content_id;
 use crate::entry::EntryDoc;
 use crate::entry::opened::OpenedEntry;
-use crate::store::codes::CodeFile;
-use crate::store::pairings::PairingFile;
+use crate::store::codes::OneTimeCodeEntries;
+use crate::store::pairings::SitePairings;
 use crate::store::gpg_id::recipients_for;
 use crate::store::read::read_file;
 use crate::store::tree::StoreTree;
@@ -150,13 +150,13 @@ impl WriteStore {
     /// The entry moved from `from` to `to`, or with `None` went: its site
     /// pairings and its one-time-code mark follow it.
     fn entry_moved(&self, from: &str, to: Option<&str>, follow_ups: &mut FollowUps) {
-        let pairings = PairingFile::new(&self.state_dir);
+        let pairings = SitePairings::new(&self.state_dir);
         let moved = match to {
             Some(to) => pairings.moved(from, to),
             None => pairings.clear(Some(from)),
         };
         follow_ups.io(FollowUp::SitePairings, moved);
-        follow_ups.io(FollowUp::OneTimeCodeMark, CodeFile::new(&self.state_dir).moved(from, to));
+        follow_ups.io(FollowUp::OneTimeCodeMark, OneTimeCodeEntries::new(&self.state_dir).moved(from, to));
     }
 
     fn forget_copy(&self, entry: &str, follow_ups: &mut FollowUps) {
@@ -245,7 +245,7 @@ impl WriteStore {
         }
         // AutoFill learns of a code added or removed here without the
         // entry being opened again.
-        follow_ups.io(FollowUp::OneTimeCodeMark, CodeFile::new(&self.state_dir).mark(&entry, doc.makes_codes()));
+        follow_ups.io(FollowUp::OneTimeCodeMark, OneTimeCodeEntries::new(&self.state_dir).mark(&entry, doc.makes_codes()));
         let face_id_until_ms = self.copies.as_ref().and_then(|copies| {
             let text = doc.to_bytes();
             follow_ups.copy(match draft.original_path() {

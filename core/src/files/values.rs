@@ -34,10 +34,6 @@ pub(crate) fn text<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a str)>) -> S
     pairs.into_iter().map(|(name, value)| format!("{name}={value}\n")).collect()
 }
 
-pub(crate) fn write<'a>(
-    path: &Path,
-    temp_prefix: &str,
-    pairs: impl IntoIterator<Item = (&'a str, &'a str)>,
-) -> std::io::Result<()> {
-    write_atomic(path, temp_prefix, text(pairs).as_bytes())
+pub(crate) fn write<'a>(path: &Path, pairs: impl IntoIterator<Item = (&'a str, &'a str)>) -> std::io::Result<()> {
+    write_atomic(path, text(pairs).as_bytes())
 }

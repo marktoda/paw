@@ -19,12 +19,11 @@
 //! file, so the app and the extension read the same answer. While off
 //! nothing is written or read, and turning it off deletes the file.
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use super::PassStore;
-use crate::files::list::{ListFile, ListKind, MAX_PATH_BYTES};
+use crate::files::list::{ListFile, ListKind};
 use crate::PawError;
 
 pub const MAX_ENTRIES: usize = 1000;
@@ -32,32 +31,29 @@ pub const MAX_ENTRIES: usize = 1000;
 static LIST: ListKind = ListKind {
     file: crate::files::layout::ONE_TIME_CODES,
     key: "entries",
-    temp_prefix: ".one-time-codes.tmp-",
     max_items: MAX_ENTRIES,
     on_marker: Some(crate::files::layout::ONE_TIME_CODES_ON),
     writing: Mutex::new(()),
 };
 
-pub struct CodeFile {
-    list: ListFile,
+fn failed(e: std::io::Error) -> PawError {
+    PawError::Store(format!("could not keep which entries have codes: {e}"))
 }
 
-impl CodeFile {
+/// Which entries of one store have a one-time code, for the app and the
+/// AutoFill extension.
+#[derive(uniffi::Object)]
+pub struct OneTimeCodeEntries {
+    list: ListFile<String>,
+}
+
+impl OneTimeCodeEntries {
     pub fn new(state_dir: &Path) -> Self {
         Self { list: ListFile::new(state_dir, &LIST) }
     }
 
     pub fn path(&self) -> PathBuf {
         self.list.path()
-    }
-
-    pub fn enabled(&self) -> bool {
-        self.list.enabled()
-    }
-
-    /// Either way the list starts empty.
-    pub fn set_enabled(&self, enabled: bool) -> std::io::Result<()> {
-        self.list.set_enabled(enabled)
     }
 
     /// Every marked entry, least recently marked first. None while the
@@ -69,17 +65,12 @@ impl CodeFile {
     /// True if the file changed. A mark already kept is not moved: an
     /// entry opened often is no reason to write each time.
     pub fn mark(&self, entry: &str, has_code: bool) -> std::io::Result<bool> {
-        if entry.is_empty() || entry.len() > MAX_PATH_BYTES {
-            return Ok(false);
-        }
-        self.list.update(|entries: &mut Vec<String>| {
-            let known = entries.iter().any(|e| e == entry);
-            match (known, has_code) {
-                (false, true) => entries.push(entry.to_owned()),
-                (true, false) => entries.retain(|e| e != entry),
-                _ => return false,
+        self.list.update(|entries| {
+            if !has_code {
+                entries.retain(|e| e != entry);
+            } else if !entries.iter().any(|e| e == entry) {
+                entries.push(entry.to_owned());
             }
-            true
         })
     }
 
@@ -89,32 +80,17 @@ impl CodeFile {
         if Some(from) == to {
             return Ok(());
         }
-        self.list.update(|entries: &mut Vec<String>| {
-            let Some(at) = entries.iter().position(|e| e == from) else { return false };
-            entries.remove(at);
-            if let Some(to) = to.filter(|to| !to.is_empty() && to.len() <= MAX_PATH_BYTES) {
-                entries.retain(|e| e != to);
-                entries.insert(at.min(entries.len()), to.to_owned());
-            }
-            true
-        })
-        .map(|_| ())
+        self.list
+            .update(|entries| {
+                let Some(at) = entries.iter().position(|e| e == from) else { return };
+                entries.remove(at);
+                if let Some(to) = to {
+                    entries.retain(|e| e != to);
+                    entries.insert(at.min(entries.len()), to.to_owned());
+                }
+            })
+            .map(|_| ())
     }
-
-    pub fn clear(&self) -> std::io::Result<()> {
-        self.list.clear()
-    }
-}
-
-fn failed(e: std::io::Error) -> PawError {
-    PawError::Store(format!("could not keep which entries have codes: {e}"))
-}
-
-/// Which entries of one store have a one-time code, for the app and the
-/// AutoFill extension.
-#[derive(uniffi::Object)]
-pub struct OneTimeCodeEntries {
-    file: CodeFile,
 }
 
 #[uniffi::export]
@@ -122,7 +98,7 @@ impl OneTimeCodeEntries {
     /// Reads nothing until asked.
     #[uniffi::constructor]
     pub fn open(state_dir: String) -> Arc<Self> {
-        Arc::new(Self { file: CodeFile::new(Path::new(&state_dir)) })
+        Arc::new(Self::new(Path::new(&state_dir)))
     }
 
     /// The entry at `entry` was opened or saved: keeps whether it has a
@@ -130,31 +106,31 @@ impl OneTimeCodeEntries {
     /// if that changed what is kept (the suggestions above the keyboard are
     /// then out of date). False, and nothing kept, while the list is off.
     pub fn note(&self, entry: String, has_code: bool) -> Result<bool, PawError> {
-        self.file.mark(&entry, has_code).map_err(failed)
+        self.mark(&entry, has_code).map_err(failed)
     }
 
     /// Off by default.
     pub fn enabled(&self) -> bool {
-        self.file.enabled()
+        self.list.enabled()
     }
 
     /// Settings › AutoFill › Suggest one-time codes. Off deletes the list;
     /// on starts an empty one.
     pub fn set_enabled(&self, enabled: bool) -> Result<(), PawError> {
-        self.file.set_enabled(enabled).map_err(failed)
+        self.list.set_enabled(enabled).map_err(failed)
     }
 
     /// The entries of `store` known to have a one-time code, sorted. None
     /// while the list is off.
     pub fn entries(&self, store: Arc<PassStore>) -> Vec<String> {
-        let existing: HashSet<&str> = store.entries().iter().map(|e| e.path.as_str()).collect();
-        let mut out: Vec<String> = self.file.load().into_iter().filter(|e| existing.contains(e.as_str())).collect();
+        let existing = store.tree().entry_paths();
+        let mut out: Vec<String> = self.load().into_iter().filter(|e| existing.contains(e.as_str())).collect();
         out.sort();
         out
     }
 
     pub fn clear(&self) -> Result<(), PawError> {
-        self.file.clear().map_err(failed)
+        self.list.clear().map_err(failed)
     }
 }
 
@@ -181,8 +157,8 @@ mod tests {
         codes
     }
 
-    fn file_on(dir: &Path) -> CodeFile {
-        let file = CodeFile::new(dir);
+    fn file_on(dir: &Path) -> OneTimeCodeEntries {
+        let file = OneTimeCodeEntries::new(dir);
         file.set_enabled(true).unwrap();
         file
     }
@@ -197,7 +173,7 @@ mod tests {
         assert!(!d.path().join(crate::files::layout::ONE_TIME_CODES).exists(), "nothing is written while off");
         // A file left by a write that raced an off is not read.
         std::fs::write(d.path().join(crate::files::layout::ONE_TIME_CODES), br#"{"version":1,"entries":["a"]}"#).unwrap();
-        assert!(codes.file.load().is_empty());
+        assert!(codes.load().is_empty());
     }
 
     #[test]
@@ -206,14 +182,14 @@ mod tests {
         let codes = codes(&d);
         assert!(codes.enabled());
         assert!(codes.note("a".into(), true).unwrap());
-        assert_eq!(codes.file.load(), ["a"]);
+        assert_eq!(codes.load(), ["a"]);
         codes.set_enabled(false).unwrap();
         assert!(!codes.enabled());
         assert!(!d.path().join(crate::files::layout::ONE_TIME_CODES).exists());
         assert!(!d.path().join(crate::files::layout::ONE_TIME_CODES_ON).exists());
         std::fs::write(d.path().join(crate::files::layout::ONE_TIME_CODES), br#"{"version":1,"entries":["stale"]}"#).unwrap();
         codes.set_enabled(true).unwrap();
-        assert!(codes.file.load().is_empty(), "on starts empty");
+        assert!(codes.load().is_empty(), "on starts empty");
         codes.set_enabled(false).unwrap();
         codes.set_enabled(false).unwrap();
     }
@@ -230,7 +206,7 @@ mod tests {
         assert!(codes.note("a".into(), true).unwrap());
         assert!(!codes.note("a".into(), true).unwrap());
         assert!(codes.note("a".into(), false).unwrap());
-        assert!(codes.file.load().is_empty());
+        assert!(codes.load().is_empty());
     }
 
     #[test]
@@ -241,7 +217,7 @@ mod tests {
         assert!(!codes.note("web/github.com".into(), opened(WITH_CODE).makes_one_time_codes()).unwrap(), "no change, no write");
         assert!(!codes.note("web/gitlab.com".into(), opened(b"pw\nlogin: you\n").makes_one_time_codes()).unwrap());
         assert!(!codes.note("web/broken.com".into(), opened(BROKEN_CODE).makes_one_time_codes()).unwrap());
-        assert_eq!(codes.file.load(), ["web/github.com"]);
+        assert_eq!(codes.load(), ["web/github.com"]);
         let text = std::fs::read_to_string(d.path().join(crate::files::layout::ONE_TIME_CODES)).unwrap();
         assert!(!text.contains("JBSW") && !text.contains("otpauth") && !text.contains("pw"), "{text}");
     }
@@ -266,7 +242,7 @@ mod tests {
     fn nothing_is_kept_once_the_store_is_gone() {
         let d = dir();
         let state = d.path().join("state");
-        let file = CodeFile::new(&state);
+        let file = OneTimeCodeEntries::new(&state);
         assert!(file.mark("a", true).is_err());
         assert!(!state.exists(), "the state folder is never made again here");
     }
