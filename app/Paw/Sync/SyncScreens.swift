@@ -68,18 +68,11 @@ struct HeldBackScreen: View {
                     text: "Who can open the folder changed after you saved, so these are encrypted for the old "
                         + "list of keys. Review the new list, then re-encrypt them.")
             }
-            if !syncing.heldBack.isEmpty, syncing.reencryptReady > 0 {
+            if syncing.canReencrypt {
                 Section {
-                    Button {
-                        syncing.startReencrypt()
-                    } label: {
-                        KeyActionLabel(reencryptTitle(syncing.reencryptReady))
-                    }
-                    .buttonStyle(.pawPrimary)
-                    .disabled(syncing.running != nil)
-                    .accessibilityIdentifier("held-back-reencrypt")
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
+                    ReencryptButton(syncing: syncing, identifier: "held-back-reencrypt")
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
                 }
             }
             if syncing.heldBack.isEmpty {
@@ -207,10 +200,6 @@ struct RefusedRemoteScreen: View {
     let model: AppModel
     let syncing: SyncModel
 
-    private var unpushed: Int {
-        syncing.queue.unpushed.count
-    }
-
     var body: some View {
         List {
             Section {
@@ -218,7 +207,7 @@ struct RefusedRemoteScreen: View {
                     headline: SyncFailure.refusedRemoteProblem,
                     text: sentences(
                         "Rename or remove them on a computer. Sync is paused until then.",
-                        SyncFailure.waiting(unpushed)))
+                        SyncFailure.waiting(syncing.unpushed)))
             }
             if syncing.refused.isEmpty {
                 Section {
@@ -251,9 +240,13 @@ struct RefusedRemoteScreen: View {
             }
             Section {
                 Button {
-                    syncing.start(.refresh)
+                    syncing.check()
                 } label: {
-                    KeyActionLabel("Check again")
+                    if syncing.checkNeedsKey {
+                        KeyActionLabel("Check again")
+                    } else {
+                        Text("Check again")
+                    }
                 }
                 .buttonStyle(.pawSecondary)
                 .accessibilityIdentifier("refused-check-again")
@@ -277,12 +270,8 @@ struct ReplacedScreen: View {
     let syncing: SyncModel
     @State private var confirmingDiscard = false
 
-    private var unpushed: Int {
-        syncing.queue.unpushed.count
-    }
-
     private var changes: String {
-        changeCount(unpushed)
+        changeCount(syncing.unpushed)
     }
 
     var body: some View {
@@ -294,7 +283,7 @@ struct ReplacedScreen: View {
                         + "Not expected? Ask whoever looks after the store first.",
                     identifier: "replaced-intro")
             }
-            if unpushed > 0 {
+            if syncing.unpushed > 0 {
                 Section {
                     ForEach(syncing.queue.unpushed.prefix(5), id: \.id) { item in
                         Text(UnpushedScreen.title(item))
@@ -303,8 +292,8 @@ struct ReplacedScreen: View {
                             .frame(minHeight: PawMetrics.rowOneLine, alignment: .leading)
                             .pawListRow()
                     }
-                    if unpushed > 5 {
-                        Text("and \(unpushed - 5) more")
+                    if syncing.unpushed > 5 {
+                        Text("and \(syncing.unpushed - 5) more")
                             .font(PawFont.footnote)
                             .foregroundStyle(PawColor.labelSecondary)
                             .pawListRow()
@@ -330,7 +319,7 @@ struct ReplacedScreen: View {
                     confirmingDiscard = false
                     syncing.acceptReplaced(keepChanges: true)
                 } label: {
-                    Text(unpushed > 0 ? "Use the new store, keep my \(changes)" : "Use the new store")
+                    Text(syncing.unpushed > 0 ? "Use the new store, keep my \(changes)" : "Use the new store")
                 }
                 .buttonStyle(.pawPrimary)
                 .disabled(syncing.accepting)
@@ -338,13 +327,13 @@ struct ReplacedScreen: View {
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Color.clear)
             }
-            if unpushed > 0 {
+            if syncing.unpushed > 0 {
                 Section {
                     if confirmingDiscard {
                         InlineConfirmRow(
                             question: "Discard \(changes)?",
                             detail: "This can't be undone.",
-                            confirmTitle: "Discard", cancelTitle: unpushed == 1 ? "Keep it" : "Keep them",
+                            confirmTitle: "Discard", cancelTitle: syncing.unpushed == 1 ? "Keep it" : "Keep them",
                             identifier: "replaced-discard",
                             onConfirm: {
                                 confirmingDiscard = false

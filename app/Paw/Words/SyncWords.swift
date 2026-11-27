@@ -125,7 +125,7 @@ extension SyncFailure {
             self.kind = .refusedRemote
             problem = Self.refusedRemoteProblem
             nextStep = Self.refusedRemoteNextStep(unpushed: unpushed)
-            pill = "Sync paused \u{00B7} Review"
+            pill = SyncWords.paused
         case .pushRefused(let message):
             self.kind = .pushRefused
             problem = "\(host) refused your changes"
@@ -167,7 +167,6 @@ extension SyncFailure {
     var actionTitle: String? {
         switch kind {
         case .hostKeyChanged: "Open Settings"
-        case .refusedRemote: "Show names"
         case .cancelled: nil
         default: "Try again"
         }
@@ -177,7 +176,7 @@ extension SyncFailure {
     /// again does.
     var actionNeedsKey: Bool {
         switch kind {
-        case .hostKeyChanged, .refusedRemote, .cancelled: false
+        case .hostKeyChanged, .cancelled: false
         default: true
         }
     }
@@ -331,6 +330,9 @@ enum SyncWords {
     /// The queue of unsent changes couldn't be opened: nothing sends or
     /// checks for changes until paw opens the store again.
     static let off = "Sync is off"
+
+    /// The pill while the remote needs looking at first.
+    static let paused = "Sync paused \u{00B7} Review"
 }
 
 /// A key an entry is encrypted for, as its file names it.

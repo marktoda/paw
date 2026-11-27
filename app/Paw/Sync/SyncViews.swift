@@ -18,6 +18,40 @@ struct KeyActionLabel: View {
     }
 }
 
+/// "Re-encrypt 3 changes": shown while `SyncModel.canReencrypt`.
+struct ReencryptButton: View {
+    let syncing: SyncModel
+    let identifier: String
+
+    var body: some View {
+        Button {
+            syncing.startReencrypt()
+        } label: {
+            KeyActionLabel(reencryptTitle(syncing.reencryptReady))
+        }
+        .buttonStyle(.pawPrimary)
+        .disabled(syncing.running != nil)
+        .accessibilityIdentifier(identifier)
+    }
+}
+
+/// "Send 2 changes": shown while `SyncModel.canSend`.
+struct SendButton: View {
+    let syncing: SyncModel
+    let identifier: String
+
+    var body: some View {
+        Button {
+            syncing.start(.send)
+        } label: {
+            KeyActionLabel(syncing.queue.sendTitle)
+        }
+        .buttonStyle(.pawPrimary)
+        .disabled(syncing.running != nil)
+        .accessibilityIdentifier(identifier)
+    }
+}
+
 /// Under the Home title: the sync status as a pill. The time it shows moves
 /// on by itself; nothing is fetched.
 struct HomeSyncPill: View {
@@ -218,29 +252,15 @@ struct SyncSendSection: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("unpushed-held-back")
                     .pawListRow()
-                    if syncing.reencryptReady > 0 {
-                        Button {
-                            syncing.startReencrypt()
-                        } label: {
-                            KeyActionLabel(reencryptTitle(syncing.reencryptReady))
-                        }
-                        .buttonStyle(.pawPrimary)
-                        .disabled(syncing.running != nil)
-                        .accessibilityIdentifier("unpushed-reencrypt")
-                        .listRowInsets(EdgeInsets())
-                        .listRowBackground(Color.clear)
+                    if syncing.canReencrypt {
+                        ReencryptButton(syncing: syncing, identifier: "unpushed-reencrypt")
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
                     }
                 } else if syncing.canSend {
-                    Button {
-                        syncing.start(.send)
-                    } label: {
-                        KeyActionLabel(syncing.queue.sendTitle)
-                    }
-                    .buttonStyle(.pawPrimary)
-                    .disabled(syncing.running != nil)
-                    .accessibilityIdentifier("unpushed-send")
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
+                    SendButton(syncing: syncing, identifier: "unpushed-send")
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
                 } else {
                     Button {
                         syncing.showStatus()
@@ -313,7 +333,8 @@ private struct SyncSheetHost: View {
                 KeyTaskSheet(
                     driver: syncing.keyTask,
                     purpose: purpose(keyKind),
-                    note: [syncing.keyPathNote, touchNote].compactMap { $0 }.joined(separator: " ").nilIfEmpty,
+                    note: [syncing.keyPathNote, keyKind == .reencrypt ? nil : touchNote]
+                        .compactMap { $0 }.joined(separator: " ").nilIfEmpty,
                     onCancel: { syncing.cancelSheet() })
             } else {
                 SyncStatusSheet(model: model, syncing: syncing)
@@ -338,7 +359,7 @@ private struct SyncSheetHost: View {
 
     /// Said only when the core expects the login to wait for a touch: a
     /// key whose touch is cached and was touched in the last 15 seconds
-    /// signs without one.
+    /// signs without one. A re-encrypt logs in nowhere.
     private var touchNote: String? {
         guard let policy = model.storeSession.keyPort.session()?.info().authenticationTouch else { return nil }
         switch syncing.sync.touchExpectation(policy: policy) {
@@ -351,10 +372,6 @@ private struct SyncSheetHost: View {
 private struct SyncStatusSheet: View {
     let model: AppModel
     let syncing: SyncModel
-
-    private var unpushed: Int {
-        syncing.queue.unpushed.count
-    }
 
     /// The last background run: its result, with its time only when that
     /// differs from "Last checked" above, so "Just now" is said once.
@@ -410,12 +427,12 @@ private struct SyncStatusSheet: View {
                     .padding(.vertical, PawMetrics.Spacing.xs)
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("sync-address")
-                    if unpushed > 0 {
+                    if syncing.unpushed > 0 {
                         Button {
                             syncing.go(to: .unpushed)
                         } label: {
                             LabeledContent {
-                                Text(changeCount(unpushed))
+                                Text(changeCount(syncing.unpushed))
                                     .foregroundStyle(PawColor.labelSecondary)
                             } label: {
                                 Text("Not sent yet")
@@ -462,7 +479,7 @@ private struct SyncStatusSheet: View {
                         kind: failure.kind == .offline ? .warning : .error,
                         problem: failure.problem, nextStep: failure.nextStep,
                         actionTitle: failure.actionTitle,
-                        actionNeedsKey: failure.actionNeedsKey && !(failure.during == .refresh && syncing.checksWithSignIn)
+                        actionNeedsKey: syncing.actionNeedsKey(after: failure)
                     ) {
                         act(on: failure)
                     }
@@ -501,7 +518,7 @@ private struct SyncStatusSheet: View {
             Section {
                 ErrorRow(
                     kind: .warning, problem: SyncFailure.refusedRemoteProblem,
-                    nextStep: SyncFailure.refusedRemoteNextStep(unpushed: unpushed),
+                    nextStep: SyncFailure.refusedRemoteNextStep(unpushed: syncing.unpushed),
                     actionTitle: "Show names"
                 ) {
                     syncing.go(to: .sync(.refusedRemote))
@@ -529,7 +546,6 @@ private struct SyncStatusSheet: View {
     private func act(on failure: SyncFailure) {
         switch failure.kind {
         case .hostKeyChanged: syncing.openSettings()
-        case .refusedRemote: syncing.go(to: .sync(.refusedRemote))
         default: syncing.retryFailed()
         }
     }
@@ -537,38 +553,23 @@ private struct SyncStatusSheet: View {
     /// Send (or Re-encrypt, while changes are held back) and Check, each
     /// with the gold disc: that says they need the key.
     private var actions: some View {
-        let canSend = syncing.canSend
-        let canReencrypt = !syncing.heldBack.isEmpty && syncing.reencryptReady > 0
-        return VStack(spacing: PawMetrics.Spacing.s) {
-            if canReencrypt {
-                Button {
-                    syncing.startReencrypt()
-                } label: {
-                    KeyActionLabel(reencryptTitle(syncing.reencryptReady))
-                }
-                .buttonStyle(.pawPrimary)
-                .disabled(syncing.running != nil)
-                .accessibilityIdentifier("sync-reencrypt")
+        VStack(spacing: PawMetrics.Spacing.s) {
+            if syncing.canReencrypt {
+                ReencryptButton(syncing: syncing, identifier: "sync-reencrypt")
             }
-            if canSend {
-                Button {
-                    syncing.start(.send)
-                } label: {
-                    KeyActionLabel(syncing.queue.sendTitle)
-                }
-                .buttonStyle(.pawPrimary)
-                .accessibilityIdentifier("sync-send")
+            if syncing.canSend {
+                SendButton(syncing: syncing, identifier: "sync-send")
             }
             Button {
                 syncing.check()
             } label: {
-                if syncing.checksWithSignIn {
-                    Text(syncing.running == .refresh ? "Checking for changes\u{2026}" : "Check for changes")
-                } else {
+                if syncing.checkNeedsKey {
                     KeyActionLabel("Check for changes")
+                } else {
+                    Text(syncing.running == .refresh ? "Checking for changes\u{2026}" : "Check for changes")
                 }
             }
-            .buttonStyle(PawButtonStyle(kind: canSend || canReencrypt ? .secondary : .primary))
+            .buttonStyle(PawButtonStyle(kind: syncing.canSend || syncing.canReencrypt ? .secondary : .primary))
             .disabled(syncing.running != nil)
             .accessibilityIdentifier("sync-check")
         }
