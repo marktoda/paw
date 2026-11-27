@@ -213,12 +213,12 @@ impl SimLogin {
 
     /// Waits until the PIN is verified, then hands over the signer (once);
     /// the task's final stage if it ended first.
-    pub fn signer(&self) -> Result<SimSigner, KeyTaskState> {
+    pub fn signer(&self) -> Result<SimSigner, Box<KeyTaskState>> {
         let signer = self.signer.lock().unwrap_or_else(|p| p.into_inner());
         loop {
             let state = self.task.state();
             if state.is_final() {
-                return Err(state);
+                return Err(Box::new(state));
             }
             match signer.recv_timeout(Duration::from_millis(5)) {
                 Ok(signer) => return Ok(SimSigner { signer, failed: self.failed.clone() }),
