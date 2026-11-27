@@ -377,6 +377,6 @@ fn reencrypt_each_until<S>(
 }
 
 /// Whether any waiting change is held back: a send then pushes nothing.
-pub(crate) fn holds_back(dirs: &StoreDirs) -> Result<bool, SyncError> {
-    Ok(!held_back(dirs)?.is_empty())
+pub(crate) fn holds_back(reading: &Shared, store: &OpenStore) -> Result<bool, SyncError> {
+    Ok(!survey(reading, store)?.held.is_empty())
 }

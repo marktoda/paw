@@ -1089,6 +1089,6 @@ pub mod steps {
         store: &StoreDirs,
         send: bool,
     ) -> Result<SyncReport, crate::task::TaskFailure> {
-        operation::run_until(remote, signer, store, &|| crate::write::held_back::holds_back(store), send, &|| false, None)
+        operation::run_until(remote, signer, store, crate::write::held_back::holds_back, send, &|| false, None)
     }
 }

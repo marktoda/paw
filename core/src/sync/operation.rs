@@ -94,10 +94,6 @@ fn branch_tip(store: &OpenStore) -> Result<(String, git2::Oid), SyncError> {
     Ok((branch, tip))
 }
 
-/// Whether a waiting change must not be pushed now, asked after each
-/// integrate.
-pub(crate) type HoldsBack<'a> = dyn Fn() -> Result<bool, SyncError> + 'a;
-
 /// `progress` for one step, keeping it for the next.
 fn reborrow<'b>(progress: &'b mut Option<TransferCallback<'_>>) -> Option<TransferCallback<'b>> {
     match progress {
@@ -108,10 +104,10 @@ fn reborrow<'b>(progress: &'b mut Option<TransferCallback<'_>>) -> Option<Transf
 
 /// Fetches, integrates and, if `send`, pushes on one login, for the store
 /// `dirs`. Retries once, on the same connection, if the remote moved
-/// before the push. After integrating, if `holds_back` says a waiting
+/// before the push. After each integrate, if `holds_back` says a waiting
 /// change is not encrypted for exactly its entry's accepted recipients
-/// (`crate::write::held_back`), nothing is pushed and the state is
-/// [`SyncState::Waiting`]. Stops between steps once `stop` says so, with
+/// (`crate::write::held_back`, which is above this module), nothing is
+/// pushed and the state is [`SyncState::Waiting`]. Stops between steps once `stop` says so, with
 /// [`Halt::Cancelled`], and reports each fetch's progress to `progress`.
 ///
 /// Fails with the key's own error if the key did not sign the login, else
@@ -120,7 +116,7 @@ pub(crate) fn run_until<E: From<KeyError> + From<Halt> + From<SyncError>>(
     remote: &Remote,
     signer: &dyn SshSigner,
     dirs: &StoreDirs,
-    holds_back: &HoldsBack<'_>,
+    holds_back: fn(&Shared, &OpenStore) -> Result<bool, SyncError>,
     send: bool,
     stop: &dyn Fn() -> bool,
     progress: Option<TransferCallback<'_>>,
@@ -145,7 +141,7 @@ const SEND_ROUNDS: u32 = 2;
 fn run_on(
     connection: &Connection,
     store: &OpenStore,
-    holds_back: &HoldsBack<'_>,
+    holds_back: fn(&Shared, &OpenStore) -> Result<bool, SyncError>,
     send: bool,
     stop: &dyn Fn() -> bool,
     mut progress: Option<TransferCallback<'_>>,
@@ -172,7 +168,7 @@ fn run_on(
         if stop() {
             return Ok(None);
         }
-        if holds_back()? {
+        if holds_back(&held, store)? {
             return Ok(Some(report));
         }
         let (branch, tip) = branch_tip(store)?;

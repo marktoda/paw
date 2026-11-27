@@ -94,10 +94,9 @@ pub(crate) fn sync(
             .map_err(SyncError::from)?
             .ok_or_else(|| SyncError::from(RemoteFailure::NoSavedHostKey { host: address.connect_host().to_owned() }))?;
         let store = StoreDirs::new(&state_dir);
-        let holds_back = || held_back::holds_back(&store);
         let stop = || job.cancelled();
         let mut progress = |update: TransferProgress| job.progress(update.into());
-        let report = operation::run_until::<TaskFailure>(&remote, &signer, &store, &holds_back, push, &stop, Some(&mut progress))?;
+        let report = operation::run_until::<TaskFailure>(&remote, &signer, &store, held_back::holds_back, push, &stop, Some(&mut progress))?;
         Ok(KeyOutcome::Synced { report })
     });
     let expected = port.expected();
