@@ -27,6 +27,43 @@ enum AutoFillConfirmReason: Equatable, Sendable {
     case urlDiffers(url: String, site: String)
 }
 
+/// What a request offers, settled once the store has opened.
+private enum AutoFillOffer {
+    /// The key icon or "Passwords…": every match for the site, best first,
+    /// lookalikes included. Cancel and Back return to the list.
+    case site([MatchedEntry])
+    /// A suggestion above the keyboard: this entry, which iOS offers only
+    /// for the site it was published for, so it fills without asking. The
+    /// request was for this one fill: Cancel ends it.
+    case suggestion(EntryRef)
+}
+
+/// What the store gives as it opens, read off the main thread.
+private struct AutoFillLoad {
+    let opening: AutoFillOpening
+    /// Entries with a live Face ID copy. A list that can't be read marks
+    /// none: each still fills, with the key.
+    var live: [String] = []
+    var withCode: [String] = []
+    var site: String?
+    /// `nil` for a suggestion whose entry is no longer in the store.
+    var offer: AutoFillOffer?
+
+    init(_ opening: AutoFillOpening, for request: AutoFillRequest) {
+        self.opening = opening
+        guard case .ready(let source) = opening else { return }
+        live = ((try? source.copies?.list()) ?? []).map(\.entry)
+        withCode = source.codes.entries(store: source.store)
+        switch request {
+        case .list(let services):
+            site = services.lazy.compactMap { serviceHost(service: $0) }.first
+            offer = .site(source.store.matchServices(services: services, pairings: source.pairings))
+        case .entry(let path, _):
+            offer = source.store.entry(path: path).map { .suggestion($0) }
+        }
+    }
+}
+
 /// A Face ID problem from the last tap, said at the top of the list.
 struct AutoFillNotice: Equatable {
     let problem: String
@@ -81,19 +118,10 @@ final class AutoFillModel {
     /// The site the list is for, e.g. `github.com`. `nil` for an app iOS
     /// gives no site for.
     private(set) var site: String?
-    /// The site's own entries, under "For <site>": by host, or by a name
-    /// already filled on this domain. These fill without asking.
-    private(set) var matches: [EntryRef] = []
-    /// Named like the site but never filled on this domain, listed apart
-    /// under "Might be for this site"; each asks first. A name match
-    /// paired only with other domains (a lookalike) is in neither list and
-    /// is found by search only.
-    private(set) var maybe: [EntryRef] = []
+    private var offer: AutoFillOffer = .site([])
     /// Entries known to have a one-time code (`OneTimeCodeEntries`): seen
     /// with one when last opened on this iPhone.
     private(set) var withCode: Set<String> = []
-    /// Every match for the site by path, lookalikes included, with why.
-    @ObservationIgnored private var found: [String: MatchedEntry] = [:]
     /// The name match the person confirmed for this domain, recorded once
     /// it has filled: (entry path, registrable domain).
     @ObservationIgnored private var pairing: (path: String, site: String)?
@@ -115,20 +143,17 @@ final class AutoFillModel {
     let keyTask: KeyTaskDriver
     let faceId: FaceIdOpener
     /// Face ID copies can be kept and are on in Settings: the key sheet
-    /// says fills afterwards use Face ID, and Fill after a url warning
-    /// opens from the copy rather than with the key again.
+    /// says fills afterwards use Face ID.
     private(set) var keepsCopies = false
 
     @ObservationIgnored private let open: @Sendable () -> AutoFillOpening
     @ObservationIgnored private var source: AutoFillSource?
     /// Where the request ends, and whether it has.
     @ObservationIgnored private weak var provider: AutoFillProvider?
-    /// Reads the key, once a fill needs it: a list alone never touches the card.
-    @ObservationIgnored private var reader: KeyReader?
     @ObservationIgnored private var started = false
     @ObservationIgnored private let work = DispatchQueue(label: "paw-autofill", qos: .userInitiated)
 
-    init(request: AutoFillRequest, kind: AutoFillKind = .password, provider: AutoFillProvider,
+    init(request: AutoFillRequest, kind: AutoFillKind, provider: AutoFillProvider,
          open: @escaping @Sendable () -> AutoFillOpening) {
         self.request = request
         self.kind = kind
@@ -148,40 +173,18 @@ final class AutoFillModel {
         let open = open
         let request = request
         work.async {
-            let opening = open()
-            var live: [String] = []
-            var matches: [EntryRef] = []
-            var maybe: [EntryRef] = []
-            var found: [MatchedEntry] = []
-            var withCode: [String] = []
-            if case .ready(let source) = opening {
-                // A list that can't be read marks no entry as opening with
-                // Face ID: each still fills, with the key.
-                live = ((try? source.copies?.list()) ?? []).map(\.entry)
-                withCode = source.codes.entries(store: source.store)
-                switch request {
-                case .list(let services):
-                    found = source.store.matchServices(services: services, pairings: source.pairings)
-                    matches = found.filter { isTrustedMatch(kind: $0.kind) }.map(\.entry)
-                    maybe = found.filter { $0.kind == .name(pairing: .unpaired) }.map(\.entry)
-                case .entry(let path, _):
-                    matches = source.store.entry(path: path).map { [$0] } ?? []
-                }
-            }
-            let carried = Handoff(value: (opening, live, matches, found, maybe, withCode))
+            let carried = Handoff(value: AutoFillLoad(open(), for: request))
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { [weak self] in
-                    self?.found = Dictionary(carried.value.3.map { ($0.entry.path, $0) }) { first, _ in first }
-                    self?.maybe = carried.value.4
-                    self?.withCode = Set(carried.value.5)
-                    self?.opened(carried.value.0, live: carried.value.1, matches: carried.value.2)
+                    self?.opened(carried.value)
                 }
             }
         }
     }
 
-    private func opened(_ opening: AutoFillOpening, live: [String], matches: [EntryRef]) {
-        switch opening {
+    private func opened(_ load: AutoFillLoad) {
+        withCode = Set(load.withCode)
+        switch load.opening {
         case .noStore:
             page = .noStore
         case .busy:
@@ -191,22 +194,19 @@ final class AutoFillModel {
             page = .problem(words.problem, words.nextStep, backToList: false)
         case .ready(let source):
             self.source = source
-            let reader = KeyReader(port: source.keyPort, source: source.keys)
-            self.reader = reader
-            keyTask.reader = reader
+            // The key is read once a fill needs it: a list alone never
+            // touches the card.
+            keyTask.reader = KeyReader(port: source.keyPort, source: source.keys)
             keepsCopies = source.copies?.copiesEnabled() == true
-            self.live = Set(live)
-            self.matches = matches
-            switch request {
-            case .list(let services):
-                site = services.lazy.compactMap { serviceHost(service: $0) }.first
-                page = .list
-            case .entry:
-                guard let entry = matches.first else {
-                    end(.credentialIdentityNotFound)
-                    return
-                }
-                page = .list
+            live = Set(load.live)
+            guard let offer = load.offer else {
+                end(.credentialIdentityNotFound)
+                return
+            }
+            self.offer = offer
+            site = load.site
+            page = .list
+            if case .suggestion(let entry) = offer {
                 pick(entry)
             }
         }
@@ -222,41 +222,94 @@ final class AutoFillModel {
 
     // MARK: The list
 
-    private var isSuggestion: Bool {
-        if case .entry = request { return true }
-        return false
-    }
-
     private func search() {
         guard let source else { return }
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        hits = trimmed.isEmpty ? [] : source.store.search(query: trimmed, limit: 100)
+        hits = isSearching ? source.store.search(query: trimmedQuery, limit: 100) : []
     }
 
-    /// The site's own entries the list shows. Search still finds the rest.
-    var listedMatches: [EntryRef] {
-        matches.filter { kind.lists($0.path, knownCodes: withCode) }
-    }
-
-    /// The name matches the list shows, likewise.
-    var listedMaybe: [EntryRef] {
-        maybe.filter { kind.lists($0.path, knownCodes: withCode) }
+    private var trimmedQuery: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var isSearching: Bool {
-        !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !trimmedQuery.isEmpty
     }
 
-    /// Whether the entry is one of the site's, as matched by name. A
-    /// suggestion above the keyboard is one by construction: iOS offers it
-    /// only for the site it was published for.
+    /// The entries the request offers: the site's matches, or the
+    /// suggested entry.
+    private var offered: [EntryRef] {
+        switch offer {
+        case .site(let matches): matches.map(\.entry)
+        case .suggestion(let entry): [entry]
+        }
+    }
+
+    /// The site's own entries the list shows, under "For <site>": by host,
+    /// or by a name already filled on this domain. Search still finds the
+    /// rest.
+    var listedMatches: [EntryRef] {
+        offered.filter { isMatch($0) && kind.lists($0.path, knownCodes: withCode) }
+    }
+
+    /// Named like the site but never filled on this domain, listed apart
+    /// under "Might be for this site". A name match paired only with other
+    /// domains (a lookalike) is in neither list and is found by search
+    /// only.
+    var listedMaybe: [EntryRef] {
+        offered.filter { isMaybe($0) && kind.lists($0.path, knownCodes: withCode) }
+    }
+
+    /// Whether the entry fills without asking.
     func isMatch(_ entry: EntryRef) -> Bool {
-        isSuggestion || matches.contains { $0.path == entry.path }
+        confirmReason(entry) == nil
     }
 
     /// Whether the entry is named like the site but not yet filled here.
     func isMaybe(_ entry: EntryRef) -> Bool {
-        !isSuggestion && maybe.contains { $0.path == entry.path }
+        if case .firstTime? = confirmReason(entry) { return true }
+        return false
+    }
+
+    /// The site's match for `entry`, if it is one of the site's.
+    private func siteMatch(_ entry: EntryRef) -> MatchedEntry? {
+        guard case .site(let matches) = offer else { return nil }
+        return matches.first { $0.entry.path == entry.path }
+    }
+
+    /// Why `entry` asks before it fills; `nil` if it fills at once.
+    private func confirmReason(_ entry: EntryRef) -> AutoFillConfirmReason? {
+        if case .suggestion = offer { return nil }
+        guard let match = siteMatch(entry) else { return .otherSite }
+        return Self.reason(for: match)
+    }
+
+    /// A match by host, or by a name already filled on this domain, fills
+    /// at once; any other name match asks.
+    private static func reason(for match: MatchedEntry) -> AutoFillConfirmReason? {
+        switch match.kind {
+        case .exactHost, .sameDomain, .name(.paired):
+            return nil
+        case .name(.unpaired):
+            return .firstTime(site: displayHost(host: match.site))
+        case .name(.pairedElsewhere(let known)):
+            return .lookalike(site: displayHost(host: match.site), known: known.map { displayHost(host: $0) })
+        }
+    }
+
+    /// Cancel and Back return to the list, except for a suggestion: its
+    /// request was for one fill, so it ends.
+    private var backEnds: Bool {
+        if case .suggestion = offer { return true }
+        return false
+    }
+
+    /// Back to the list, or the request ends (`backEnds`).
+    private func back() {
+        if backEnds {
+            end(.userCanceled)
+        } else {
+            page = .list
+        }
     }
 
     /// What a fill says it does: "Fill github.com", or with the site when
@@ -277,22 +330,10 @@ final class AutoFillModel {
         notice = nil
         pairing = nil
         warned = nil
-        if isSuggestion {
+        if let reason = confirmReason(entry) {
+            page = .confirm(entry, reason)
+        } else {
             open(entry)
-            return
-        }
-        guard let match = found[entry.path] else {
-            page = .confirm(entry, .otherSite)
-            return
-        }
-        switch match.kind {
-        case .exactHost, .sameDomain, .name(.paired):
-            open(entry)
-        case .name(.unpaired):
-            page = .confirm(entry, .firstTime(site: displayHost(host: match.site)))
-        case .name(.pairedElsewhere(let known)):
-            page = .confirm(entry, .lookalike(
-                site: displayHost(host: match.site), known: known.map { displayHost(host: $0) }))
         }
     }
 
@@ -310,11 +351,7 @@ final class AutoFillModel {
         guard case .confirm(let entry, let reason) = screen else { return }
         switch reason {
         case .firstTime:
-            if let match = found[entry.path] {
-                pairing = (path: entry.path, site: match.site)
-            } else {
-                pairing = nil
-            }
+            pairing = siteMatch(entry).map { (path: entry.path, site: $0.site) }
             warned = nil
         case .lookalike, .otherSite, .urlDiffers:
             pairing = nil
@@ -330,12 +367,9 @@ final class AutoFillModel {
     func backToList() {
         pairing = nil
         warned = nil
-        if isSuggestion, case .confirm = screen {
-            end(.userCanceled)
-            return
-        }
         switch screen {
-        case .confirm, .problem(_, _, backToList: true): page = .list
+        case .confirm: back()
+        case .problem(_, _, backToList: true): page = .list
         default: break
         }
     }
@@ -378,7 +412,7 @@ final class AutoFillModel {
             page = .list
             openWithKey(entry)
         case .failure(let error):
-            if case .FaceIdCancelled? = error as? PawError, isSuggestion {
+            if case .FaceIdCancelled? = error as? PawError, backEnds {
                 end(.userCanceled)
                 return
             }
@@ -396,7 +430,7 @@ final class AutoFillModel {
 
     /// Fills with the key: the sheet at the first stage still needed.
     func openWithKey(_ entry: EntryRef) {
-        guard let source, let reader, !keyTask.isFollowing else { return }
+        guard let source, let reader = keyTask.reader, !keyTask.isFollowing else { return }
         notice = nil
         keyEntry = entry
         reader.watch()
@@ -408,11 +442,7 @@ final class AutoFillModel {
     func cancelKey() {
         keyTask.cancel()
         keyEntry = nil
-        if isSuggestion {
-            end(.userCanceled)
-        } else {
-            page = .list
-        }
+        back()
     }
 
     // MARK: Ending
@@ -445,10 +475,10 @@ final class AutoFillModel {
                 withCode.remove(entry.path)
             }
             if let unusable = taken.unusable {
-                page = .problem(unusable.problem, unusable.nextStep, backToList: !isSuggestion)
+                page = .problem(unusable.problem, unusable.nextStep, backToList: !backEnds)
             } else {
-                let words = AutoFillWords.nothingToFill(entry.name, kind, fromList: !isSuggestion)
-                page = .problem(words.problem, words.nextStep, backToList: !isSuggestion)
+                let words = AutoFillWords.nothingToFill(entry.name, kind, fromList: !backEnds)
+                page = .problem(words.problem, words.nextStep, backToList: !backEnds)
             }
             return
         }
@@ -526,7 +556,7 @@ final class AutoFillModel {
         keyTask.cancelAll()
         source?.keyPort.session()?.forgetPin()
         faceId.forget()
-        reader?.stopWatching()
+        keyTask.reader?.stopWatching()
     }
 }
 
@@ -542,7 +572,7 @@ extension AutoFillModel {
             opened: { [weak self] opened in
                 // A copy that wasn't kept goes unsaid: the request ends
                 // with the fill, and the next fill uses the key again.
-                if opened.faceIdUntilMs != nil, copies != nil {
+                if opened.faceIdUntilMs != nil {
                     self?.live.insert(entry.path)
                 }
                 self?.fill(opened.entry, entry: entry)
@@ -550,13 +580,11 @@ extension AutoFillModel {
                 return .close
             },
             lateCopyKept: { [weak self] in
-                // Nothing was asked for: the copy goes.
                 guard let copies else { return }
                 let carried = Handoff(value: copies)
                 self?.work.async { try? carried.value.forgetEntry(entry: entry.path) }
             })
         job.closed = {
-            // paw is done with the key for this pick, however it went.
             port.session()?.forgetPin()
         }
         return job
