@@ -269,6 +269,9 @@ impl GitHubAccount {
         if !plan.recipients_changes.is_empty() {
             decisions.push(RefreshDecision::RecipientsChanged { changes: plan.recipients_changes.clone() });
         }
+        if let Some(replaced) = &plan.replaced {
+            decisions.push(RefreshDecision::RemoteReplaced { replaced: replaced.clone() });
+        }
         let Waiting { held_back, unpushed } = Waiting::count(&held, &store);
         if held_back > 0 {
             decisions.push(RefreshDecision::HeldBack { count: held_back });
@@ -287,12 +290,8 @@ impl GitHubAccount {
         };
         let integration = report.integration;
         let unpushed = match report.state {
-            SyncState::RemoteReplaced { replaced } => {
-                decisions.push(RefreshDecision::RemoteReplaced { replaced });
-                return BackgroundRefreshReport { outcome: BackgroundOutcome::NeedsDecision, integration: None, decisions, unpushed };
-            }
             SyncState::Waiting { unpushed } => unpushed,
-            SyncState::UpToDate => 0,
+            _ => 0,
         };
         let changed = integration.fast_forwarded > 0 || integration.replayed > 0;
         let outcome = if !decisions.is_empty() {
