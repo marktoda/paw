@@ -105,7 +105,8 @@ struct SplitRootView: View {
     // MARK: Keyboard
 
     /// What the shortcuts do (`PawCommands`): what the buttons do, and
-    /// nothing while a sheet is up.
+    /// nothing while a sheet is up, even one that came up after these were
+    /// published.
     private var actions: PawActions {
         let model = model
         let syncing = model.storeSession.syncing
@@ -113,24 +114,18 @@ struct SplitRootView: View {
         if model.sheetIsUp {
             return PawActions()
         }
+        func unlessSheetUp(_ action: @escaping () -> Void) -> () -> Void {
+            { if !model.sheetIsUp { action() } }
+        }
         return PawActions(
             search: { searchFocused = true },
-            add: edits == nil ? nil : {
-                guard !model.sheetIsUp else { return }
-                edits?.startAdd(folder: model.splitFolder)
-            },
-            check: syncing == nil || syncing?.running != nil ? nil : {
-                guard !model.sheetIsUp, let syncing, syncing.running == nil else { return }
+            add: edits.map { edits in unlessSheetUp { edits.startAdd(folder: model.splitFolder) } },
+            check: syncing == nil || syncing?.running != nil ? nil : unlessSheetUp {
+                guard let syncing, syncing.running == nil else { return }
                 syncing.check()
             },
-            lock: {
-                guard !model.sheetIsUp else { return }
-                model.lockNow()
-            },
-            settings: {
-                guard !model.sheetIsUp else { return }
-                model.showsSettings = true
-            })
+            lock: unlessSheetUp { model.lockNow() },
+            settings: unlessSheetUp { model.showsSettings = true })
     }
 }
 

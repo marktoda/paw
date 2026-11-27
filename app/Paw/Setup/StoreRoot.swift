@@ -44,7 +44,9 @@ final class StoreRootModel {
     /// `-pawSimGitHub`).
     private(set) var gitHub: GitHubAccess?
 
-    init(platform: Platform) {
+    /// `removesLegacyStore`: this launch deletes what paw left where it
+    /// kept the store before (`LegacyStore`).
+    init(platform: Platform, removesLegacyStore: Bool) {
         self.platform = platform
         route()
         // The model lives as long as the app, so the observer is never removed.
@@ -53,7 +55,7 @@ final class StoreRootModel {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.retryAfterUnlock() }
         }
-        if platform.removesLegacyStore {
+        if removesLegacyStore {
             LegacyStore.remove()
         }
     }
@@ -108,9 +110,13 @@ final class StoreRootModel {
             phase = .waitingForUnlock
             return
         }
+        showFailure(error, detail: String(describing: error))
+    }
+
+    private func showFailure(_ error: Error, detail: String) {
         let stateDir = reachableLocation?.stateDir
         phase = .failed(
-            detail: String(describing: error), unpushed: Self.unpushed(stateDir: stateDir), busy: isStoreBusy(error),
+            detail: detail, unpushed: Self.unpushed(stateDir: stateDir), busy: isStoreBusy(error),
             mayBeLocked: ProtectedData.mayBeLocked(error, stateDir: stateDir))
     }
 
@@ -161,7 +167,7 @@ final class StoreRootModel {
 
     private func removeStoreNow() -> String? {
         if case .home(let model) = phase {
-            model.storeSession.live.announce(.removed)
+            model.lockNow()
         }
         let problems = wipeAndRestart()
         if let keychain = problems.keychain {
@@ -174,11 +180,7 @@ final class StoreRootModel {
     /// and set up again" when the store could not be opened.
     func startOver() {
         if let files = wipeAndRestart().files {
-            let stateDir = reachableLocation?.stateDir
-            phase = .failed(
-                detail: "paw couldn't delete the store: \(files.localizedDescription)",
-                unpushed: Self.unpushed(stateDir: stateDir), busy: false,
-                mayBeLocked: ProtectedData.mayBeLocked(files, stateDir: stateDir))
+            showFailure(files, detail: "paw couldn't delete the store: \(files.localizedDescription)")
         }
     }
 
@@ -226,7 +228,9 @@ enum StoreWipe {
         }
         _ = CredentialIdentities.submit(.clear)
         LegacyStore.remove()
+        BackgroundRefresh.forgetLastRun()
         guard let location else { return problems }
+        LastChecked.forget(repoDir: location.repoDir.path)
         // Gone with the folder below too; cleared first in case that fails.
         try? SitePairings.open(stateDir: location.stateDir.path).clearPairings(entry: nil)
         try? OneTimeCodeEntries.open(stateDir: location.stateDir.path).clear()
@@ -243,6 +247,7 @@ enum StoreWipe {
 /// Home, and says so inline if the store can't be read, with a way out.
 struct StoreRoot: View {
     let platform: Platform
+    let removesLegacyStore: Bool
     @State private var root: StoreRootModel?
     @Environment(\.scenePhase) private var scenePhase
 
@@ -256,7 +261,7 @@ struct StoreRoot: View {
         }
         .preferredColorScheme(Self.appearance)
         .onAppear {
-            if root == nil { root = StoreRootModel(platform: platform) }
+            if root == nil { root = StoreRootModel(platform: platform, removesLegacyStore: removesLegacyStore) }
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }

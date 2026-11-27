@@ -68,15 +68,20 @@ extension AppModel {
         }
     }
 
-    var splitShownEntry: OpenSession? {
+    /// The entry route on the right, open or closed.
+    private var splitShownID: UUID? {
         guard usesSplitView, case .entry(let id)? = SplitPath(path).details.last else { return nil }
-        return session(id)
+        return id
+    }
+
+    var splitShownEntry: OpenSession? {
+        splitShownID.flatMap { session($0) }
     }
 
     /// The path of the entry on the right, open or closed, for its row's
     /// selected look.
     var splitShownPath: String? {
-        guard usesSplitView, case .entry(let id)? = SplitPath(path).details.last else { return nil }
+        guard let id = splitShownID else { return nil }
         return session(id)?.ref.path ?? closedEntry(id)?.ref.path
     }
 

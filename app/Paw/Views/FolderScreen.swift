@@ -24,7 +24,6 @@ struct FolderScreen: View {
         .navigationTitle(EntryRef(path: path).name)
         .navigationBarTitleDisplayMode(.large)
         .addEntryButton(model, folder: path)
-        .onAppear { model.refreshCopies() }
     }
 
     private func list(_ listing: FolderListing) -> some View {

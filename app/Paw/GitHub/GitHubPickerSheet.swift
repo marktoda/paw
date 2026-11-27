@@ -14,15 +14,13 @@ struct GitHubChooseButton: View {
         Button("Choose from GitHub") {
             let picker = GitHubPicker(access: gitHub, purpose: .pick(chosen: { address in
                 self.picker = nil
-                model.addressText = address
-                model.addressProblem = nil
-                model.connectToHost()
+                model.use(address: address)
             }))
             self.picker = picker
             picker.begin()
         }
         .buttonStyle(.pawSecondary)
-        .disabled(model.working != nil)
+        .disabled(model.busy)
         .accessibilityIdentifier("address-github")
         .pawSheet(item: $picker) { picker in
             GitHubPickerSheet(picker: picker)
@@ -112,9 +110,8 @@ private struct GitHubCodeView: View {
     /// This device only, gone when the code expires. Not a secret, so not
     /// `Clipboard`, which clears on Lock now.
     private func copyCode() {
-        UIPasteboard.general.setItems(
-            [[UTType.utf8PlainText.identifier: code.userCode]],
-            options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(TimeInterval(code.expiresIn))])
+        Clipboard.copyNotSecret(
+            code.userCode, localOnly: true, expiry: Date().addingTimeInterval(TimeInterval(code.expiresIn)))
     }
 
     static let gitHubDevicePage = "https://github.com/login/device"

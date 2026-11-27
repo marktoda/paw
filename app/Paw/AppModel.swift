@@ -67,16 +67,17 @@ final class AppModel {
     /// The key sheet's task: opening an entry with the key.
     let keyTask: KeyTaskDriver
     let faceId: FaceIdOpener
+    let copies: LiveCopies
 
     /// The navigation stack. Changed only through `setPath`, `show` and
     /// `leave`, which close what leaves it.
     private(set) var path: [Route] = []
     /// iPad in regular width: `path` is shown as columns (`SplitPath`).
     var usesSplitView = false
-    private(set) var liveCopies: [LiveCopy] = []
     /// Entry paths opened in this run, most recent first.
     private(set) var recentPaths: [String] = []
-    /// What the core says about each entry for the last key plugged in.
+    /// What the core says about each entry for the last key read, worked
+    /// out again when the key or the store changes.
     private(set) var accessByPath: [String: Access] = [:]
     private var keyEntry: EntryRef?
     private(set) var sessions: [UUID: OpenSession] = [:]
@@ -84,8 +85,6 @@ final class AppModel {
     /// the Face ID time ended), by the id their route still carries.
     var closedEntries: [UUID: ClosedEntry] = [:]
     var notice: Notice?
-    /// A problem with the Face ID copies themselves, shown on Home.
-    private(set) var copiesProblem: String?
     var toast: Toast?
     var showsSettings = false
     /// The open entry's value in large type (a full-screen cover on iPad).
@@ -96,21 +95,23 @@ final class AppModel {
     @ObservationIgnored private var pendingRoute: Route?
     /// Lock now's so far, so an open can tell it came since the open began.
     @ObservationIgnored private var locks = 0
-    /// Bumped by each key read: which access answer is the latest.
+    /// The last key read's opening key: `accessByPath` is for it.
+    @ObservationIgnored private var accessFingerprint: String?
+    /// Bumped by each look at the access: which answer is the latest.
     @ObservationIgnored private var accessAttempt = 0
     /// Monotonic milliseconds on `clock` when paw went to the background.
     @ObservationIgnored var backgroundedAtMs: Int64?
     @ObservationIgnored var deviceLockWatch: NSObjectProtocol?
 
-    /// `notice` is said on Home from the start.
-    init(session: StoreSession, notice: Notice? = nil) {
+    init(session: StoreSession) {
         storeSession = session
         keyTask = session.keyTasks.make()
         faceId = FaceIdOpener()
-        self.notice = notice ?? session.syncProblem.map { Notice(problem: SyncWords.off, nextStep: describe($0)) }
+        copies = LiveCopies(session.copies)
+        notice = session.syncProblem.map { Notice(problem: SyncWords.off, nextStep: describe($0)) }
         session.reader.onRead = { [weak self] read in
             if case .success(let keySession) = read {
-                self?.learnAccess(keySession)
+                self?.keyRead(keySession)
             }
         }
         session.live.changed.subscribe(self) { model, changed in
@@ -119,17 +120,16 @@ final class AppModel {
         session.requests.subscribe(self) { model, request in
             model.asked(request)
         }
-        sweepCopies()
+        copies.listed.subscribe(self) { model, _ in
+            model.closeEntriesWhoseCopyEnded()
+        }
+        copies.change { try $0.sweep() }
         watchDeviceLock()
     }
 
     /// The store as it is now: read again after each change.
     var store: PassStore {
         storeSession.live.store
-    }
-
-    private var copies: CopyCache? {
-        storeSession.copies
     }
 
     private var keyPort: KeyPort {
@@ -146,47 +146,16 @@ final class AppModel {
 
     // MARK: Face ID copies
 
-    func liveCopy(_ path: String) -> LiveCopy? {
-        liveCopies.first { $0.entry == path }
-    }
-
     /// Recently opened entries whose Face ID time has ended.
     var recentNeedingKey: [EntryRef] {
-        recentPaths.filter { liveCopy($0) == nil }.prefix(5).map(EntryRef.init(path:))
+        recentPaths.filter { copies.copy(of: $0) == nil }.prefix(5).map(EntryRef.init(path:))
     }
 
     /// What a row should show before it is tapped.
     func rowAccess(_ path: String) -> EntryRow.Access {
-        if liveCopy(path) != nil { return .faceID }
+        if copies.copy(of: path) != nil { return .faceID }
         if case .notForThisKey = accessByPath[path] { return .anotherKey }
         return .needsKey
-    }
-
-    /// Reads the copies again. `problem` is what the change to them just
-    /// before ran into, said on Home unless the list itself can't be read.
-    func refreshCopies(after problem: Error? = nil) {
-        guard let copies else {
-            liveCopies = []
-            return
-        }
-        do {
-            liveCopies = try copies.list()
-            copiesProblem = problem.map { describe($0) }
-        } catch {
-            liveCopies = []
-            copiesProblem = describe(error)
-        }
-        closeEntriesWhoseCopyEnded()
-    }
-
-    private func sweepCopies() {
-        var problem: Error?
-        do {
-            try copies?.sweep()
-        } catch {
-            problem = error
-        }
-        refreshCopies(after: problem)
     }
 
     // MARK: Plugging the key in and out
@@ -197,24 +166,32 @@ final class AppModel {
         reader.problem.map { KeyErrorWords($0, table: .app) }
     }
 
-    /// A key was read: asks the core which entries it can open. Only the
-    /// latest read's answer is kept, should an earlier key's come later.
-    private func learnAccess(_ session: KeySession) {
+    private func keyRead(_ session: KeySession) {
+        accessFingerprint = session.info().decryptionFingerprint
+        learnAccess()
+    }
+
+    /// Asks the core which entries of the store as it is now the last key
+    /// read can open; none for a key with no opening key. Only the latest
+    /// answer is kept, should an earlier one come later.
+    private func learnAccess() {
         accessAttempt += 1
+        guard let fingerprint = accessFingerprint else {
+            accessByPath = [:]
+            return
+        }
         let attempt = accessAttempt
         let store = store
         let paths = allEntryPaths()
         DispatchQueue.global(qos: .userInitiated).async {
             var access: [String: Access] = [:]
-            if let fingerprint = session.info().decryptionFingerprint {
-                for path in paths {
-                    access[path] = store.access(entry: path, cardFingerprint: fingerprint)
-                }
+            for path in paths {
+                access[path] = store.access(entry: path, cardFingerprint: fingerprint)
             }
             let found = Handoff(value: access)
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
-                    guard let self, attempt == self.accessAttempt, !found.value.isEmpty else { return }
+                    guard let self, attempt == self.accessAttempt else { return }
                     self.accessByPath = found.value
                 }
             }
@@ -230,11 +207,9 @@ final class AppModel {
     /// A tap on an entry row.
     func open(_ entry: EntryRef) {
         notice = nil
-        if usesSplitView {
-            if splitShownEntry?.ref.path == entry.path { return }
-            closeSplitEntryForNextOpen()
-        }
-        if liveCopy(entry.path) != nil {
+        if splitShownEntry?.ref.path == entry.path { return }
+        closeSplitEntryForNextOpen()
+        if copies.copy(of: entry.path) != nil {
             openWithFaceId(entry)
         } else {
             openWithKey(entry)
@@ -275,23 +250,13 @@ final class AppModel {
         }
     }
 
-    /// The core found, before any PIN or touch, that this key cannot open
-    /// the entry: say which keys can.
-    private func showAnotherKey(_ entry: EntryRef) {
-        // The key may have been plugged in after the list was worked out.
-        if let fingerprint = keyPort.session()?.info().decryptionFingerprint {
-            accessByPath[entry.path] = store.access(entry: entry.path, cardFingerprint: fingerprint)
-        }
-        show(.anotherKey(entry.path))
-    }
-
     /// Opens from the entry's Face ID copy, with no key sheet. Falls back
     /// to the key when the copy has ended.
     private func openWithFaceId(_ entry: EntryRef) {
-        guard let copies else { return }
+        guard let cache = copies.cache else { return }
         faceId.open(
-            entry, store: store, copies: copies, reason: "Open \(entry.name)",
-            answered: { [weak self] in self?.refreshCopies() }
+            entry, store: store, copies: cache, reason: "Open \(entry.name)",
+            answered: { [weak self] in self?.copies.reread() }
         ) { [weak self] result in
             self?.faceIdFinished(entry, result: result)
         }
@@ -302,7 +267,7 @@ final class AppModel {
         case .success(.opened(let opened)):
             noteOpened(opened, path: entry.path)
             let session = OpenSession(
-                ref: entry, entry: opened, view: opened.view(), hadCopy: liveCopy(entry.path) != nil)
+                ref: entry, entry: opened, view: opened.view(), hadCopy: copies.copy(of: entry.path) != nil)
             sessions[session.id] = session
             show(.entry(session.id))
         case .success(.needsKey):
@@ -347,7 +312,8 @@ final class AppModel {
 
     /// The store on disk changed (a save, a delete, an undo, a sync):
     /// lists and search read it again. Recent entries follow a rename and
-    /// drop entries that are gone. A removal locks first.
+    /// drop entries that are gone, and what the key can open is worked out
+    /// again.
     private func storeChanged(_ changed: StoreChanged) {
         let renamed: StoreChange.Renamed?
         switch changed.change {
@@ -356,9 +322,6 @@ final class AppModel {
         case .synced, .reencrypted:
             renamed = nil
         case .recipientsAccepted:
-            return
-        case .removed:
-            lockNow()
             return
         }
         if let problem = changed.readProblem {
@@ -369,25 +332,25 @@ final class AppModel {
         recentPaths = recentPaths
             .map { $0 == renamed?.from ? (renamed?.to ?? $0) : $0 }
             .filter { exists.contains($0) }
+        learnAccess()
         // A copy of an entry that is gone (a discarded add, a rename, a
         // delete) would otherwise sit on Home until its time ran out.
-        var problem: Error?
-        if let copies {
-            for copy in liveCopies where !exists.contains(copy.entry) {
+        let gone = copies.list.map(\.entry).filter { !exists.contains($0) }
+        copies.change { cache in
+            var failure: Error?
+            for entry in gone {
                 do {
-                    try copies.forgetEntry(entry: copy.entry)
+                    try cache.forgetEntry(entry: entry)
                 } catch {
-                    problem = error
+                    failure = error
                 }
             }
+            if let failure { throw failure }
         }
-        refreshCopies(after: problem)
     }
 
     // MARK: Navigation
 
-    /// The one way the stack changes: by a screen's back, a column, or a
-    /// feature asking. Every opened entry that leaves it is closed.
     func setPath(_ routes: [Route]) {
         path = routes
         pathChanged()
@@ -428,7 +391,8 @@ final class AppModel {
         if routes.last == .entry(id) {
             routes.removeLast()
         }
-        while case .folder(let folder)? = routes.last, (try? store.folder(path: folder)) == nil {
+        let folders = Set(store.allFolders())
+        while case .folder(let folder)? = routes.last, !folders.contains(folder) {
             routes.removeLast()
         }
         setPath(routes)
@@ -440,7 +404,6 @@ final class AppModel {
         storeSession.keyTasks.sheetShown || sheets.any
     }
 
-    /// Closes every opened entry that is no longer on the navigation stack.
     private func pathChanged() {
         if usesSplitView {
             // Arrives as appended to the stack; the columns want it in order.
@@ -471,23 +434,17 @@ final class AppModel {
     /// cancelled task keeps no copy. A task past the point where cancel
     /// works ends the copies again when it finishes (`openJob`'s `letGo`).
     func lockNow() {
-        let ended = liveCopies.count
+        let ended = copies.list.count
         locks += 1
         keyTask.cancelAll()
         keyPort.session()?.forgetPin()
-        var problem: Error?
-        do {
-            try copies?.lockNow()
-        } catch {
-            problem = error
-        }
         // A Face ID open that started before this finishes into a locked
         // app: it leaves nothing behind.
         faceId.forget()
         pendingRoute = nil
         setPath([])
         storeSession.clipboard.clearIfOurs()
-        refreshCopies(after: problem)
+        copies.change { try $0.lockNow() }
         toast = Toast(text: lockedToast(ended: ended))
     }
 
@@ -499,7 +456,7 @@ final class AppModel {
         switch phase {
         case .background:
             backgroundedAtMs = clock.monotonicMs()
-            keyPort.session()?.noteBackgrounded()
+            reader.backgrounded()
         case .active:
             if let away = backgroundedAtMs {
                 backgroundedAtMs = nil
@@ -507,10 +464,10 @@ final class AppModel {
                     closeAllSessions(because: .away)
                 }
             }
-            keyPort.session()?.noteForegrounded()
+            reader.foregrounded()
             storeSession.cameForward()
             storeSession.clipboard.clearIfExpired()
-            sweepCopies()
+            copies.change { try $0.sweep() }
             reader.readIfNeeded()
         default:
             break
@@ -521,7 +478,7 @@ final class AppModel {
     /// and a password on the clipboard may be due to go.
     func timePassed() {
         storeSession.clipboard.clearIfExpired()
-        refreshCopies()
+        copies.reread()
     }
 }
 
@@ -529,7 +486,7 @@ extension AppModel {
     /// Opening `entry` with the key: the entry is pushed once the sheet has
     /// gone. One that the key cannot open says which keys can instead.
     private func openJob(_ entry: EntryRef) -> KeyJob<Never> {
-        let open = KeyOpen(entry: entry, store: store, port: keyPort, copies: copies, table: .app)
+        let open = KeyOpen(entry: entry, store: store, port: keyPort, copies: copies.cache, table: .app)
         let locksAtStart = locks
         return open.job(
             opened: { [weak self] opened in
@@ -537,8 +494,9 @@ extension AppModel {
                 return .standard
             },
             failed: { [weak self] error in
+                // Said before any PIN or touch: say which keys can.
                 guard case .NotForThisKey = error else { return .standard }
-                self?.showAnotherKey(entry)
+                self?.show(.anotherKey(entry.path))
                 return .close
             },
             lateCopyKept: { [weak self] in
@@ -553,25 +511,20 @@ extension AppModel {
     /// began, end every copy again instead, which also deletes the seal key
     /// the late copy may have made.
     private func removeLateCopy(of entry: EntryRef, lockedSince: Bool) {
-        guard let copies else { return }
-        var problem: Error?
-        do {
+        copies.change { cache in
             if lockedSince {
-                try copies.lockNow()
+                try cache.lockNow()
             } else {
-                try copies.forgetEntry(entry: entry.path)
+                try cache.forgetEntry(entry: entry.path)
             }
-        } catch {
-            problem = error
         }
-        refreshCopies(after: problem)
     }
 
     /// The entry is open: it is pushed once the sheet has gone. A copy that
     /// was asked for and not kept is said on Home.
     private func opened(_ opened: KeyOpen.Opened, entry: EntryRef) {
         noteOpened(opened.entry, path: entry.path)
-        refreshCopies()
+        copies.reread()
         let session = OpenSession(
             ref: entry, entry: opened.entry, view: opened.entry.view(), hadCopy: opened.faceIdUntilMs != nil)
         sessions[session.id] = session

@@ -62,10 +62,10 @@ private struct LaunchRoot: View {
         } else if FixtureLaunch.isRequested {
             FixtureRoot()
         } else {
-            StoreRoot(platform: LaunchedHardware.storeRoot)
+            StoreRoot(platform: LaunchedHardware.storeRoot, removesLegacyStore: !LegacyStore.plantsInstead)
         }
         #else
-        StoreRoot(platform: .device(.app))
+        StoreRoot(platform: .device(.app), removesLegacyStore: true)
         #endif
     }
 }

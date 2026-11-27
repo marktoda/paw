@@ -11,7 +11,7 @@ struct FaceIdSettingsSection: View {
     @State private var problem: String?
 
     var body: some View {
-        if let copies = model.storeSession.copies {
+        if let copies = model.copies.cache {
             Section {
                 Toggle(isOn: binding(copies)) {
                     Text(Device.words("Open with Face ID"))
@@ -46,13 +46,11 @@ struct FaceIdSettingsSection: View {
 
     private func set(_ on: Bool, _ copies: CopyCache) {
         do {
-            try copies.setCopiesEnabled(enabled: on)
+            try model.copies.tryChange { try $0.setCopiesEnabled(enabled: on) }
             problem = nil
         } catch {
             problem = describe(error)
         }
         enabled = copies.copiesEnabled()
-        // Home's "Open with Face ID" list, and any password open from a copy.
-        model.refreshCopies()
     }
 }

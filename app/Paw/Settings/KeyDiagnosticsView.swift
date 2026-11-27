@@ -1,6 +1,5 @@
 import SwiftUI
 import UIKit
-import UniformTypeIdentifiers
 
 /// Settings › Key diagnostics on a set-up store: what the key session read
 /// when the key was plugged in, which asks for no PIN and sends nothing to
@@ -132,7 +131,7 @@ struct KeyDiagnosticsView: View {
             appBuild: Self.bundleString("CFBundleVersion"),
             systemVersion: "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)",
             deviceModel: Self.deviceModel,
-            lastSync: syncSummary,
+            lastSync: model.storeSession.syncing?.pillState.lastSync,
             lastCheckedMs: model.storeSession.syncing?.lastChecked.map { Int64($0.timeIntervalSince1970 * 1000) })
         let stateDir = model.storeSession.stateDir
         let port = model.storeSession.keyPort
@@ -147,21 +146,6 @@ struct KeyDiagnosticsView: View {
             assembling = false
             Self.copyForDesktop(text)
             copiedReport = text
-        }
-    }
-
-    /// What the sync pill says now, as one fixed word.
-    private var syncSummary: LastSyncState? {
-        guard let syncing = model.storeSession.syncing else { return nil }
-        switch syncing.pillState {
-        case .working: return .working
-        case .upToDate: return .upToDate
-        case .needsKey: return .needsKey
-        case .notChecked: return .notChecked
-        case .notSent: return .notSent
-        case .offline: return .offline
-        case .failed: return .failed
-        case .paused: return .paused
         }
     }
 
@@ -242,13 +226,11 @@ struct KeyDiagnosticsView: View {
     /// How long a copied report or log stays on the pasteboard.
     static let copyLifetime: TimeInterval = 10 * 60
 
-    /// Not `Clipboard`: the owner pastes these on a desktop, so they may go
+    /// Not as a secret: the owner pastes these on a desktop, so they may go
     /// to other devices by Universal Clipboard (principles 6 notes the
     /// exception), but they still expire, after 10 minutes, not 45 seconds.
     private static func copyForDesktop(_ text: String) {
-        UIPasteboard.general.setItems(
-            [[UTType.utf8PlainText.identifier: text]],
-            options: [.expirationDate: Date().addingTimeInterval(copyLifetime)])
+        Clipboard.copyNotSecret(text, localOnly: false, expiry: Date().addingTimeInterval(copyLifetime))
     }
 
     private func clearLog() {

@@ -86,7 +86,6 @@ struct RootView: View {
                 // test can wait for "0" instead of sleeping before it checks
                 // that a cancelled open left nothing.
                 KeyTasksSignal(keys: model.storeSession.reader.simulated) { model.storeSession.keyTasks.pendingTasks }
-                // And how many times the privacy cover has been drawn.
                 Text(verbatim: "\(PrivacyCoverLog.shared.shown)")
                     .font(.caption2)
                     .frame(width: 1, height: 1)
@@ -166,7 +165,7 @@ private struct ClosedEntryScreen: View {
                 Button {
                     model.reopen(id)
                 } label: {
-                    if model.liveCopy(closed.ref.path) != nil {
+                    if model.copies.copy(of: closed.ref.path) != nil {
                         Text(Device.words("Open with Face ID"))
                     } else {
                         KeyButtonLabel(title: "Open with your key")

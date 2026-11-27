@@ -6,29 +6,19 @@ struct AnotherKeyScreen: View {
     let model: AppModel
     let entry: EntryRef
 
+    /// Also what its row says in a list.
+    static let headline = "Encrypted for another key"
+
     var body: some View {
         List {
             Section {
-                HStack(spacing: 14) {
-                    IconChip(symbol: EntryGlyph.symbol(for: entry.name), tint: FolderTint(folder: entry.topFolder), size: .large)
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(entry.name)
-                            .font(PawFont.title)
-                            .foregroundStyle(PawColor.label)
-                            .accessibilityAddTraits(.isHeader)
-                            .accessibilityIdentifier("entry-title")
-                        Text(entry.folder.isEmpty ? "Not in a folder" : entry.folder)
-                            .font(PawFont.subheadline)
-                            .foregroundStyle(PawColor.labelSecondary)
-                    }
-                }
-                .padding(.horizontal, PawMetrics.Spacing.xs)
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
+                EntryHeader(entry: entry)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
             }
             Section {
                 VStack(alignment: .leading, spacing: PawMetrics.Spacing.xs) {
-                    Text("Encrypted for another key")
+                    Text(Self.headline)
                         .font(PawFont.headline)
                         .foregroundStyle(PawColor.label)
                     Text(explanation)

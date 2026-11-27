@@ -1,6 +1,5 @@
 import SwiftUI
 import UIKit
-import UniformTypeIdentifiers
 
 /// First-run setup (design.md 2.4): one screen per step, Back on all but
 /// the first, the shared key sheet for the steps that need the key.
@@ -31,7 +30,7 @@ struct SetupFlowView: View {
                             } label: {
                                 Label("Back", systemImage: "chevron.left")
                             }
-                            .disabled(model.working != nil)
+                            .disabled(model.busy)
                             .accessibilityLabel("Back")
                             .accessibilityIdentifier("setup-back")
                         }
@@ -45,7 +44,7 @@ struct SetupFlowView: View {
         }
         .onChange(of: scenePhase) {
             switch scenePhase {
-            case .background: model.keyPort.session()?.noteBackgrounded()
+            case .background: model.reader.backgrounded()
             case .active: model.foregrounded()
             default: break
             }
@@ -96,7 +95,7 @@ private struct WelcomeScreen: View {
     let model: SetupModel
 
     var body: some View {
-        SetupPage(step: nil, title: "paw", titleFont: PawFont.homeTitle, identifier: "setup-welcome") {
+        SetupPage(model: model, title: "paw", titleFont: PawFont.homeTitle, identifier: "setup-welcome") {
             VStack(alignment: .leading, spacing: PawMetrics.Spacing.xl) {
                 Text("Your pass store, opened with your YubiKey.")
                     .font(PawFont.columnTitle)
@@ -113,9 +112,6 @@ private struct WelcomeScreen: View {
                 }
             }
             .padding(.top, PawMetrics.Spacing.s)
-            if let problem = model.problem {
-                SetupProblemView(problem: problem, act: { model.performProblemAction() }, offer: { model.performOffer() })
-            }
         } buttons: {
             Button {
                 model.begin()
@@ -135,7 +131,7 @@ private struct PlugInScreen: View {
 
     var body: some View {
         SetupPage(
-            step: 1, title: "Plug in your YubiKey",
+            model: model, title: "Plug in your YubiKey",
             message: "No PIN yet. Setup continues once it's in.",
             identifier: "setup-plug-in"
         ) {
@@ -145,25 +141,19 @@ private struct PlugInScreen: View {
                 Spacer()
             }
             .padding(.vertical, PawMetrics.Spacing.l)
-            if let working = model.working, !working.isEmpty {
-                SetupWorkingLine(text: working)
-            }
             if let attachProblem = model.attachProblem {
                 ErrorRow(kind: .error, problem: attachProblem.problem, nextStep: attachProblem.nextStep, isBanner: true)
-            }
-            if let problem = model.problem {
-                SetupProblemView(problem: problem, act: { model.performProblemAction() }, offer: { model.performOffer() })
             }
         } buttons: {
             if model.attachProblem != nil, !model.noSmartCards {
                 // Reading the key again needs it in, but no PIN or touch.
                 Button {
-                    model.retryAttach()
+                    model.readKey()
                 } label: {
                     KeyButtonLabel(title: "Try again")
                 }
                 .buttonStyle(.pawPrimary)
-                .disabled(model.working != nil)
+                .disabled(model.busy)
                 .accessibilityIdentifier("plug-in-retry")
             }
         }
@@ -196,7 +186,7 @@ private struct YourKeyScreen: View {
 
     var body: some View {
         SetupPage(
-            step: 1, title: "Your key",
+            model: model, title: "Your key",
             message: "It has both keys paw needs.",
             identifier: "setup-your-key"
         ) {
@@ -216,9 +206,6 @@ private struct YourKeyScreen: View {
             }
             ForEach(warnings, id: \.self) { warning in
                 ErrorRow(kind: .warning, problem: warning.problem, nextStep: warning.nextStep)
-            }
-            if let problem = model.problem {
-                SetupProblemView(problem: problem, act: { model.performProblemAction() }, offer: { model.performOffer() })
             }
         } buttons: {
             Button("Continue") { model.continueFromKey() }
@@ -279,7 +266,7 @@ private struct AddressScreen: View {
 
     var body: some View {
         SetupPage(
-            step: 2, title: "Where is your password store?",
+            model: model, title: "Where is your password store?",
             // With GitHub the choice comes first and the typed address is
             // the other way; without it, the address is the only way.
             message: gitHub == nil ? "Its SSH address, under Code \u{203A} SSH on your git host." : nil,
@@ -309,7 +296,6 @@ private struct AddressScreen: View {
                         .submitLabel(.go)
                         .focused($focused)
                         .onChange(of: model.addressText) { _, text in
-                            model.addressProblem = nil
                             guard text.contains(where: \.isNewline) else { return }
                             model.addressText = text.filter { !$0.isNewline }
                             connect()
@@ -319,7 +305,6 @@ private struct AddressScreen: View {
                     PasteButton(payloadType: String.self) { strings in
                         if let text = strings.first {
                             model.addressText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                            model.addressProblem = nil
                         }
                     }
                     .labelStyle(.iconOnly)
@@ -365,16 +350,10 @@ private struct AddressScreen: View {
                     }
                 }
             }
-            if let working = model.working, !working.isEmpty {
-                SetupWorkingLine(text: working)
-            }
-            if let problem = model.problem {
-                SetupProblemView(problem: problem, act: { model.performProblemAction() }, offer: { model.performOffer() })
-            }
         } buttons: {
             Button("Connect") { connect() }
                 .buttonStyle(.pawPrimary)
-                .disabled(model.working != nil || model.addressText.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(!model.canConnect)
                 .accessibilityIdentifier("address-connect")
         }
         #if DEBUG && targetEnvironment(simulator)
@@ -390,13 +369,12 @@ private struct AddressScreen: View {
     private var simulatorActions: [SimulatorAction] {
         [SimulatorAction(title: "use the simulated host", identifier: "simulated-address") {
             model.addressText = SimulatedHostHolder.shared.host?.address() ?? ""
-            model.addressProblem = nil
         }]
     }
     #endif
 
     private func connect() {
-        guard model.working == nil, !model.addressText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        guard model.canConnect else { return }
         focused = false
         model.connectToHost()
     }
@@ -410,7 +388,7 @@ private struct ConfirmHostScreen: View {
 
     var body: some View {
         SetupPage(
-            step: 2, title: "First time connecting to \(host)",
+            model: model, title: "First time connecting to \(host)",
             message: "Compare with the fingerprint your server publishes.",
             identifier: "setup-confirm-host"
         ) {
@@ -418,27 +396,21 @@ private struct ConfirmHostScreen: View {
                 Text(algorithm)
                     .font(PawFont.footnote.weight(.semibold))
                     .foregroundStyle(PawColor.labelSecondary)
-                GroupedFingerprint(fingerprint: fingerprint)
+                FingerprintText(fingerprint: fingerprint, font: PawFont.password, color: PawColor.label)
                     .accessibilityIdentifier("host-fingerprint")
             }
             Text("If it doesn't match, go back: someone may be intercepting the connection.")
                 .font(PawFont.footnote)
                 .foregroundStyle(PawColor.labelSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if let working = model.working, !working.isEmpty {
-                SetupWorkingLine(text: working)
-            }
-            if let problem = model.problem {
-                SetupProblemView(problem: problem, act: { model.performProblemAction() }, offer: { model.performOffer() })
-            }
         } buttons: {
             Button("Trust this key") { model.trustHost(fingerprint: fingerprint) }
                 .buttonStyle(.pawPrimary)
-                .disabled(model.working != nil)
+                .disabled(model.busy)
                 .accessibilityIdentifier("host-trust")
             Button("Back") { model.back() }
                 .buttonStyle(.pawSecondary)
-                .disabled(model.working != nil)
+                .disabled(model.busy)
                 .accessibilityIdentifier("host-back")
         }
     }
@@ -452,7 +424,7 @@ private struct KeyNotAcceptedScreen: View {
 
     var body: some View {
         SetupPage(
-            step: 2, title: "\(host) doesn't know this key yet",
+            model: model, title: "\(host) doesn't know this key yet",
             message: "Add this SSH key to your account on \(host), then check again.",
             identifier: "setup-key-not-accepted"
         ) {
@@ -473,8 +445,7 @@ private struct KeyNotAcceptedScreen: View {
                     Button {
                         // A public key, not a secret: it stays on this
                         // iPhone's pasteboard with no expiry.
-                        UIPasteboard.general.setItems(
-                            [[UTType.utf8PlainText.identifier: publicKey]], options: [.localOnly: true])
+                        Clipboard.copyNotSecret(publicKey, localOnly: true)
                         toast = "SSH key copied."
                     } label: {
                         Label("Copy", systemImage: PawSymbol.copy)
@@ -498,16 +469,10 @@ private struct KeyNotAcceptedScreen: View {
                 }
                 .accessibilityIdentifier("open-github")
             }
-            if let working = model.working, !working.isEmpty {
-                SetupWorkingLine(text: working)
-            }
-            if let problem = model.problem {
-                SetupProblemView(problem: problem, act: { model.performProblemAction() }, offer: { model.performOffer() })
-            }
         } buttons: {
             Button("Check again") { model.checkAgain() }
                 .buttonStyle(.pawPrimary)
-                .disabled(model.working != nil)
+                .disabled(model.busy)
                 .accessibilityIdentifier("check-again")
         }
         .copyToast($toast)
@@ -533,7 +498,7 @@ private struct DownloadScreen: View {
 
     var body: some View {
         SetupPage(
-            step: 3, title: "Download your store",
+            model: model, title: "Download your store",
             message: "\(storeAddressHost(address: address)) accepts your key.",
             identifier: "setup-download"
         ) {
@@ -549,20 +514,15 @@ private struct DownloadScreen: View {
                     .foregroundStyle(PawColor.labelSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let problem = model.problem {
-                SetupProblemView(problem: problem, act: { model.performProblemAction() }, offer: { model.performOffer() })
-            }
         } buttons: {
-            // After the host's identity changed, the only way on is to
-            // start again: no button invites another try.
-            if model.problem?.action != .startOver {
+            if model.canDownload {
                 Button {
                     model.startDownload()
                 } label: {
                     KeyButtonLabel(title: "Download")
                 }
                 .buttonStyle(.pawPrimary)
-                .disabled(model.working != nil)
+                .disabled(model.busy)
                 .accessibilityIdentifier("download-start")
             }
         }
@@ -580,7 +540,7 @@ private struct CheckScreen: View {
 
     var body: some View {
         SetupPage(
-            step: 4, title: "Check that your key opens it",
+            model: model, title: "Check that your key opens it",
             message: "One password is opened as a test. It isn't shown or kept.",
             identifier: "setup-check"
         ) {
@@ -593,9 +553,6 @@ private struct CheckScreen: View {
                     .foregroundStyle(PawColor.success)
             }
             .accessibilityIdentifier("check-count")
-            if let problem = model.problem {
-                SetupProblemView(problem: problem, act: { model.performProblemAction() }, offer: { model.performOffer() })
-            }
         } buttons: {
             Button {
                 model.startCheck()
@@ -603,7 +560,7 @@ private struct CheckScreen: View {
                 KeyButtonLabel(title: "Check my key")
             }
             .buttonStyle(.pawPrimary)
-            .disabled(model.working != nil)
+            .disabled(model.busy)
             .accessibilityIdentifier("check-start")
         }
     }
@@ -616,7 +573,7 @@ private struct DoneScreen: View {
 
     var body: some View {
         SetupPage(
-            step: nil, title: "Your store is ready",
+            model: model, title: "Your store is ready",
             message: "Your key opened \(opened).",
             identifier: "setup-done"
         ) {

@@ -63,6 +63,18 @@ final class KeyReader {
         following = nil
     }
 
+    /// paw went to the background: the key's session counts its time away
+    /// from now, for the core's PIN timeout.
+    func backgrounded() {
+        port.session()?.noteBackgrounded()
+    }
+
+    /// paw is back: the key's session hears it, and may drop a PIN held
+    /// too long.
+    func foregrounded() {
+        port.session()?.noteForegrounded()
+    }
+
     func readIfNeeded() {
         if present, port.session() == nil {
             read()

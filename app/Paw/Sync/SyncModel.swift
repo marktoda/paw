@@ -167,8 +167,6 @@ final class SyncModel {
         switch changed.change {
         case .synced(let report?, let replaced):
             summarise(report, origin: replaced ? .replaced : .sync, store: changed.store)
-        case .removed:
-            return
         case .wrote, .recipientsAccepted, .synced(nil, _), .reencrypted:
             break
         }
@@ -385,7 +383,7 @@ final class SyncModel {
         workQueue.async { [weak self] in
             var summary = SyncSummary(origin: origin, report: report)
             // A list that can't be read is said on Home from the same store
-            // change (`AppModel.copiesProblem`); an entry that can't be read
+            // change (`LiveCopies.problem`); an entry that can't be read
             // is gone, and its copy with it, or the store is, which Home
             // says too.
             if let copies {

@@ -81,7 +81,7 @@ struct PawIconButton: View {
 struct FieldRow: View {
     let label: String
     let value: String
-    var onCopy: () -> Void = {}
+    let onCopy: () -> Void
 
     var body: some View {
         HStack(spacing: PawMetrics.Spacing.xs) {
@@ -109,13 +109,13 @@ struct FieldRow: View {
 
 /// The password: always 16 dots while hidden, coloured SF Mono when shown.
 struct PasswordField: View {
-    var label = "Password"
+    let label: String
     /// Prefix of the identifiers: `<prefix>-value`, `-reveal`, `-copy`, `-large-type`.
-    var identifier = "password"
+    let identifier: String
     let password: String
     @Binding var isRevealed: Bool
-    var onCopy: () -> Void = {}
-    var onLargeType: () -> Void = {}
+    let onCopy: () -> Void
+    let onLargeType: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
