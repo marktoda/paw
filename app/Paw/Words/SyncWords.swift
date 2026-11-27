@@ -24,7 +24,7 @@ extension SyncFailure {
             nextStep: waiting(unpushed), details: [describe(error)], pill: "Check failed")
     }
 
-    static func cancelled(during kind: SyncKind, unpushed: Int) -> SyncFailure {
+    static func cancelled(during kind: SyncKind) -> SyncFailure {
         let problem = switch kind {
         case .send: "Sending was cancelled."
         case .refresh: "Checking was cancelled."

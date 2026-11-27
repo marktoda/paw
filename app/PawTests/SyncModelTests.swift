@@ -65,7 +65,7 @@ final class SyncModelTests: XCTestCase {
                 host: "git.example", expected: ["SHA256:aaa"], presented: "SHA256:ccc", bundled: false))),
             during: .refresh, unpushed: 0, host: "git.example")
         XCTAssertFalse(sync.actionNeedsKey(after: hostKey))
-        XCTAssertFalse(sync.actionNeedsKey(after: SyncFailure.cancelled(during: .send, unpushed: 1)))
+        XCTAssertFalse(sync.actionNeedsKey(after: SyncFailure.cancelled(during: .send)))
     }
 
     func testSendingAsksForThePinOnceEmptiesTheQueueAndASecondSendAsksForNoPin() async throws {

@@ -39,7 +39,7 @@ enum LaunchArgument: String, CaseIterable, DebugLaunchArgument {
 
     /// Word, `cancel|nomatch|lockout|notenrolled`: what the simulated Face ID answers.
     case simFaceId = "pawSimFaceId"
-    /// Number: milliseconds the simulated clock moves on each time paw goes to the background.
+    /// Number: milliseconds the simulated clock moves on each time paw comes back from the background.
     case simAwayMs = "pawSimAwayMs"
     /// Number: seconds the system keeps a copied password on the pasteboard.
     case simPasteboardSecs = "pawSimPasteboardSecs"

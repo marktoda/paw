@@ -52,7 +52,6 @@ struct SetupProblem: Equatable {
         let action: Action
     }
 
-    var kind: ErrorRow.Kind = .error
     let problem: String
     let nextStep: String
     /// Lines to read closely, such as fingerprints or the host's own words.

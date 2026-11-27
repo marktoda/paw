@@ -89,12 +89,12 @@ final class SyncWordsTests: XCTestCase {
     }
 
     func testACancelIsQuietAndOffersNothing() {
-        let send = SyncFailure.cancelled(during: .send, unpushed: 1)
+        let send = SyncFailure.cancelled(during: .send)
         XCTAssertEqual(send.kind, .cancelled)
         XCTAssertEqual(send.problem, "Sending was cancelled.")
         XCTAssertEqual(send.pill, "")
         XCTAssertNil(send.step)
-        XCTAssertEqual(SyncFailure.cancelled(during: .refresh, unpushed: 0).problem, "Checking was cancelled.")
+        XCTAssertEqual(SyncFailure.cancelled(during: .refresh).problem, "Checking was cancelled.")
     }
 
     // MARK: The pill

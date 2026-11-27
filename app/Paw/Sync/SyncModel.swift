@@ -218,7 +218,7 @@ final class SyncModel {
         if keyTask.isShown {
             keyTask.cancel()
             if running != nil {
-                failure = SyncFailure.cancelled(during: keyKind, unpushed: unpushed)
+                failure = SyncFailure.cancelled(during: keyKind)
                 stoppedQuietly()
             }
         }
