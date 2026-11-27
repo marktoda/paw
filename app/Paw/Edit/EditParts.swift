@@ -142,7 +142,6 @@ extension RecipientLine {
         switch status {
         case .ready: return "Your key"
         case .missing: return "paw doesn't have this key"
-        case .ambiguous: return "Matches more than one saved key"
         }
     }
 }

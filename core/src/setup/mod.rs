@@ -21,7 +21,7 @@ use crate::store::PassStore;
 use crate::sync::address::{AddressNotice, AddressProblem, StoreAddress};
 use crate::sync::hosts::{self, KnownHosts};
 use crate::sync::{self, Cloned, Connection, PresentedHostKey};
-use crate::write::{Keyring, LineStatus, WriteError};
+use crate::write::{Keyring, LineStatus};
 use crate::fault::Fault;
 use crate::remote::{PortFallback, RemoteFailure};
 use crate::key::touch_clock::{TouchClock, TouchExpectation};
@@ -685,14 +685,7 @@ impl SetupFlow {
         // that entry names the card's key, says which line is the card's.
         let store = PassStore::open(repo.to_string_lossy().into_owned()).map_err(SetupError::from)?;
         let ciphertext = store.read_entry(&entry).map_err(SetupError::from)?;
-        let bound = keyring.bind_card_for_opened_entry(&held, &repo, &fingerprint, &entry, &ciphertext);
-        match bound {
-            // Several unknown lines: the person picks the card's later.
-            Ok(_) | Err(WriteError::MissingRecipients { .. }) => {}
-            Err(WriteError::Fault { fault }) => return Err(write_failed(fault)),
-            // The card's key was pinned just above.
-            Err(other) => return Err(write_failed(Fault::local(other))),
-        }
+        keyring.bind_card_for_opened_entry(&held, &repo, &fingerprint, &entry, &ciphertext).map_err(write_failed)?;
         keyring.accept_all_recipients_at_setup(&held, &repo).map_err(write_failed)?;
         save_enrolment(&self.dir, identity).map_err(SetupError::from)?;
         drop(held);

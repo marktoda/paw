@@ -166,8 +166,6 @@ private struct RecipientKeyRow: View {
             return nil
         case .missing:
             return "paw doesn't have this key. Can't save here."
-        case .ambiguous(let fingerprints):
-            return Device.words("Matches \(fingerprints.count) keys on this iPhone.")
         }
     }
 

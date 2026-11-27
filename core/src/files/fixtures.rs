@@ -175,9 +175,10 @@ fn the_pinned_recipients() {
     assert_eq!(folder.accepted_lines, ["AAAA1111"]);
     assert_eq!(folder.lines[0].status, crate::write::LineStatus::Ready { fingerprint: CARD_KEY.into(), bound: true });
 
-    // Binding the line again saves the file again, as it was.
+    // Pinning the card's key again saves the file again, as it was.
     let held = keyring.lock().exclusive().unwrap();
-    keyring.bind(&held, "AAAA1111", CARD_KEY).unwrap();
+    let key = keyring.keys()[0].key.clone();
+    keyring.pin_card_key(&held, &key).unwrap();
     assert_eq!(get(dir.path(), layout::RECIPIENTS), bytes.as_bytes());
 }
 

@@ -139,7 +139,8 @@ impl Store {
     }
 
     /// Pins the encryption subkey of `gpg`'s key `who`, as setup pins the
-    /// card's key, and binds each of `lines` to it.
+    /// card's key, and binds each of `lines` to it, as setup's test decrypt
+    /// binds a line.
     fn pin(&self, gpg: &Gpg, who: &str, lines: &[&str]) {
         let certificate = SignedPublicKey::from_bytes(&gpg.export(who, false)[..]).unwrap();
         let subkey = &certificate.public_subkeys[0].key;
@@ -150,7 +151,7 @@ impl Store {
         let held = keyring.lock().exclusive().unwrap();
         let fingerprint = keyring.pin_card_key(&held, &key).unwrap();
         for line in lines {
-            keyring.bind(&held, line, &fingerprint).unwrap();
+            support::bind_recipient(&self.state, line, &fingerprint);
         }
     }
 }

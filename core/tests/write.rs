@@ -243,16 +243,17 @@ fn a_gpg_id_naming_the_primary_key_needs_the_setup_binding_for_the_card() {
 }
 
 #[test]
-fn a_binding_must_name_a_pinned_key_and_the_card_binding_needs_one_open_line() {
+fn the_card_binding_needs_one_open_line() {
     let s = store_with("AAAA1111\nBBBB2222\n", &[]);
-    assert!(matches!(s.keyring().bind(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), "AAAA1111", "00FF"), Err(WriteError::NotPinned { .. })));
     // Two lines no key satisfies: paw cannot tell which is the card's.
+    let bound = s.keyring().bind_card_for_opened_entry(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, &card().fingerprint_hex(), "x", &encrypted("pw\n")).unwrap();
+    assert!(bound.is_empty());
     assert!(matches!(
-        s.keyring().bind_card_for_opened_entry(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, &card().fingerprint_hex(), "x", &encrypted("pw\n")),
-        Err(WriteError::MissingRecipients { missing, .. }) if missing.len() == 2
+        s.write().save(&new_entry("", "x", "pw")).unwrap_err(),
+        WriteError::MissingRecipients { missing, .. } if missing.len() == 2
     ));
-    // The person picks; then the other line is still missing.
-    s.keyring().bind(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), "AAAA1111", &card().fingerprint_hex()).unwrap();
+    // With one of them bound, as setup binds a line, the other is still missing.
+    support::bind_recipient(&s.state, "AAAA1111", &card().fingerprint_hex());
     assert!(matches!(
         s.write().save(&new_entry("", "x", "pw")).unwrap_err(),
         WriteError::MissingRecipients { missing, .. } if missing == ["BBBB2222"]

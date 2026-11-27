@@ -61,8 +61,6 @@ func editProblem(_ error: WriteError, folder: String) -> EditProblem {
         return EditProblem(problem: StoreBusyWords.problem, nextStep: StoreBusyWords.nextStep)
     case .Fault(let fault):
         return EditProblem(problem: "Couldn't save this", nextStep: "Nothing was changed. Details: \(faultDetail(fault))")
-    case .NotPinned:
-        return EditProblem(problem: Device.words("A key for this folder isn't saved on this iPhone"), nextStep: "Nothing was changed.")
     }
 }
 

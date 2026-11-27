@@ -56,9 +56,6 @@ pub enum WriteError {
     /// would lose that change.
     #[error("{entry} changed since you opened it; open it again to edit it")]
     ChangedSinceOpened { entry: String },
-    /// A binding names a key that is not pinned.
-    #[error("there is no saved key {fingerprint}")]
-    NotPinned { fingerprint: String },
     #[error("{message}")]
     Policy { message: String },
     /// Underneath the change: the store, a refused name, or the files.
