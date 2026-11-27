@@ -432,7 +432,7 @@ final class EntryFormModel {
     /// when it couldn't be told. Save waits for `true`.
     var folderWritable: Bool? {
         guard case .success(let recipients)? = recipients else { return nil }
-        return recipients.writable
+        return recipients.problem == nil
     }
 
     var canSave: Bool {
@@ -507,12 +507,5 @@ final class EntryFormModel {
         draft = nil
         recipientsTask?.cancel()
         openableTask?.cancel()
-    }
-}
-
-extension RecipientLine {
-    var isReady: Bool {
-        if case .ready = status { return true }
-        return false
     }
 }

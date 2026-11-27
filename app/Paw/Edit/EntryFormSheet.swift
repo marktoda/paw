@@ -654,6 +654,6 @@ extension StoreWriter {
     /// stays choosable: the form then offers the review.
     func folderOpenable(_ folder: String) -> Bool? {
         guard let recipients = try? folderRecipients(folder: folder) else { return nil }
-        return recipients.lines.allSatisfy(\.isReady)
+        return recipients.missingKeys == 0
     }
 }

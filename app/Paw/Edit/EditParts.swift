@@ -75,21 +75,10 @@ struct RecipientsFooter: View {
         case .failure(let error)?:
             ErrorRow(kind: .error, problem: "Can't tell who can open this folder", nextStep: describe(error))
         case .success(let recipients)?:
-            if !recipients.confirmed {
+            if let problem = recipients.problem?.words(folder: folder) {
                 ErrorRow(
-                    kind: .warning, problem: "paw hasn't confirmed who can open this store",
-                    nextStep: "Finish setting up the store, then save.")
-            } else if recipients.changed {
-                ErrorRow(
-                    kind: .warning,
-                    problem: whoCanOpenChanged(folder),
-                    nextStep: "Review the new list before saving here.",
-                    actionTitle: "Review", action: onReview)
-            } else if !recipients.lines.allSatisfy(\.isReady) {
-                ErrorRow(
-                    kind: .warning,
-                    problem: "Can't save in \(place)",
-                    nextStep: "It's also encrypted for a key paw doesn't have. Pick another folder.")
+                    kind: .warning, problem: problem.problem, nextStep: problem.nextStep,
+                    actionTitle: problem.reviewFolder == nil ? nil : "Review", action: onReview)
             } else {
                 HStack(alignment: .firstTextBaseline, spacing: PawMetrics.Spacing.s) {
                     Image(systemName: "person.badge.key")
@@ -111,10 +100,6 @@ struct RecipientsFooter: View {
                 .accessibilityIdentifier("form-recipients")
             }
         }
-    }
-
-    private var place: String {
-        folder.isEmpty ? "the top of your store" : folder
     }
 
     /// "Encrypted for your key." or "Encrypted for your key and key 9A1C 03F2."
@@ -185,7 +170,7 @@ struct RecipientsReviewScreen: View {
                     ForEach(found.lines, id: \.line) { line in
                         lineRow(
                             Self.name(line.line, in: found),
-                            detail: Self.isYourKey(line) ? RecipientLineWords.grouped(line.line)
+                            detail: line.isReady ? RecipientLineWords.grouped(line.line)
                                 : "\(line.statusWords) \u{00B7} \(RecipientLineWords.grouped(line.line))")
                     }
                 } header: {
@@ -244,13 +229,8 @@ struct RecipientsReviewScreen: View {
     /// The same name for a key in both lists: "Your key" for the plugged-in
     /// key's line wherever it appears, otherwise "Key 9A1C 03F2".
     private static func name(_ line: String, in found: FolderRecipients) -> String {
-        let yours = found.lines.contains { $0.line == line && isYourKey($0) }
+        let yours = found.lines.contains { $0.line == line && $0.isReady }
         return yours ? "Your key" : "Key \(RecipientLineWords.ending(line))"
-    }
-
-    private static func isYourKey(_ line: RecipientLine) -> Bool {
-        if case .ready = line.status { return true }
-        return false
     }
 
     private func accept() {
