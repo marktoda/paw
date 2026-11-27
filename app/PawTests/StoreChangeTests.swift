@@ -34,7 +34,7 @@ final class StoreChangeTests: XCTestCase {
         let model = fixture.model
         let edits = try XCTUnwrap(model.storeSession.edits)
         let form = edits.addForm(folder: "web")
-        form.binding(\.name, field: "name").wrappedValue = "late.example"
+        form.binding(\.name, field: .name).wrappedValue = "late.example"
         XCTAssertNil(form.problem(for: .name))
 
         try await fixture.add("late.example", folder: "web")

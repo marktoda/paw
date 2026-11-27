@@ -8,6 +8,13 @@ import SwiftUI
 /// The typed text is dropped and the draft released when the sheet closes.
 @MainActor @Observable
 final class EntryFormModel {
+    /// A field of the form, as typing in it and the core's problems name it.
+    enum Field: Hashable {
+        case name, folder, username, password, website, notes, setupKey
+        /// The extra field in this row.
+        case extra(UUID)
+    }
+
     /// One of the other `key: value` lines.
     struct ExtraField: Identifiable {
         let id = UUID()
@@ -31,7 +38,10 @@ final class EntryFormModel {
     }
 
     let purpose: EntryFormPurpose
-    let isEditing: Bool
+    var isEditing: Bool {
+        if case .edit = purpose { return true }
+        return false
+    }
     /// "Rename or move" starts with the name field focused. Add does not,
     /// so the whole form shows before the keyboard covers half of it.
     var startsOnName: Bool {
@@ -75,7 +85,7 @@ final class EntryFormModel {
     /// The core's message for an extra field it would refuse, by row.
     private(set) var fieldProblems: [UUID: String] = [:]
     /// Fields typed in, so a message is not shown before anything was typed.
-    private(set) var touched: Set<String> = []
+    private(set) var touched: Set<Field> = []
     private(set) var recipients: Result<FolderRecipients, Error>?
     var saveProblem: EditProblem?
     var confirmingDiscard = false
@@ -92,7 +102,7 @@ final class EntryFormModel {
     @ObservationIgnored private var original = Original()
     /// Setters already called on the draft, so a value changed back is
     /// set back too.
-    @ObservationIgnored private var applied: Set<String> = []
+    @ObservationIgnored private var applied: Set<Field> = []
     @ObservationIgnored private var appliedFieldKeys: Set<String> = []
     /// The extra fields' keys as opened, lower-cased.
     @ObservationIgnored private var openedFieldKeys: Set<String> = []
@@ -102,7 +112,6 @@ final class EntryFormModel {
 
     init(adding folder: String, writer: StoreWriter, folders: [String], live: LiveStore) {
         purpose = .add(folder: folder)
-        isEditing = false
         hadOneTimeCode = false
         self.writer = writer
         self.folders = folders
@@ -120,7 +129,6 @@ final class EntryFormModel {
         editing session: OpenSession, focusName: Bool, writer: StoreWriter, folders: [String], live: LiveStore
     ) throws {
         purpose = .edit(sessionID: session.id, focusName: focusName)
-        isEditing = true
         hadOneTimeCode = session.view.hasOtp
         self.writer = writer
         self.folders = folders
@@ -158,7 +166,7 @@ final class EntryFormModel {
     // MARK: Typing
 
     /// A binding that tells the draft about each change.
-    func binding(_ keyPath: ReferenceWritableKeyPath<EntryFormModel, String>, field: String) -> Binding<String> {
+    func binding(_ keyPath: ReferenceWritableKeyPath<EntryFormModel, String>, field: Field) -> Binding<String> {
         Binding(
             get: { self[keyPath: keyPath] },
             set: { value in
@@ -181,7 +189,7 @@ final class EntryFormModel {
                 } else {
                     self.extraFields[index].value = value
                 }
-                self.touched.insert("field-\(id)")
+                self.touched.insert(.extra(id))
                 self.changed()
             })
     }
@@ -205,13 +213,13 @@ final class EntryFormModel {
     func chooseFolder(_ folder: String) {
         self.folder = folder
         newFolder = nil
-        touched.insert("folder")
+        touched.insert(.folder)
         changed()
     }
 
     func chooseNewFolder() {
         newFolder = ""
-        touched.insert("folder")
+        touched.insert(.folder)
         changed()
     }
 
@@ -230,7 +238,7 @@ final class EntryFormModel {
             password = made
             generated = made
             showsPassword = true
-            touched.insert("password")
+            touched.insert(.password)
             changed()
         } catch let error as WriteError {
             saveProblem = editProblem(error, folder: effectiveFolder)
@@ -285,11 +293,11 @@ final class EntryFormModel {
         saveProblem = nil
         draft.setName(name: name)
         draft.setFolder(folder: effectiveFolder)
-        setIfChanged("username", username, original.username) { draft.setUsername(username: $0) }
-        setIfChanged("website", website, original.website) { draft.setUrl(url: $0) }
-        setIfChanged("notes", notes, original.notes) { draft.setNotes(notes: $0) }
+        setIfChanged(.username, username, original.username) { draft.setUsername(username: $0) }
+        setIfChanged(.website, website, original.website) { draft.setUrl(url: $0) }
+        setIfChanged(.notes, notes, original.notes) { draft.setNotes(notes: $0) }
         if password != generated {
-            setIfChanged("password", password, original.password) { draft.setPassword(password: $0) }
+            setIfChanged(.password, password, original.password) { draft.setPassword(password: $0) }
         }
         applyFields(to: draft)
         // One slot in the draft, replaced each time: a key typed wins over
@@ -373,9 +381,9 @@ final class EntryFormModel {
         loadFolderOpenable()
     }
 
-    private func setIfChanged(_ key: String, _ value: String, _ original: String, _ set: (String) -> Void) {
-        if value != original || applied.contains(key) {
-            applied.insert(key)
+    private func setIfChanged(_ field: Field, _ value: String, _ original: String, _ set: (String) -> Void) {
+        if value != original || applied.contains(field) {
+            applied.insert(field)
             set(value)
         }
     }
@@ -410,9 +418,38 @@ final class EntryFormModel {
         key.trimmingCharacters(in: .whitespaces).lowercased()
     }
 
-    /// What the core says is wrong with `field`, shown under it once it was typed in.
+    /// What the core says is wrong with `field`.
     func problem(for field: DraftField) -> String? {
         problems.first { $0.field == field }?.message
+    }
+
+    /// What the core says is wrong with `field`, once it was typed in or a
+    /// refused save named it.
+    func shownProblem(_ field: Field) -> String? {
+        guard touched.contains(field), let named = draftField(field) else { return nil }
+        return problem(for: named)
+    }
+
+    /// How the core names `field`; `nil` for a row no longer there.
+    private func draftField(_ field: Field) -> DraftField? {
+        switch field {
+        case .name: return .name
+        case .folder: return .folder
+        case .username: return .username
+        case .password: return .password
+        case .website: return .url
+        case .notes: return .notes
+        case .setupKey: return .oneTimeCode
+        case .extra(let id): return extraFields.first { $0.id == id }.map { DraftField.field(key: $0.key) }
+        }
+    }
+
+    /// The fields the core's `field` names: an extra field's key can be in
+    /// more than one row.
+    private func fields(named field: DraftField) -> [Field] {
+        let all: [Field] = [.name, .folder, .username, .password, .website, .notes, .setupKey]
+            + extraFields.map { .extra($0.id) }
+        return all.filter { draftField($0) == field }
     }
 
     /// Something was typed or changed: Cancel then asks first.
@@ -459,9 +496,9 @@ final class EntryFormModel {
         } catch let error as WriteError {
             if case .Invalid(let found) = error {
                 problems = found
-                found.forEach { touched.insert(Self.touchKey($0.field)) }
+                found.forEach { touched.formUnion(fields(named: $0.field)) }
             } else if case .AlreadyExists = error {
-                touched.insert("name")
+                touched.insert(.name)
                 problems = [DraftProblem(field: .name, message: editProblem(error, folder: effectiveFolder).problem)]
             } else {
                 saveProblem = editProblem(error, folder: effectiveFolder)
@@ -472,23 +509,6 @@ final class EntryFormModel {
             saveProblem = EditProblem(problem: "Couldn't save this", nextStep: "Nothing was changed. \(describe(error))")
             return nil
         }
-    }
-
-    static func touchKey(_ field: DraftField) -> String {
-        switch field {
-        case .name: "name"
-        case .folder: "folder"
-        case .password: "password"
-        case .username: "username"
-        case .url: "website"
-        case .notes: "notes"
-        case .field(let key): "key-\(key)"
-        case .oneTimeCode: "setup-key"
-        }
-    }
-
-    func isTouched(_ key: String) -> Bool {
-        touched.contains(key)
     }
 
     /// The sheet is closing: drop the typed text and the draft, whose
