@@ -21,9 +21,9 @@
 //! the vault after taking it, so two callers in one process never spend one
 //! refresh token twice.
 //!
-//! **Between processes** (the app and its extension share the vault) no
-//! lock is held: a file lock held across the refresh request would get a
-//! process suspended mid-request killed by iOS. If both send the same
+//! **Between processes** that share the vault no lock is held: a file
+//! lock held across the refresh request would get a process suspended
+//! mid-request killed by iOS. If both send the same
 //! refresh token, GitHub honours one and refuses the other with
 //! `bad_refresh_token`. The refused one then re-reads the vault for up to
 //! [`OTHER_PROCESS_GRACE`]: once the winner has kept its new pair, that
