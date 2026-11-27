@@ -556,8 +556,8 @@ private struct SyncStatusSheet: View {
         }
     }
 
-    /// Send (or Re-encrypt, while changes are held back) and Check, each
-    /// with the gold disc: that says they need the key.
+    /// Re-encrypt and Send when they are offered, then Check; the gold disc
+    /// marks each that asks for the key.
     private var actions: some View {
         VStack(spacing: PawMetrics.Spacing.s) {
             if syncing.canReencrypt {

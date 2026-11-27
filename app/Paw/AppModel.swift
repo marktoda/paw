@@ -357,7 +357,6 @@ final class AppModel {
             if let opened = saved.opened {
                 replaceSession(id, ref: EntryRef(path: saved.entry), entry: opened)
             } else {
-                // Saved, but the screen can't show the new text: close it.
                 leave(.entry(id))
             }
         case .deleted(let id):

@@ -33,7 +33,8 @@ final class FaceIdOpener {
                     self?.opening = nil
                     reply.value.0?()
                     guard let self, started == self.generation else {
-                        // Forgotten while Face ID was up: nothing opens.
+                        // Forgotten while Face ID was up, or the opener is
+                        // gone: nothing opens.
                         if case .success(.opened(let opened)) = handoff.value { opened.close() }
                         return
                     }

@@ -3,8 +3,9 @@ import SwiftUI
 /// Where the one key sheet is. Plain values only: the core decides the stage.
 enum KeySheetStage: Equatable {
     case plugIn
-    /// `triesLeft` is shown before any input when few remain
-    /// (`KeySheetWords.warnsBelowTries`). `forgotten` adds the line about the PIN being dropped in the background.
+    /// `triesLeft` is shown before any input when fewer than
+    /// `KeySheetWords.warnsBelowTries` remain. `forgotten` adds the line
+    /// about the PIN being dropped in the background.
     case pin(triesLeft: Int, forgotten: Bool)
     case wrongPin(triesLeft: Int)
     /// The PIN is asked again for another reason: it was not 6 to 127
@@ -275,8 +276,9 @@ struct KeyPinField: View {
                 .keyboardType(.asciiCapable)
                 .submitLabel(.continue)
                 .onSubmit {
-                    // The button waits for 6 characters; the return key sends what
-                    // was typed, and the core refuses a short PIN without using a try.
+                    // The button waits for the shortest PIN the core takes; the
+                    // return key sends what was typed, and the core refuses a
+                    // short PIN without using a try.
                     if !pin.isEmpty { onContinue() }
                 }
                 .accessibilityLabel("Key PIN")

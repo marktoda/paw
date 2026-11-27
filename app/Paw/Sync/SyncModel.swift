@@ -82,7 +82,6 @@ final class SyncModel {
         storeAddressHost(address: address)
     }
 
-    /// How many changes wait to be sent.
     var unpushed: Int {
         queue.unpushed.count
     }
