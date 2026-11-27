@@ -190,11 +190,11 @@ enum GallerySample {
         ("bank", 9), ("dev", 27), ("email", 14), ("home", 6), ("shopping", 31),
     ]
 
-    static func row(_ entry: Entry, match: String? = nil, action: @escaping () -> Void = {}) -> EntryRow {
+    static func row(_ entry: Entry, action: @escaping () -> Void = {}) -> EntryRow {
         EntryRow(
             name: entry.name, subtitle: entry.folder,
             symbol: EntryGlyph.symbol(for: entry.name), tint: FolderTint(folder: entry.folder),
-            access: entry.access, match: match, action: action)
+            access: entry.access, action: action)
     }
 }
 #endif

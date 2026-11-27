@@ -58,7 +58,7 @@ struct KeyOpen {
             letGo: { end in
                 guard case .done(.opened(let open, let until, _)) = end else { return }
                 open.close()
-                if until != nil, copies != nil {
+                if until != nil {
                     lateCopyKept()
                 }
             })

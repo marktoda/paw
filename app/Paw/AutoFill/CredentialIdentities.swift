@@ -15,8 +15,7 @@ import Observation
 /// Settings: an entry seen with a one-time code when last opened
 /// (`OneTimeCodeEntries`, a yes per entry) also gets a one-time-code
 /// identity for each of its sites, so iOS offers it in a code field. Off,
-/// the core lists none. App target only (not compiled into the
-/// extension).
+/// the core lists none.
 enum CredentialIdentities {
     struct Identity: Equatable, Sendable {
         let domain: String
@@ -43,7 +42,7 @@ enum CredentialIdentities {
             identities.append(Identity(
                 domain: paired.site, user: entryRef(path: paired.entry).name, path: paired.entry))
         }
-        return Array(identities.sorted { ($0.path, $0.domain) < ($1.path, $1.domain) }.prefix(limit))
+        return identities.sorted { ($0.path, $0.domain) < ($1.path, $1.domain) }
     }
 
     /// What iOS should end up with: a store's identities, or none.
@@ -51,6 +50,7 @@ enum CredentialIdentities {
         /// The store's identities, with the pairings and the entries with a
         /// one-time code kept for it.
         case replace(PassStore, pairings: SitePairings, codes: OneTimeCodeEntries)
+        /// The store was removed: no suggestion may name its entries.
         case clear
     }
 
@@ -108,12 +108,6 @@ enum CredentialIdentities {
         #else
         _ = identities
         #endif
-    }
-
-    /// The store was removed: no suggestion may name its entries.
-    @MainActor
-    static func clear() {
-        _ = submit(.clear)
     }
 
     private static func removeAll() async {

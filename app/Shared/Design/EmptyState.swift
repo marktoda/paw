@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Nothing to show: a slate chip, a rounded title, one or two sentences and
-/// up to two buttons.
+/// a button.
 struct EmptyState: View {
     struct Action {
         let title: String
@@ -13,7 +13,6 @@ struct EmptyState: View {
     let title: String
     let message: String
     var primary: Action? = nil
-    var secondary: Action? = nil
 
     var body: some View {
         ContentUnavailableView {
@@ -38,11 +37,6 @@ struct EmptyState: View {
                     Button(primary.title, action: primary.run)
                         .buttonStyle(.pawPrimary)
                         .accessibilityIdentifier(primary.identifier)
-                }
-                if let secondary {
-                    Button(secondary.title, action: secondary.run)
-                        .buttonStyle(.pawSecondary)
-                        .accessibilityIdentifier(secondary.identifier)
                 }
             }
             .frame(maxWidth: PawMetrics.sheetTextWidth)

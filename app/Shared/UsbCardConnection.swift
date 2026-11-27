@@ -22,10 +22,6 @@ final class UsbCardConnection: CardConnection, @unchecked Sendable {
 
     private let card: TKSmartCard
 
-    static func slotNames() -> [String] {
-        TKSmartCardSlotManager.default?.slotNames ?? []
-    }
-
     /// Opens a session with the first key found. Blocks; call off the main thread.
     init() throws {
         guard let manager = TKSmartCardSlotManager.default else { throw Failure.unavailable }

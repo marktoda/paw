@@ -6,9 +6,7 @@ import UIKit
 enum PawColor {
     static let bg = Color(uiColor: .systemGroupedBackground)
     static let surface = Color(uiColor: .secondarySystemGroupedBackground)
-    static let surfaceRaised = Color(uiColor: .tertiarySystemGroupedBackground)
     static let fill = Color(uiColor: .tertiarySystemFill)
-    static let separator = Color(uiColor: .separator)
     static let label = Color.primary
 
     // Custom ink. The system secondary label is too faint on the grouped background.

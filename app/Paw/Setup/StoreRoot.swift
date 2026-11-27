@@ -224,7 +224,7 @@ enum StoreWipe {
         } catch {
             problems.keychain = error
         }
-        CredentialIdentities.clear()
+        _ = CredentialIdentities.submit(.clear)
         LegacyStore.remove()
         guard let location else { return problems }
         // Gone with the folder below too; cleared first in case that fails.

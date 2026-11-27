@@ -18,10 +18,8 @@ struct EntryRow: View {
     var symbol: String = PawSymbol.entry
     var tint: FolderTint = .slate
     let access: Access
-    /// A search term; the part of the name that matches is drawn semibold.
-    var match: String? = nil
     /// Matched stretches of the name and subtitle in UTF-16 units, as the
-    /// core's search reports them. Drawn semibold; they win over `match`.
+    /// core's search reports them. Drawn semibold.
     var nameHighlights: [NSRange] = []
     var subtitleHighlights: [NSRange] = []
     /// Defaults to `entry-<name>`. Set it when one name can appear twice on a screen.
@@ -80,15 +78,7 @@ struct EntryRow: View {
     }
 
     private var displayName: AttributedString {
-        if !nameHighlights.isEmpty {
-            return Self.emphasized(name, nameHighlights, font: Font.body.weight(.semibold))
-        }
-        var text = AttributedString(name)
-        if let match, !match.isEmpty,
-           let range = text.range(of: match, options: [.caseInsensitive, .diacriticInsensitive]) {
-            text[range].font = Font.body.weight(.semibold)
-        }
-        return text
+        Self.emphasized(name, nameHighlights, font: Font.body.weight(.semibold))
     }
 
     private var spokenLabel: String {
@@ -120,7 +110,7 @@ struct PawSectionHeader: View {
 
 extension View {
     /// Gives a paw row the full height it asks for inside a `List`: the row
-    /// sets its own vertical padding, the list only keeps the 16pt margins.
+    /// sets its own vertical padding, the list keeps only its side margins.
     func pawListRow() -> some View {
         listRowInsets(EdgeInsets(
             top: 0, leading: PawMetrics.Spacing.l, bottom: 0, trailing: PawMetrics.Spacing.l))
