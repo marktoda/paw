@@ -448,7 +448,7 @@ impl SetupFlow {
     pub fn state(&self) -> SetupState {
         if let Some((address, key)) = &self.unconfirmed {
             return SetupState::ConfirmHost {
-                host: address.host.clone(),
+                host: address.connect_host().to_owned(),
                 algorithm: key.algorithm(),
                 fingerprint: key.fingerprint(),
             };
@@ -567,7 +567,7 @@ impl SetupFlow {
         };
         let trusted = self.known_hosts().trust(&address, || Ok(key.clone()), fingerprint)?;
         if !trusted {
-            let host = address.host.clone();
+            let host = address.connect_host().to_owned();
             self.unconfirmed = Some((address, key));
             return Err(RemoteFailure::HostKeyNotConfirmed { host }.into());
         }
@@ -857,6 +857,34 @@ mod tests {
         let saved = Saved::from_values(&Values::parse(text.into_bytes()).unwrap());
         assert_eq!(saved.step(), Step::CheckHost);
         assert_eq!(saved.reached().unwrap().notice, None);
+    }
+
+    /// An IPv6 host is named without its brackets, as everywhere else.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn an_unconfirmed_ipv6_host_is_named_without_brackets() {
+        let card = crate::sim::SimulatedKey::new("123456".into(), false, 1_000);
+        let server = crate::sim::remote::SimRemote::start(card.clone()).unwrap();
+        let presented = sync::scan_host_key("127.0.0.1", server.port()).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let mut flow = SetupFlow::open(dir.path()).unwrap();
+        let key = SetupKey {
+            ident: "0006:1".into(),
+            ssh: SshPublicKey::ed25519(&card.authentication_public_key()),
+            decryption: Fingerprint::parse(&card.fingerprint_hex()).unwrap(),
+            authentication_touch: KeyTouch::Unknown,
+            decryption_touch: KeyTouch::Unknown,
+        };
+        let address = StoreAddress::parse("ssh://git@[::1]:2222/store.git").unwrap().address;
+        flow.saved = Saved::CheckHost(Reached { key, address: address.clone(), notice: None });
+        flow.unconfirmed = Some((address, presented));
+
+        assert!(matches!(flow.state(), SetupState::ConfirmHost { host, .. } if host == "::1"));
+        let error = flow.confirm_host("SHA256:not-it").unwrap_err();
+        assert!(
+            matches!(&error, SetupError::Fault { fault: Fault::Remote { failure: RemoteFailure::HostKeyNotConfirmed { host } } } if host == "::1"),
+            "{error:?}"
+        );
     }
 
     /// A card that names one key's fingerprint and hands over another key:
