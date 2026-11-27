@@ -6,6 +6,7 @@ use std::path::Path;
 use super::layout;
 
 const FINGERPRINT: &str = "0123456789ABCDEF0123456789ABCDEF01234567";
+const AUTH_FINGERPRINT: &str = "89ABCDEF0123456789ABCDEF0123456789ABCDEF";
 const SSH_KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f";
 
 fn state() -> tempfile::TempDir {
@@ -23,13 +24,13 @@ fn get(dir: &Path, name: &str) -> Vec<u8> {
 #[test]
 fn the_enrolled_key() {
     use crate::key::enrolment::{load_enrolment, save_enrolment};
-    let bytes = format!("ident=0006:12345678\ndecryption_fingerprint={FINGERPRINT}\nauthentication_fingerprint=AB12\n");
+    let bytes = format!("ident=0006:12345678\ndecryption_fingerprint={FINGERPRINT}\nauthentication_fingerprint={AUTH_FINGERPRINT}\n");
     let dir = state();
     put(dir.path(), layout::ENROLLED_KEY, bytes.as_bytes());
     let key = load_enrolment(dir.path()).unwrap().unwrap();
     assert_eq!(key.ident, "0006:12345678");
     assert_eq!(key.decryption_fingerprint.as_deref(), Some(FINGERPRINT));
-    assert_eq!(key.authentication_fingerprint.as_deref(), Some("AB12"));
+    assert_eq!(key.authentication_fingerprint.as_deref(), Some(AUTH_FINGERPRINT));
 
     let again = state();
     save_enrolment(again.path(), &key).unwrap();

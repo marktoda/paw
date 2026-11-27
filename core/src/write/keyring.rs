@@ -47,7 +47,7 @@ use sha2::{Digest, Sha256};
 
 use super::WriteError;
 use crate::fault::Fault;
-use crate::recipients::{fingerprint_of, hex, key_id};
+use crate::fingerprint::{Fingerprint, hex};
 use crate::path::{folder_and_parents, folder_of, folder_of_gpg_id, gpg_id_in, governing};
 use crate::store::gpg_id::{governing_gpg_id, gpg_id_text, key_digits, parse_gpg_id};
 use crate::files::layout::StoreDirs;
@@ -59,8 +59,8 @@ const HEADER: &str = "# paw pinned recipients, version 1";
 /// A public key paw may encrypt to: the card's decryption key.
 #[derive(Clone)]
 pub struct PinnedKey {
-    /// The fingerprint of the key itself, upper-case hex.
-    pub fingerprint: String,
+    /// The fingerprint of the key itself.
+    pub fingerprint: Fingerprint,
     pub key: PublicKey,
 }
 
@@ -73,8 +73,7 @@ impl std::fmt::Debug for PinnedKey {
 /// What one `.gpg-id` line looks like.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Spec {
-    /// 40 (v4) or 64 (v6) hex digits.
-    Fingerprint(String),
+    Fingerprint(Fingerprint),
     /// 16 hex digits.
     LongId(String),
     /// A short key ID, a name, an e-mail address or anything else: only a
@@ -84,12 +83,11 @@ enum Spec {
 
 impl Spec {
     /// Whether this line names the (sub)key with `fingerprint` by itself:
-    /// by that fingerprint or by its key ID ([`crate::recipients::key_id`],
-    /// as a recipient packet would).
-    fn names(&self, fingerprint: &str) -> bool {
+    /// by that fingerprint or by its key ID, as a recipient packet would.
+    fn names(&self, fingerprint: &Fingerprint) -> bool {
         match self {
             Self::Fingerprint(wanted) => wanted == fingerprint,
-            Self::LongId(id) => key_id(fingerprint) == Some(id.as_str()),
+            Self::LongId(id) => fingerprint.key_id() == id,
             Self::Other => false,
         }
     }
@@ -99,17 +97,25 @@ impl Spec {
 /// names by fingerprint or long key ID; `None` for any other line.
 pub(crate) fn line_key_id(line: &str) -> Option<String> {
     match spec(line) {
-        Spec::Fingerprint(fingerprint) => key_id(&fingerprint).map(str::to_owned),
+        Spec::Fingerprint(fingerprint) => Some(fingerprint.key_id().to_owned()),
         Spec::LongId(id) => Some(id),
         Spec::Other => None,
     }
 }
 
+/// The fingerprint `line` names a key by, if it does.
+pub(crate) fn line_fingerprint(line: &str) -> Option<Fingerprint> {
+    match spec(line) {
+        Spec::Fingerprint(fingerprint) => Some(fingerprint),
+        Spec::LongId(_) | Spec::Other => None,
+    }
+}
+
 fn spec(line: &str) -> Spec {
     match key_digits(line) {
-        Some(digits) if matches!(digits.len(), 40 | 64) => Spec::Fingerprint(digits),
         Some(digits) if digits.len() == 16 => Spec::LongId(digits),
-        _ => Spec::Other,
+        Some(digits) => Fingerprint::parse(&digits).map_or(Spec::Other, Spec::Fingerprint),
+        None => Spec::Other,
     }
 }
 
@@ -192,7 +198,7 @@ pub struct Keyring {
     store: StoreDirs,
     keys: Vec<PinnedKey>,
     /// `(line, fingerprint)`: the line, trimmed, is satisfied by the key.
-    bindings: Vec<(String, String)>,
+    bindings: Vec<(String, Fingerprint)>,
     /// Every `.gpg-id` as last accepted; `None` before setup recorded them.
     accepted: Option<Vec<Accepted>>,
 }
@@ -242,21 +248,24 @@ impl Keyring {
             match parts.as_slice() {
                 ["key", _, "certificate", ..] => {}
                 ["key", fpr, "card", _primary, _expires, _fingerprints, _emails, packet] => {
+                    let damaged = || failed("read", format!("the key {fpr} is damaged"));
+                    let fingerprint = Fingerprint::parse(fpr).ok_or_else(damaged)?;
                     let key = B64
                         .decode(packet)
                         .ok()
                         .and_then(|bytes| key_from_bytes(&bytes))
-                        .filter(|key| fingerprint_of(key) == *fpr)
-                        .ok_or_else(|| failed("read", format!("the key {fpr} is damaged")))?;
-                    keyring.keys.push(PinnedKey { fingerprint: (*fpr).to_owned(), key });
+                        .filter(|key| Fingerprint::of(key) == fingerprint)
+                        .ok_or_else(damaged)?;
+                    keyring.keys.push(PinnedKey { fingerprint, key });
                 }
                 ["key", ..] => return Err(failed("read", "unknown key source")),
                 ["accepted"] => {
                     keyring.accepted.get_or_insert_with(Vec::new);
                 }
                 ["bind", fpr, spec] => {
-                    let spec = un_b64(spec).ok_or_else(|| failed("read", "a damaged binding"))?;
-                    keyring.bindings.push((spec, (*fpr).to_owned()));
+                    let damaged = || failed("read", "a damaged binding");
+                    let spec = un_b64(spec).ok_or_else(damaged)?;
+                    keyring.bindings.push((spec, Fingerprint::parse(fpr).ok_or_else(damaged)?));
                 }
                 ["gpgid", sha, path, text] => {
                     let damaged = || failed("read", "a damaged .gpg-id record");
@@ -302,7 +311,7 @@ impl Keyring {
         self.accepted.is_some()
     }
 
-    fn pin(&mut self, held: &Exclusive, key: PinnedKey) -> Result<String, Fault> {
+    fn pin(&mut self, held: &Exclusive, key: PinnedKey) -> Result<Fingerprint, Fault> {
         let fingerprint = key.fingerprint.clone();
         self.keys.retain(|old| old.fingerprint != fingerprint);
         self.keys.push(key);
@@ -312,18 +321,18 @@ impl Keyring {
 
     /// Pins the card's decryption key (from its key session).
     /// Returns its fingerprint. Pinning it again replaces it.
-    pub fn pin_card_key(&mut self, held: &Exclusive, key: &PublicKey) -> Result<String, Fault> {
-        let fingerprint = fingerprint_of(key);
+    pub fn pin_card_key(&mut self, held: &Exclusive, key: &PublicKey) -> Result<Fingerprint, Fault> {
+        let fingerprint = Fingerprint::of(key);
         self.pin(held, PinnedKey { fingerprint, key: key.clone() })
     }
 
     /// Records that the `.gpg-id` line `line` is satisfied by the pinned key
     /// `fingerprint`, once setup's test decrypt has shown that the card
     /// opens entries written for that line.
-    fn bind(&mut self, held: &Exclusive, line: &str, fingerprint: &str) -> Result<(), Fault> {
+    fn bind(&mut self, held: &Exclusive, line: &str, fingerprint: &Fingerprint) -> Result<(), Fault> {
         let line = line.trim().to_owned();
         self.bindings.retain(|(spec, _)| *spec != line);
-        self.bindings.push((line, fingerprint.to_owned()));
+        self.bindings.push((line, fingerprint.clone()));
         self.save(held)
     }
 
@@ -349,7 +358,7 @@ impl Keyring {
 
     pub fn line_status(&self, line: &str) -> LineStatus {
         match self.line_key(line) {
-            Some((key, bound)) => LineStatus::Ready { fingerprint: key.fingerprint.clone(), bound },
+            Some((key, bound)) => LineStatus::Ready { fingerprint: key.fingerprint.to_string(), bound },
             None => LineStatus::Missing,
         }
     }
@@ -405,7 +414,7 @@ impl Keyring {
         for RecipientLine { line, .. } in &recipients.lines {
             match self.line_key(line) {
                 Some((key, _)) => {
-                    if !keys.iter().any(|k| fingerprint_of(k) == key.fingerprint) {
+                    if !keys.iter().any(|k| Fingerprint::of(k) == key.fingerprint) {
                         keys.push(key.key.clone());
                     }
                 }
@@ -473,19 +482,18 @@ impl Keyring {
     pub fn bind_card_for_opened_entry(
         &mut self,
         held: &Exclusive,
-        card_fingerprint: &str,
+        card_fingerprint: &Fingerprint,
         entry: &str,
         ciphertext: &[u8],
     ) -> Result<Vec<String>, Fault> {
-        let card_fingerprint = card_fingerprint.trim().to_ascii_uppercase();
         let names_card = crate::recipients::entry_recipients(ciphertext)
-            .is_ok_and(|found| crate::recipients::names_key(&found.keys, &card_fingerprint));
+            .is_ok_and(|found| crate::recipients::names_key(&found.keys, card_fingerprint));
         if !names_card {
             return Ok(Vec::new());
         }
         let folder = folder_of(entry);
         let recipients = self.folder_recipients(held, folder)?;
-        self.bind_one_open_line(held, recipients, &card_fingerprint)
+        self.bind_one_open_line(held, recipients, card_fingerprint)
     }
 
     /// Binds the card to the one open line of `recipients`, unless a line
@@ -494,7 +502,7 @@ impl Keyring {
         &mut self,
         held: &Exclusive,
         recipients: FolderRecipients,
-        card_fingerprint: &str,
+        card_fingerprint: &Fingerprint,
     ) -> Result<Vec<String>, Fault> {
         // A line already means the card's key (it names it, or was bound
         // before): every line still open is someone else's, and binding one
@@ -503,7 +511,7 @@ impl Keyring {
         let card_has_a_line = recipients
             .lines
             .iter()
-            .any(|line| matches!(&line.status, LineStatus::Ready { fingerprint, .. } if *fingerprint == card_fingerprint));
+            .any(|line| matches!(&line.status, LineStatus::Ready { fingerprint, .. } if fingerprint == card_fingerprint.as_str()));
         if card_has_a_line {
             return Ok(Vec::new());
         }

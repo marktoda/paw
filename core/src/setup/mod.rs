@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::files::values::{self, Values};
+use crate::fingerprint::Fingerprint;
 use crate::files::layout::StoreDirs;
 use crate::files::{self, layout};
 use crate::key::enrolment::save_enrolment;
@@ -646,18 +647,14 @@ impl SetupFlow {
         identity: &KeyIdentity,
     ) -> Result<SetupState, SetupError> {
         self.expect(&[Step::TestDecrypt], "finish the key check")?;
-        let summary = self.key()?;
-        if identity.decryption_fingerprint.as_deref().map(str::to_ascii_uppercase)
-            != Some(summary.decryption_fingerprint.to_ascii_uppercase())
-        {
+        let read = Fingerprint::parse(&self.key()?.decryption_fingerprint);
+        if read.is_none() || identity.decryption_fingerprint.as_deref().and_then(Fingerprint::parse) != read {
             return Err(SetupError::UnusableKey { reason: UnusableKeyReason::NotTheKeyRead });
         }
         // The key about to be trusted for every future save must be the very
         // key whose fingerprint the card reported, not merely one handed in
         // alongside it.
-        if !crate::recipients::fingerprint_of(card_key)
-            .eq_ignore_ascii_case(&summary.decryption_fingerprint)
-        {
+        if Some(Fingerprint::of(card_key)) != read {
             return Err(SetupError::UnusableKey { reason: UnusableKeyReason::CardKeyMismatch });
         }
         // The keyring and the enrolment change as one critical section.

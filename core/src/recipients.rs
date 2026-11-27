@@ -12,6 +12,7 @@
 //! the first few bytes of each recipient packet, nothing else.
 
 use crate::PawError;
+use crate::fingerprint::{Fingerprint, hex};
 
 /// One key an entry is encrypted for, as far as the file says.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -27,15 +28,15 @@ pub enum Recipient {
 }
 
 impl Recipient {
-    /// Whether this packet names the key with `fingerprint` (upper-case
-    /// hex, no spaces): by that fingerprint, or by its key ID. A hidden
+    /// Whether this packet names the key with `fingerprint`: by that
+    /// fingerprint, or by its key ID. A hidden
     /// recipient names no key. The one rule for "is this entry for that
     /// key": Home's badge, the key open, held-back changes, setup's
     /// binding and the recipients screen all ask it.
-    pub(crate) fn names(&self, fingerprint: &str) -> bool {
+    pub(crate) fn names(&self, fingerprint: &Fingerprint) -> bool {
         match self {
-            Self::KeyId { id } => key_id(fingerprint) == Some(id.as_str()),
-            Self::Fingerprint { fingerprint: named } => named == fingerprint,
+            Self::KeyId { id } => fingerprint.key_id() == id,
+            Self::Fingerprint { fingerprint: named } => named == fingerprint.as_str(),
             Self::Hidden => false,
         }
     }
@@ -122,11 +123,6 @@ fn header(bytes: &[u8], at: usize) -> Result<(u8, Length, usize), PawError> {
     }
 }
 
-/// `bytes` as upper-case hex, the way fingerprints and key IDs are written.
-pub(crate) fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02X}")).collect()
-}
-
 fn recipient(body: &[u8]) -> Result<Recipient, PawError> {
     let damaged = || PawError::NotAnEntry("a recipient packet is too short".into());
     match body.first() {
@@ -206,63 +202,22 @@ pub fn entry_recipients(bytes: &[u8]) -> Result<EntryRecipients, PawError> {
     }
 }
 
-/// The 64-bit key ID of the key with `fingerprint` (hex): the low 64 bits
-/// of a v4 fingerprint (40 digits), the high 64 bits of a v6 one (64).
-pub(crate) fn key_id(fingerprint: &str) -> Option<&str> {
-    match fingerprint.len() {
-        40 => fingerprint.get(24..),
-        64 => fingerprint.get(..16),
-        _ => None,
-    }
-}
-
-pub(crate) fn names_key(recipients: &[Recipient], fingerprint: &str) -> bool {
+pub(crate) fn names_key(recipients: &[Recipient], fingerprint: &Fingerprint) -> bool {
     recipients.iter().any(|recipient| recipient.names(fingerprint))
 }
 
-/// `text` in groups of four characters, as people read a fingerprint out:
-/// "9A1C 03F2 …". Spaces in `text` are dropped first; the characters are
-/// kept as they are (an SSH fingerprint is base64).
-#[uniffi::export]
-pub fn fingerprint_groups(text: String) -> Vec<String> {
-    let chars: Vec<char> = text.chars().filter(|c| !c.is_whitespace()).collect();
-    chars.chunks(4).map(|group| group.iter().collect()).collect()
-}
-
-/// How a person tells keys apart by eye: the last eight hex digits of
-/// `fingerprint`, upper case, in two groups ("2C11", "41DE"). Fewer if it
-/// has fewer digits.
-#[uniffi::export]
-pub fn fingerprint_tail(fingerprint: String) -> Vec<String> {
-    let hex: String = fingerprint.chars().filter(char::is_ascii_hexdigit).map(|c| c.to_ascii_uppercase()).collect();
-    let tail = &hex[hex.len().saturating_sub(8)..];
-    let (first, last) = tail.split_at(tail.len().min(4));
-    [first, last].into_iter().filter(|part| !part.is_empty()).map(str::to_owned).collect()
-}
-
-/// The fingerprint of `key`, upper-case hex: as a recipient packet or a
-/// `.gpg-id` line names it.
-pub(crate) fn fingerprint_of(key: &impl pgp::types::KeyDetails) -> String {
-    hex(key.fingerprint().as_bytes())
-}
-
-/// Decides whether the key whose decryption (sub)key has `card_fingerprint`
-/// can open an entry with these recipients.
+/// Decides whether the key whose decryption (sub)key has `card` can open
+/// an entry with these recipients; `None` names no key.
 ///
 /// The card reports the fingerprint of the decryption subkey, which is also
 /// what a recipient packet names, so no certificate is needed to compare.
-pub fn access_for(recipients: &EntryRecipients, card_fingerprint: &str) -> Access {
-    let card: String = card_fingerprint
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .map(|c| c.to_ascii_uppercase())
-        .collect();
+fn access_for(recipients: &EntryRecipients, card: Option<&Fingerprint>) -> Access {
     if recipients.keys.is_empty() {
         return Access::Unreadable {
             reason: "it is locked with a passphrase, not for a key".into(),
         };
     }
-    if names_key(&recipients.keys, &card) {
+    if card.is_some_and(|card| names_key(&recipients.keys, card)) {
         Access::CanOpen
     } else if recipients.keys.contains(&Recipient::Hidden) {
         Access::MightOpen
@@ -271,23 +226,19 @@ pub fn access_for(recipients: &EntryRecipients, card_fingerprint: &str) -> Acces
     }
 }
 
-pub fn access(bytes: &[u8], card_fingerprint: &str) -> Access {
+/// Whether the key whose decryption fingerprint is `card` can open the
+/// entry whose bytes are `bytes`.
+pub(crate) fn key_access(bytes: &[u8], card: Option<&Fingerprint>) -> Access {
     match entry_recipients(bytes) {
-        Ok(recipients) => access_for(&recipients, card_fingerprint),
+        Ok(recipients) => access_for(&recipients, card),
         Err(PawError::NotAnEntry(reason)) => Access::Unreadable { reason },
         Err(other) => Access::Unreadable { reason: other.to_string() },
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{fingerprint_groups, fingerprint_tail};
-
-    #[test]
-    fn fingerprints_read_in_groups_of_four_and_end_in_two() {
-        assert_eq!(fingerprint_groups("AAAA BBBB CCCC D".into()), ["AAAA", "BBBB", "CCCC", "D"]);
-        assert_eq!(fingerprint_groups("uNiVztFv8Wq2".into()), ["uNiV", "ztFv", "8Wq2"]);
-        assert_eq!(fingerprint_tail("0x0123456789abcdef2c1141de".into()), ["2C11", "41DE"]);
-        assert_eq!(fingerprint_tail("ABCDE".into()), ["ABCD", "E"]);
-    }
+/// [`key_access`] for a fingerprint given as text, as the card reports it
+/// or a person pastes it. Text that is no fingerprint names no key.
+pub fn access(bytes: &[u8], card_fingerprint: &str) -> Access {
+    key_access(bytes, Fingerprint::parse(card_fingerprint).as_ref())
 }
+

@@ -18,6 +18,7 @@ use std::path::Path;
 
 use super::CardInfo;
 use crate::PawError;
+use crate::fingerprint::Fingerprint;
 use crate::files::values::{self, Values};
 
 /// The serial printed on a key, from its `ident` ("0006:12345678" is
@@ -47,7 +48,7 @@ pub struct KeyMismatch {
 
 fn same(a: &Option<String>, b: &Option<String>) -> bool {
     match (a, b) {
-        (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+        (Some(a), Some(b)) => Fingerprint::parse(a).is_some_and(|a| Fingerprint::parse(b) == Some(a)),
         (None, None) => true,
         _ => false,
     }
@@ -82,7 +83,7 @@ impl KeyIdentity {
         let tail = self
             .decryption_fingerprint
             .clone()
-            .map(|fpr| format!(", decryption key ending {}", crate::recipients::fingerprint_tail(fpr).join(" ")))
+            .map(|fpr| format!(", decryption key ending {}", crate::fingerprint::fingerprint_tail(fpr).join(" ")))
             .unwrap_or_default();
         format!("serial {}{tail}", self.serial())
     }
@@ -99,12 +100,7 @@ impl KeyIdentity {
     }
 
     fn from_values(values: &Values) -> Option<Self> {
-        let fingerprint = |name: &str| {
-            values
-                .get(name)
-                .filter(|fpr| !fpr.is_empty() && fpr.bytes().all(|b| b.is_ascii_hexdigit()))
-                .map(str::to_owned)
-        };
+        let fingerprint = |name: &str| values.get(name).and_then(Fingerprint::parse).map(|fpr| fpr.to_string());
         let identity = Self {
             ident: values.get("ident")?.to_owned(),
             decryption_fingerprint: fingerprint("decryption_fingerprint"),
@@ -124,7 +120,7 @@ pub fn save_enrolment(state_dir: &Path, identity: &KeyIdentity) -> Result<(), Pa
     if identity.ident.contains(['\n', '\r'])
         || [&identity.decryption_fingerprint, &identity.authentication_fingerprint]
             .iter()
-            .any(|fpr| fpr.as_deref().is_some_and(|f| !f.bytes().all(|b| b.is_ascii_hexdigit())))
+            .any(|fpr| fpr.as_deref().is_some_and(|f| Fingerprint::parse(f).is_none()))
     {
         return Err(PawError::Store("not a key identity".into()));
     }

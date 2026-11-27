@@ -16,7 +16,7 @@ use pgp::crypto::hash::HashAlgorithm;
 use pgp::crypto::public_key::PublicKeyAlgorithm;
 use pgp::crypto::sym::SymmetricKeyAlgorithm;
 use pgp::packet::{PubKeyInner, PublicKey};
-use pgp::types::{EcdhKdfType, EcdhPublicParams, KeyDetails, KeyVersion, PublicParams, Timestamp};
+use pgp::types::{EcdhKdfType, EcdhPublicParams, KeyVersion, PublicParams, Timestamp};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
@@ -110,7 +110,7 @@ pub fn other_key() -> Result<PublicKey, PawError> {
 }
 
 fn hex_fingerprint(key: &PublicKey) -> String {
-    crate::recipients::hex(key.fingerprint().as_bytes())
+    crate::fingerprint::Fingerprint::of(key).to_string()
 }
 
 /// Hex fingerprint of the key the `archive` folder is encrypted for.

@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use paw_core::copies::{CopyCache, CopyStatus};
 use paw_core::files::content_id;
+use paw_core::fingerprint::Fingerprint;
 use paw_core::entry::EntryDoc;
 use paw_core::entry::opened::OpenedEntry;
 use paw_core::ffi::write::StoreWriter;
@@ -35,6 +36,10 @@ const MARKER: &str = "PLAINTEXT-MARKER-5f1c";
 
 fn card() -> Arc<SimulatedKey> {
     SimulatedKey::new(PIN.into(), false, 50)
+}
+
+fn card_fingerprint() -> Fingerprint {
+    Fingerprint::parse(&card().fingerprint_hex()).unwrap()
 }
 
 fn card_key() -> PublicKey {
@@ -234,7 +239,7 @@ fn a_gpg_id_naming_the_primary_key_needs_the_setup_binding_for_the_card() {
     ));
 
     // Setup, after the test decrypt of an entry for the card succeeded.
-    let bound = s.keyring().bind_card_for_opened_entry(&s.dirs().exclusive().unwrap(), &card().fingerprint_hex(), "x", &encrypted("pw\n")).unwrap();
+    let bound = s.keyring().bind_card_for_opened_entry(&s.dirs().exclusive().unwrap(), &card_fingerprint(), "x", &encrypted("pw\n")).unwrap();
     assert_eq!(bound, std::slice::from_ref(&primary));
     assert_eq!(
         s.write().folder_recipients("").unwrap().lines[0].status,
@@ -251,7 +256,7 @@ fn a_gpg_id_naming_the_primary_key_needs_the_setup_binding_for_the_card() {
 fn the_card_binding_needs_one_open_line() {
     let s = store_with("AAAA1111\nBBBB2222\n", &[]);
     // Two lines no key satisfies: paw cannot tell which is the card's.
-    let bound = s.keyring().bind_card_for_opened_entry(&s.dirs().exclusive().unwrap(), &card().fingerprint_hex(), "x", &encrypted("pw\n")).unwrap();
+    let bound = s.keyring().bind_card_for_opened_entry(&s.dirs().exclusive().unwrap(), &card_fingerprint(), "x", &encrypted("pw\n")).unwrap();
     assert!(bound.is_empty());
     assert!(matches!(
         s.write().save(&new_entry("", "x", "pw")).unwrap_err(),

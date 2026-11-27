@@ -12,6 +12,7 @@ use openpgp_card::state::{Open, Transaction};
 use openpgp_card_rpgp::CardSlot;
 
 use super::KeyError;
+use crate::fingerprint::hex;
 use crate::ssh::SshPublicKey;
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -39,7 +40,8 @@ pub trait CardConnection: Send + Sync {
 pub struct CardInfo {
     /// Manufacturer and serial, e.g. "0006:12345678".
     pub ident: String,
-    /// Hex fingerprint of the decryption key slot, if a key is loaded.
+    /// Fingerprint of the decryption key slot, if a key is loaded, in the
+    /// form [`crate::fingerprint::Fingerprint`] reads.
     pub decryption_fingerprint: Option<String>,
     /// Hex fingerprint of the authentication key slot (used for SSH).
     pub authentication_fingerprint: Option<String>,
@@ -170,8 +172,8 @@ pub(crate) fn card_info(transport: Arc<dyn CardConnection>) -> Result<CardInfo, 
 
     Ok(CardInfo {
         ident,
-        decryption_fingerprint: fps.decryption().map(|f| f.to_string().replace(' ', "")),
-        authentication_fingerprint: fps.authentication().map(|f| f.to_string().replace(' ', "")),
+        decryption_fingerprint: fps.decryption().map(|f| hex(f.as_bytes())),
+        authentication_fingerprint: fps.authentication().map(|f| hex(f.as_bytes())),
         pin_tries_left,
         decryption_touch,
         authentication_touch,

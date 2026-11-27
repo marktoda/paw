@@ -156,7 +156,7 @@ impl Store {
         let held = self.dirs().exclusive().unwrap();
         let fingerprint = keyring.pin_card_key(&held, &key).unwrap();
         for line in lines {
-            support::bind_recipient(&self.state, line, &fingerprint);
+            support::bind_recipient(&self.state, line, fingerprint.as_str());
         }
     }
 }

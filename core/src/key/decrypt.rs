@@ -14,6 +14,7 @@ use zeroize::Zeroizing;
 use super::session::{CardJob, Halt, card_error};
 use super::task::TaskSide;
 use super::{KeyError, KeySlot};
+use crate::fingerprint::Fingerprint;
 use crate::recipients::{self, Access};
 
 use crate::entry::MAX_PLAINTEXT_BYTES;
@@ -61,7 +62,7 @@ impl<'a> Plan<'a> {
     /// never disagree.
     pub(crate) fn new(ciphertext: &'a [u8], key: &PublicKey) -> Result<Self, KeyError> {
         let not_for_this_key = |keys: &[recipients::Recipient]| KeyError::NotForThisKey { recipients: keys.to_vec() };
-        match recipients::access(ciphertext, &recipients::fingerprint_of(key)) {
+        match recipients::key_access(ciphertext, Some(&Fingerprint::of(key))) {
             Access::CanOpen | Access::MightOpen => {}
             Access::NotForThisKey { recipients } => return Err(not_for_this_key(&recipients)),
             Access::Unreadable { reason } => return Err(unreadable(reason)),

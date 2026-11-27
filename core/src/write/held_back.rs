@@ -6,6 +6,7 @@ use git2::Oid;
 
 use super::{Keyring, WriteError, encrypt};
 use crate::fault::Fault;
+use crate::fingerprint::Fingerprint;
 use crate::files::layout::StoreDirs;
 use crate::key::KeyError;
 use crate::lock::Shared;
@@ -43,7 +44,7 @@ pub enum HeldBackList {
 /// Whether `found` names exactly the keys of `keys`, no more, no fewer,
 /// and nothing hidden or passphrase-only.
 fn encrypted_for_exactly(found: &crate::recipients::EntryRecipients, keys: &[pgp::packet::PublicKey]) -> bool {
-    let fingerprints: Vec<String> = keys.iter().map(crate::recipients::fingerprint_of).collect();
+    let fingerprints: Vec<Fingerprint> = keys.iter().map(Fingerprint::of).collect();
     !found.passphrase
         && found.keys.iter().all(|r| fingerprints.iter().any(|f| r.names(f)))
         && fingerprints.iter().all(|f| found.keys.iter().any(|r| r.names(f)))
