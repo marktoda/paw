@@ -22,7 +22,6 @@ enum PawColor {
     static let onAction = dyn(0xFFFFFF, 0x16151F)
     static let panel = dyn(0x1B1A2B, 0x26243A)
     static let onPanel = Color(hex: 0xFFFFFF)
-    static let onPanelSecondary = Color(hex: 0xD4D2E4)
 
     // The key disc only.
     static let keyGold = Color(hex: 0xF5B301)

@@ -6,8 +6,9 @@ enum Route: Hashable {
     case folder(String)
     /// An opened entry, by the id of its `OpenSession`.
     case entry(UUID)
-    /// An entry the plugged-in key cannot open, explained.
-    case anotherKey(String)
+    /// An entry the plugged-in key cannot open, explained, with the keys
+    /// its file is encrypted for.
+    case anotherKey(String, recipients: [Recipient])
     /// Changes saved on this iPhone and not sent yet.
     case unpushed
     /// A screen about sync: held-back changes, a refused remote, replaced
@@ -31,14 +32,6 @@ struct KeyRequest: Identifiable {
     /// The sheet's run: the same across Try again.
     let id: UUID
     let entry: EntryRef
-}
-
-/// A problem shown inline at the top of the list it happened in.
-struct Notice: Equatable {
-    let problem: String
-    let nextStep: String
-    /// When set, the notice offers to open this entry with the key instead.
-    var keyEntry: EntryRef? = nil
 }
 
 /// A short line at the bottom of the screen: a copy, or what a feature
@@ -230,8 +223,8 @@ final class AppModel {
         notice = nil
         guard !keyTask.isShown else { return }
         closeSplitEntryForNextOpen()
-        if keyPort.session() != nil, case .notForThisKey = accessByPath[entry.path] {
-            show(.anotherKey(entry.path))
+        if keyPort.session() != nil, case .notForThisKey(let recipients) = accessByPath[entry.path] {
+            show(.anotherKey(entry.path, recipients: recipients))
             return
         }
         pendingRoute = nil
@@ -481,8 +474,8 @@ extension AppModel {
             },
             failed: { [weak self] error in
                 // Said before any PIN or touch: say which keys can.
-                guard case .NotForThisKey = error else { return .standard }
-                self?.show(.anotherKey(entry.path))
+                guard case .NotForThisKey(let recipients) = error else { return .standard }
+                self?.show(.anotherKey(entry.path, recipients: recipients))
                 return .close
             },
             lateCopyKept: { [weak self] in
@@ -517,17 +510,5 @@ extension AppModel {
         if let error = opened.copyFailed {
             notice = Notice(problem: "Face ID couldn't keep a copy", nextStep: describe(error))
         }
-    }
-}
-
-extension EntryRef {
-    /// An entry from its full path, e.g. `web/github.com`.
-    init(path: String) {
-        self = entryRef(path: path)
-    }
-
-    /// The top-level folder, which picks the tint; `nil` at the top.
-    var topFolder: String? {
-        topFolderOf(folder: folder)
     }
 }

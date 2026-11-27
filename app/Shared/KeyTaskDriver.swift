@@ -250,9 +250,6 @@ final class KeyTaskDriver {
         followed != nil
     }
 
-    /// What the followed task is for, or the last one's once it ended.
-    @ObservationIgnored private(set) var taskPurpose: KeyPurpose?
-
     /// Puts the sheet up for `job`'s task. A task the sheet followed until
     /// now is let go of.
     func start<Step>(_ job: KeyJob<Step>) {
@@ -286,7 +283,6 @@ final class KeyTaskDriver {
     func retry() {
         if readFailed {
             reader?.retry()
-            show(.plugIn)
             return
         }
         guard shown != nil, let job else { return }
@@ -336,7 +332,6 @@ final class KeyTaskDriver {
         let hold = job.hold()
         let task = job.begin(listener)
         tasks[id] = Running(task: task, job: job, hold: hold)
-        taskPurpose = task.purpose()
         followed = id
         // The listener's word comes a main-queue turn later; whoever
         // started the job reads the sheet in this one.

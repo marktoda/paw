@@ -22,7 +22,7 @@ final class SplitTests: XCTestCase {
 
     func testASyncScreenReplacesAnEntryButStacksOnOtherScreens() {
         XCTAssertEqual(SplitPath([.entry(a), .sync(.heldBack)]).details, [.sync(.heldBack)])
-        XCTAssertEqual(SplitPath([.anotherKey("x"), .sync(.replaced)]).details, [.sync(.replaced)])
+        XCTAssertEqual(SplitPath([.anotherKey("x", recipients: []), .sync(.replaced)]).details, [.sync(.replaced)])
         XCTAssertEqual(
             SplitPath([.unpushed, .sync(.review(folder: "work"))]).details,
             [.unpushed, .sync(.review(folder: "work"))])
@@ -45,7 +45,7 @@ final class SplitTests: XCTestCase {
 
     func testOnlyEntriesAndTheirExplanationsShowAnEntry() {
         XCTAssertTrue(Route.entry(a).showsEntry)
-        XCTAssertTrue(Route.anotherKey("x").showsEntry)
+        XCTAssertTrue(Route.anotherKey("x", recipients: []).showsEntry)
         XCTAssertFalse(Route.unpushed.showsEntry)
         XCTAssertFalse(Route.folder("web").showsEntry)
         XCTAssertFalse(Route.sync(.heldBack).showsEntry)

@@ -96,7 +96,7 @@ struct HomeScreen: View {
             }
             UnpushedSection(model: model)
             SyncSummarySection(model: model)
-            NoticeSection(model: model)
+            NoticeSection(notice: model.notice) { model.openWithKey($0) }
             if let problem = model.copies.problem {
                 Section {
                     ErrorRow(
@@ -194,28 +194,6 @@ struct EntryRowFor: View {
     }
 }
 
-/// A Face ID or key problem from the last tap, said where it happened.
-struct NoticeSection: View {
-    let model: AppModel
-
-    var body: some View {
-        if let notice = model.notice {
-            Section {
-                ErrorRow(
-                    kind: .warning, problem: notice.problem, nextStep: notice.nextStep,
-                    actionTitle: notice.keyEntry == nil ? nil : "Use your key",
-                    actionNeedsKey: true
-                ) {
-                    if let entry = notice.keyEntry {
-                        model.openWithKey(entry)
-                    }
-                }
-                .pawListRow()
-            }
-        }
-    }
-}
-
 /// Ranked results from the core, with what matched drawn semibold.
 struct SearchResults: View {
     let model: AppModel
@@ -230,7 +208,7 @@ struct SearchResults: View {
                 message: "Search reads names, not what's inside.")
         } else {
             List {
-                NoticeSection(model: model)
+                NoticeSection(notice: model.notice) { model.openWithKey($0) }
                 Section {
                     ForEach(hits, id: \.entry.path) { hit in
                         EntryRowFor(
@@ -245,11 +223,5 @@ struct SearchResults: View {
             }
             .listStyle(.insetGrouped)
         }
-    }
-}
-
-extension HighlightRange {
-    var nsRange: NSRange {
-        NSRange(location: Int(start), length: Int(len))
     }
 }

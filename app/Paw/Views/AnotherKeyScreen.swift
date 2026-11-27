@@ -3,8 +3,8 @@ import SwiftUI
 /// An entry the plugged-in key cannot open. Says which keys can, worked
 /// out from the file alone: no PIN, no touch.
 struct AnotherKeyScreen: View {
-    let model: AppModel
     let entry: EntryRef
+    let recipients: [Recipient]
 
     /// Also what its row says in a list.
     static let headline = "Encrypted for another key"
@@ -53,13 +53,6 @@ struct AnotherKeyScreen: View {
         .listStyle(.insetGrouped)
         .contentMargins(.top, 0, for: .scrollContent)
         .navigationBarTitleDisplayMode(.inline)
-    }
-
-    private var recipients: [Recipient] {
-        if case .notForThisKey(let recipients) = model.accessByPath[entry.path] {
-            return recipients
-        }
-        return []
     }
 
     private var keys: [String] {

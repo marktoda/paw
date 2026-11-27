@@ -126,6 +126,9 @@ final class SetupModel {
     /// "Set up", Plug in or Try again asked for the key to be read: the
     /// next read that works is setup's first step.
     @ObservationIgnored private var readingKey = false
+    /// The entry the last check opens, as its task says: the key sheet's
+    /// words name it.
+    @ObservationIgnored private var checkedEntry: String?
 
     private let workQueue = DispatchQueue(label: "paw-setup", qos: .userInitiated)
 
@@ -526,10 +529,8 @@ final class SetupModel {
     }
 
     private var entryName: String {
-        if case .checkKey(let entry?)? = keyTask.taskPurpose, !entry.isEmpty {
-            return EntryRef(path: entry).name
-        }
-        return StoreWords.asEntry
+        guard let checkedEntry, !checkedEntry.isEmpty else { return StoreWords.asEntry }
+        return EntryRef(path: checkedEntry).name
     }
 
     /// Setup's step after a key task: the core may have moved on, or put
@@ -603,11 +604,17 @@ extension SetupModel {
         let setup = setup
         let port = keyPort
         return KeyJob(
-            begin: { listener in
-                switch purpose {
+            begin: { [weak self] listener in
+                let task = switch purpose {
                 case .download: setup.downloadWithKey(port: port, listener: listener)
                 case .check: setup.testDecryptWithKey(port: port, listener: listener)
                 }
+                if case .checkKey(let entry) = task.purpose() {
+                    self?.checkedEntry = entry
+                } else {
+                    self?.checkedEntry = nil
+                }
+                return task
             },
             words: { [weak self] in
                 KeyErrorWords.Context(entry: self?.entryName ?? StoreWords.asEntry)

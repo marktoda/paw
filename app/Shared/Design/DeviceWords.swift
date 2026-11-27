@@ -10,7 +10,7 @@ import LocalAuthentication
 enum Device {
     /// The hardware model, e.g. "iPhone17,1" or "iPad13,18". The simulator
     /// reports the model it simulates.
-    private static let model: String = {
+    static let model: String = {
         if let simulated = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] {
             return simulated
         }

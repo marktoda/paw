@@ -65,9 +65,7 @@ struct FixtureSession {
         }
         // Settings' AutoFill sections work on the fixture's own state; its
         // entries never reach the system's suggestions.
-        let autoFill = writing.map { writing in
-            AutoFillSuggestions(stateDir: writing.stateDir, submit: { _ in Task {} })
-        }
+        let autoFill = writable ? AutoFillSuggestions(stateDir: stateDir, submit: { _ in Task {} }) : nil
         session = try StoreSession(StoreSession.Parts(
             stateDir: stateDir, copies: platform.copies(in: copiesDir), clock: platform.clock,
             keyPort: platform.keyPort(keyLog: keyLog ? root.path : nil), keys: platform.keys,
@@ -89,7 +87,7 @@ struct FixtureSession {
         }
         // Only now: setup's own download must not be refused or cut off.
         SimRemoteHandle.shared.storeReady(repoDir: storeRepoDir(stateDir: stateDir))
-        return StoreSession.Writing(writer: StoreWriter.open(stateDir: stateDir), sync: sync, stateDir: stateDir)
+        return StoreSession.Writing(writer: StoreWriter.open(stateDir: stateDir), sync: sync)
     }
 }
 

@@ -97,17 +97,7 @@ private struct AutoFillList: View {
 
     var body: some View {
         List {
-            if let notice = model.notice {
-                Section {
-                    ErrorRow(
-                        kind: .warning, problem: notice.problem, nextStep: notice.nextStep,
-                        actionTitle: notice.keyEntry == nil ? nil : "Use your key",
-                        actionNeedsKey: true,
-                        action: {
-                            if let entry = notice.keyEntry { model.openWithKey(entry) }
-                        })
-                }
-            }
+            NoticeSection(notice: model.notice) { model.openWithKey($0) }
             if model.isSearching {
                 searchSection
             } else {
@@ -200,7 +190,7 @@ private struct AutoFillList: View {
                 }
             }
             maybeSection(maybe.map {
-                MaybeRow(entry: $0.entry, names: $0.nameRanges.map(Self.range), folders: $0.folderRanges.map(Self.range))
+                MaybeRow(entry: $0.entry, names: $0.nameRanges.map(\.nsRange), folders: $0.folderRanges.map(\.nsRange))
             })
             if !others.isEmpty {
                 Section {
@@ -215,8 +205,8 @@ private struct AutoFillList: View {
 
     private func hitRow(_ hit: SearchHit) -> some View {
         row(hit.entry,
-            nameHighlights: hit.nameRanges.map(Self.range),
-            folderHighlights: hit.folderRanges.map(Self.range))
+            nameHighlights: hit.nameRanges.map(\.nsRange),
+            folderHighlights: hit.folderRanges.map(\.nsRange))
     }
 
     private func row(_ entry: EntryRef, nameHighlights: [NSRange] = [], folderHighlights: [NSRange] = []) -> some View {
@@ -224,7 +214,7 @@ private struct AutoFillList: View {
             name: entry.name,
             subtitle: entry.folder,
             symbol: EntryGlyph.symbol(for: entry.name),
-            tint: FolderTint(folder: entry.folder.split(separator: "/").first.map(String.init)),
+            tint: FolderTint(folder: entry.topFolder),
             access: model.opensWithKey(entry) ? .needsKey : .faceID,
             nameHighlights: nameHighlights,
             subtitleHighlights: folderHighlights,
@@ -233,10 +223,6 @@ private struct AutoFillList: View {
             model.pick(entry)
         }
         .pawListRow()
-    }
-
-    private static func range(_ range: HighlightRange) -> NSRange {
-        NSRange(location: Int(range.start), length: Int(range.len))
     }
 }
 

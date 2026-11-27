@@ -29,7 +29,7 @@ struct FolderScreen: View {
     private func list(_ listing: FolderListing) -> some View {
         let tint = FolderTint(folder: topFolderOf(folder: path))
         return List {
-            NoticeSection(model: model)
+            NoticeSection(notice: model.notice) { model.openWithKey($0) }
             if !listing.folders.isEmpty {
                 Section {
                     ForEach(listing.folders, id: \.path) { folder in

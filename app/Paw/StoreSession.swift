@@ -170,7 +170,6 @@ final class StoreSession {
         let writer: StoreWriter
         /// The queue, or why it could not be opened: then nothing syncs.
         let sync: Result<StoreSync, Error>
-        let stateDir: String
     }
 
     let live: LiveStore
@@ -208,7 +207,7 @@ final class StoreSession {
         clipboard = Clipboard(clock: parts.clock)
         gitHub = parts.gitHub
         setUp = parts.setUp
-        stateDir = parts.writing?.stateDir
+        stateDir = parts.writing == nil ? nil : parts.stateDir
         let reader = KeyReader(port: parts.keyPort, source: parts.keys)
         self.reader = reader
         let keyTasks = KeyTaskDrivers(reader: reader)
