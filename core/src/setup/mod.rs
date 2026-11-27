@@ -404,10 +404,6 @@ impl SetupFlow {
         Ok(flow)
     }
 
-    pub fn repo_dir(&self) -> &Path {
-        self.store.repo_dir()
-    }
-
     fn open_store(&self) -> Result<Arc<PassStore>, SetupError> {
         PassStore::of(self.store.clone()).map_err(SetupError::from)
     }
