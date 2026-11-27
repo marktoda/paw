@@ -277,10 +277,13 @@ struct SyncSendSection: View {
                     .listRowBackground(Color.clear)
                 }
             } footer: {
-                Text("To \(syncing.host). Needs your key.")
-                    .font(PawFont.footnote)
-                    .foregroundStyle(PawColor.labelSecondary)
-                    .accessibilityIdentifier("unpushed-send-footer")
+                // Under Send only: it says where Send goes.
+                if syncing.heldBack.isEmpty && syncing.canSend {
+                    Text("To \(syncing.host). Needs your key.")
+                        .font(PawFont.footnote)
+                        .foregroundStyle(PawColor.labelSecondary)
+                        .accessibilityIdentifier("unpushed-send-footer")
+                }
             }
         }
     }
