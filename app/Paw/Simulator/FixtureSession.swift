@@ -75,6 +75,7 @@ struct FixtureSession {
         let autoFill = writable ? AutoFillSuggestions(stateDir: stateDir, submit: { _ in Task {} }) : nil
         session = try StoreSession(StoreSession.Parts(
             stateDir: stateDir, copies: platform.copies(in: copiesDir), clock: platform.clock,
+            pasteboardLifetime: platform.pasteboardLifetime,
             keyPort: platform.keyPort(keyLog: keyLog ? root.path : nil), keys: platform.keys,
             writing: writing, gitHub: nil, autoFill: autoFill, setUp: nil))
     }

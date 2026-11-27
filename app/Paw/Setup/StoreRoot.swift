@@ -145,7 +145,8 @@ final class StoreRootModel {
             // Setup pinned the key and accepted the recipients: saving
             // works from here with no further step.
             let session = try StoreSession(StoreSession.Parts(
-                stateDir: stateDir, copies: copies, clock: platform.clock, keyPort: base.keyPort,
+                stateDir: stateDir, copies: copies, clock: platform.clock,
+                pasteboardLifetime: platform.pasteboardLifetime, keyPort: base.keyPort,
                 keys: platform.keys,
                 writing: StoreSession.Writing(
                     writer: StoreWriter.open(stateDir: stateDir), sync: Result { try StoreSync.open(stateDir: stateDir) }),

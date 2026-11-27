@@ -155,6 +155,9 @@ final class StoreSession {
         let copies: CopyCache?
         /// The copies' clock, the key port's and the clipboard's.
         let clock: Clock
+        /// The system's expiry of a copied password, where it isn't
+        /// `Clipboard.lifetime` (`Platform.pasteboardLifetime`).
+        let pasteboardLifetime: TimeInterval?
         let keyPort: KeyPort
         let keys: any KeyConnector
         /// The write side: `nil` where the store can't be written.
@@ -204,7 +207,7 @@ final class StoreSession {
         self.copies = copies
         clock = parts.clock
         keyPort = parts.keyPort
-        clipboard = Clipboard(clock: parts.clock)
+        clipboard = Clipboard(clock: parts.clock, systemLifetime: parts.pasteboardLifetime ?? Clipboard.lifetime)
         gitHub = parts.gitHub
         setUp = parts.setUp
         stateDir = parts.writing == nil ? nil : parts.stateDir

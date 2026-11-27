@@ -25,27 +25,17 @@ final class Clipboard {
     /// The system's own expiry always runs on real time.
     private let clock: Clock
     private let pasteboard: Pasteboard
+    /// The system's own expiry, on real time (`Platform.pasteboardLifetime`).
+    private let systemLifetime: TimeInterval
 
-    init(clock: Clock, pasteboard: Pasteboard = UIPasteboard.general) {
+    init(clock: Clock, pasteboard: Pasteboard = UIPasteboard.general, systemLifetime: TimeInterval = lifetime) {
         self.clock = clock
         self.pasteboard = pasteboard
-    }
-
-    /// The system's own expiry, on real time. In the simulator the UI tests
-    /// can lengthen it (`-pawSimPasteboardSecs`): a test reads the
-    /// pasteboard more than 45 real seconds after copying, and checks paw's
-    /// own expiry on the simulated clock instead.
-    private static var systemLifetime: TimeInterval {
-        #if DEBUG && targetEnvironment(simulator)
-        if let seconds = LaunchArgument.simPasteboardSecs.int {
-            return TimeInterval(seconds)
-        }
-        #endif
-        return lifetime
+        self.systemLifetime = systemLifetime
     }
 
     func copy(_ value: String) {
-        let expiry = Date().addingTimeInterval(Self.systemLifetime)
+        let expiry = Date().addingTimeInterval(systemLifetime)
         pasteboard.setItems(
             [[UTType.utf8PlainText.identifier: value]],
             options: [.localOnly: true, .expirationDate: expiry])

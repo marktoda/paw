@@ -30,13 +30,15 @@ final class SimulatedClockHolder {
 }
 /// The app's platform on the launch's simulated hardware: its key
 /// (`-pawSimPin`, `-pawSimTouch`, `-pawSimUnplugged`, …), clock and Face ID
-/// (`SimulatedClockHolder`, `SimulatedKeystoreHolder`), and its lock
-/// (`-pawSimLockedLaunch`).
+/// (`SimulatedClockHolder`, `SimulatedKeystoreHolder`), its lock
+/// (`-pawSimLockedLaunch`), and how long its pasteboard keeps a copy
+/// (`-pawSimPasteboardSecs`).
 enum LaunchedHardware {
     @MainActor static var app: Platform {
         .simulated(
             .app, keys: .launched, clock: SimulatedClockHolder.shared.clock.asClock(),
-            keystore: SimulatedKeystoreHolder.keystore.asKeystore(), lockedOut: SimLockedLaunch.refusal)
+            keystore: SimulatedKeystoreHolder.keystore.asKeystore(), lockedOut: SimLockedLaunch.refusal,
+            pasteboardLifetime: LaunchArgument.simPasteboardSecs.int.map { TimeInterval($0) })
     }
 
     /// `app` for `StoreRoot`, which reads the store only after this.
