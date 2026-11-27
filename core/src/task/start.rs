@@ -250,7 +250,7 @@ impl KeyPort {
                 // The entry opens even if keeping the copy fails: the
                 // person has already touched the key.
                 let (face_id_until_ms, copy_failed) =
-                    match copies.map(|(copies, ttl)| crate::open::keep_copy(&copies, &entry, &opened, ttl)) {
+                    match copies.map(|(copies, ttl)| crate::open::keep_copy(&copies, &opened, ttl)) {
                         None => (None, None),
                         Some(Ok(until)) => (until, None),
                         Some(Err(error)) => (None, Some(error)),

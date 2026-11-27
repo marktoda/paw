@@ -66,8 +66,6 @@ pub struct Saved {
     pub entry: String,
     /// Where it was, if the write moved it.
     pub previous: Option<String>,
-    /// The content id of its file now ([`crate::files::content_id`]).
-    pub content_id: Vec<u8>,
     /// The commits made, oldest first: none if nothing changed.
     pub commits: Vec<String>,
     /// The entry as saved, open. `None` for a rename or move.
@@ -246,10 +244,9 @@ impl WriteStore {
             })
         });
         Ok(Saved {
-            opened: Some(OpenedEntry::new(&entry, doc, content_id.clone())),
+            opened: Some(OpenedEntry::new(&entry, doc, content_id)),
             entry,
             previous,
-            content_id,
             commits,
             face_id_until_ms,
             follow_up_failures: follow_ups.0,

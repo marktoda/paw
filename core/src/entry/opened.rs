@@ -106,7 +106,7 @@ impl OpenedEntry {
         self.read(EntryDoc::duplicate)
     }
 
-    pub(crate) fn content_id(&self) -> &[u8] {
+    pub fn content_id(&self) -> &[u8] {
         &self.content_id
     }
 

@@ -18,18 +18,13 @@ use crate::files::content_id;
 use crate::store::PassStore;
 use crate::store::service::{self, UrlCheck};
 
-/// Keeps a Face ID copy of `opened`, the entry named `name`, for `ttl`.
-/// `Ok` with when it ends (wall clock), or `None` if the cache kept none.
-pub(crate) fn keep_copy(
-    copies: &CopyCache,
-    name: &str,
-    opened: &OpenedEntry,
-    ttl: Duration,
-) -> Result<Option<i64>, PawError> {
+/// Keeps a Face ID copy of `opened` for `ttl`. `Ok` with when it ends
+/// (wall clock), or `None` if the cache kept none.
+pub(crate) fn keep_copy(copies: &CopyCache, opened: &OpenedEntry, ttl: Duration) -> Result<Option<i64>, PawError> {
     let Some(text) = opened.read(|doc| doc.to_bytes()) else {
         return Err(PawError::CopyUnavailable);
     };
-    copies.put(name, &text, opened.content_id(), ttl)
+    copies.put(opened.path(), &text, opened.content_id(), ttl)
 }
 
 /// What came of trying Face ID first.
@@ -77,11 +72,12 @@ pub fn check_entry_url(entry: Arc<OpenedEntry>, services: Vec<String>) -> UrlChe
     entry.read(|doc| service::check_urls(&doc.addresses(), &services)).unwrap_or(UrlCheck::NoUrl)
 }
 
-/// The user name AutoFill fills for the entry at `path`: the entry's own
-/// ([`EntryDoc::filled_username`]), else the path's guess ([`service::path_user`]).
+/// The user name AutoFill fills for `entry`: its own
+/// ([`EntryDoc::filled_username`]), else its path's guess
+/// ([`service::path_user`]).
 ///
 /// [`EntryDoc::filled_username`]: crate::entry::EntryDoc::filled_username
 #[uniffi::export]
-pub fn fill_username(entry: Arc<OpenedEntry>, path: String) -> Option<String> {
-    entry.read(|doc| doc.filled_username().map(str::to_owned)).flatten().or_else(|| service::path_user(&path))
+pub fn fill_username(entry: Arc<OpenedEntry>) -> Option<String> {
+    entry.read(|doc| doc.filled_username().map(str::to_owned)).flatten().or_else(|| service::path_user(entry.path()))
 }

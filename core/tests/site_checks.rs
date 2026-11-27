@@ -257,7 +257,8 @@ fn the_entrys_own_user_name_wins_over_the_path() {
         ("pw\nlogin:\n", "web/github.com", None),
     ];
     for (text, path, want) in cases {
-        assert_eq!(fill_username(opened(text), (*path).into()).as_deref(), *want, "{text:?} at {path}");
+        let entry = OpenedEntry::decrypted(path, text.as_bytes().to_vec(), vec![0; 32]).unwrap();
+        assert_eq!(fill_username(entry).as_deref(), *want, "{text:?} at {path}");
     }
 }
 

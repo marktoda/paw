@@ -378,7 +378,7 @@ fn adding_commits_one_file_with_pass_wording_as_paw() {
 
     assert_eq!(saved.entry, "Work/gitlab.com");
     assert_eq!(saved.commits.len(), 1);
-    assert_eq!(saved.content_id, content_id(&s.file("Work/gitlab.com")));
+    assert_eq!(saved.opened.as_ref().unwrap().content_id(), &content_id(&s.file("Work/gitlab.com")));
     assert_eq!(
         s.last_commit(),
         (vec!["A\tWork/gitlab.com.gpg".into()], "Add given password for Work/gitlab.com to store.".into())
@@ -465,7 +465,7 @@ fn an_edit_rewrites_only_the_changed_line_and_commits_it_as_an_edit() {
         s.last_commit(),
         (vec!["M\tWork/github.com.gpg".into()], "Edit password for Work/github.com using paw.".into())
     );
-    assert_eq!(saved.content_id, content_id(&s.file("Work/github.com")));
+    assert_eq!(saved.opened.as_ref().unwrap().content_id(), &content_id(&s.file("Work/github.com")));
 }
 
 #[test]
@@ -474,7 +474,7 @@ fn an_unchanged_edit_commits_nothing() {
     let head = s.head();
     let saved = s.write().save(&open(&s, "Work/github.com")).unwrap();
     assert!(saved.commits.is_empty());
-    assert_eq!(saved.content_id, content_id(&s.file("Work/github.com")));
+    assert_eq!(saved.opened.as_ref().unwrap().content_id(), &content_id(&s.file("Work/github.com")));
     assert_eq!(s.head(), head);
 }
 
@@ -587,7 +587,7 @@ fn a_move_to_other_recipients_re_encrypts() {
         [Recipient::KeyId { id: card_fpr[24..].into() }, Recipient::KeyId { id: other_fpr[24..].into() }]
     );
     assert_eq!(s.decrypt("Shared/github.com"), "old-pw\nlogin: you@example.com\notpauth://totp/x?secret=A\nnote\n");
-    assert_eq!(saved.content_id, content_id(&s.file("Shared/github.com")));
+    assert_eq!(saved.opened.as_ref().unwrap().content_id(), &content_id(&s.file("Shared/github.com")));
     let (files, message) = s.last_commit();
     assert_eq!(message, "Rename Work/github.com to Shared/github.com.");
     assert_eq!(files.len(), 2);
@@ -826,7 +826,7 @@ fn a_new_entry_gets_a_copy_for_the_chosen_length() {
         c.cache.status("Work/fresh", &content_id(&s.file("Work/fresh"))).unwrap(),
         CopyStatus::Available { until_ms: 1_790_000_000_000 + 3_600_000 }
     );
-    assert_eq!(*c.cache.open("Work/fresh", &outcome.content_id, "test").unwrap(), b"pw\n");
+    assert_eq!(*c.cache.open("Work/fresh", outcome.opened.as_ref().unwrap().content_id(), "test").unwrap(), b"pw\n");
 }
 
 #[test]
@@ -884,7 +884,7 @@ fn a_move_of_an_open_entry_takes_its_copy_along() {
     assert_eq!(outcome.face_id_until_ms, Some(1_790_000_000_000 + 3_600_000));
     let live: Vec<String> = c.cache.list().unwrap().into_iter().map(|l| l.entry).collect();
     assert_eq!(live, ["Shared/github.com"]);
-    assert!(c.cache.open("Shared/github.com", &outcome.content_id, "test").unwrap().starts_with(b"old-pw\n"));
+    assert!(c.cache.open("Shared/github.com", outcome.opened.as_ref().unwrap().content_id(), "test").unwrap().starts_with(b"old-pw\n"));
 }
 
 #[test]
