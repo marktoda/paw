@@ -6,12 +6,12 @@ import Foundation
 /// answer when read. The controls reach it through the reader the
 /// platform's key was handed to (`KeyReader.simulated`).
 final class SimulatedKeyConnector: KeyConnector, @unchecked Sendable {
-    /// The launch's key, one per launch so PIN tries carry across
-    /// operations the way they do on a real key. `KeyLaunchArgument`
-    /// configures it. The entry points hand it to `Platform.simulated`.
     /// The PIN of a simulated key unless `-pawSimPin` says another.
     static let defaultPin = "123456"
 
+    /// The launch's key, one per launch so PIN tries carry across
+    /// operations the way they do on a real key. `KeyLaunchArgument`
+    /// configures it. The entry points hand it to `Platform.simulated`.
     static let launched: SimulatedKeyConnector = {
         let pin = KeyLaunchArgument.simPin.string ?? defaultPin
         let touch = KeyLaunchArgument.simTouch.string == nil || KeyLaunchArgument.simTouch.bool

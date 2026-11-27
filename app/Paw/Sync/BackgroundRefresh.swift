@@ -212,7 +212,7 @@ enum BackgroundRefresh {
     /// left for the next open go with it.
     static func forgetLastRun() {
         let defaults = UserDefaults.standard
-        for key in [atKey, resultKey, changedKey, needsLookKey, oldSuccessKey] {
+        for key in [atKey, resultKey, changedKey, needsLookKey] {
             defaults.removeObject(forKey: key)
         }
     }
