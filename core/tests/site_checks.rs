@@ -3,7 +3,7 @@
 
 use paw_core::entry::opened::OpenedEntry;
 use paw_core::store::service::{
-    MatchKind, NamePairing, UrlCheck, check_entry_url, display_host, fill_username, host_of, is_trusted_match, match_services,
+    MatchKind, NamePairing, UrlCheck, check_entry_url, display_host, fill_username, host_of, match_services,
     match_site, path_user, service_host, suggestion_domain, url_site,
 };
 use paw_core::store::tree::EntryRef;
@@ -162,7 +162,7 @@ fn url_values_are_read_tolerantly() {
 }
 
 fn opened(text: &str) -> std::sync::Arc<OpenedEntry> {
-    OpenedEntry::decrypted(text.as_bytes().to_vec(), vec![0; 32]).unwrap()
+    OpenedEntry::decrypted("x", text.as_bytes().to_vec(), vec![0; 32]).unwrap()
 }
 
 fn differs(url: &str, site: &str) -> UrlCheck {
@@ -313,17 +313,6 @@ fn several_services_offer_each_entry_once_as_its_best_match() {
             ("GitHub".to_owned(), MatchKind::Name { pairing: NamePairing::Unpaired }),
         ]
     );
-}
-
-#[test]
-fn only_a_host_or_a_name_already_filled_here_fills_without_asking() {
-    assert!(is_trusted_match(MatchKind::ExactHost));
-    assert!(is_trusted_match(MatchKind::SameDomain));
-    assert!(is_trusted_match(MatchKind::Name { pairing: NamePairing::Paired }));
-    assert!(!is_trusted_match(MatchKind::Name { pairing: NamePairing::Unpaired }));
-    assert!(!is_trusted_match(MatchKind::Name {
-        pairing: NamePairing::PairedElsewhere { sites: vec!["bankofamerica.co".into()] }
-    }));
 }
 
 #[test]

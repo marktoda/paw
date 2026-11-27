@@ -7,24 +7,27 @@
 //! [`SetupFlow::open`] picks up where it stopped; a download that was
 //! interrupted is removed and starts again.
 
-
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::files::values::{self, Values};
+use crate::fingerprint::Fingerprint;
 use crate::files::layout::StoreDirs;
-use crate::files::{self, layout};
+use crate::files::layout;
 use crate::key::enrolment::save_enrolment;
-use crate::key::{CardInfo, KeyError, KeyIdentity, KeyTouch, PinKdfStatus};
+use crate::key::{CardInfo, KeyError, KeyIdentity, KeyPort, KeySession, KeyTouch, PinKdfStatus};
 use crate::recipients::Access;
 use crate::ssh::SshPublicKey;
 use crate::store::PassStore;
-use crate::sync::address::{AddressNotice, AddressProblem, StoreAddress};
+use crate::sync::address::{AddressNotice, AddressProblem, StoreAddress, save_address};
 use crate::sync::hosts::{self, KnownHosts};
 use crate::sync::{self, Cloned, Connection, PresentedHostKey};
 use crate::write::{Keyring, LineStatus};
 use crate::fault::Fault;
+use crate::locked;
 use crate::remote::{PortFallback, RemoteFailure};
+use crate::task::workflows;
+use crate::task::{KeyTask, KeyTaskListener};
 
 /// The key as setup shows it on "Your key". Public data only.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -100,8 +103,6 @@ pub enum UnusableKeyReason {
     NotTheKeyRead,
     #[error("the key read from the card does not match its fingerprint")]
     CardKeyMismatch,
-    #[error("{detail}")]
-    SshKeyUnreadable { detail: String },
 }
 
 fn failed(error: impl std::fmt::Display) -> SetupError {
@@ -118,9 +119,6 @@ pub struct SetupWriteReadiness {
     /// which pinned key they mean). Add those keys, or bind the lines, to
     /// save. Empty when `can_save`.
     pub missing_recipients: Vec<String>,
-    /// Other `.gpg-id` files (e.g. `archive/.gpg-id`) whose folders cannot
-    /// be saved in yet, for the same reason.
-    pub folders_needing_keys: Vec<String>,
 }
 
 fn write_failed(fault: Fault) -> SetupError {
@@ -142,22 +140,23 @@ enum Step {
 }
 
 impl Step {
-    const ALL: [(Step, &'static str); 7] = [
-        (Step::ReadKey, "read-key"),
-        (Step::Address, "address"),
-        (Step::CheckHost, "check-host"),
-        (Step::NeedPin, "need-pin"),
-        (Step::Cloning, "cloning"),
-        (Step::TestDecrypt, "test-decrypt"),
-        (Step::Done, "done"),
-    ];
+    const ALL: [Step; 7] =
+        [Step::ReadKey, Step::Address, Step::CheckHost, Step::NeedPin, Step::Cloning, Step::TestDecrypt, Step::Done];
 
     fn name(self) -> &'static str {
-        Self::ALL.iter().find(|(s, _)| *s == self).map(|(_, n)| *n).unwrap_or("read-key")
+        match self {
+            Step::ReadKey => "read-key",
+            Step::Address => "address",
+            Step::CheckHost => "check-host",
+            Step::NeedPin => "need-pin",
+            Step::Cloning => "cloning",
+            Step::TestDecrypt => "test-decrypt",
+            Step::Done => "done",
+        }
     }
 
     fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.iter().find(|(_, n)| *n == name).map(|(s, _)| *s)
+        Self::ALL.into_iter().find(|step| step.name() == name)
     }
 }
 
@@ -179,69 +178,135 @@ fn touch_from(name: &str) -> KeyTouch {
     }
 }
 
-/// What is saved between launches. Nothing in it is secret.
+/// The key as setup read it at "Your key".
 #[derive(Debug, Clone)]
-struct Saved {
-    step: Step,
-    key: Option<KeySummary>,
-    address: Option<String>,
+struct SetupKey {
+    ident: String,
+    ssh: SshPublicKey,
+    decryption: Fingerprint,
+    authentication_touch: KeyTouch,
+    decryption_touch: KeyTouch,
+}
+
+impl SetupKey {
+    fn summary(&self) -> KeySummary {
+        KeySummary {
+            ident: self.ident.clone(),
+            ssh_public_key: self.ssh.authorized_key(),
+            decryption_fingerprint: self.decryption.to_string(),
+            authentication_touch: self.authentication_touch,
+            decryption_touch: self.decryption_touch,
+        }
+    }
+}
+
+/// What setup has once the address is set: the key, the address and why
+/// paw changed it, if it did.
+#[derive(Debug, Clone)]
+struct Reached {
+    key: SetupKey,
+    address: StoreAddress,
     notice: Option<AddressNotice>,
-    opened: Option<String>,
+}
+
+/// What is saved between launches: the step reached, with what that step
+/// has. Nothing in it is secret.
+#[derive(Debug, Clone)]
+enum Saved {
+    ReadKey,
+    Address(SetupKey),
+    CheckHost(Reached),
+    NeedPin(Reached),
+    Cloning(Reached),
+    TestDecrypt(Reached),
+    /// With the entry the test decrypt opened.
+    Done(Reached, String),
 }
 
 impl Saved {
-    fn fresh() -> Self {
-        Self { step: Step::ReadKey, key: None, address: None, notice: None, opened: None }
+    fn step(&self) -> Step {
+        match self {
+            Saved::ReadKey => Step::ReadKey,
+            Saved::Address(_) => Step::Address,
+            Saved::CheckHost(_) => Step::CheckHost,
+            Saved::NeedPin(_) => Step::NeedPin,
+            Saved::Cloning(_) => Step::Cloning,
+            Saved::TestDecrypt(_) => Step::TestDecrypt,
+            Saved::Done(..) => Step::Done,
+        }
+    }
+
+    fn reached(&self) -> Option<&Reached> {
+        match self {
+            Saved::ReadKey | Saved::Address(_) => None,
+            Saved::CheckHost(reached)
+            | Saved::NeedPin(reached)
+            | Saved::Cloning(reached)
+            | Saved::TestDecrypt(reached)
+            | Saved::Done(reached, _) => Some(reached),
+        }
+    }
+
+    fn key(&self) -> Option<&SetupKey> {
+        match self {
+            Saved::Address(key) => Some(key),
+            other => other.reached().map(|reached| &reached.key),
+        }
     }
 
     fn pairs(&self) -> Vec<(&'static str, String)> {
-        let mut pairs = vec![("step", self.step.name().to_owned())];
-        if let Some(key) = &self.key {
+        let mut pairs = vec![("step", self.step().name().to_owned())];
+        if let Some(key) = self.key() {
             pairs.push(("ident", key.ident.clone()));
-            pairs.push(("ssh_public_key", key.ssh_public_key.clone()));
-            pairs.push(("decryption_fingerprint", key.decryption_fingerprint.clone()));
+            pairs.push(("ssh_public_key", key.ssh.authorized_key()));
+            pairs.push(("decryption_fingerprint", key.decryption.to_string()));
             pairs.push(("authentication_touch", touch_name(key.authentication_touch).to_owned()));
             pairs.push(("decryption_touch", touch_name(key.decryption_touch).to_owned()));
         }
-        let notice = self.notice.as_ref().map(notice_line);
-        for (name, value) in [("address", &self.address), ("notice", &notice), ("opened", &self.opened)] {
-            if let Some(value) = value {
-                pairs.push((name, value.clone()));
+        if let Some(reached) = self.reached() {
+            pairs.push(("address", reached.address.display()));
+            if let Some(notice) = &reached.notice {
+                pairs.push(("notice", notice_line(notice)));
             }
+        }
+        if let Saved::Done(_, opened) = self {
+            pairs.push(("opened", opened.clone()));
         }
         pairs.into_iter().map(|(name, value)| (name, value.replace(['\n', '\r'], " "))).collect()
     }
 
-    /// Anything unreadable means starting setup again, which is always safe.
+    /// Anything unreadable, or missing for the step, means starting setup
+    /// again, which is always safe.
     fn from_values(values: &Values) -> Self {
-        let value = |name: &str| values.get(name).map(str::to_owned);
-        let Some(step) = value("step").as_deref().and_then(Step::from_name) else {
-            return Self::fresh();
+        Self::read(values).unwrap_or(Saved::ReadKey)
+    }
+
+    fn read(values: &Values) -> Option<Self> {
+        let key = || {
+            Some(SetupKey {
+                ident: values.get("ident")?.to_owned(),
+                ssh: SshPublicKey::from_authorized_key(values.get("ssh_public_key")?)?,
+                decryption: Fingerprint::parse(values.get("decryption_fingerprint")?)?,
+                authentication_touch: values.get("authentication_touch").map_or(KeyTouch::Unknown, touch_from),
+                decryption_touch: values.get("decryption_touch").map_or(KeyTouch::Unknown, touch_from),
+            })
         };
-        let key = match (value("ident"), value("ssh_public_key"), value("decryption_fingerprint")) {
-            (Some(ident), Some(ssh_public_key), Some(decryption_fingerprint)) => Some(KeySummary {
-                ident,
-                ssh_public_key,
-                decryption_fingerprint,
-                authentication_touch: touch_from(&value("authentication_touch").unwrap_or_default()),
-                decryption_touch: touch_from(&value("decryption_touch").unwrap_or_default()),
-            }),
-            _ => None,
+        let reached = || {
+            Some(Reached {
+                key: key()?,
+                address: StoreAddress::parse(values.get("address")?).ok()?.address,
+                notice: values.get("notice").and_then(notice_from),
+            })
         };
-        let saved = Self {
-            step,
-            key,
-            address: value("address"),
-            notice: value("notice").as_deref().and_then(notice_from),
-            opened: value("opened"),
-        };
-        let complete = match step {
-            Step::ReadKey => true,
-            Step::Address => saved.key.is_some(),
-            Step::Done => saved.key.is_some() && saved.address.is_some() && saved.opened.is_some(),
-            _ => saved.key.is_some() && saved.address.is_some(),
-        };
-        if complete { saved } else { Self::fresh() }
+        Some(match Step::from_name(values.get("step")?)? {
+            Step::ReadKey => Saved::ReadKey,
+            Step::Address => Saved::Address(key()?),
+            Step::CheckHost => Saved::CheckHost(reached()?),
+            Step::NeedPin => Saved::NeedPin(reached()?),
+            Step::Cloning => Saved::Cloning(reached()?),
+            Step::TestDecrypt => Saved::TestDecrypt(reached()?),
+            Step::Done => Saved::Done(reached()?, values.get("opened")?.to_owned()),
+        })
     }
 }
 
@@ -281,12 +346,27 @@ fn notice_from(line: &str) -> Option<AddressNotice> {
     })
 }
 
+/// Setup finished for the store in `state_dir` and the store is there.
+/// Reads two files and writes nothing, so the AutoFill extension can ask.
+pub fn is_set_up(state_dir: &Path) -> bool {
+    let done = values::read(&state_dir.join(layout::SETUP)).is_ok_and(|found| {
+        found.is_some_and(|values| values.get("step").and_then(Step::from_name) == Some(Step::Done))
+    });
+    done && layout::holds_store(&layout::repo_dir(state_dir))
+}
+
+#[uniffi::export]
+pub fn store_is_set_up(state_dir: String) -> bool {
+    is_set_up(Path::new(&state_dir))
+}
+
 pub struct SetupFlow {
     dir: PathBuf,
     saved: Saved,
-    /// The key a host presented that is waiting for the person's confirmation.
-    /// Not saved: after a restart the host is asked again.
-    unconfirmed: Option<PresentedHostKey>,
+    /// The key a host presented that is waiting for the person's
+    /// confirmation, and the address it was asked at. Not saved: after a
+    /// restart the host is asked again.
+    unconfirmed: Option<(StoreAddress, PresentedHostKey)>,
 }
 
 fn remove_dir(path: &Path, _held: &crate::lock::Exclusive) -> Result<(), SetupError> {
@@ -302,15 +382,15 @@ impl SetupFlow {
         std::fs::create_dir_all(state_dir).map_err(failed)?;
         let saved = match values::read(&state_dir.join(layout::SETUP)).map_err(failed)? {
             Some(found) => Saved::from_values(&found),
-            None => Saved::fresh(),
+            None => Saved::ReadKey,
         };
         let mut flow = Self { dir: state_dir.to_path_buf(), saved, unconfirmed: None };
         let repo = flow.repo_dir();
         let cloned = repo.join(".git").is_dir() && layout::holds_store(&repo);
-        match flow.saved.step {
+        match &flow.saved {
             // Killed while downloading, or the download went missing.
-            Step::Cloning => flow.restart_download()?,
-            Step::TestDecrypt | Step::Done if !cloned => flow.restart_download()?,
+            Saved::Cloning(reached) => flow.restart_download(reached.clone())?,
+            Saved::TestDecrypt(reached) | Saved::Done(reached, _) if !cloned => flow.restart_download(reached.clone())?,
             _ => {}
         }
         Ok(flow)
@@ -332,15 +412,11 @@ impl SetupFlow {
         KnownHosts::of(&self.dir)
     }
 
-    fn save(&self) -> Result<(), SetupError> {
+    fn go(&mut self, saved: Saved) -> Result<SetupState, SetupError> {
+        self.saved = saved;
         let pairs = self.saved.pairs();
         let pairs = pairs.iter().map(|(name, value)| (*name, value.as_str()));
-        values::write(&self.dir.join(layout::SETUP), pairs).map_err(failed)
-    }
-
-    fn go(&mut self, step: Step) -> Result<SetupState, SetupError> {
-        self.saved.step = step;
-        self.save()?;
+        values::write(&self.dir.join(layout::SETUP), pairs).map_err(failed)?;
         Ok(self.state())
     }
 
@@ -350,10 +426,9 @@ impl SetupFlow {
         self.store().exclusive().map_err(SetupError::from)
     }
 
-    fn restart_download(&mut self) -> Result<(), SetupError> {
+    fn restart_download(&mut self, reached: Reached) -> Result<(), SetupError> {
         remove_dir(&self.repo_dir(), &self.exclusive()?)?;
-        self.saved.opened = None;
-        self.go(Step::NeedPin).map(drop)
+        self.go(Saved::NeedPin(reached)).map(drop)
     }
 
     /// 0 for a store that cannot be read: the count is only shown, and the
@@ -366,24 +441,24 @@ impl SetupFlow {
     }
 
     pub fn state(&self) -> SetupState {
-        let address = self.saved.address.clone().unwrap_or_default();
-        if let Some(key) = &self.unconfirmed {
+        if let Some((address, key)) = &self.unconfirmed {
             return SetupState::ConfirmHost {
-                host: self.address().map(|a| a.host).unwrap_or_default(),
+                host: address.host.clone(),
                 algorithm: key.algorithm(),
                 fingerprint: key.fingerprint(),
             };
         }
-        match (self.saved.step, &self.saved.key) {
-            (Step::ReadKey, _) | (_, None) => SetupState::ReadKey,
-            (Step::Address, Some(key)) => SetupState::Address { key: key.clone() },
-            (Step::CheckHost, _) => SetupState::CheckHost { address, notice: self.saved.notice.clone() },
-            (Step::NeedPin | Step::Cloning, _) => SetupState::NeedPin { address },
-            (Step::TestDecrypt, _) => SetupState::TestDecrypt { entries: self.entry_count() },
-            (Step::Done, _) => SetupState::Done {
-                opened: self.saved.opened.clone().unwrap_or_default(),
-                entries: self.entry_count(),
-            },
+        match &self.saved {
+            Saved::ReadKey => SetupState::ReadKey,
+            Saved::Address(key) => SetupState::Address { key: key.summary() },
+            Saved::CheckHost(reached) => {
+                SetupState::CheckHost { address: reached.address.display(), notice: reached.notice.clone() }
+            }
+            Saved::NeedPin(reached) | Saved::Cloning(reached) => {
+                SetupState::NeedPin { address: reached.address.display() }
+            }
+            Saved::TestDecrypt(_) => SetupState::TestDecrypt { entries: self.entry_count() },
+            Saved::Done(_, opened) => SetupState::Done { opened: opened.clone(), entries: self.entry_count() },
         }
     }
 
@@ -395,25 +470,18 @@ impl SetupFlow {
     }
 
     fn at(&self, steps: &[Step], doing: &str) -> Result<(), SetupError> {
-        if steps.contains(&self.saved.step) { Ok(()) } else { Err(self.wrong_step(doing)) }
+        if steps.contains(&self.saved.step()) { Ok(()) } else { Err(self.wrong_step(doing)) }
+    }
+
+    /// What setup has, for `doing` at one of `steps`, which all come after
+    /// the address.
+    fn reached(&self, steps: &[Step], doing: &str) -> Result<Reached, SetupError> {
+        self.expect(steps, doing)?;
+        self.saved.reached().cloned().ok_or_else(|| self.wrong_step(doing))
     }
 
     fn wrong_step(&self, doing: &str) -> SetupError {
-        SetupError::WrongStep { message: format!("cannot {doing} now: setup is at {}", self.saved.step.name()) }
-    }
-
-    fn address(&self) -> Result<StoreAddress, SetupError> {
-        let text = self.saved.address.as_deref().unwrap_or_default();
-        StoreAddress::parse(text)
-            .map(|parsed| parsed.address)
-            .map_err(|problem| SetupError::BadAddress { problem })
-    }
-
-    fn key(&self) -> Result<&KeySummary, SetupError> {
-        self.saved
-            .key
-            .as_ref()
-            .ok_or_else(|| SetupError::WrongStep { message: "the key has not been read".into() })
+        SetupError::WrongStep { message: format!("cannot {doing} now: setup is at {}", self.saved.step().name()) }
     }
 
     /// Goes one step back: the Back button.
@@ -421,13 +489,13 @@ impl SetupFlow {
         if self.unconfirmed.take().is_some() {
             return Ok(self.state());
         }
-        match self.saved.step {
-            Step::ReadKey | Step::Done => Ok(self.state()),
-            Step::Address => self.go(Step::ReadKey),
-            Step::CheckHost => self.go(Step::Address),
-            Step::NeedPin | Step::Cloning => self.go(Step::CheckHost),
-            Step::TestDecrypt => {
-                self.restart_download()?;
+        match self.saved.clone() {
+            Saved::ReadKey | Saved::Done(..) => Ok(self.state()),
+            Saved::Address(_) => self.go(Saved::ReadKey),
+            Saved::CheckHost(reached) => self.go(Saved::Address(reached.key)),
+            Saved::NeedPin(reached) | Saved::Cloning(reached) => self.go(Saved::CheckHost(reached)),
+            Saved::TestDecrypt(reached) => {
+                self.restart_download(reached)?;
                 Ok(self.state())
             }
         }
@@ -447,9 +515,9 @@ impl SetupFlow {
             return Err(SetupError::UnusableKey { reason: UnusableKeyReason::PinKdfUnsupported { detail: pin_kdf.detail } });
         }
         // A key with neither is named by its missing decryption key.
-        if info.decryption_fingerprint.is_none() {
+        let Some(decryption) = info.decryption_fingerprint.as_deref().and_then(Fingerprint::parse) else {
             return Err(SetupError::UnusableKey { reason: UnusableKeyReason::NoDecryptionKey });
-        }
+        };
         let ssh = ssh.map_err(|error| SetupError::UnusableKey {
             reason: match error {
                 KeyError::AuthenticationKeyNotEd25519 { algorithm } => {
@@ -458,30 +526,20 @@ impl SetupFlow {
                 _ => UnusableKeyReason::NoAuthenticationKey,
             },
         })?;
-        self.use_key(info.clone(), ssh)
-    }
-
-    fn use_key(&mut self, info: CardInfo, ssh: &SshPublicKey) -> Result<SetupState, SetupError> {
-        let Some(decryption_fingerprint) = info.decryption_fingerprint else {
-            return Err(SetupError::UnusableKey { reason: UnusableKeyReason::NoDecryptionKey });
-        };
-        let key = KeySummary {
-            ident: info.ident,
-            ssh_public_key: ssh.authorized_key(),
-            decryption_fingerprint,
+        self.go(Saved::Address(SetupKey {
+            ident: info.ident.clone(),
+            ssh: ssh.clone(),
+            decryption,
             authentication_touch: info.authentication_touch,
             decryption_touch: info.decryption_touch,
-        };
-        self.saved.key = Some(key);
-        self.go(Step::Address)
+        }))
     }
 
     pub fn set_address(&mut self, text: &str) -> Result<SetupState, SetupError> {
         self.expect(&[Step::Address, Step::CheckHost], "set the address")?;
+        let Some(key) = self.saved.key().cloned() else { return Err(self.wrong_step("set the address")) };
         let parsed = StoreAddress::parse(text).map_err(|problem| SetupError::BadAddress { problem })?;
-        self.saved.address = Some(parsed.address.display());
-        self.saved.notice = parsed.notice;
-        self.go(Step::CheckHost)
+        self.go(Saved::CheckHost(Reached { key, address: parsed.address, notice: parsed.notice }))
     }
 
     /// Connects to the host. A host with a pinned key (github.com ships
@@ -489,13 +547,14 @@ impl SetupFlow {
     /// whether it accepts this key, without a signature. An unknown host
     /// leads to [`SetupState::ConfirmHost`] instead.
     pub fn check_host(&mut self) -> Result<SetupState, SetupError> {
-        self.expect(&[Step::CheckHost, Step::NeedPin], "check the host")?;
-        let address = self.address()?;
+        let reached = self.reached(&[Step::CheckHost, Step::NeedPin], "check the host")?;
+        let address = reached.address.clone();
         let host = address.connect_host().to_owned();
         match self.known_hosts().pin(&host, address.port)? {
-            Some(_) => self.ask_host(),
+            Some(_) => self.ask_host(reached),
             None => {
-                self.unconfirmed = Some(sync::scan_host_key(&host, address.port)?);
+                let presented = sync::scan_host_key(&host, address.port)?;
+                self.unconfirmed = Some((address, presented));
                 Ok(self.state())
             }
         }
@@ -504,16 +563,17 @@ impl SetupFlow {
     /// The person compared the fingerprint and accepts the host's key.
     pub fn confirm_host(&mut self, fingerprint: &str) -> Result<SetupState, SetupError> {
         self.at(&[Step::CheckHost, Step::NeedPin], "confirm the host")?;
-        let address = self.address()?;
-        let Some(key) = self.unconfirmed.take() else {
+        let reached = self.saved.reached().cloned().ok_or_else(|| self.wrong_step("confirm the host"))?;
+        let Some((address, key)) = self.unconfirmed.take() else {
             return Err(SetupError::WrongStep { message: "no host key is waiting to be confirmed".into() });
         };
-        let trusted = self.known_hosts().trust(address.connect_host(), address.port, || Ok(key.clone()), fingerprint)?;
+        let trusted = self.known_hosts().trust(&address, || Ok(key.clone()), fingerprint)?;
         if !trusted {
-            self.unconfirmed = Some(key);
-            return Err(RemoteFailure::HostKeyNotConfirmed { host: address.host }.into());
+            let host = address.host.clone();
+            self.unconfirmed = Some((address, key));
+            return Err(RemoteFailure::HostKeyNotConfirmed { host }.into());
         }
-        self.ask_host()
+        self.ask_host(reached)
     }
 
     /// "I expected this change": forgets the key pinned for the store's
@@ -522,44 +582,41 @@ impl SetupFlow {
     /// after it has shown both fingerprints; setup stays where it is.
     /// Refused for a host whose keys ship with paw ([`KnownHosts::forget`]).
     pub fn forget_host_key(&mut self) -> Result<SetupState, SetupError> {
-        self.expect(&[Step::CheckHost, Step::NeedPin], "forget the host's key")?;
-        let address = self.address()?;
-        self.known_hosts().forget(address.connect_host(), address.port)?;
-        self.go(Step::CheckHost)
+        let reached = self.reached(&[Step::CheckHost, Step::NeedPin], "forget the host's key")?;
+        self.known_hosts().forget(&reached.address)?;
+        self.go(Saved::CheckHost(reached))
     }
 
-    fn remote(&self) -> Result<sync::Remote, SetupError> {
-        let address = self.address()?;
-        let remote = self.known_hosts().remote(&address)?;
+    fn remote(&self, address: &StoreAddress) -> Result<sync::Remote, SetupError> {
+        let remote = self.known_hosts().remote(address)?;
         remote.ok_or_else(|| SetupError::WrongStep { message: "the host has not been checked".into() })
     }
 
     pub fn use_port_fallback(&mut self) -> Result<SetupState, SetupError> {
-        self.expect(&[Step::CheckHost, Step::NeedPin], "use another port")?;
-        let address = self.address()?;
+        let reached = self.reached(&[Step::CheckHost, Step::NeedPin], "use another port")?;
+        let address = &reached.address;
         let Some(fallback) = hosts::port_fallback(address.connect_host(), address.port) else {
             return Err(SetupError::WrongStep { message: "no other way to reach the host is offered now".into() });
         };
-        self.saved.address = Some(fallback.address(&address).display());
-        self.saved.notice = Some(AddressNotice::PortFallback { fallback });
-        self.go(Step::CheckHost)
+        let address = fallback.address(address);
+        let notice = Some(AddressNotice::PortFallback { fallback });
+        self.go(Saved::CheckHost(Reached { address, notice, ..reached }))
     }
 
     /// Asks the pinned host whether it accepts the key. No signature.
-    fn ask_host(&mut self) -> Result<SetupState, SetupError> {
-        let remote = self.remote()?;
-        let key = ssh_key(self.key()?)?;
-        Connection::probe(&remote, &key)?;
-        self.go(Step::NeedPin)
+    fn ask_host(&mut self, reached: Reached) -> Result<SetupState, SetupError> {
+        let remote = self.remote(&reached.address)?;
+        Connection::probe(&remote, &reached.key.ssh)?;
+        self.go(Saved::NeedPin(reached))
     }
 
     /// Setup is at "cloning" until
     /// [`Self::finish_download`] or [`Self::abandon_download`].
     pub(crate) fn begin_download(&mut self) -> Result<(sync::Remote, StoreDirs), SetupError> {
-        self.expect(&[Step::NeedPin], "download")?;
-        let remote = self.remote()?;
+        let reached = self.reached(&[Step::NeedPin], "download")?;
+        let remote = self.remote(&reached.address)?;
         remove_dir(&self.repo_dir(), &self.exclusive()?)?;
-        self.go(Step::Cloning)?;
+        self.go(Saved::Cloning(reached))?;
         Ok((remote, self.store()))
     }
 
@@ -569,49 +626,44 @@ impl SetupFlow {
     /// (the store is busy, the disk refuses), setup stays at "cloning",
     /// which the next [`Self::open`] starts over from.
     pub(crate) fn abandon_download(&mut self) {
-        if self.saved.step == Step::Cloning {
-            let _ = self.restart_download();
+        if let Saved::Cloning(reached) = &self.saved {
+            let _ = self.restart_download(reached.clone());
         }
     }
 
     /// A repository with no commits, or with no `.gpg-id` at the top, is
     /// the wrong address rather than a failed download: setup goes back to
-    /// the address, with the address kept.
+    /// the address.
     pub(crate) fn finish_download(&mut self, cloned: Result<Cloned, Fault>) -> Result<SetupState, SetupError> {
+        let reached = self.reached(&[Step::Cloning], "finish the download")?;
         let repo = self.repo_dir();
         let outcome = match cloned {
             Err(e) => Err(SetupError::from(e)),
-            Ok(Cloned::Empty) => return self.wrong_repository(SetupError::EmptyRepository),
+            Ok(Cloned::Empty) => return self.wrong_repository(reached, SetupError::EmptyRepository),
             // Nothing was checked out; the download is removed below.
             Ok(Cloned::Refused(paths)) => Err(RemoteFailure::RefusedContent { paths }.into()),
             Ok(Cloned::Store) if layout::holds_store(&repo) => Ok(()),
-            Ok(Cloned::Store) => return self.wrong_repository(SetupError::NotAPassStore),
+            Ok(Cloned::Store) => return self.wrong_repository(reached, SetupError::NotAPassStore),
         };
         if let Err(e) = outcome {
-            self.restart_download()?;
+            self.restart_download(reached)?;
             return Err(e);
         }
-        let address = self.saved.address.clone().unwrap_or_default();
-        {
-            let _held = self.exclusive()?;
-            let remote = self.dir.join(layout::REMOTE);
-            files::write_atomic(&remote, format!("{address}\n").as_bytes()).map_err(failed)?;
-        }
-        self.go(Step::TestDecrypt)
+        save_address(&self.dir, &self.exclusive()?, &reached.address).map_err(failed)?;
+        self.go(Saved::TestDecrypt(reached))
     }
 
-    fn wrong_repository(&mut self, why: SetupError) -> Result<SetupState, SetupError> {
+    fn wrong_repository(&mut self, reached: Reached, why: SetupError) -> Result<SetupState, SetupError> {
         remove_dir(&self.repo_dir(), &self.exclusive()?)?;
-        self.saved.opened = None;
-        self.go(Step::Address)?;
+        self.go(Saved::Address(reached.key))?;
         Err(why)
     }
 
     /// The entry the test decrypt opens: the first the key surely opens,
     /// else the first it might (hidden recipients).
     pub(crate) fn pick_test_entry(&self) -> Result<String, SetupError> {
-        self.expect(&[Step::TestDecrypt], "test the key")?;
-        let fingerprint = self.key()?.decryption_fingerprint.clone();
+        let reached = self.reached(&[Step::TestDecrypt], "test the key")?;
+        let fingerprint = reached.key.decryption.to_string();
         let store = self.open_store()?;
 
         let mut maybe = None;
@@ -645,19 +697,15 @@ impl SetupFlow {
         card_key: &pgp::packet::PublicKey,
         identity: &KeyIdentity,
     ) -> Result<SetupState, SetupError> {
-        self.expect(&[Step::TestDecrypt], "finish the key check")?;
-        let summary = self.key()?;
-        if identity.decryption_fingerprint.as_deref().map(str::to_ascii_uppercase)
-            != Some(summary.decryption_fingerprint.to_ascii_uppercase())
-        {
+        let reached = self.reached(&[Step::TestDecrypt], "finish the key check")?;
+        let read = &reached.key.decryption;
+        if identity.decryption_fingerprint.as_deref().and_then(Fingerprint::parse).as_ref() != Some(read) {
             return Err(SetupError::UnusableKey { reason: UnusableKeyReason::NotTheKeyRead });
         }
         // The key about to be trusted for every future save must be the very
         // key whose fingerprint the card reported, not merely one handed in
         // alongside it.
-        if !crate::recipients::fingerprint_of(card_key)
-            .eq_ignore_ascii_case(&summary.decryption_fingerprint)
-        {
+        if Fingerprint::of(card_key) != *read {
             return Err(SetupError::UnusableKey { reason: UnusableKeyReason::CardKeyMismatch });
         }
         // The keyring and the enrolment change as one critical section.
@@ -672,8 +720,7 @@ impl SetupFlow {
         keyring.accept_all_recipients_at_setup(&held).map_err(write_failed)?;
         save_enrolment(&self.dir, identity).map_err(SetupError::from)?;
         drop(held);
-        self.saved.opened = Some(entry);
-        self.go(Step::Done)
+        self.go(Saved::Done(reached, entry))
     }
 
     /// Whether new entries can be saved, once setup is done. Reads the
@@ -693,50 +740,115 @@ impl SetupFlow {
                 .map(|line| line.line.clone())
                 .collect()
         };
-        let mut folders_needing_keys = Vec::new();
-        for gpg_id in crate::write::keyring::gpg_id_paths(store.repo_dir()).map_err(write_failed)? {
-            let folder = crate::path::folder_of_gpg_id(&gpg_id);
-            if folder.is_empty() {
-                continue;
-            }
-            let recipients = keyring.folder_recipients(&reading, folder).map_err(write_failed)?;
-            if !recipients.writable {
-                folders_needing_keys.push(gpg_id);
-            }
-        }
-        Ok(SetupWriteReadiness { can_save: top.writable, missing_recipients, folders_needing_keys })
+        Ok(SetupWriteReadiness { can_save: top.writable, missing_recipients })
     }
 
     /// The key setup read at the start, as an identity to hold a session to.
     pub(crate) fn expected_key(&self) -> Option<KeyIdentity> {
-        self.saved.key.as_ref().map(|key| KeyIdentity {
+        self.saved.key().map(|key| KeyIdentity {
             ident: key.ident.clone(),
-            decryption_fingerprint: Some(key.decryption_fingerprint.clone()),
+            decryption_fingerprint: Some(key.decryption.to_string()),
             authentication_fingerprint: None,
         })
     }
 }
 
-fn ssh_key(key: &KeySummary) -> Result<SshPublicKey, SetupError> {
-    use base64::Engine;
-    let encoded = key.ssh_public_key.split(' ').nth(1).unwrap_or_default();
-    let blob = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .map_err(|e| unreadable_ssh_key(e.to_string()))?;
-    // An ssh-ed25519 blob ends in the 32-byte key.
-    let raw: [u8; 32] = blob
-        .get(blob.len().saturating_sub(32)..)
-        .and_then(|tail| tail.try_into().ok())
-        .ok_or_else(|| unreadable_ssh_key("not an ed25519 key".into()))?;
-    let key = SshPublicKey::ed25519(&raw);
-    if key.blob() != blob.as_slice() {
-        return Err(unreadable_ssh_key("not an ed25519 key".into()));
-    }
-    Ok(key)
+/// First-run setup as the setup screens drive it: [`SetupFlow`] behind a
+/// lock. Each call is one step and returns the state to show next.
+///
+/// The steps that need the key run as a [`KeyTask`] on the [`KeyPort`]'s
+/// session (the `*_with_key` calls), as [`crate::sync::StoreSync`]'s do;
+/// one that fails ends `SetupFailed` for the work after the key.
+#[derive(uniffi::Object)]
+pub struct Setup {
+    flow: Arc<Mutex<SetupFlow>>,
 }
 
-fn unreadable_ssh_key(detail: String) -> SetupError {
-    SetupError::UnusableKey { reason: UnusableKeyReason::SshKeyUnreadable { detail } }
+impl Setup {
+    fn flow(&self) -> MutexGuard<'_, SetupFlow> {
+        locked(&self.flow)
+    }
+}
+
+#[uniffi::export]
+impl Setup {
+    #[uniffi::constructor]
+    pub fn open(state_dir: String) -> Result<Arc<Self>, SetupError> {
+        let flow = SetupFlow::open(&PathBuf::from(state_dir))?;
+        Ok(Arc::new(Self { flow: Arc::new(Mutex::new(flow)) }))
+    }
+
+    pub fn state(&self) -> SetupState {
+        self.flow().state()
+    }
+
+    pub fn back(&self) -> Result<SetupState, SetupError> {
+        self.flow().back()
+    }
+
+    pub fn set_address(&self, address: String) -> Result<SetupState, SetupError> {
+        self.flow().set_address(&address)
+    }
+
+    /// Checks the host and whether it accepts the key. No PIN, no touch.
+    pub fn check_host(&self) -> Result<SetupState, SetupError> {
+        self.flow().check_host()
+    }
+
+    /// Pins the host key whose fingerprint `ConfirmHost` showed.
+    pub fn confirm_host(&self, fingerprint: String) -> Result<SetupState, SetupError> {
+        self.flow().confirm_host(&fingerprint)
+    }
+
+    /// "Your key", from the plugged-in key's session: what the session read
+    /// when the key was plugged in. No PIN, no touch, no card exchange. A
+    /// key whose PIN KDF paw does not support is refused here with
+    /// `UnusableKey` (`PinKdfUnsupported`), before any PIN is asked.
+    pub fn read_key_from_session(&self, session: Arc<KeySession>) -> Result<SetupState, SetupError> {
+        self.flow().read_key_from(session.card_info(), session.ssh_key(), session.pin_kdf())
+    }
+
+    /// "Download your store" as a key task (sign-in, `Clone`): the PIN
+    /// stage unless the session holds it, `Working` while connecting,
+    /// `Touch` while the key signs the login, `Working` with progress while
+    /// cloning (objects and bytes received, at most ten times a second),
+    /// then `Done`; read `state` for the next step. A key other than the
+    /// one read at "Your key" is refused before the PIN.
+    pub fn download_with_key(self: Arc<Self>, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
+        workflows::download(&port, self.flow.clone(), listener)
+    }
+
+    /// "Check your key" as a key task (`CheckKey`): opens one entry with
+    /// the held PIN and a touch, wipes the text, then pins the card's key
+    /// for saving, accepts the store's recipients, records the key as the
+    /// store's enrolled key (and gives it to `port`), and setup is done.
+    pub fn test_decrypt_with_key(self: Arc<Self>, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
+        workflows::check_key(&port, self.flow.clone(), listener)
+    }
+
+    /// "I expected this change", on the changed-host-key screen: forgets
+    /// the host's pinned key without leaving setup; `check_host` then shows
+    /// the key it presents now for confirmation. Refused with
+    /// `RemoteFailure::HostKeyBundled` for a host whose keys ship with
+    /// paw, such as github.com.
+    pub fn forget_host_key(&self) -> Result<SetupState, SetupError> {
+        self.flow().forget_host_key()
+    }
+
+    /// After `RemoteFailure::NoConnection` with a `fallback` (no
+    /// connection at all to github.com on port 22): switches the address to
+    /// that endpoint and goes back to the host check (`CheckHost`, with a
+    /// notice saying why); call `check_host` next. Its keys ship with paw,
+    /// so nothing is confirmed. Never used unless the person says so.
+    pub fn use_port_fallback(&self) -> Result<SetupState, SetupError> {
+        self.flow().use_port_fallback()
+    }
+
+    /// Once setup is done: whether new entries can be saved with no
+    /// further step, and if not, which recipients paw needs keys for.
+    pub fn write_readiness(&self) -> Result<SetupWriteReadiness, SetupError> {
+        self.flow().write_readiness()
+    }
 }
 
 #[cfg(test)]
@@ -757,18 +869,14 @@ mod tests {
             assert_eq!(notice_from(&notice_line(&notice)), Some(notice));
         }
         let old = "Port 22 of github.com could not be reached, so paw will use ssh.github.com on port 443 instead.";
-        let text = format!("step=check-host\nident=x\nssh_public_key=k\ndecryption_fingerprint=f\naddress=a\nnotice={old}\n");
+        let key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f";
+        let fingerprint = "0123456789ABCDEF0123456789ABCDEF01234567";
+        let text = format!(
+            "step=check-host\nident=x\nssh_public_key={key}\ndecryption_fingerprint={fingerprint}\naddress=git@example.com:a.git\nnotice={old}\n"
+        );
         let saved = Saved::from_values(&Values::parse(text.into_bytes()).unwrap());
-        assert_eq!(saved.step, Step::CheckHost);
-        assert_eq!(saved.notice, None);
-    }
-
-    #[test]
-    fn a_finished_setup_starts_with_the_line_layout_reads() {
-        let done = Saved { step: Step::Done, ..Saved::fresh() };
-        let pairs = done.pairs();
-        let text = values::text(pairs.iter().map(|(name, value)| (*name, value.as_str())));
-        assert_eq!(text.lines().next(), Some(layout::SETUP_DONE));
+        assert_eq!(saved.step(), Step::CheckHost);
+        assert_eq!(saved.reached().unwrap().notice, None);
     }
 
     /// A card that names one key's fingerprint and hands over another key:
@@ -782,21 +890,22 @@ mod tests {
         let fingerprint = card.fingerprint_hex();
         let dir = tempfile::tempdir().unwrap();
         let mut flow = SetupFlow::open(dir.path()).unwrap();
-        let key = KeySummary {
+        let key = SetupKey {
             ident: "0006:1".into(),
-            ssh_public_key: card.ssh_public_key(),
-            decryption_fingerprint: fingerprint.clone(),
+            ssh: SshPublicKey::ed25519(&card.authentication_public_key()),
+            decryption: Fingerprint::parse(&fingerprint).unwrap(),
             authentication_touch: KeyTouch::Unknown,
             decryption_touch: KeyTouch::Unknown,
         };
-        flow.saved = Saved { step: Step::TestDecrypt, key: Some(key), ..Saved::fresh() };
+        let address = StoreAddress::parse("git@example.com:store.git").unwrap().address;
+        flow.saved = Saved::TestDecrypt(Reached { key, address, notice: None });
         let identity =
             KeyIdentity { ident: "0006:1".into(), decryption_fingerprint: Some(fingerprint), authentication_fingerprint: None };
 
         let error = flow.finish_test_decrypt("web/github.com".into(), &other.decryption_key().unwrap(), &identity).unwrap_err();
 
         assert!(matches!(error, SetupError::UnusableKey { reason: UnusableKeyReason::CardKeyMismatch }), "{error:?}");
-        assert_eq!(flow.saved.step, Step::TestDecrypt);
+        assert_eq!(flow.saved.step(), Step::TestDecrypt);
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0, "nothing written");
     }
 }

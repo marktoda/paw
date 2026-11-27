@@ -20,6 +20,7 @@ use super::guard::{self, check_commit};
 use super::history::{KeptBoth, PawCommit, Replay, ReplayNotes, commits_between, ensure_clean, move_branch};
 use super::queue::waiting;
 use super::{OpenStore, SyncError, current_branch, git_err};
+use crate::fault::Fault;
 use crate::files::layout::StoreDirs;
 use crate::files::refs;
 use crate::remote::RefusedPath;
@@ -126,7 +127,6 @@ fn take(list: &mut Vec<String>, entry: &str) -> bool {
 /// The remote's history no longer contains the tip paw saw last.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct Replaced {
-    pub last_seen: String,
     pub remote: String,
     /// Local changes that would be replayed onto the new history.
     pub unpushed: u32,
@@ -158,8 +158,7 @@ fn tips(repo: &Repository) -> Result<Tips, SyncError> {
 
 struct Fetched {
     remote: Oid,
-    /// The remote's tip paw saw last. A copy cloned before paw kept that
-    /// ref counts what it builds on as seen.
+    /// The remote's tip paw saw last.
     seen: Oid,
     /// The remote's history no longer contains `seen`.
     replaced: bool,
@@ -169,9 +168,10 @@ fn fetched(repo: &Repository, tips: &Tips) -> Result<Option<Fetched>, SyncError>
     let Some(remote) = tips.remote else {
         return Ok(None);
     };
-    let seen = match tips.seen {
-        Some(seen) => seen,
-        None => repo.merge_base(tips.head, remote).unwrap_or(remote),
+    // Every clone records it with the branch. A copy cloned before paw
+    // did is set up again rather than guessed at.
+    let Some(seen) = tips.seen else {
+        return Err(Fault::local("this copy has no record of what it last fetched; start setup again").into());
     };
     let replaced = seen != remote && !repo.graph_descendant_of(remote, seen).map_err(git_err)?;
     Ok(Some(Fetched { remote, seen, replaced }))
@@ -203,7 +203,7 @@ pub(crate) fn plan(_reading: &Shared, store: &OpenStore) -> Result<Plan, SyncErr
         // Every local commit is counted, paw's or not: this decision is
         // also the way out of a history paw would refuse to replay.
         let unpushed = commits_between(repo, plan.tips.head, &[seen])?.len() as u32;
-        plan.replaced = Some(Replaced { last_seen: seen.to_string(), remote: remote.to_string(), unpushed });
+        plan.replaced = Some(Replaced { remote: remote.to_string(), unpushed });
     } else {
         plan.recipients_changes = recipients_changes(repo, seen, remote)?;
     }

@@ -22,11 +22,12 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use super::WriteError;
-use super::keyring::{Keyring, LineStatus};
+use super::keyring::{Keyring, LineStatus, line_fingerprint, line_key_id};
+use crate::fingerprint::Fingerprint;
 use crate::path::folder_of_gpg_id;
 use crate::recipients::{Recipient, entry_recipients};
 use crate::path::GPG_ID;
-use crate::store::gpg_id::{governing_gpg_id, key_digits, shown_gpg_id_lines};
+use crate::store::gpg_id::{governing_gpg_id, shown_gpg_id_lines};
 use crate::store::read::{read_entry, read_file};
 use crate::store::tree::StoreTree;
 use crate::lock::Shared;
@@ -36,12 +37,13 @@ use crate::lock::Shared;
 pub struct ScopeKey {
     /// The line as written in `.gpg-id`.
     pub line: String,
-    /// The last 16 hex digits of the line, if it is a fingerprint or key ID;
-    /// else of the pinned key it resolves to; else `None` (an e-mail
-    /// address or a name paw has no key for).
+    /// The 64-bit key ID the line names, if it is a fingerprint or long key
+    /// ID; else that of the pinned key it resolves to; else `None` (an
+    /// e-mail address or a name paw has no key for).
     pub short_id: Option<String>,
-    /// The line resolves to the key on the plugged-in card that this store
-    /// was set up with.
+    /// The line resolves to a key pinned on this device. The only key paw
+    /// pins is the card's, at setup, so this is the key the store was set
+    /// up with, plugged in or not.
     pub this_key: bool,
     pub status: LineStatus,
 }
@@ -64,13 +66,11 @@ pub struct RecipientScope {
     pub unsure_entries: u32,
 }
 
-use super::keyring::line_key_id as key_id;
-
 /// The keys a `.gpg-id` names: by fingerprint (its own lines', and its
 /// pinned keys'), and by key ID alone for a line no pinned key is behind.
 #[derive(Default)]
 struct Named {
-    fingerprints: Vec<String>,
+    fingerprints: Vec<Fingerprint>,
     key_ids: HashSet<String>,
 }
 
@@ -80,12 +80,12 @@ impl Named {
     /// packet that names its key by fingerprint, as v6 packets do).
     fn has(&self, recipient: &Recipient) -> bool {
         let by_key_id = match recipient {
-            Recipient::KeyId { id } => Some(id.as_str()),
-            Recipient::Fingerprint { fingerprint } => crate::recipients::key_id(fingerprint),
+            Recipient::KeyId { id } => Some(id.clone()),
+            Recipient::Fingerprint { fingerprint } => Fingerprint::parse(fingerprint).map(|f| f.key_id().to_owned()),
             Recipient::Hidden => None,
         };
         self.fingerprints.iter().any(|fingerprint| recipient.names(fingerprint))
-            || by_key_id.is_some_and(|id| self.key_ids.contains(id))
+            || by_key_id.is_some_and(|id| self.key_ids.contains(&id))
     }
 }
 
@@ -122,20 +122,18 @@ pub fn recipient_scopes(_reading: &Shared, keyring: &Keyring) -> Result<Vec<Reci
         let mut complete = true;
         let mut keys = Vec::new();
         for line in lines {
-            let status = keyring.line_status(&line);
-            let pinned = match &status {
-                LineStatus::Ready { fingerprint, .. } => keyring.keys().iter().find(|k| k.fingerprint == *fingerprint),
-                _ => None,
-            };
+            let found = keyring.line_key(&line);
+            let status = LineStatus::of(found);
+            let pinned = found.map(|(key, _)| key);
             match pinned {
                 Some(key) => named.fingerprints.push(key.fingerprint.clone()),
                 None => {
                     complete = false;
-                    named.key_ids.extend(key_id(&line));
+                    named.key_ids.extend(line_key_id(&line));
                 }
             }
-            named.fingerprints.extend(key_digits(&line).filter(|digits| digits.len() >= 40));
-            let short_id = key_id(&line).or_else(|| pinned.and_then(|k| key_id(&k.fingerprint)));
+            named.fingerprints.extend(line_fingerprint(&line));
+            let short_id = line_key_id(&line).or_else(|| pinned.map(|k| k.fingerprint.key_id().to_owned()));
             keys.push(ScopeKey { line, short_id, this_key: pinned.is_some(), status });
         }
         let entries = governed.remove(&gpg_id).unwrap_or_default();
@@ -179,13 +177,13 @@ mod tests {
 
     #[test]
     fn key_ids_come_from_fingerprints_and_long_ids() {
-        assert_eq!(key_id("0x1122334455667788").as_deref(), Some("1122334455667788"));
+        assert_eq!(line_key_id("0x1122334455667788").as_deref(), Some("1122334455667788"));
         assert_eq!(
-            key_id("AAAA BBBB CCCC DDDD EEEE  FFFF 0000 1111 2222 3333").as_deref(),
+            line_key_id("AAAA BBBB CCCC DDDD EEEE  FFFF 0000 1111 2222 3333").as_deref(),
             Some("0000111122223333")
         );
-        assert_eq!(key_id("you@example.com"), None);
-        assert_eq!(key_id("ABCD1234"), None);
+        assert_eq!(line_key_id("you@example.com"), None);
+        assert_eq!(line_key_id("ABCD1234"), None);
     }
 
     #[test]

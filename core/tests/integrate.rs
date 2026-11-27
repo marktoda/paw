@@ -603,7 +603,6 @@ fn a_sync_fetches_replays_and_pushes_with_one_signature() {
 
     assert_eq!(report.state, SyncState::UpToDate);
     assert_eq!((report.integration.replayed, report.pushed, report.retried), (2, 2, false));
-    assert_eq!(report.signatures, 1);
     assert_eq!(w.card.authentication_count() - signatures, 1);
     assert_eq!(w.server.tip(), head(&w));
     assert_eq!(git(&w.server.bare(), &["show", "main:web/theirs.gpg"]), "theirs");
@@ -621,7 +620,6 @@ fn a_sync_whose_push_meets_a_moved_remote_retries_on_the_same_login() {
     let report = steps::sync(&w.server.remote(), &signer(&w.card), &w.store, true).unwrap();
 
     assert!(report.retried);
-    assert_eq!(report.signatures, 1);
     assert_eq!(w.server.logins() - logins, 1);
     assert_eq!(
         w.server.services().last().unwrap(),
@@ -638,11 +636,12 @@ fn a_refresh_integrates_without_pushing() {
     let w = world();
     phone_write(&w, "web/mine.gpg", "mine");
     let remote = desktop_write(&w, "web/theirs.gpg", "theirs");
+    let signatures = w.card.authentication_count();
 
     let report = steps::sync(&w.server.remote(), &signer(&w.card), &w.store, false).unwrap();
 
     assert_eq!(report.state, SyncState::Waiting { unpushed: 1 });
-    assert_eq!((report.pushed, report.signatures), (0, 1));
+    assert_eq!((report.pushed, w.card.authentication_count() - signatures), (0, 1));
     assert_eq!(w.server.tip(), remote);
     assert_eq!(read(&w, "web/theirs.gpg"), "theirs");
     assert_eq!(w.server.services().last().unwrap(), &["git-upload-pack"]);
@@ -652,10 +651,11 @@ fn a_refresh_integrates_without_pushing() {
 fn a_sync_with_nothing_to_send_pushes_nothing() {
     let w = world();
     desktop_write(&w, "web/theirs.gpg", "theirs");
+    let signatures = w.card.authentication_count();
 
     let report = steps::sync(&w.server.remote(), &signer(&w.card), &w.store, true).unwrap();
 
-    assert_eq!((report.state, report.pushed, report.signatures), (SyncState::UpToDate, 0, 1));
+    assert_eq!((report.state, report.pushed, w.card.authentication_count() - signatures), (SyncState::UpToDate, 0, 1));
     assert_eq!(report.integration.fast_forwarded, 1);
     assert_eq!(w.server.services().last().unwrap(), &["git-upload-pack"]);
 }

@@ -11,6 +11,7 @@ use std::path::Path;
 
 use super::hosts::{GITHUB_SSH, is_github};
 use crate::PawError;
+use crate::lock::Exclusive;
 use crate::remote::PortFallback;
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -315,6 +316,13 @@ fn from_web(text: &str) -> Result<ParsedAddress, AddressProblem> {
         return Err(AddressProblem::NotARepositoryPage);
     };
     github(owner, repo, |address| AddressNotice::GitHubWebAddress { address })
+}
+
+/// Saves `address` as the store's in `state_dir`, once its download
+/// succeeded: one line, as [`StoreAddress::display`] writes it.
+pub(crate) fn save_address(state_dir: &Path, _held: &Exclusive, address: &StoreAddress) -> std::io::Result<()> {
+    let path = state_dir.join(crate::files::layout::REMOTE);
+    crate::files::write_atomic(&path, format!("{}\n", address.display()).as_bytes())
 }
 
 /// The store address a finished download saved in `state_dir`.

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use key_common::{Driver, PIN, WAIT, finish, is_touch, port_with};
-use paw_core::ffi::sync::Setup;
+use paw_core::setup::Setup;
 use paw_core::key::{KeyError, KeyPort, KeySlot, KeyTouch};
 use paw_core::task::KeyTaskState;
 use paw_core::sync::address::{AddressProblem, StoreAddress};
@@ -200,7 +200,7 @@ fn setup_reads_the_key_checks_the_host_downloads_and_opens_one_entry() {
     // Nothing secret is saved.
     let saved = std::fs::read_to_string(rig.dir.path().join(paw_core::files::layout::SETUP)).unwrap();
     assert!(!saved.contains(PIN), "{saved}");
-    assert!(paw_core::files::layout::is_set_up(rig.dir.path()));
+    assert!(paw_core::setup::is_set_up(rig.dir.path()));
     // Sync can find the store.
     assert_eq!(paw_core::sync::address::saved_address(rig.dir.path()).unwrap().display(), address(&server));
 }
@@ -453,7 +453,7 @@ fn a_store_that_went_missing_after_the_download_is_downloaded_again() {
 #[test]
 fn an_unreadable_state_file_starts_setup_over() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join(paw_core::files::layout::SETUP), format!("{}\n", paw_core::files::layout::SETUP_DONE)).unwrap();
+    std::fs::write(dir.path().join(paw_core::files::layout::SETUP), "step=done\n").unwrap();
 
     assert_eq!(relaunch(dir.path()), SetupState::ReadKey);
 }
@@ -638,7 +638,7 @@ fn a_known_hosts_entry_is_only_replaced_by_forgetting_it() {
     known.add("git.example.org", 22, &support::ed25519_host_key()).unwrap();
 
     assert!(known.add("git.example.org", 22, &support::ecdsa_host_key()).is_err());
-    known.forget("git.example.org", 22).unwrap();
+    known.forget(&StoreAddress::parse("git@git.example.org:store.git").unwrap().address).unwrap();
     known.add("git.example.org", 22, &support::ecdsa_host_key()).unwrap();
     let pin = known.lookup("git.example.org", 22).unwrap().unwrap();
     assert_eq!(pin.fingerprints(), HostKeyPin::parse(&support::ecdsa_host_key()).unwrap().fingerprints());
@@ -700,7 +700,6 @@ fn a_team_line_at_the_top_is_not_bound_to_the_card_that_opened_a_personal_entry(
     let readiness = open_setup(state.path()).write_readiness().unwrap();
     assert!(!readiness.can_save);
     assert_eq!(readiness.missing_recipients, ["team@example.com"]);
-    assert!(readiness.folders_needing_keys.is_empty(), "{readiness:?}");
 }
 
 #[test]

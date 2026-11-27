@@ -21,7 +21,7 @@ use paw_core::sync::operation::SyncState;
 use paw_core::task::TaskFailure;
 use paw_core::sync::{ChangeKind, Connection, Integration, queue};
 use paw_core::files::layout::StoreDirs;
-use paw_core::write::{EntryDraft, Keyring, WriteStore, held_back};
+use paw_core::write::{Draft, Keyring, WriteStore, held_back};
 use pgp::types::KeyDetails;
 use key_common::{PIN, decrypt, decrypt_text, signer};
 use support::{GitServer, git, move_entry};
@@ -81,10 +81,10 @@ impl World {
         steps::integrate(&self.store()).unwrap()
     }
 
-    fn open(&self, entry: &str) -> EntryDraft {
+    fn open(&self, entry: &str) -> Draft {
         let bytes = std::fs::read(self.repo().join(format!("{entry}.gpg"))).unwrap();
         let doc = EntryDoc::parse(self.decrypt(&self.repo(), entry).into_bytes()).unwrap();
-        EntryDraft::edit(entry, doc, content_id(&bytes))
+        Draft::edit(entry, doc, content_id(&bytes))
     }
 }
 
@@ -122,8 +122,8 @@ fn world() -> World {
     w
 }
 
-fn new_entry(folder: &str, name: &str, password: &str) -> EntryDraft {
-    let mut draft = EntryDraft::new(folder);
+fn new_entry(folder: &str, name: &str, password: &str) -> Draft {
+    let mut draft = Draft::new(folder);
     draft.set_name(name);
     draft.set_password(password);
     draft

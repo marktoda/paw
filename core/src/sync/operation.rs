@@ -5,8 +5,6 @@
 //! fetches, integrates and pushes once more, still on the same connection.
 //! A refresh only fetches and integrates.
 
-use std::sync::atomic::{AtomicU32, Ordering};
-
 use super::integrate::{self, IntegrateReport, Integration, Plan, Replaced};
 use super::transport::{ConnectError, Connection, Remote};
 use super::{OpenStore, PushError, SyncError, TransferCallback, current_branch, fetch_branches, git_err, push_tip};
@@ -14,8 +12,7 @@ use crate::files::layout::StoreDirs;
 use crate::key::KeyError;
 use crate::remote::RemoteFailure;
 use crate::lock::{Exclusive, Shared};
-use crate::key::{Halt, SignFailure, SshSigner};
-use crate::ssh::SshPublicKey;
+use crate::key::{Halt, SshSigner};
 
 /// Where a sync ended.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -45,8 +42,6 @@ pub struct SyncReport {
     /// The first push was refused because the remote moved, and it was
     /// fetched, integrated and pushed again.
     pub retried: bool,
-    /// Card signatures the whole sync cost: one per login.
-    pub signatures: u32,
 }
 
 impl SyncReport {
@@ -56,7 +51,6 @@ impl SyncReport {
             integration: IntegrateReport::default(),
             pushed: 0,
             retried: false,
-            signatures: 0,
         }
     }
 
@@ -76,24 +70,6 @@ impl SyncReport {
                 Ok(None)
             }
         }
-    }
-}
-
-/// Counts the signatures a login asks for.
-struct Counting<'a> {
-    inner: &'a dyn SshSigner,
-    count: AtomicU32,
-}
-
-impl SshSigner for Counting<'_> {
-    fn public_key(&self) -> &SshPublicKey {
-        self.inner.public_key()
-    }
-
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, SignFailure> {
-        let signature = self.inner.sign(data)?;
-        self.count.fetch_add(1, Ordering::SeqCst);
-        Ok(signature)
     }
 }
 
@@ -149,19 +125,14 @@ pub(crate) fn run_until<E: From<KeyError> + From<Halt> + From<SyncError>>(
     stop: &dyn Fn() -> bool,
     progress: Option<TransferCallback<'_>>,
 ) -> Result<SyncReport, E> {
-    let counting = Counting { inner: signer, count: AtomicU32::new(0) };
-    let connection = match Connection::open(remote, &counting) {
+    let connection = match Connection::open(remote, signer) {
         Ok(connection) => connection,
         Err(ConnectError::Key(error)) => return Err(error.into()),
         Err(ConnectError::Cancelled) => return Err(Halt::Cancelled.into()),
         Err(ConnectError::Fault(error)) => return Err(SyncError::from(error).into()),
     };
     let store = OpenStore::open(dirs).map_err(SyncError::from)?;
-    let Some(mut report) = run_on(&connection, &store, holds_back, send, stop, progress)? else {
-        return Err(Halt::Cancelled.into());
-    };
-    report.signatures = counting.count.load(Ordering::SeqCst);
-    Ok(report)
+    run_on(&connection, &store, holds_back, send, stop, progress)?.ok_or_else(|| Halt::Cancelled.into())
 }
 
 /// How often a send pushes: once, and once more after fetching again if

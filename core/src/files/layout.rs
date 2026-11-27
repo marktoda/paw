@@ -21,8 +21,6 @@ use crate::lock::{Exclusive, Shared, StoreLock};
 
 pub const REPO: &str = "repo";
 pub const SETUP: &str = "setup";
-/// The first line of [`SETUP`] once setup has finished.
-pub const SETUP_DONE: &str = "step=done";
 pub const KNOWN_HOSTS: &str = "known_hosts";
 pub const REMOTE: &str = "remote";
 pub const GITHUB_LINK: &str = "github";
@@ -76,14 +74,6 @@ impl StoreDirs {
     }
 }
 
-/// Setup finished and the store is here. Reads two files and writes
-/// nothing, so the AutoFill extension can ask.
-pub fn is_set_up(state_dir: &Path) -> bool {
-    let done = super::values::read(&state_dir.join(SETUP))
-        .is_ok_and(|found| found.is_some_and(|values| values.first_line() == Some(SETUP_DONE)));
-    done && holds_store(&repo_dir(state_dir))
-}
-
 /// Whether the checkout at `repo` is a pass store: a `.gpg-id` at its top
 /// that is a file, not a link (a link is never checked out). Every "is the
 /// store here" asks this.
@@ -94,11 +84,6 @@ pub(crate) fn holds_store(repo: &Path) -> bool {
 #[uniffi::export]
 pub fn store_repo_dir(state_dir: String) -> String {
     repo_dir(Path::new(&state_dir)).to_string_lossy().into_owned()
-}
-
-#[uniffi::export]
-pub fn store_is_set_up(state_dir: String) -> bool {
-    is_set_up(Path::new(&state_dir))
 }
 
 /// Whether the system refuses to open the store's files in `state_dir`, as
@@ -125,7 +110,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         assert!(!files_refused(dir.path()));
         let setup = dir.path().join(SETUP);
-        std::fs::write(&setup, SETUP_DONE).unwrap();
+        std::fs::write(&setup, "step=done\n").unwrap();
         assert!(!files_refused(dir.path()));
         std::fs::set_permissions(&setup, std::fs::Permissions::from_mode(0o000)).unwrap();
         // Root ignores the mode, and then there is nothing to check.

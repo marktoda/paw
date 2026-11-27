@@ -62,11 +62,9 @@ impl std::fmt::Debug for Pin {
     }
 }
 
-/// Why a card job stopped.
+/// Why a key task's work stopped.
 #[derive(Debug)]
 pub(crate) enum Halt {
-    /// The PIN is needed from the person; `Some` says why it is asked again.
-    AskPin(Option<KeyError>),
     Fail(KeyError),
     /// The task was cancelled.
     Cancelled,
@@ -75,6 +73,28 @@ pub(crate) enum Halt {
 impl From<KeyError> for Halt {
     fn from(error: KeyError) -> Self {
         Self::Fail(error)
+    }
+}
+
+/// Why a card job stopped: a [`Halt`], or the PIN is needed from the
+/// person. [`KeySession::unlocked`] asks for it and runs the job again; a
+/// job run on its own ([`KeySession::run`]) has to say what that means.
+#[derive(Debug)]
+pub(crate) enum CardStop {
+    /// `Some` says why it is asked again.
+    AskPin(Option<KeyError>),
+    Halt(Halt),
+}
+
+impl From<Halt> for CardStop {
+    fn from(halt: Halt) -> Self {
+        Self::Halt(halt)
+    }
+}
+
+impl From<KeyError> for CardStop {
+    fn from(error: KeyError) -> Self {
+        Self::Halt(Halt::Fail(error))
     }
 }
 
@@ -175,8 +195,8 @@ impl KeySession {
                 log.line(format!(
                     "session ready: PIN tries left {}, touch decryption {}, authentication {}",
                     info.pin_tries_left,
-                    keylog::touch_words(info.decryption_touch),
-                    keylog::touch_words(info.authentication_touch),
+                    info.decryption_touch.words(),
+                    info.authentication_touch.words(),
                 ));
             }
             Err(error) => log.line(format!("session failed to start: {}", keylog::error_name(error))),
@@ -440,7 +460,7 @@ impl KeySession {
     /// Runs `op`, which sends `slot`'s command that may wait for a touch
     /// (PSO:DECIPHER or INTERNAL AUTHENTICATE), in a card job: `Touch` is
     /// shown as the slot's policy says, and the slot's touch clock notes an
-    /// answer. A failure the card explains ends in a [`Halt`]: the key went
+    /// answer. A failure the card explains ends in a [`CardStop`]: the key went
     /// away, refused for its security conditions ([`Self::refused`]), or
     /// answered another status word. `Ok(Err(_))` is a failure of `op`
     /// after the card said yes, or nothing.
@@ -449,7 +469,7 @@ impl KeySession {
         task: &Arc<dyn TaskSide>,
         slot: KeySlot,
         op: impl FnOnce() -> Result<T, E>,
-    ) -> Result<Result<T, E>, Halt> {
+    ) -> Result<Result<T, E>, CardStop> {
         let info = self.card_info();
         let (policy, ins, step, name) = match slot {
             KeySlot::Decryption => (info.decryption_touch, apdu::PSO, "decrypting", "decryption"),
@@ -468,13 +488,13 @@ impl KeySession {
             Err(error) => error,
         };
         if self.wire.failed() {
-            return Err(Halt::Fail(KeyError::KeyRemoved));
+            return Err(KeyError::KeyRemoved.into());
         }
         match self.wire.last() {
             Some((last, sw)) if last == ins && apdu::security_refusal(sw) => {
                 Err(self.refused(task.as_ref(), step, sw, touch::possible(policy), sent.elapsed()))
             }
-            Some((_, sw)) if sw != apdu::SW_OK => Err(Halt::Fail(apdu::unexpected(step, sw))),
+            Some((_, sw)) if sw != apdu::SW_OK => Err(apdu::unexpected(step, sw).into()),
             _ => Ok(Err(error)),
         }
     }
@@ -503,22 +523,22 @@ impl KeySession {
     ///
     /// A card that cannot say whether the PIN is verified is judged on the
     /// time alone.
-    fn refused(&self, task: &dyn TaskSide, step: &str, sw: u16, touch_possible: bool, elapsed: Duration) -> Halt {
+    fn refused(&self, task: &dyn TaskSide, step: &str, sw: u16, touch_possible: bool, elapsed: Duration) -> CardStop {
         let check = match self.wire.send(&apdu::CHECK_PIN) {
             Ok((_, check)) => check,
-            Err(error) => return Halt::Fail(error),
+            Err(error) => return error.into(),
         };
         let slow = elapsed >= FAST_REFUSAL;
-        let (halt, reading) = match apdu::verify(check) {
+        let (halt, reading): (CardStop, &str) = match apdu::verify(check) {
             Verify::Verified | Verify::Other(_) if touch_possible && slow => {
-                (Halt::Fail(KeyError::TouchTimeout), "a touch timeout")
+                (KeyError::TouchTimeout.into(), "a touch timeout")
             }
             Verify::Verified | Verify::Other(_) if touch_possible => (
-                Halt::Fail(KeyError::Reader { detail: format!("{step}: the key refused at once ({sw:04X})") }),
+                KeyError::Reader { detail: format!("{step}: the key refused at once ({sw:04X})") }.into(),
                 "a refusal, too quick for a touch timeout",
             ),
             Verify::Verified | Verify::Other(_) => (
-                Halt::Fail(KeyError::Reader { detail: format!("{step}: the key refused ({sw:04X})") }),
+                KeyError::Reader { detail: format!("{step}: the key refused ({sw:04X})") }.into(),
                 "a refusal, and the slot asks for no touch",
             ),
             Verify::NotVerified { tries_left } => {
@@ -528,19 +548,17 @@ impl KeySession {
                 self.drop_pin("the key lost its verification");
                 if task.note_pin_lost() > 1 {
                     (
-                        Halt::Fail(KeyError::Reader {
-                            detail: format!("{step}: the key lost the PIN twice ({sw:04X})"),
-                        }),
+                        KeyError::Reader { detail: format!("{step}: the key lost the PIN twice ({sw:04X})") }.into(),
                         "the PIN lost a second time",
                     )
                 } else {
-                    (Halt::AskPin(Some(KeyError::PinForgotten)), "the PIN lost, ask again")
+                    (CardStop::AskPin(Some(KeyError::PinForgotten)), "the PIN lost, ask again")
                 }
             }
             Verify::Blocked => {
                 self.set_tries(0);
                 self.drop_pin("the key is locked");
-                (Halt::Fail(KeyError::PinBlocked), "the PIN is blocked")
+                (KeyError::PinBlocked.into(), "the PIN is blocked")
             }
         };
         self.log().line(format!(
@@ -583,7 +601,7 @@ impl KeySession {
     pub(crate) fn unlocked<T>(
         &self,
         task: &dyn TaskSide,
-        mut op: impl FnMut(&mut CardJob<'_>) -> Result<T, Halt>,
+        mut op: impl FnMut(&mut CardJob<'_>) -> Result<T, CardStop>,
     ) -> Result<T, Halt> {
         let mut last_error = None;
         loop {
@@ -595,8 +613,9 @@ impl KeySession {
                 job.unlock(supplied)?;
                 op(job)
             }) {
-                Err(Halt::AskPin(why)) => last_error = why,
-                other => return other,
+                Ok(done) => return Ok(done),
+                Err(CardStop::AskPin(why)) => last_error = why,
+                Err(CardStop::Halt(halt)) => return Err(halt),
             }
         }
     }
@@ -618,8 +637,8 @@ impl KeySession {
     pub(crate) fn run<T>(
         &self,
         task: &dyn TaskSide,
-        job: impl FnOnce(&mut CardJob<'_>) -> Result<T, Halt>,
-    ) -> Result<T, Halt> {
+        job: impl FnOnce(&mut CardJob<'_>) -> Result<T, CardStop>,
+    ) -> Result<T, CardStop> {
         self.apply_background_limit();
         let guard = match self.acquire(task) {
             Ok(guard) => guard,
@@ -627,19 +646,19 @@ impl KeySession {
                 if self.wire.failed() {
                     self.end();
                 }
-                return Err(halt);
+                return Err(halt.into());
             }
         };
         task.show_working();
         let forgets = self.lock().forgets;
         let result = match card::open(self.wire.clone()) {
             Ok(card) => job(&mut CardJob { session: self, card, forgets }),
-            Err(e) => Err(Halt::Fail(read_error(&self.wire, e))),
+            Err(e) => Err(read_error(&self.wire, e).into()),
         };
         drop(guard);
         if self.wire.failed() {
             self.end();
-            return Err(Halt::Fail(KeyError::KeyRemoved));
+            return Err(KeyError::KeyRemoved.into());
         }
         result
     }
@@ -701,23 +720,23 @@ impl<'a> CardJob<'a> {
     ///
     /// No VERIFY is ever sent with no tries left. A card with a PIN KDF
     /// (read when it was plugged in) is sent the derived PIN.
-    pub(crate) fn unlock(&mut self, supplied: Option<Pin>) -> Result<(), Halt> {
+    pub(crate) fn unlock(&mut self, supplied: Option<Pin>) -> Result<(), CardStop> {
         let session = self.session;
         if let Some(pin) = supplied {
             if session.lock().tries_left == 0 {
-                return Err(Halt::Fail(KeyError::PinBlocked));
+                return Err(KeyError::PinBlocked.into());
             }
             return match self.verify(&pin)? {
                 Verified::Yes => {
                     session.hold(pin, self.forgets);
                     Ok(())
                 }
-                Verified::Wrong { tries_left } => Err(Halt::AskPin(Some(KeyError::WrongPin { tries_left }))),
-                Verified::Blocked => Err(Halt::Fail(KeyError::PinBlocked)),
+                Verified::Wrong { tries_left } => Err(CardStop::AskPin(Some(KeyError::WrongPin { tries_left }))),
+                Verified::Blocked => Err(KeyError::PinBlocked.into()),
             };
         }
 
-        let Some(pin) = session.held_pin() else { return Err(Halt::AskPin(None)) };
+        let Some(pin) = session.held_pin() else { return Err(CardStop::AskPin(None)) };
         let (_, sw) = session.wire.send(&apdu::CHECK_PIN)?;
         let tries_left = match apdu::verify(sw) {
             Verify::Verified => return Ok(()),
@@ -731,17 +750,17 @@ impl<'a> CardJob<'a> {
         session.set_tries(tries_left);
         if tries_left == 0 {
             session.drop_pin("the key is locked");
-            return Err(Halt::Fail(KeyError::PinBlocked));
+            return Err(KeyError::PinBlocked.into());
         }
         match self.verify(&pin)? {
             Verified::Yes => Ok(()),
             Verified::Wrong { tries_left } => {
                 session.drop_pin("the key refused it");
-                Err(Halt::AskPin(Some(KeyError::HeldPinRejected { tries_left })))
+                Err(CardStop::AskPin(Some(KeyError::HeldPinRejected { tries_left })))
             }
             Verified::Blocked => {
                 session.drop_pin("the key is locked");
-                Err(Halt::Fail(KeyError::PinBlocked))
+                Err(KeyError::PinBlocked.into())
             }
         }
     }

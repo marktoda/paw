@@ -33,7 +33,7 @@ impl TouchWatch {
         wire.log().line(format!(
             "{} touch watch {watch} ({slot} slot: {})",
             task.tag(),
-            super::keylog::touch_words(policy)
+            policy.words()
         ));
         let hook: Option<Arc<dyn TouchHook>> = match policy {
             KeyTouch::Off => None,

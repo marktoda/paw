@@ -300,13 +300,6 @@ fn rank(kind: &MatchKind) -> u8 {
     }
 }
 
-/// Whether a match fills without asking: by host, or by a name already
-/// filled on this domain.
-#[uniffi::export]
-pub fn is_trusted_match(kind: MatchKind) -> bool {
-    rank(&kind) <= 2
-}
-
 /// Every entry that matches `service` by host or by name, best first:
 /// exact host, same registrable domain, then name matches paired here, not
 /// yet paired, and paired only elsewhere. Within each, the shorter path,

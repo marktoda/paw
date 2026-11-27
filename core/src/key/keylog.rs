@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use super::{KeyError, KeyTouch, apdu};
+use super::{KeyError, apdu};
 use crate::locked;
 use crate::PawError;
 
@@ -168,15 +168,6 @@ pub(crate) fn clock_time(at_ms: i64, utc_offset_secs: i32) -> String {
     let in_day = local.rem_euclid(86_400_000);
     let (h, m, s, ms) = (in_day / 3_600_000, in_day / 60_000 % 60, in_day / 1000 % 60, in_day % 1000);
     format!("{h:02}:{m:02}:{s:02}.{ms:03}")
-}
-
-pub(crate) fn touch_words(policy: KeyTouch) -> &'static str {
-    match policy {
-        KeyTouch::Off => "off",
-        KeyTouch::EachUse => "each use",
-        KeyTouch::Cached => "cached",
-        KeyTouch::Unknown => "unknown",
-    }
 }
 
 /// The error's name only: its text can name an entry or a key.

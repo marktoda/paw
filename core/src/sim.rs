@@ -207,12 +207,12 @@ impl SimulatedKey {
         let key = self.decryption_key()?;
         let store = crate::files::layout::StoreDirs::new(std::path::Path::new(&state_dir));
         let held = store.exclusive()?;
-        Ok(crate::write::Keyring::open(&store)?.pin_card_key(&held, &key)?)
+        Ok(crate::write::Keyring::open(&store)?.pin_card_key(&held, &key)?.to_string())
     }
 
     /// Hex OpenPGP v4 fingerprint of the decryption key.
     pub fn fingerprint_hex(&self) -> String {
-        crate::recipients::hex(&self.fingerprint())
+        crate::fingerprint::hex(&self.fingerprint())
     }
 
     /// The key is pulled out: every exchange fails, and a key operation
@@ -463,7 +463,7 @@ impl SimulatedKey {
 
     /// Hex OpenPGP v4 fingerprint of the authentication key.
     pub fn authentication_fingerprint_hex(&self) -> String {
-        crate::recipients::hex(&self.auth_fingerprint())
+        crate::fingerprint::hex(&self.auth_fingerprint())
     }
 
     fn public(&self) -> [u8; 32] {

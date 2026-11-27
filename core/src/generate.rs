@@ -151,3 +151,14 @@ pub fn entropy_bits(policy: &PasswordPolicy) -> Result<f64, PolicyError> {
     }
     Ok(all + fraction.log2())
 }
+
+/// The Generate button's fixed settings.
+#[uniffi::export]
+pub fn default_password_policy() -> PasswordPolicy {
+    PasswordPolicy::default()
+}
+
+#[uniffi::export]
+pub fn password_entropy_bits(policy: PasswordPolicy) -> Result<f64, crate::write::WriteError> {
+    Ok(entropy_bits(&policy)?)
+}

@@ -17,7 +17,7 @@ use paw_core::sim::remote::steps;
 use paw_core::github::{
     BackgroundOutcome, GitHubAccount, GitHubError, RefreshDecision, RefreshStep, RepositoryList, SignInState,
 };
-use paw_core::ffi::sync::Setup;
+use paw_core::setup::Setup;
 use paw_core::task::{KeyOutcome, KeyTaskState};
 use paw_core::setup::SetupState;
 use paw_core::sim::SimulatedKey;
@@ -416,7 +416,6 @@ fn sign_in_pick_clone_over_ssh_then_refresh_over_https_with_no_key() {
 
     assert_eq!(report.state, SyncState::UpToDate);
     assert_eq!(report.integration.fast_forwarded, 1);
-    assert_eq!(report.signatures, 0);
     assert_eq!(w.head(), changed);
     assert!(w.repo().join(NEW_ENTRY).is_file());
     // No SSH login, so no card: the key was used once, for the clone.

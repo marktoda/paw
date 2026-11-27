@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use key_common::{WAIT, port_with};
 use paw_core::fault::Fault;
-use paw_core::ffi::sync::Setup;
+use paw_core::setup::Setup;
 use paw_core::key::KeyPort;
 use paw_core::remote::{PortFallback, RemoteFailure};
 use paw_core::setup::{SetupError, SetupState};

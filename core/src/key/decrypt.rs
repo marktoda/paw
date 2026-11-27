@@ -11,9 +11,10 @@ use pgp::packet::{PublicKey, PublicKeyEncryptedSessionKey};
 use pgp::types::{DecryptionKey, EskType, Password};
 use zeroize::Zeroizing;
 
-use super::session::{CardJob, Halt, card_error};
+use super::session::{CardJob, CardStop, Halt, card_error};
 use super::task::TaskSide;
 use super::{KeyError, KeySlot};
+use crate::fingerprint::Fingerprint;
 use crate::recipients::{self, Access};
 
 use crate::entry::MAX_PLAINTEXT_BYTES;
@@ -61,7 +62,7 @@ impl<'a> Plan<'a> {
     /// never disagree.
     pub(crate) fn new(ciphertext: &'a [u8], key: &PublicKey) -> Result<Self, KeyError> {
         let not_for_this_key = |keys: &[recipients::Recipient]| KeyError::NotForThisKey { recipients: keys.to_vec() };
-        match recipients::access(ciphertext, &recipients::fingerprint_of(key)) {
+        match recipients::key_access(ciphertext, Some(&Fingerprint::of(key))) {
             Access::CanOpen | Access::MightOpen => {}
             Access::NotForThisKey { recipients } => return Err(not_for_this_key(&recipients)),
             Access::Unreadable { reason } => return Err(unreadable(reason)),
@@ -90,14 +91,14 @@ impl<'a> Plan<'a> {
         job: &mut CardJob<'_>,
         task: &Arc<dyn TaskSide>,
         key: &PublicKey,
-    ) -> Result<PlainSessionKey, Halt> {
+    ) -> Result<PlainSessionKey, CardStop> {
         let session = job.session();
         let wire = session.wire().clone();
         let mut tx = job.card.transaction().map_err(|e| card_error(&wire, "starting to decrypt", e))?;
         let slot = CardSlot::with_public_key(&mut tx, KeyType::Decryption, key.clone(), &|| {})
             .map_err(|e| card_error(&wire, "reading the decryption key", e))?;
         if task.cancelled() {
-            return Err(Halt::Cancelled);
+            return Err(Halt::Cancelled.into());
         }
         let version = match self.packet {
             PublicKeyEncryptedSessionKey::V6 { .. } => EskType::V6,
@@ -107,7 +108,7 @@ impl<'a> Plan<'a> {
             self.packet.values().and_then(|values| slot.decrypt(&Password::empty(), values, version)).and_then(|inner| inner)
         })?;
         // The card answered; what it gave did not unwrap the packet.
-        unwrapped.map_err(|error| Halt::Fail(KeyError::DecryptFailed { detail: error.to_string() }))
+        unwrapped.map_err(|error| KeyError::DecryptFailed { detail: error.to_string() }.into())
     }
 
     /// Decrypts the entry with the unwrapped session key. No card.

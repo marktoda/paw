@@ -12,7 +12,7 @@ pub mod clock;
 pub mod copies;
 pub mod entry;
 pub mod fault;
-pub mod ffi;
+pub mod fingerprint;
 pub mod path;
 pub mod recipients;
 pub mod remote;

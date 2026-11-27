@@ -19,11 +19,11 @@
 //! step ([`FollowUp`]). The commits stand whatever happens to those; what
 //! failed is returned with the outcome.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::draft::{EntryDraft, Original, folder_problems, name_problems};
+use super::draft::{Draft, EntryDraft, Original, folder_problems, name_problems};
 use super::keyring::{FolderRecipients, Keyring};
 use super::{WriteError, author, encrypt};
 use crate::PawError;
@@ -137,10 +137,15 @@ impl WriteStore {
 
     /// The same store, keeping the Face ID copies in `copies` in step: an
     /// edited or moved entry's live copy is resealed with its new text for
-    /// the time it had left, a deleted or renamed one is forgotten, and a
-    /// new entry gets one for `new_copy_ttl` (zero keeps none).
-    pub fn with_copies(&self, copies: Option<Arc<CopyCache>>, new_copy_ttl: Duration) -> Self {
-        Self { copies, new_copy_ttl, ..self.clone() }
+    /// the time it had left, and a deleted or renamed one is forgotten.
+    pub fn with_copies(&self, copies: Option<Arc<CopyCache>>) -> Self {
+        Self { copies, ..self.clone() }
+    }
+
+    /// The same store, giving a new entry a Face ID copy for `ttl` (zero,
+    /// as at first, keeps none).
+    pub fn with_new_copy_ttl(&self, ttl: Duration) -> Self {
+        Self { new_copy_ttl: ttl, ..self.clone() }
     }
 
     /// The entry moved from `from` to `to`, or with `None` went: its site
@@ -225,7 +230,7 @@ impl WriteStore {
     /// Saves `draft`: encrypts to every recipient of its folder and commits.
     /// Returns what was done, with the entry as saved, open. No key, PIN or
     /// network is involved.
-    pub fn save(&self, draft: &EntryDraft) -> Result<Saved, WriteError> {
+    pub fn save(&self, draft: &Draft) -> Result<Saved, WriteError> {
         let Committed { entry, previous, content_id, commits, doc } = self.save_commits(draft)?;
         let mut follow_ups = FollowUps::default();
         if let Some(previous) = &previous {
@@ -242,7 +247,7 @@ impl WriteStore {
             })
         });
         Ok(Saved {
-            opened: Some(OpenedEntry::new(doc, content_id.clone())),
+            opened: Some(OpenedEntry::new(&entry, doc, content_id.clone())),
             entry,
             previous,
             content_id,
@@ -252,7 +257,7 @@ impl WriteStore {
         })
     }
 
-    fn save_commits(&self, draft: &EntryDraft) -> Result<Committed, WriteError> {
+    fn save_commits(&self, draft: &Draft) -> Result<Committed, WriteError> {
         let held = self.exclusive()?;
         let held = &held;
         let store = OpenStore::open(&self.store)?;
@@ -354,4 +359,67 @@ impl WriteStore {
         Ok(Deleted { commit, follow_up_failures: follow_ups.0 })
     }
 
+}
+
+/// Writing to the store set up in a state directory. Every call works
+/// without the key and without the network.
+#[derive(uniffi::Object)]
+pub struct StoreWriter {
+    store: WriteStore,
+}
+
+#[uniffi::export]
+impl StoreWriter {
+    #[uniffi::constructor]
+    pub fn open(state_dir: String) -> Arc<Self> {
+        Arc::new(Self { store: WriteStore::open(&PathBuf::from(state_dir)) })
+    }
+
+    /// A blank "New entry" form in `folder`.
+    pub fn new_draft(&self, folder: String) -> Arc<EntryDraft> {
+        EntryDraft::wrap(Draft::new(&folder))
+    }
+
+    /// An edit form for the entry `opened`, filled from it. Saving is
+    /// refused if the file changed since it was opened.
+    pub fn edit_draft(&self, opened: Arc<OpenedEntry>) -> Result<Arc<EntryDraft>, WriteError> {
+        let doc = opened.duplicate_doc().ok_or_else(|| WriteError::from(Fault::local("the entry was closed")))?;
+        Ok(EntryDraft::wrap(Draft::edit(opened.path(), doc, opened.content_id().to_vec())))
+    }
+
+    /// Saves `draft` as one commit (two if an edit also moved it). With
+    /// `copies`: an entry that had a live Face ID copy gets it re-sealed with
+    /// the new text for the time it had left; a new entry gets a copy for
+    /// `new_copy_ttl_secs` (0 keeps none).
+    pub fn save(
+        &self,
+        draft: Arc<EntryDraft>,
+        copies: Option<Arc<CopyCache>>,
+        new_copy_ttl_secs: u32,
+    ) -> Result<Saved, WriteError> {
+        let store = self.store.with_copies(copies).with_new_copy_ttl(Duration::from_secs(new_copy_ttl_secs.into()));
+        store.save(&draft.draft())
+    }
+
+    /// Deletes `entry` (it stays in the git history) and wipes its copy.
+    pub fn delete(&self, entry: String, copies: Option<Arc<CopyCache>>) -> Result<Deleted, WriteError> {
+        self.store.with_copies(copies).delete(&entry)
+    }
+
+    /// Which keys can open entries in `folder`, and whether paw can save
+    /// there (`writable`). For the folder picker and the recipients screen.
+    pub fn folder_recipients(&self, folder: String) -> Result<FolderRecipients, WriteError> {
+        self.store.folder_recipients(&folder)
+    }
+
+    /// "Who can open these passwords"; see [`WriteStore::recipient_scopes`].
+    pub fn recipient_scopes(&self) -> Result<Vec<super::RecipientScope>, WriteError> {
+        self.store.recipient_scopes()
+    }
+
+    /// After "Who can open … changed": accepts the folder's current
+    /// `.gpg-id`.
+    pub fn accept_recipients(&self, folder: String) -> Result<(), WriteError> {
+        self.store.accept_recipients(&folder)
+    }
 }

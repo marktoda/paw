@@ -110,7 +110,6 @@ impl From<Halt> for TaskFailure {
     fn from(halt: Halt) -> Self {
         match halt {
             Halt::Fail(error) => Self::Key(error),
-            Halt::AskPin(_) => Self::Key(KeyError::Internal { detail: "the PIN was needed where it cannot be asked".into() }),
             Halt::Cancelled => Self::Cancelled,
         }
     }

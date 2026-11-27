@@ -134,7 +134,7 @@ final class EntryFormModel {
         self.folders = folders
         store = live.store
         let opened = session.entry
-        draft = try writer.editDraft(opened: opened, entry: session.ref.path)
+        draft = try writer.editDraft(opened: opened)
         original = Original(
             name: session.ref.name, folder: session.ref.folder,
             username: opened.username() ?? "", password: opened.password() ?? "",
