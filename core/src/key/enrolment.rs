@@ -14,12 +14,11 @@
 //! "Replace my key" is the only way to accept another card: it records the
 //! plugged-in key in place of the old one.
 
-use std::path::Path;
-
 use super::CardInfo;
 use crate::PawError;
 use crate::fingerprint::Fingerprint;
 use crate::files::values::{self, Values};
+use crate::lock::{Exclusive, StoreDirs};
 
 /// The serial printed on a key, from its `ident` ("0006:12345678" is
 /// "12345678"). The screens group its digits for reading.
@@ -116,7 +115,7 @@ fn io(what: &str, e: std::io::Error) -> PawError {
     PawError::Store(format!("could not {what} the enrolled key: {e}"))
 }
 
-pub fn save_enrolment(state_dir: &Path, identity: &KeyIdentity) -> Result<(), PawError> {
+pub fn save_enrolment(store: &StoreDirs, _held: &Exclusive, identity: &KeyIdentity) -> Result<(), PawError> {
     if identity.ident.contains(['\n', '\r'])
         || [&identity.decryption_fingerprint, &identity.authentication_fingerprint]
             .iter()
@@ -124,14 +123,14 @@ pub fn save_enrolment(state_dir: &Path, identity: &KeyIdentity) -> Result<(), Pa
     {
         return Err(PawError::Store("not a key identity".into()));
     }
-    values::write(&state_dir.join(crate::files::layout::ENROLLED_KEY), identity.pairs()).map_err(|e| io("save", e))
+    values::write(&store.state_dir().join(crate::files::layout::ENROLLED_KEY), identity.pairs()).map_err(|e| io("save", e))
 }
 
-/// The key the store in `state_dir` was set up with, if setup recorded one.
+/// The key `store` was set up with, if setup recorded one.
 /// A record that cannot be read is an error, not "none": treating it as
 /// none would send the PIN to any card.
-pub fn load_enrolment(state_dir: &Path) -> Result<Option<KeyIdentity>, PawError> {
-    match values::read(&state_dir.join(crate::files::layout::ENROLLED_KEY)).map_err(|e| io("read", e))? {
+pub fn load_enrolment(store: &StoreDirs) -> Result<Option<KeyIdentity>, PawError> {
+    match values::read(&store.state_dir().join(crate::files::layout::ENROLLED_KEY)).map_err(|e| io("read", e))? {
         Some(found) => KeyIdentity::from_values(&found)
             .map(Some)
             .ok_or_else(|| PawError::Store("the enrolled key record is damaged".into())),

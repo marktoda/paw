@@ -23,7 +23,7 @@ use paw_core::store::PassStore;
 use paw_core::sim::copies::{SimClock, SimKeystore};
 use paw_core::sync::ChangeKind;
 use paw_core::sync::queue;
-use paw_core::files::layout::StoreDirs;
+use paw_core::lock::StoreDirs;
 use paw_core::write::{
     DraftField, Draft, FolderRecipients, Keyring, LineStatus, WriteError, WriteStore,
 };

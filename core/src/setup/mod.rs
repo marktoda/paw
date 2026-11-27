@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::files::values::{self, Values};
 use crate::fingerprint::Fingerprint;
-use crate::files::layout::StoreDirs;
+use crate::lock::StoreDirs;
 use crate::files::layout;
 use crate::key::enrolment::save_enrolment;
 use crate::key::{CardInfo, KeyError, KeyIdentity, KeyPort, KeySession, KeyTouch, PinKdfStatus};
@@ -346,22 +346,22 @@ fn notice_from(line: &str) -> Option<AddressNotice> {
     })
 }
 
-/// Setup finished for the store in `state_dir` and the store is there.
-/// Reads two files and writes nothing, so the AutoFill extension can ask.
-pub fn is_set_up(state_dir: &Path) -> bool {
-    let done = values::read(&state_dir.join(layout::SETUP)).is_ok_and(|found| {
+/// Setup finished for `store` and the store is there. Reads two files and
+/// writes nothing, so the AutoFill extension can ask.
+pub fn is_set_up(store: &StoreDirs) -> bool {
+    let done = values::read(&store.state_dir().join(layout::SETUP)).is_ok_and(|found| {
         found.is_some_and(|values| values.get("step").and_then(Step::from_name) == Some(Step::Done))
     });
-    done && layout::holds_store(&layout::repo_dir(state_dir))
+    done && layout::holds_store(store.repo_dir())
 }
 
 #[uniffi::export]
 pub fn store_is_set_up(state_dir: String) -> bool {
-    is_set_up(Path::new(&state_dir))
+    is_set_up(&StoreDirs::new(Path::new(&state_dir)))
 }
 
 pub struct SetupFlow {
-    dir: PathBuf,
+    store: StoreDirs,
     saved: Saved,
     /// The key a host presented that is waiting for the person's
     /// confirmation, and the address it was asked at. Not saved: after a
@@ -384,9 +384,9 @@ impl SetupFlow {
             Some(found) => Saved::from_values(&found),
             None => Saved::ReadKey,
         };
-        let mut flow = Self { dir: state_dir.to_path_buf(), saved, unconfirmed: None };
-        let repo = flow.repo_dir();
-        let cloned = repo.join(".git").is_dir() && layout::holds_store(&repo);
+        let mut flow = Self { store: StoreDirs::new(state_dir), saved, unconfirmed: None };
+        let repo = flow.store.repo_dir();
+        let cloned = repo.join(".git").is_dir() && layout::holds_store(repo);
         match &flow.saved {
             // Killed while downloading, or the download went missing.
             Saved::Cloning(reached) => flow.restart_download(reached.clone())?,
@@ -396,38 +396,34 @@ impl SetupFlow {
         Ok(flow)
     }
 
-    pub fn repo_dir(&self) -> PathBuf {
-        crate::files::layout::repo_dir(&self.dir)
-    }
-
-    pub(crate) fn store(&self) -> StoreDirs {
-        StoreDirs::new(&self.dir)
+    pub fn repo_dir(&self) -> &Path {
+        self.store.repo_dir()
     }
 
     pub(crate) fn open_store(&self) -> Result<Arc<PassStore>, SetupError> {
-        PassStore::open(self.dir.to_string_lossy().into_owned()).map_err(SetupError::from)
+        PassStore::open(self.store.state_dir().to_string_lossy().into_owned()).map_err(SetupError::from)
     }
 
     fn known_hosts(&self) -> KnownHosts {
-        KnownHosts::of(&self.dir)
+        KnownHosts::of(&self.store)
     }
 
     fn go(&mut self, saved: Saved) -> Result<SetupState, SetupError> {
         self.saved = saved;
         let pairs = self.saved.pairs();
         let pairs = pairs.iter().map(|(name, value)| (*name, value.as_str()));
-        values::write(&self.dir.join(layout::SETUP), pairs).map_err(failed)?;
+        values::write(&self.store.state_dir().join(layout::SETUP), pairs).map_err(failed)?;
         Ok(self.state())
     }
 
     /// The store's lock, held: for removing or replacing the repository,
     /// and for the keyring and enrolment writes.
     fn exclusive(&self) -> Result<crate::lock::Exclusive, SetupError> {
-        self.store().exclusive().map_err(SetupError::from)
+        self.store.exclusive().map_err(SetupError::from)
     }
 
     fn restart_download(&mut self, reached: Reached) -> Result<(), SetupError> {
-        remove_dir(&self.repo_dir(), &self.exclusive()?)?;
+        remove_dir(self.store.repo_dir(), &self.exclusive()?)?;
         self.go(Saved::NeedPin(reached)).map(drop)
     }
 
@@ -583,7 +579,7 @@ impl SetupFlow {
     /// Refused for a host whose keys ship with paw ([`KnownHosts::forget`]).
     pub fn forget_host_key(&mut self) -> Result<SetupState, SetupError> {
         let reached = self.reached(&[Step::CheckHost, Step::NeedPin], "forget the host's key")?;
-        self.known_hosts().forget(&reached.address)?;
+        self.known_hosts().forget(&self.exclusive()?, &reached.address)?;
         self.go(Saved::CheckHost(reached))
     }
 
@@ -615,9 +611,9 @@ impl SetupFlow {
     pub(crate) fn begin_download(&mut self) -> Result<(sync::Remote, StoreDirs), SetupError> {
         let reached = self.reached(&[Step::NeedPin], "download")?;
         let remote = self.remote(&reached.address)?;
-        remove_dir(&self.repo_dir(), &self.exclusive()?)?;
+        remove_dir(self.store.repo_dir(), &self.exclusive()?)?;
         self.go(Saved::Cloning(reached))?;
-        Ok((remote, self.store()))
+        Ok((remote, self.store.clone()))
     }
 
     /// The download stopped (cancelled, or the login failed): back to the
@@ -636,25 +632,24 @@ impl SetupFlow {
     /// the address.
     pub(crate) fn finish_download(&mut self, cloned: Result<Cloned, Fault>) -> Result<SetupState, SetupError> {
         let reached = self.reached(&[Step::Cloning], "finish the download")?;
-        let repo = self.repo_dir();
         let outcome = match cloned {
             Err(e) => Err(SetupError::from(e)),
             Ok(Cloned::Empty) => return self.wrong_repository(reached, SetupError::EmptyRepository),
             // Nothing was checked out; the download is removed below.
             Ok(Cloned::Refused(paths)) => Err(RemoteFailure::RefusedContent { paths }.into()),
-            Ok(Cloned::Store) if layout::holds_store(&repo) => Ok(()),
+            Ok(Cloned::Store) if layout::holds_store(self.store.repo_dir()) => Ok(()),
             Ok(Cloned::Store) => return self.wrong_repository(reached, SetupError::NotAPassStore),
         };
         if let Err(e) = outcome {
             self.restart_download(reached)?;
             return Err(e);
         }
-        save_address(&self.dir, &self.exclusive()?, &reached.address).map_err(failed)?;
+        save_address(&self.store, &self.exclusive()?, &reached.address).map_err(failed)?;
         self.go(Saved::TestDecrypt(reached))
     }
 
     fn wrong_repository(&mut self, reached: Reached, why: SetupError) -> Result<SetupState, SetupError> {
-        remove_dir(&self.repo_dir(), &self.exclusive()?)?;
+        remove_dir(self.store.repo_dir(), &self.exclusive()?)?;
         self.go(Saved::Address(reached.key))?;
         Err(why)
     }
@@ -709,16 +704,16 @@ impl SetupFlow {
             return Err(SetupError::UnusableKey { reason: UnusableKeyReason::CardKeyMismatch });
         }
         // The keyring and the enrolment change as one critical section.
-        let store = self.store();
-        let held = store.exclusive().map_err(SetupError::from)?;
-        let mut keyring = Keyring::open(&store).map_err(write_failed)?;
+        let store = &self.store;
+        let held = self.exclusive()?;
+        let mut keyring = Keyring::open(store).map_err(write_failed)?;
         let fingerprint = keyring.pin_card_key(&held, card_key).map_err(write_failed)?;
         // Only the `.gpg-id` that governs the entry just opened, and only if
         // that entry names the card's key, says which line is the card's.
         let ciphertext = crate::store::read::read_entry(store.repo_dir(), &entry).map_err(SetupError::from)?;
         keyring.bind_card_for_opened_entry(&held, &fingerprint, &entry, &ciphertext).map_err(write_failed)?;
         keyring.accept_all_recipients_at_setup(&held).map_err(write_failed)?;
-        save_enrolment(&self.dir, identity).map_err(SetupError::from)?;
+        save_enrolment(store, &held, identity).map_err(SetupError::from)?;
         drop(held);
         self.go(Saved::Done(reached, entry))
     }
@@ -727,9 +722,8 @@ impl SetupFlow {
     /// pinned keys and the store; changes nothing.
     pub fn write_readiness(&self) -> Result<SetupWriteReadiness, SetupError> {
         self.expect(&[Step::Done], "say whether entries can be saved")?;
-        let store = self.store();
-        let reading = store.shared().map_err(SetupError::from)?;
-        let keyring = Keyring::open(&store).map_err(write_failed)?;
+        let reading = self.store.shared().map_err(SetupError::from)?;
+        let keyring = Keyring::open(&self.store).map_err(write_failed)?;
         let top = keyring.folder_recipients(&reading, "").map_err(write_failed)?;
         let missing_recipients = if top.writable {
             Vec::new()

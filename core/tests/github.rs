@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use paw_core::files::layout::StoreDirs;
+use paw_core::lock::StoreDirs;
 use paw_core::sim::remote::steps;
 use paw_core::github::{
     BackgroundOutcome, GitHubAccount, GitHubError, RefreshDecision, RefreshStep, RepositoryList, SignInState,

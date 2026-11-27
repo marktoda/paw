@@ -1021,7 +1021,7 @@ async fn receive_pack(shared: &Shared, input: &mut Input, out: &mut (impl AsyncW
 /// test support, not how the app syncs (it runs whole syncs as key tasks,
 /// `StoreSync.send_with_key`). Not in device builds.
 pub mod steps {
-    use crate::files::layout::StoreDirs;
+    use crate::lock::StoreDirs;
     use crate::files::refs;
     use crate::key::SshSigner;
     use crate::lock::FETCH_WAIT;

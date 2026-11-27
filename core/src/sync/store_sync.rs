@@ -9,14 +9,14 @@
 //! state that says what failed: `Failed` for the key, `SyncFailed` for the
 //! work after it.
 
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 
 use super::address::{StoreAddress, saved_address};
 use super::hosts::{KnownHosts, ServerKeys};
 use super::queue::{self, QueueItem};
 use super::{IntegrateReport, ServerKey, SyncError, accept_replaced_remote};
-use crate::files::layout::StoreDirs;
+use crate::lock::StoreDirs;
 use crate::key::KeyPort;
 use crate::remote::{RefusedPath, RemoteFailure};
 use crate::task::workflows;
@@ -26,22 +26,17 @@ use crate::write::held_back::{self, HeldBack, ReencryptCheck};
 /// Keeping a set-up store in step with its remote.
 #[derive(uniffi::Object)]
 pub struct StoreSync {
-    state_dir: PathBuf,
+    store: StoreDirs,
     address: StoreAddress,
 }
 
 impl StoreSync {
-    fn store(&self) -> StoreDirs {
-        StoreDirs::new(&self.state_dir)
-    }
-
     fn known_hosts(&self) -> KnownHosts {
-        KnownHosts::of(&self.state_dir)
+        KnownHosts::of(&self.store)
     }
 
     fn with_key(&self, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>, login: LoginPurpose) -> Arc<KeyTask> {
-        let (state_dir, address) = (self.state_dir.clone(), self.address.clone());
-        workflows::sync(&port, listener, login, state_dir, address)
+        workflows::sync(&port, listener, login, self.store.clone(), self.address.clone())
     }
 }
 
@@ -49,9 +44,9 @@ impl StoreSync {
 impl StoreSync {
     #[uniffi::constructor]
     pub fn open(state_dir: String) -> Result<Arc<Self>, SyncError> {
-        let state_dir = PathBuf::from(state_dir);
-        let address = saved_address(&state_dir)?;
-        Ok(Arc::new(Self { state_dir, address }))
+        let store = StoreDirs::new(Path::new(&state_dir));
+        let address = saved_address(&store)?;
+        Ok(Arc::new(Self { store, address }))
     }
 
     pub fn address(&self) -> String {
@@ -90,7 +85,7 @@ impl StoreSync {
     /// host's keys (github.com's, ...) cannot be forgotten:
     /// `RemoteFailure::HostKeyBundled`.
     pub fn forget_host_key(&self) -> Result<(), SyncError> {
-        Ok(self.known_hosts().forget(&self.address)?)
+        Ok(self.known_hosts().forget(&self.store.exclusive()?, &self.address)?)
     }
 
     /// "Send" as a key task (sign-in, `Push`): fetch, integrate and push on
@@ -108,7 +103,7 @@ impl StoreSync {
 
     /// The "not yet pushed" list, newest first.
     pub fn unpushed(&self) -> Result<Vec<QueueItem>, SyncError> {
-        queue::unpushed(&self.store())
+        queue::unpushed(&self.store)
     }
 
     /// The waiting changes "Send" will not push, because their ciphertext
@@ -119,14 +114,14 @@ impl StoreSync {
     /// should be for; the person accepts the new recipients, then
     /// re-encrypts them with `reencrypt_with_key`, or discards one outright.
     pub fn held_back(&self) -> Result<Vec<HeldBack>, SyncError> {
-        held_back::held_back(&self.store())
+        held_back::held_back(&self.store)
     }
 
     /// How many held-back changes "Re-encrypt" can do now (their folder's
     /// new list is accepted and paw has every key on it), and why each
     /// other one can't be done. No key, no network.
     pub fn reencrypt_check(&self) -> Result<ReencryptCheck, SyncError> {
-        held_back::reencrypt_check(&self.store())
+        held_back::reencrypt_check(&self.store)
     }
 
     /// "Re-encrypt" as a key task (`Reencrypt`): opens each held-back
@@ -139,19 +134,19 @@ impl StoreSync {
     /// changes. Ends `Done` with `Reencrypted` and what it did and left if
     /// it ran to the end; `reencrypt_check` says what is left after a stop.
     pub fn reencrypt_with_key(self: Arc<Self>, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
-        workflows::reencrypt(&port, listener, self.state_dir.clone())
+        workflows::reencrypt(&port, listener, self.store.clone())
     }
 
     pub fn discard(&self, id: String) -> Result<Vec<QueueItem>, SyncError> {
-        queue::discard(&self.store(), &id)
+        queue::discard(&self.store, &id)
     }
 
     pub fn undo_last(&self) -> Result<Vec<QueueItem>, SyncError> {
-        queue::undo_last(&self.store())
+        queue::undo_last(&self.store)
     }
 
     pub fn discard_all(&self) -> Result<(), SyncError> {
-        queue::discard_all(&self.store())
+        queue::discard_all(&self.store)
     }
 
     /// What the fetched remote holds that paw will not check out (links,
@@ -159,12 +154,12 @@ impl StoreSync {
     /// with why; empty if nothing. A sync that fails with
     /// `RemoteFailure::RefusedContent` names the same paths.
     pub fn refused_remote(&self) -> Result<Vec<RefusedPath>, SyncError> {
-        Ok(super::refused_remote(&self.store())?)
+        Ok(super::refused_remote(&self.store)?)
     }
 
     /// After `RemoteReplaced`: take the remote's history, keeping or
     /// discarding this device's unpushed changes.
     pub fn accept_replaced_remote(&self, keep_changes: bool) -> Result<IntegrateReport, SyncError> {
-        accept_replaced_remote(&self.store(), keep_changes)
+        accept_replaced_remote(&self.store, keep_changes)
     }
 }

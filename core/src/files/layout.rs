@@ -16,9 +16,6 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::PawError;
-use crate::lock::{Exclusive, Shared, StoreLock};
-
 pub const REPO: &str = "repo";
 pub const SETUP: &str = "setup";
 pub const KNOWN_HOSTS: &str = "known_hosts";
@@ -34,44 +31,6 @@ pub const STORE_LOCK: &str = "store.lock";
 
 pub fn repo_dir(state_dir: &Path) -> PathBuf {
     state_dir.join(REPO)
-}
-
-/// One store: its state directory, the repository in it at [`REPO`], and
-/// its lock. Every function that works on a store is given this.
-#[derive(Clone, Debug)]
-pub struct StoreDirs {
-    state: PathBuf,
-    repo: PathBuf,
-    lock: StoreLock,
-}
-
-impl StoreDirs {
-    /// The store kept in `state_dir`, which is created if need be.
-    pub fn new(state_dir: &Path) -> Self {
-        Self { state: state_dir.to_path_buf(), repo: repo_dir(state_dir), lock: StoreLock::for_state_dir(state_dir) }
-    }
-
-    pub fn state_dir(&self) -> &Path {
-        &self.state
-    }
-
-    pub fn repo_dir(&self) -> &Path {
-        &self.repo
-    }
-
-    pub fn lock(&self) -> &StoreLock {
-        &self.lock
-    }
-
-    /// Takes the store for changing it ([`StoreLock::exclusive`]).
-    pub fn exclusive(&self) -> Result<Exclusive, PawError> {
-        self.lock.exclusive()
-    }
-
-    /// Takes the store for reading it ([`StoreLock::shared`]).
-    pub fn shared(&self) -> Result<Shared, PawError> {
-        self.lock.shared()
-    }
 }
 
 /// Whether the checkout at `repo` is a pass store: a `.gpg-id` at its top

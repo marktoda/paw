@@ -200,9 +200,9 @@ fn setup_reads_the_key_checks_the_host_downloads_and_opens_one_entry() {
     // Nothing secret is saved.
     let saved = std::fs::read_to_string(rig.dir.path().join(paw_core::files::layout::SETUP)).unwrap();
     assert!(!saved.contains(PIN), "{saved}");
-    assert!(paw_core::setup::is_set_up(rig.dir.path()));
+    assert!(paw_core::setup::is_set_up(&paw_core::lock::StoreDirs::new(rig.dir.path())));
     // Sync can find the store.
-    assert_eq!(paw_core::sync::address::saved_address(rig.dir.path()).unwrap().display(), address(&server));
+    assert_eq!(paw_core::sync::address::saved_address(&paw_core::lock::StoreDirs::new(rig.dir.path())).unwrap().display(), address(&server));
 }
 
 #[test]
@@ -212,7 +212,7 @@ fn a_confirmed_host_is_pinned_and_not_asked_about_again() {
     let mut rig = Rig::new(&sim, &server);
     rig.at_need_pin();
 
-    let pinned = KnownHosts::of(rig.dir.path())
+    let pinned = KnownHosts::of(&paw_core::lock::StoreDirs::new(rig.dir.path()))
         .lookup("127.0.0.1", server.remote().port)
         .unwrap()
         .unwrap();
@@ -634,12 +634,15 @@ fn a_host_with_several_keys_presents_the_pinned_one() {
 #[test]
 fn a_known_hosts_entry_is_only_replaced_by_forgetting_it() {
     let dir = tempfile::tempdir().unwrap();
-    let known = KnownHosts::of(dir.path());
-    known.add("git.example.org", 22, &support::ed25519_host_key()).unwrap();
+    let store = paw_core::lock::StoreDirs::new(dir.path());
+    let known = KnownHosts::of(&store);
+    let held = store.exclusive().unwrap();
+    known.add(&held, "git.example.org", 22, &support::ed25519_host_key()).unwrap();
 
-    assert!(known.add("git.example.org", 22, &support::ecdsa_host_key()).is_err());
-    known.forget(&StoreAddress::parse("git@git.example.org:store.git").unwrap().address).unwrap();
-    known.add("git.example.org", 22, &support::ecdsa_host_key()).unwrap();
+    assert!(known.add(&held, "git.example.org", 22, &support::ecdsa_host_key()).is_err());
+    known.forget(&held, &StoreAddress::parse("git@git.example.org:store.git").unwrap().address).unwrap();
+    known.add(&held, "git.example.org", 22, &support::ecdsa_host_key()).unwrap();
+    drop(held);
     let pin = known.lookup("git.example.org", 22).unwrap().unwrap();
     assert_eq!(pin.fingerprints(), HostKeyPin::parse(&support::ecdsa_host_key()).unwrap().fingerprints());
     assert!(known.lookup("git.example.org", 2222).unwrap().is_none());
@@ -694,7 +697,7 @@ fn a_team_line_at_the_top_is_not_bound_to_the_card_that_opened_a_personal_entry(
 
     let state = set_up(&sim, &server);
 
-    let keyring = paw_core::write::Keyring::open(&paw_core::files::layout::StoreDirs::new(state.path())).unwrap();
+    let keyring = paw_core::write::Keyring::open(&paw_core::lock::StoreDirs::new(state.path())).unwrap();
     assert_eq!(keyring.line_status("team@example.com"), LineStatus::Missing);
     assert!(matches!(keyring.line_status("owner@example.com"), LineStatus::Ready { bound: true, .. }));
     let readiness = open_setup(state.path()).write_readiness().unwrap();
@@ -714,7 +717,7 @@ fn the_one_line_of_the_gpg_id_that_governs_the_opened_entry_is_bound() {
 
     let state = set_up(&sim, &server);
 
-    let keyring = paw_core::write::Keyring::open(&paw_core::files::layout::StoreDirs::new(state.path())).unwrap();
+    let keyring = paw_core::write::Keyring::open(&paw_core::lock::StoreDirs::new(state.path())).unwrap();
     assert!(matches!(keyring.line_status("owner@example.com"), LineStatus::Ready { bound: true, .. }));
     let readiness = open_setup(state.path()).write_readiness().unwrap();
     assert!(readiness.can_save, "{readiness:?}");
@@ -739,7 +742,7 @@ fn nothing_is_bound_when_the_opened_entry_does_not_name_the_card() {
 
     let state = set_up(&sim, &server);
 
-    let keyring = paw_core::write::Keyring::open(&paw_core::files::layout::StoreDirs::new(state.path())).unwrap();
+    let keyring = paw_core::write::Keyring::open(&paw_core::lock::StoreDirs::new(state.path())).unwrap();
     assert_eq!(keyring.line_status("owner@example.com"), LineStatus::Missing);
     let readiness = open_setup(state.path()).write_readiness().unwrap();
     assert_eq!(readiness.missing_recipients, ["owner@example.com"]);

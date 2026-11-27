@@ -50,9 +50,8 @@ use crate::fault::Fault;
 use crate::fingerprint::{Fingerprint, hex};
 use crate::path::{folder_and_parents, folder_of, folder_of_gpg_id, gpg_id_in, governing};
 use crate::store::gpg_id::{governing_gpg_id, gpg_id_text, key_digits, parse_gpg_id};
-use crate::files::layout::StoreDirs;
 use crate::files::{MAX_FILE_BYTES, read_bounded, write_atomic};
-use crate::lock::{Exclusive, Shared};
+use crate::lock::{Exclusive, Shared, StoreDirs};
 
 const HEADER: &str = "# paw pinned recipients, version 1";
 
@@ -308,7 +307,6 @@ impl Keyring {
                 text.push_str(&format!("gpgid {} {} {}\n", record.sha, b64(&record.path), b64(&record.text)));
             }
         }
-        std::fs::create_dir_all(self.store.state_dir()).map_err(|e| failed("save", e))?;
         write_atomic(&file(&self.store), text.as_bytes()).map_err(|e| failed("save", e))
     }
 

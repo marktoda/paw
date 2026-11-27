@@ -10,9 +10,8 @@ use git2::Oid;
 
 use super::history::{ChangeKind, PawCommit, Replay, ensure_clean, move_branch, paw_commits};
 use super::{OpenStore, SyncError, check_not_being_sent, current_branch, git_err};
-use crate::files::layout::StoreDirs;
 use crate::files::refs;
-use crate::lock::{Exclusive, Shared};
+use crate::lock::{Exclusive, Shared, StoreDirs};
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct QueueItem {

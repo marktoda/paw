@@ -32,8 +32,7 @@
 //! ([`StoreLock::being_sent`]).
 //!
 //! **Which lock.** A store's repository is always `<state>/repo`
-//! ([`crate::files::layout::StoreDirs`]), and its lock is the state
-//! directory's.
+//! ([`StoreDirs`]), and its lock is the state directory's.
 //!
 //! **Evidence, not re-entry.** Code that changes a store takes an
 //! [`Exclusive`] as a parameter, and code that reads it under the lock a
@@ -96,16 +95,63 @@ pub struct StoreLock {
     root: PathBuf,
 }
 
+/// `path` with every link resolved, as far as it exists: the part that
+/// does not exist yet is kept as written. So a store's lock is the same
+/// before and after its directory is made.
 fn canonical(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    if let Ok(found) = std::fs::canonicalize(path) {
+        return found;
+    }
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => canonical(parent).join(name),
+        _ => path.to_path_buf(),
+    }
+}
+
+/// One store: its state directory, the repository in it at
+/// [`crate::files::layout::REPO`], and its lock. Every function that works
+/// on a store is given this. Making one creates nothing: only setup makes
+/// a store's directory.
+#[derive(Clone, Debug)]
+pub struct StoreDirs {
+    state: PathBuf,
+    repo: PathBuf,
+    lock: StoreLock,
+}
+
+impl StoreDirs {
+    pub fn new(state_dir: &Path) -> Self {
+        let lock = StoreLock::for_state_dir(state_dir);
+        Self { state: state_dir.to_path_buf(), repo: crate::files::layout::repo_dir(state_dir), lock }
+    }
+
+    pub fn state_dir(&self) -> &Path {
+        &self.state
+    }
+
+    pub fn repo_dir(&self) -> &Path {
+        &self.repo
+    }
+
+    pub fn lock(&self) -> &StoreLock {
+        &self.lock
+    }
+
+    /// Takes the store for changing it ([`StoreLock::exclusive`]).
+    pub fn exclusive(&self) -> Result<Exclusive, PawError> {
+        self.lock.exclusive()
+    }
+
+    /// Takes the store for reading it ([`StoreLock::shared`]).
+    pub fn shared(&self) -> Result<Shared, PawError> {
+        self.lock.shared()
+    }
 }
 
 impl StoreLock {
     /// The lock of the store whose state directory is `state_dir` (its
-    /// repository at `<state_dir>/repo`). The directory is created if need
-    /// be.
+    /// repository at `<state_dir>/repo`).
     pub fn for_state_dir(state_dir: &Path) -> Self {
-        let _ = std::fs::create_dir_all(state_dir);
         Self { root: canonical(state_dir) }
     }
 
@@ -365,17 +411,16 @@ fn leave(gate: &Gate, mode: Mode) {
 /// with one in another exactly as two processes' would; the in-process
 /// gate already keeps this process's holders apart.
 ///
-/// A reader that cannot create the lock file (a store it may not write,
-/// which no paw process can then change either) reads without it.
+/// The lock file is made in the state directory, never the directory
+/// itself. A reader that cannot create the file reads without it: in a
+/// store it may not write, which no paw process can then change either,
+/// or in a store whose directory is gone, which has nothing to read.
 fn lock_file(path: &Path, mode: Mode, deadline: Instant) -> Result<Option<File>, PawError> {
+    use std::io::ErrorKind::{NotFound, PermissionDenied};
     let io = |e: std::io::Error| PawError::Store(format!("could not lock the store ({}): {e}", path.display()));
-    let opened = path
-        .parent()
-        .map_or(Ok(()), std::fs::create_dir_all)
-        .and_then(|()| OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path));
-    let file = match opened {
+    let file = match OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path) {
         Ok(file) => file,
-        Err(e) if mode == Mode::Shared && e.kind() == std::io::ErrorKind::PermissionDenied => return Ok(None),
+        Err(e) if mode == Mode::Shared && matches!(e.kind(), PermissionDenied | NotFound) => return Ok(None),
         Err(e) => return Err(io(e)),
     };
     let mut pause = Duration::from_millis(1);

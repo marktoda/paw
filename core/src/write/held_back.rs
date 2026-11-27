@@ -7,7 +7,7 @@ use git2::Oid;
 use super::{Keyring, WriteError, encrypt};
 use crate::fault::Fault;
 use crate::fingerprint::Fingerprint;
-use crate::files::layout::StoreDirs;
+use crate::lock::StoreDirs;
 use crate::key::KeyError;
 use crate::lock::Shared;
 use crate::sync::{OpenStore, SyncError};

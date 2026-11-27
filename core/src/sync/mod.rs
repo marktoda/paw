@@ -24,9 +24,8 @@ pub use transport::{ConnectError, Connection, HostKeyPin, PresentedHostKey, Remo
 
 use crate::PawError;
 use crate::fault::Fault;
-use crate::files::layout::StoreDirs;
 use crate::files::refs;
-use crate::lock::{DEFAULT_WAIT, Exclusive, FETCH_WAIT, Fetching};
+use crate::lock::{DEFAULT_WAIT, Exclusive, FETCH_WAIT, Fetching, StoreDirs};
 use crate::remote::{RefusedPath, RemoteFailure};
 
 /// Why a sync, an integrate or a change to the queue did not happen. In

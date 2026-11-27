@@ -21,11 +21,10 @@ use super::history::{KeptBoth, PawCommit, Replay, ReplayNotes, commits_between, 
 use super::queue::waiting;
 use super::{OpenStore, SyncError, current_branch, git_err};
 use crate::fault::Fault;
-use crate::files::layout::StoreDirs;
 use crate::files::refs;
 use crate::remote::RefusedPath;
 use crate::store::gpg_id::shown_gpg_id_lines;
-use crate::lock::{Exclusive, Shared};
+use crate::lock::{Exclusive, Shared, StoreDirs};
 
 /// A `.gpg-id` that differs between the remote tip paw saw last and the
 /// one it just fetched. paw always says when recipients change.

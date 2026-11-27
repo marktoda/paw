@@ -17,7 +17,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::PawError;
-use crate::files::layout::StoreDirs;
+use crate::lock::StoreDirs;
 use crate::recipients::Access;
 use search::SearchHit;
 use pairings::SitePairings;

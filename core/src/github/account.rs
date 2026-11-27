@@ -4,7 +4,7 @@
 //! The tokens never cross into Swift: Swift only provides where they are
 //! kept ([`TokenVault`]). The token is read-only and is never used to push.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use zeroize::Zeroizing;
@@ -16,6 +16,7 @@ use super::repos::{self, GitHubRepository, RepositoryList};
 use super::session::{TokenKeeper, TokenVault, WallClock, system_wall_clock};
 use super::{Endpoints, GitHubError, Secret};
 use crate::fault::Fault;
+use crate::lock::StoreDirs;
 use crate::remote::RemoteFailure;
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -43,7 +44,7 @@ pub(crate) struct SignInExpiry {
 pub struct GitHubAccount {
     pub(crate) endpoints: Endpoints,
     pub(crate) keeper: Arc<TokenKeeper>,
-    pub(crate) state_dir: PathBuf,
+    pub(crate) store: StoreDirs,
     clock: Arc<dyn PollClock>,
     /// The last list shown, which `select_repository` picks from.
     listed: Mutex<Vec<GitHubRepository>>,
@@ -66,7 +67,7 @@ impl GitHubAccount {
         Self {
             endpoints,
             keeper: Arc::new(TokenKeeper::new(vault, wall)),
-            state_dir: state_dir.to_path_buf(),
+            store: StoreDirs::new(state_dir),
             clock,
             listed: Mutex::new(Vec::new()),
             #[cfg(feature = "sim")]
@@ -163,13 +164,12 @@ impl GitHubAccount {
             .find(|r| r.full_name.eq_ignore_ascii_case(full_name))
             .ok_or_else(|| GitHubError::NotListed { full_name: full_name.to_owned() })?;
         let link = GitHubLink { full_name: chosen.full_name.clone(), ssh_address: chosen.ssh_address.clone() };
-        let _held = crate::lock::StoreLock::for_state_dir(&self.state_dir).exclusive()?;
-        link.save(&self.state_dir)?;
+        link.save(&self.store, &self.store.exclusive()?)?;
         Ok(chosen.ssh_address.clone())
     }
 
     pub fn linked_repository(&self) -> Option<GitHubLink> {
-        GitHubLink::load(&self.state_dir)
+        GitHubLink::load(&self.store)
     }
 
     /// Forgets the sign-in here, and, if `revoke`, asks GitHub to revoke

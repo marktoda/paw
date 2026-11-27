@@ -16,12 +16,13 @@
 //! (<https://docs.codeberg.org/security/ssh-fingerprint/>) and git.sr.ht.
 //! They are confirmed on first use like any other host.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use super::address::StoreAddress;
 use super::transport::{HostKeyPin, PresentedHostKey, Remote, ServerKey};
 use crate::PawError;
 use crate::fault::Fault;
+use crate::lock::{Exclusive, StoreDirs};
 use crate::remote::{PortFallback, RemoteFailure};
 
 /// github.com's SSH host keys, ed25519 first, with their fingerprints.
@@ -178,7 +179,7 @@ pub struct ServerKeys {
 /// Host keys confirmed by the person, one host per line:
 /// `host port algorithm base64`, in the store's state directory.
 pub struct KnownHosts {
-    state_dir: PathBuf,
+    store: StoreDirs,
 }
 
 fn io_err(e: std::io::Error) -> PawError {
@@ -186,17 +187,12 @@ fn io_err(e: std::io::Error) -> PawError {
 }
 
 impl KnownHosts {
-    pub fn of(state_dir: &Path) -> Self {
-        Self { state_dir: state_dir.to_path_buf() }
+    pub fn of(store: &StoreDirs) -> Self {
+        Self { store: store.clone() }
     }
 
     fn path(&self) -> PathBuf {
-        self.state_dir.join(crate::files::layout::KNOWN_HOSTS)
-    }
-
-    /// The store's lock: a change reads, changes and writes the whole file.
-    fn lock(&self) -> Result<crate::lock::Exclusive, PawError> {
-        crate::lock::StoreLock::for_state_dir(&self.state_dir).exclusive()
+        self.store.state_dir().join(crate::files::layout::KNOWN_HOSTS)
     }
 
     fn read(&self) -> Result<Vec<(String, u16, String)>, PawError> {
@@ -274,13 +270,13 @@ impl KnownHosts {
 
     /// Pins `key_line` for `host`, replacing nothing: a host that already
     /// has a pinned key must be forgotten first. Refused for a host whose
-    /// keys ship with paw.
-    pub fn add(&self, host: &str, port: u16, key_line: &str) -> Result<(), Fault> {
+    /// keys ship with paw. A change reads, changes and writes the whole
+    /// file, under the store's lock.
+    pub fn add(&self, _held: &Exclusive, host: &str, port: u16, key_line: &str) -> Result<(), Fault> {
         refuse_if_bundled(host, port)?;
         if key_line.contains(['\n', '\r']) || host.contains([' ', '\n', '\r']) {
             return Err(PawError::Store("not a host key line".into()).into());
         }
-        let _held = self.lock()?;
         let mut entries = self.read()?;
         if entries.iter().any(|(h, p, _)| is((h.as_str(), *p), host, port)) {
             return Err(PawError::Store(format!("{host} already has a saved key")).into());
@@ -293,7 +289,8 @@ impl KnownHosts {
     /// the key `presented` gives for the host `address` connects to, if it
     /// is the one with that fingerprint. `Ok(false)`, pinning nothing, if
     /// it is another. Refused, before `presented` is asked, for a host
-    /// whose keys ship with paw.
+    /// whose keys ship with paw. `presented` may go to the network, so the
+    /// store's lock is taken after it.
     pub fn trust(
         &self,
         address: &StoreAddress,
@@ -306,7 +303,7 @@ impl KnownHosts {
         if presented.fingerprint() != checked.trim() {
             return Ok(false);
         }
-        self.add(host, port, &presented.line()?)?;
+        self.add(&self.store.exclusive()?, host, port, &presented.line()?)?;
         Ok(true)
     }
 
@@ -314,10 +311,9 @@ impl KnownHosts {
     /// › Store › Forget server key, or "I expected this change" in setup.
     /// Refused for a host whose keys ship with paw: a different key from
     /// one of them is always refused.
-    pub fn forget(&self, address: &StoreAddress) -> Result<(), Fault> {
+    pub fn forget(&self, _held: &Exclusive, address: &StoreAddress) -> Result<(), Fault> {
         let (host, port) = (address.connect_host(), address.port);
         refuse_if_bundled(host, port)?;
-        let _held = self.lock()?;
         let mut entries = self.read()?;
         entries.retain(|(h, p, _)| !is((h.as_str(), *p), host, port));
         Ok(self.write(&entries)?)

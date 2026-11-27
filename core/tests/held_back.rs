@@ -24,7 +24,7 @@ use paw_core::sync::operation::SyncState;
 use paw_core::sync::queue;
 use paw_core::write::held_back::{self, LeftHeldBack, LeftReason, ReencryptReport};
 use paw_core::sync::{ChangeKind, Connection};
-use paw_core::files::layout::StoreDirs;
+use paw_core::lock::StoreDirs;
 use paw_core::write::{Draft, Keyring, WriteStore};
 use support::{GitServer, git, move_entry};
 

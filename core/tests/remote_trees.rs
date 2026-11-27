@@ -21,7 +21,7 @@ use paw_core::remote::{RefusedPath, RefusedReason, RemoteFailure};
 use paw_core::sync::{self, Cloned, Connection, SyncError, queue};
 use paw_core::write::Author;
 use key_common::{PIN, signer};
-use paw_core::files::layout::StoreDirs;
+use paw_core::lock::StoreDirs;
 use support::{GitServer, Phone, git};
 
 
@@ -507,6 +507,7 @@ fn a_clone_on_a_casefold_file_system_writes_no_link() {
     let server = server(&card);
     host_commit(&server, &store(vec![("caf\u{e9}", Link(".."))]));
     let state = Path::new(&base).join("state");
+    std::fs::create_dir(&state).unwrap();
     let dir = state.join(paw_core::files::layout::REPO);
     let dirs = StoreDirs::new(&state);
 

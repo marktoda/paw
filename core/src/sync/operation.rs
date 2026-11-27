@@ -8,10 +8,9 @@
 use super::integrate::{self, IntegrateReport, Integration, Plan, Replaced};
 use super::transport::{ConnectError, Connection, Remote};
 use super::{OpenStore, PushError, SyncError, TransferCallback, current_branch, fetch_branches, git_err, push_tip};
-use crate::files::layout::StoreDirs;
 use crate::key::KeyError;
 use crate::remote::RemoteFailure;
-use crate::lock::{Exclusive, Shared};
+use crate::lock::{Exclusive, Shared, StoreDirs};
 use crate::key::{Halt, SshSigner};
 
 /// Where a sync ended.

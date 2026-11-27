@@ -25,7 +25,6 @@
 //! together (`sync::integrate`); a fetch without its integrate is picked
 //! up by the next refresh.
 
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -35,10 +34,9 @@ use super::http::Http;
 use super::transport::HttpsRemote;
 use super::{GitHubError, Secret};
 use crate::fault::Fault;
-use crate::files::layout::StoreDirs;
 use crate::files::{layout, values};
 use crate::remote::RemoteFailure;
-use crate::lock::{Exclusive, Shared};
+use crate::lock::{Exclusive, Shared, StoreDirs};
 use crate::sync::address::{StoreAddress, github_repository, saved_address};
 use crate::sync::integrate::{self, IntegrateReport, RecipientsChange, Replaced};
 use crate::sync::operation::{SyncReport, SyncState};
@@ -61,17 +59,16 @@ pub struct GitHubLink {
 }
 
 impl GitHubLink {
-    pub(crate) fn save(&self, state_dir: &Path) -> Result<(), Fault> {
+    pub(crate) fn save(&self, store: &StoreDirs, _held: &Exclusive) -> Result<(), Fault> {
         let failed = |e: std::io::Error| Fault::local(format!("could not save the chosen repository: {e}"));
-        std::fs::create_dir_all(state_dir).map_err(failed)?;
         let (full_name, ssh) = (self.full_name.replace(['\n', '\r'], ""), self.ssh_address.replace(['\n', '\r'], ""));
         // Files written before kept an `id` line too; it is not read.
         let pairs = [("repository", full_name.as_str()), ("ssh", ssh.as_str())];
-        values::write(&state_dir.join(layout::GITHUB_LINK), pairs).map_err(failed)
+        values::write(&store.state_dir().join(layout::GITHUB_LINK), pairs).map_err(failed)
     }
 
-    pub(crate) fn load(state_dir: &Path) -> Option<Self> {
-        let found = values::read(&state_dir.join(layout::GITHUB_LINK)).ok()??;
+    pub(crate) fn load(store: &StoreDirs) -> Option<Self> {
+        let found = values::read(&store.state_dir().join(layout::GITHUB_LINK)).ok()??;
         let full_name = found.get("repository")?.to_owned();
         // The HTTPS path is built from it: GitHub's rules for names only.
         github_repository(&full_name)?;
@@ -161,14 +158,10 @@ impl BackgroundRefreshReport {
 }
 
 impl GitHubAccount {
-    fn store(&self) -> StoreDirs {
-        StoreDirs::new(&self.state_dir)
-    }
-
     /// The chosen repository, if the store's remote is it. Reads files only.
     fn checked_link(&self) -> Result<GitHubLink, GitHubError> {
-        let link = GitHubLink::load(&self.state_dir).ok_or(RemoteFailure::NotLinked)?;
-        let store = saved_address(&self.state_dir)?;
+        let link = GitHubLink::load(&self.store).ok_or(RemoteFailure::NotLinked)?;
+        let store = saved_address(&self.store)?;
         if !link.is_store(&store) {
             return Err(RemoteFailure::WrongRepository { store: store.display(), granted: link.full_name }.into());
         }
@@ -242,7 +235,7 @@ impl GitHubAccount {
         if stopping(RefreshStep::Fetch) {
             return out_of_time();
         }
-        let store = match OpenStore::open(&self.store()) {
+        let store = match OpenStore::open(&self.store) {
             Ok(store) => store,
             Err(e) => return failed(e.into()),
         };
@@ -358,7 +351,7 @@ impl GitHubAccount {
         }
         let link = self.checked_link()?;
         let http = Http::new(&self.endpoints, None);
-        let store = OpenStore::open(&self.store())?;
+        let store = OpenStore::open(&self.store)?;
         let held =
             self.fetch_with_token(&store, &http, &link, crate::lock::FETCH_WAIT, &|| crate::lock::DEFAULT_WAIT, None)?;
         crate::sync::operation::integrate_fetched(&held, &store, integrate::plan(&held, &store)?)

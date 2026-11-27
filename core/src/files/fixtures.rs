@@ -4,6 +4,7 @@
 use std::path::Path;
 
 use super::layout;
+use crate::lock::StoreDirs;
 
 const FINGERPRINT: &str = "0123456789ABCDEF0123456789ABCDEF01234567";
 const AUTH_FINGERPRINT: &str = "89ABCDEF0123456789ABCDEF0123456789ABCDEF";
@@ -11,6 +12,10 @@ const SSH_KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwND
 
 fn state() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
+}
+
+fn dirs(dir: &tempfile::TempDir) -> StoreDirs {
+    StoreDirs::new(dir.path())
 }
 
 fn put(dir: &Path, name: &str, bytes: &[u8]) {
@@ -27,13 +32,14 @@ fn the_enrolled_key() {
     let bytes = format!("ident=0006:12345678\ndecryption_fingerprint={FINGERPRINT}\nauthentication_fingerprint={AUTH_FINGERPRINT}\n");
     let dir = state();
     put(dir.path(), layout::ENROLLED_KEY, bytes.as_bytes());
-    let key = load_enrolment(dir.path()).unwrap().unwrap();
+    let key = load_enrolment(&dirs(&dir)).unwrap().unwrap();
     assert_eq!(key.ident, "0006:12345678");
     assert_eq!(key.decryption_fingerprint.as_deref(), Some(FINGERPRINT));
     assert_eq!(key.authentication_fingerprint.as_deref(), Some(AUTH_FINGERPRINT));
 
     let again = state();
-    save_enrolment(again.path(), &key).unwrap();
+    let store = dirs(&again);
+    save_enrolment(&store, &store.exclusive().unwrap(), &key).unwrap();
     assert_eq!(get(again.path(), layout::ENROLLED_KEY), bytes.as_bytes());
 }
 
@@ -62,7 +68,7 @@ fn the_setup_step() {
             }),
         }
     );
-    assert!(!crate::setup::is_set_up(dir.path()));
+    assert!(!crate::setup::is_set_up(&dirs(&dir)));
 
     // Setting the same address saves the file again, as it was.
     flow.set_address("ssh://git@example.com/you/store.git").unwrap();
@@ -93,14 +99,14 @@ fn a_finished_setup() {
     put(dir.path(), layout::SETUP, b"step=done\nident=0006:12345678\n");
     std::fs::create_dir_all(layout::repo_dir(dir.path())).unwrap();
     put(&layout::repo_dir(dir.path()), ".gpg-id", b"AAAA1111\n");
-    assert!(crate::setup::is_set_up(dir.path()));
+    assert!(crate::setup::is_set_up(&dirs(&dir)));
 }
 
 #[test]
 fn the_remote() {
     let dir = state();
     put(dir.path(), layout::REMOTE, b"ssh://git@example.com/you/store.git\n");
-    let address = crate::sync::address::saved_address(dir.path()).unwrap();
+    let address = crate::sync::address::saved_address(&dirs(&dir)).unwrap();
     assert_eq!(address.display(), "ssh://git@example.com/you/store.git");
 }
 
@@ -112,13 +118,14 @@ fn the_github_link() {
     let bytes = b"repository=you/store\nssh=git@github.com:you/store.git\n";
     let dir = state();
     put(dir.path(), layout::GITHUB_LINK, older);
-    let link = GitHubLink::load(dir.path()).unwrap();
+    let link = GitHubLink::load(&dirs(&dir)).unwrap();
     assert_eq!(link, GitHubLink { full_name: "you/store".into(), ssh_address: "git@github.com:you/store.git".into() });
 
     let again = state();
-    link.save(again.path()).unwrap();
+    let store = dirs(&again);
+    link.save(&store, &store.exclusive().unwrap()).unwrap();
     assert_eq!(get(again.path(), layout::GITHUB_LINK), bytes);
-    assert_eq!(GitHubLink::load(again.path()), Some(link));
+    assert_eq!(GitHubLink::load(&store), Some(link));
 }
 
 #[test]
@@ -127,11 +134,12 @@ fn the_known_hosts() {
     let bytes = format!("git.example.com 22 {SSH_KEY}\n");
     let dir = state();
     put(dir.path(), layout::KNOWN_HOSTS, bytes.as_bytes());
-    let hosts = KnownHosts::of(dir.path());
+    let hosts = KnownHosts::of(&dirs(&dir));
     assert!(hosts.lookup("git.example.com", 22).unwrap().is_some());
 
     let again = state();
-    KnownHosts::of(again.path()).add("git.example.com", 22, SSH_KEY).unwrap();
+    let store = dirs(&again);
+    KnownHosts::of(&store).add(&store.exclusive().unwrap(), "git.example.com", 22, SSH_KEY).unwrap();
     assert_eq!(get(again.path(), layout::KNOWN_HOSTS), bytes.as_bytes());
 }
 
@@ -155,10 +163,10 @@ fn pinned_recipients(keys: &str) -> String {
     )
 }
 
-fn store_with_recipients(bytes: &str) -> (tempfile::TempDir, layout::StoreDirs) {
+fn store_with_recipients(bytes: &str) -> (tempfile::TempDir, crate::lock::StoreDirs) {
     let dir = state();
     put(dir.path(), layout::RECIPIENTS, bytes.as_bytes());
-    let store = layout::StoreDirs::new(dir.path());
+    let store = crate::lock::StoreDirs::new(dir.path());
     std::fs::create_dir_all(store.repo_dir()).unwrap();
     put(store.repo_dir(), ".gpg-id", b"AAAA1111\n");
     (dir, store)

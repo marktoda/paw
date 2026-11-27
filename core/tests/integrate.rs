@@ -22,7 +22,7 @@ use paw_core::sync::{
     self, ChangeKind, Cloned, Connection, HostKeyPin, IntegrateReport, Integration, KeptBoth,
     RecipientsChange, SyncError,
 };
-use paw_core::files::layout::StoreDirs;
+use paw_core::lock::StoreDirs;
 use paw_core::write::{Author, WriteStore};
 use key_common::{PIN, signer, sync_failure};
 use support::{GitServer, git, move_entry};

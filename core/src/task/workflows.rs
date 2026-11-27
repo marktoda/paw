@@ -3,12 +3,11 @@
 //! re-encrypting held-back changes. Each is one of the key tasks of
 //! [`super::start`] with its work after the key.
 
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use super::{After, DecryptWork, KeyOutcome, KeyPurpose, KeyTask, KeyTaskListener, LoginPurpose, TaskFailure, TaskProgress, Work};
 use crate::key::{Halt, KeyIdentity, KeyPort};
-use crate::files::layout::StoreDirs;
+use crate::lock::StoreDirs;
 use crate::locked;
 use crate::remote::RemoteFailure;
 use crate::setup::{SetupError, SetupFlow};
@@ -78,22 +77,21 @@ pub(crate) fn check_key(
     port.check_key_then(store, entry, listener, expected, after)
 }
 
-/// A send (`login` is `Push`) or a refresh of the set-up store in
-/// `state_dir`, on one login.
+/// A send (`login` is `Push`) or a refresh of the set-up `store`, on one
+/// login.
 pub(crate) fn sync(
     port: &Arc<KeyPort>,
     listener: Arc<dyn KeyTaskListener>,
     login: LoginPurpose,
-    state_dir: PathBuf,
+    store: StoreDirs,
     address: StoreAddress,
 ) -> Arc<KeyTask> {
     let push = matches!(login, LoginPurpose::Push);
     let work: Work = Box::new(move |job, signer| {
-        let remote = KnownHosts::of(&state_dir)
+        let remote = KnownHosts::of(&store)
             .remote(&address)
             .map_err(SyncError::from)?
             .ok_or_else(|| SyncError::from(RemoteFailure::NoSavedHostKey { host: address.connect_host().to_owned() }))?;
-        let store = StoreDirs::new(&state_dir);
         let stop = || job.cancelled();
         let mut progress = |update: TransferProgress| job.progress(update.into());
         let report = operation::run_until::<TaskFailure>(&remote, &signer, &store, held_back::holds_back, push, &stop, Some(&mut progress))?;
@@ -103,14 +101,9 @@ pub(crate) fn sync(
     port.sign_in_then(login, listener, expected, work)
 }
 
-/// "Re-encrypt": opens each held-back change of the store in `state_dir`
-/// that is ready and encrypts it for its folder's new list, one touch each.
-pub(crate) fn reencrypt(
-    port: &Arc<KeyPort>,
-    listener: Arc<dyn KeyTaskListener>,
-    state_dir: PathBuf,
-) -> Arc<KeyTask> {
-    let store = StoreDirs::new(&state_dir);
+/// "Re-encrypt": opens each held-back change of `store` that is ready and
+/// encrypts it for its folder's new list, one touch each.
+pub(crate) fn reencrypt(port: &Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>, store: StoreDirs) -> Arc<KeyTask> {
     if let Err(error) = held_back::reencrypt_check(&store) {
         return KeyTask::refused(KeyPurpose::Reencrypt, listener, error.into());
     }
