@@ -27,19 +27,15 @@ extension AppModel {
             forName: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.deviceLocked()
+                self?.closeAllSessions(because: .deviceLocked)
             }
         }
-    }
-
-    func deviceLocked() {
-        closeAllSessions(because: .deviceLocked)
     }
 
     /// An entry that opened with a Face ID copy closes once the copy has
     /// ended (on the copies' clock), as its row moves to "needs your key".
     func closeEntriesWhoseCopyEnded() {
-        for (id, session) in sessions where session.hadCopy && liveCopy(session.ref.path) == nil {
+        for (id, session) in sessions where session.hadCopy && copies.copy(of: session.ref.path) == nil {
             closeSession(id, because: .copyEnded)
         }
     }
@@ -50,20 +46,17 @@ extension AppModel {
 
     /// "Lock this password" on an open entry: ends its Face ID copy only,
     /// closes it and goes back to the list. Lock now in Settings ends all.
+    /// A copy that could not be ended is said on the list, not called
+    /// locked.
     func lockEntry(_ session: OpenSession) {
+        let name = session.ref.name
         do {
-            try storeSession.copies?.forgetEntry(entry: session.ref.path)
+            try copies.tryChange { try $0.forgetEntry(entry: session.ref.path) }
+            toast = Toast(text: "Locked. \(name) needs your key again.")
         } catch {
-            notice = Notice(
-                problem: "Couldn't lock \(session.ref.name)",
-                nextStep: "Use Lock now in Settings.")
+            notice = Notice(problem: "Couldn't lock \(name)", nextStep: "Use Lock now in Settings.")
         }
-        closeSession(session.id, because: .copyEnded)
-        if path.last == .entry(session.id) {
-            setPath(Array(path.dropLast()))
-        }
-        refreshCopies()
-        toast = Toast(text: "Locked. \(session.ref.name) needs your key again.")
+        leave(.entry(session.id))
     }
 
     /// "Open again" on a closed entry: back to the list, then open it as a

@@ -45,7 +45,7 @@ struct SetupFlowView: View {
         }
         .onChange(of: scenePhase) {
             switch scenePhase {
-            case .background: model.keyPort.session()?.noteBackgrounded()
+            case .background: model.reader.backgrounded()
             case .active: model.foregrounded()
             default: break
             }

@@ -44,7 +44,6 @@ enum StoreChange {
     case synced(IntegrateReport?, replaced: Bool)
     /// A re-encrypt of held-back changes ended, however it ended.
     case reencrypted
-    case removed
 
     struct Renamed: Equatable {
         let from: String
@@ -55,7 +54,7 @@ enum StoreChange {
     var rewritesEntries: Bool {
         switch self {
         case .wrote, .synced, .reencrypted: true
-        case .recipientsAccepted, .removed: false
+        case .recipientsAccepted: false
         }
     }
 }

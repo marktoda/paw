@@ -39,7 +39,7 @@ struct EntryScreen: View {
             Section {
                 VStack(alignment: .leading, spacing: PawMetrics.Spacing.l) {
                     header
-                    if let copy = model.liveCopy(entry.path) {
+                    if let copy = model.copies.copy(of: entry.path) {
                         // This entry's copy only; Lock now in Settings ends them all.
                         FaceIDWindowBar(
                             text: "Opens with Face ID until \(clockTime(ms: copy.untilMs))",
@@ -240,7 +240,7 @@ struct EntryScreen: View {
 
     /// The copy confirmation says when the clipboard clears; said once, there.
     private var footer: String? {
-        model.liveCopy(entry.path) == nil ? "Needs your key each time." : nil
+        model.copies.copy(of: entry.path) == nil ? "Needs your key each time." : nil
     }
 
     // MARK: Values

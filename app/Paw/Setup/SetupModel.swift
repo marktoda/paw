@@ -199,7 +199,7 @@ final class SetupModel {
     /// (it may drop a PIN held too long), and a key that is in but was not
     /// read is read again.
     func foregrounded() {
-        keyPort.session()?.noteForegrounded()
+        reader.foregrounded()
         guard keyPresent, keyPort.session() == nil, working == nil else { return }
         if screen == .plugIn, sheet == nil {
             readKey()

@@ -38,7 +38,7 @@ final class ClosingTests: XCTestCase {
         model.timePassed()
         XCTAssertEqual(model.closedEntry(id)?.reason, .copyEnded)
         XCTAssertNil(model.session(id), "A closed entry keeps nothing of it")
-        XCTAssertNil(model.liveCopy("web/github.com"))
+        XCTAssertNil(model.copies.copy(of: "web/github.com"))
 
         // Opening again needs the key; the PIN is still held.
         model.reopen(id)
@@ -95,8 +95,8 @@ final class ClosingTests: XCTestCase {
 
         model.lockEntry(session)
         XCTAssertEqual(model.toast?.text, "Locked. gitlab.com needs your key again.")
-        XCTAssertNil(model.liveCopy("web/gitlab.com"))
-        XCTAssertNotNil(model.liveCopy("web/github.com"))
+        XCTAssertNil(model.copies.copy(of: "web/gitlab.com"))
+        XCTAssertNotNil(model.copies.copy(of: "web/github.com"))
         XCTAssertEqual(model.rowAccess("web/gitlab.com"), .needsKey)
         XCTAssertEqual(model.rowAccess("web/github.com"), .faceID)
         XCTAssertFalse(model.path.contains(.entry(id)), "Back to the list")
@@ -127,8 +127,8 @@ final class ClosingTests: XCTestCase {
         XCTAssertNil(model.keyRequest)
         model.keySheetDismissed()
         XCTAssertEqual(model.path, [], "A late finish after Cancel opens nothing")
-        XCTAssertNotNil(model.liveCopy("web/github.com"))
-        XCTAssertNil(model.liveCopy("web/gitlab.com"), "The late open's copy was removed")
+        XCTAssertNotNil(model.copies.copy(of: "web/github.com"))
+        XCTAssertNil(model.copies.copy(of: "web/gitlab.com"), "The late open's copy was removed")
         XCTAssertFalse(model.recentPaths.contains("web/gitlab.com"))
     }
 }

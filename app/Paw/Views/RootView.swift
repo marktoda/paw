@@ -166,7 +166,7 @@ private struct ClosedEntryScreen: View {
                 Button {
                     model.reopen(id)
                 } label: {
-                    if model.liveCopy(closed.ref.path) != nil {
+                    if model.copies.copy(of: closed.ref.path) != nil {
                         Text(Device.words("Open with Face ID"))
                     } else {
                         KeyButtonLabel(title: "Open with your key")

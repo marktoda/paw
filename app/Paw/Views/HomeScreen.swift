@@ -36,7 +36,6 @@ struct HomeScreen: View {
                 settingsButton
             }
         }
-        .onAppear { model.refreshCopies() }
     }
 
     private var sidebar: some View {
@@ -56,7 +55,6 @@ struct HomeScreen: View {
                     settingsButton
                 }
             }
-            .onAppear { model.refreshCopies() }
     }
 
     private var settingsButton: some View {
@@ -99,7 +97,7 @@ struct HomeScreen: View {
             UnpushedSection(model: model)
             SyncSummarySection(model: model)
             NoticeSection(model: model)
-            if let problem = model.copiesProblem {
+            if let problem = model.copies.problem {
                 Section {
                     ErrorRow(
                         kind: .warning, problem: problem,
@@ -107,9 +105,9 @@ struct HomeScreen: View {
                         .pawListRow()
                 }
             }
-            if !model.liveCopies.isEmpty {
+            if !model.copies.list.isEmpty {
                 Section {
-                    ForEach(model.liveCopies, id: \.entry) { copy in
+                    ForEach(model.copies.list, id: \.entry) { copy in
                         let entry = EntryRef(path: copy.entry)
                         EntryRowFor(
                             model: model, entry: entry,

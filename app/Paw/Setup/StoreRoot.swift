@@ -161,7 +161,7 @@ final class StoreRootModel {
 
     private func removeStoreNow() -> String? {
         if case .home(let model) = phase {
-            model.storeSession.live.announce(.removed)
+            model.lockNow()
         }
         let problems = wipeAndRestart()
         if let keychain = problems.keychain {

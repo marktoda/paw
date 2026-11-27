@@ -23,9 +23,10 @@ enum FixtureLaunch {
             return AppModel(session: fixture.session)
         } catch {
             let fixture = try FixtureSession(on: LaunchedHardware.app, writable: false, keyLog: true)
-            let notice = Notice(
+            let model = AppModel(session: fixture.session)
+            model.notice = Notice(
                 problem: "Adding passwords isn't available in this test store.", nextStep: describe(error))
-            return AppModel(session: fixture.session, notice: notice)
+            return model
         }
     }
 }
