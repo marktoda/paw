@@ -409,7 +409,7 @@ impl SetupFlow {
     }
 
     fn open_store(&self) -> Result<Arc<PassStore>, SetupError> {
-        PassStore::open(self.store.state_dir().to_string_lossy().into_owned()).map_err(SetupError::from)
+        PassStore::of(self.store.clone()).map_err(SetupError::from)
     }
 
     fn known_hosts(&self) -> KnownHosts {

@@ -39,13 +39,7 @@ impl PassStore {
     /// The store kept in `state_dir`, checked out in its `repo/`.
     #[uniffi::constructor(name = "new")]
     pub fn open(state_dir: String) -> Result<Arc<Self>, PawError> {
-        let store = StoreDirs::new(Path::new(&state_dir));
-        // With the store lock shared: a checkout is never seen half done.
-        let tree = {
-            let _reading = store.shared()?;
-            StoreTree::scan(store.repo_dir())?
-        };
-        Ok(Arc::new(Self { store, tree }))
+        Self::of(StoreDirs::new(Path::new(&state_dir)))
     }
 
     pub fn home(&self) -> FolderListing {
@@ -110,6 +104,15 @@ impl PassStore {
 }
 
 impl PassStore {
+    pub(crate) fn of(store: StoreDirs) -> Result<Arc<Self>, PawError> {
+        // With the store lock shared: a checkout is never seen half done.
+        let tree = {
+            let _reading = store.shared()?;
+            StoreTree::scan(store.repo_dir())?
+        };
+        Ok(Arc::new(Self { store, tree }))
+    }
+
     /// The encrypted bytes of `entry` ([`read::read_entry`]), read with the
     /// store lock shared (so never a file a checkout is halfway through
     /// writing) and released before anything slow, such as asking the key
