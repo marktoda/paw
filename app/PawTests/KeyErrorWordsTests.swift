@@ -89,10 +89,10 @@ final class SharedWordsTests: XCTestCase {
     }
 
     func testFaceIdNoticesOfferTheKey() {
-        let locked = FaceIdWords.notice(PawError.FaceIdLockedOut, entry: "github.com", table: .app)
+        let locked = FaceIdWords.notice(PawError.FaceIdLockedOut, entry: EntryRef(path: "web/github.com"), table: .app)
         XCTAssertEqual(locked.problem, "Face ID is off until you enter your iPhone passcode")
         XCTAssertEqual(locked.nextStep, "Lock and unlock your iPhone, then try again.")
-        let changed = FaceIdWords.notice(PawError.FaceIdChanged, entry: "github.com", table: .app)
+        let changed = FaceIdWords.notice(PawError.FaceIdChanged, entry: EntryRef(path: "web/github.com"), table: .app)
         XCTAssertEqual(changed.problem, "Face ID changed, so its saved copies were removed")
         XCTAssertEqual(changed.nextStep, "Open github.com with your key.")
         XCTAssertEqual(describe(PawError.FaceIdNotRecognised), "Face ID didn't recognise you.")
@@ -107,17 +107,17 @@ final class SharedWordsTests: XCTestCase {
         XCTAssertEqual(
             KeyErrorWords(.failed(KeyError.KeyRemoved), table: .autoFill).nextStep,
             "Unplug it, plug it back in, then try again.")
-        let locked = FaceIdWords.notice(PawError.FaceIdLockedOut, entry: "github.com", table: .autoFill)
+        let locked = FaceIdWords.notice(PawError.FaceIdLockedOut, entry: EntryRef(path: "web/github.com"), table: .autoFill)
         XCTAssertEqual(locked.problem, "Face ID is locked")
-        let other = FaceIdWords.notice(PawError.CopyUnavailable, entry: "github.com", table: .autoFill)
+        let other = FaceIdWords.notice(PawError.CopyUnavailable, entry: EntryRef(path: "web/github.com"), table: .autoFill)
         XCTAssertEqual(other.problem, "Face ID didn't open github.com")
         XCTAssertEqual(other.nextStep, "")
     }
 
     func testABusyStoreDuringAFaceIdOpenAsksForAnotherTryNotTheKey() {
         for table in [WordTable.app, .autoFill] {
-            let busy = FaceIdWords.notice(PawError.StoreBusy, entry: "github.com", table: table)
-            XCTAssertEqual(busy, FaceIdNotice(problem: "The store is busy", nextStep: "Try again in a moment.", offersKey: false))
+            let busy = FaceIdWords.notice(PawError.StoreBusy, entry: EntryRef(path: "web/github.com"), table: table)
+            XCTAssertEqual(busy, Notice(problem: "The store is busy", nextStep: "Try again in a moment."))
         }
         XCTAssertEqual(describe(PawError.StoreBusy), "The store is busy. Try again in a moment.")
     }

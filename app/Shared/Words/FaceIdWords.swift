@@ -20,9 +20,9 @@ enum FaceIdWords {
 
     /// The notice after tapping `entry` failed with `error`. A busy store asks for another tap, never the key:
     /// the key would wait for the same store.
-    static func notice(_ error: Swift.Error, entry: String, table: WordTable) -> FaceIdNotice {
+    static func notice(_ error: Swift.Error, entry: EntryRef, table: WordTable) -> Notice {
         if isStoreBusy(error) {
-            return FaceIdNotice(problem: StoreBusyWords.problem, nextStep: StoreBusyWords.nextStep, offersKey: false)
+            return Notice(problem: StoreBusyWords.problem, nextStep: StoreBusyWords.nextStep)
         }
         return table.faceIdNotice(error, entry)
     }
