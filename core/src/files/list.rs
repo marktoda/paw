@@ -67,7 +67,7 @@ impl<T: ListItem> ListFile<T> {
     }
 
     fn turn(&self) -> MutexGuard<'static, ()> {
-        self.kind.writing.lock().unwrap_or_else(|e| e.into_inner())
+        crate::locked(&self.kind.writing)
     }
 
     fn marker(&self) -> Option<PathBuf> {

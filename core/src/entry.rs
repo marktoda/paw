@@ -57,6 +57,20 @@ pub(crate) enum FieldRefusal {
     ValueReadsAsOther,
 }
 
+impl FieldRefusal {
+    /// The refusal as the form says it; `what` names the value, e.g. "The
+    /// value of PIN".
+    pub(crate) fn sentence(self, what: &str) -> String {
+        match self {
+            Self::KeyBlank => "Give the field a name.".into(),
+            Self::KeyLineBreak => "A field name can't contain a line break.".into(),
+            Self::KeyColon => "A field name can't contain a colon.".into(),
+            Self::ValueLineBreak => format!("{what} can't contain a line break."),
+            Self::ValueReadsAsOther => format!("{what} can't start with // or be a one-time-code address."),
+        }
+    }
+}
+
 pub(crate) fn key_refusal(key: &str) -> Option<FieldRefusal> {
     if key.trim().is_empty() {
         Some(FieldRefusal::KeyBlank)
@@ -88,6 +102,14 @@ pub(crate) fn note_lines(notes: &str) -> Option<Vec<&str>> {
         *line = line.strip_suffix('\r').unwrap_or(line);
     }
     (!lines.iter().any(|line| line.contains('\r'))).then_some(lines)
+}
+
+/// `lines` without blank lines at either end.
+fn trim_blank<'a, 'b>(lines: &'b [&'a str]) -> &'b [&'a str] {
+    let blank = |line: &&str| line.trim().is_empty();
+    let start = lines.iter().position(|line| !blank(line)).unwrap_or(lines.len());
+    let end = lines.iter().rposition(|line| !blank(line)).map_or(start, |last| last + 1);
+    &lines[start..end]
 }
 
 /// How a line ended in the file. Kept per line, because a file edited on
@@ -324,10 +346,7 @@ impl EntryDoc {
             .filter(|line| matches!(kind(&line.text), Kind::Note))
             .map(|line| line.text.as_str())
             .collect();
-        let blank = |line: &&str| line.trim().is_empty();
-        let start = notes.iter().position(|line| !blank(line)).unwrap_or(notes.len());
-        let end = notes.iter().rposition(|line| !blank(line)).map_or(start, |last| last + 1);
-        Zeroizing::new(notes[start..end].join("\n"))
+        Zeroizing::new(trim_blank(&notes).join("\n"))
     }
 
     fn usual_ending(&self) -> Ending {
@@ -335,6 +354,24 @@ impl EntryDoc {
             Some(Ending::CrLf) => Ending::CrLf,
             _ => Ending::Lf,
         }
+    }
+
+    /// Makes room for a line after the last: ends the last line with
+    /// `ending` if it has none, or, in an empty document, adds the
+    /// password line an entry needs before anything else.
+    fn end_last_line(&mut self, ending: Ending) {
+        match self.lines.last_mut() {
+            None => self.lines.push(Line { text: Zeroizing::new(String::new()), ending }),
+            Some(last) if last.ending == Ending::None => last.ending = ending,
+            Some(_) => {}
+        }
+    }
+
+    /// Adds `text` as a new last line.
+    fn push_line(&mut self, text: String) {
+        let ending = self.usual_ending();
+        self.end_last_line(ending);
+        self.lines.push(Line { text: Zeroizing::new(text), ending });
     }
 
     /// Replaces the first line and nothing else.
@@ -354,19 +391,8 @@ impl EntryDoc {
     /// keeping the key and the spacing after its colon as written. If there
     /// is no such field, one is added as a new last line.
     pub fn set_field(&mut self, key: &str, value: &str) -> Result<(), PawError> {
-        let refusal = key_refusal(key).or_else(|| value_refusal(value));
-        let why = match refusal {
-            None => None,
-            Some(FieldRefusal::KeyLineBreak | FieldRefusal::ValueLineBreak) => Some("a field cannot contain a line break"),
-            Some(FieldRefusal::KeyBlank | FieldRefusal::KeyColon) => {
-                Some("a field needs a name, and the name cannot contain a colon")
-            }
-            Some(FieldRefusal::ValueReadsAsOther) => {
-                Some("a field's value cannot start with `//` or be a one-time-code address")
-            }
-        };
-        if let Some(why) = why {
-            return Err(PawError::InvalidField(why.into()));
+        if let Some(refusal) = key_refusal(key).or_else(|| value_refusal(value)) {
+            return Err(PawError::InvalidField(refusal.sentence(&format!("The value of {}", key.trim()))));
         }
         let key = key.trim();
         let value = value.trim();
@@ -386,14 +412,7 @@ impl EntryDoc {
             return Ok(());
         }
 
-        let ending = self.usual_ending();
-        match self.lines.last_mut() {
-            // An entry needs its password line before any field.
-            None => self.lines.push(Line { text: Zeroizing::new(String::new()), ending }),
-            Some(last) if last.ending == Ending::None => last.ending = ending,
-            Some(_) => {}
-        }
-        self.lines.push(Line { text: Zeroizing::new(format!("{key}: {value}")), ending });
+        self.push_line(format!("{key}: {value}"));
         Ok(())
     }
 }
@@ -408,13 +427,11 @@ impl EntryDoc {
     /// A second document with the same bytes. Both wipe their memory when
     /// dropped.
     pub fn duplicate(&self) -> Self {
-        let mut bytes = self.to_bytes();
-        // Valid UTF-8 already, so this cannot fail; an empty document if it
-        // somehow did.
-        Self::parse(std::mem::take(&mut *bytes)).unwrap_or_else(|_| Self::empty())
+        let lines = self.lines.iter().map(|line| Line { text: line.text.clone(), ending: line.ending }).collect();
+        Self { lines }
     }
 
-    /// Removes line `index`. The line before keeps its ending.
+    /// The line before keeps its ending.
     fn remove_line(&mut self, index: usize) {
         if index < self.lines.len() {
             self.lines.remove(index);
@@ -476,13 +493,7 @@ impl EntryDoc {
             line.text = text;
             return Ok(());
         }
-        let ending = self.usual_ending();
-        match self.lines.last_mut() {
-            None => self.lines.push(Line { text: Zeroizing::new(String::new()), ending }),
-            Some(last) if last.ending == Ending::None => last.ending = ending,
-            Some(_) => {}
-        }
-        self.lines.push(Line { text: Zeroizing::new(address.to_owned()), ending });
+        self.push_line(address.to_owned());
         Ok(())
     }
 
@@ -508,10 +519,7 @@ impl EntryDoc {
     pub fn set_notes(&mut self, notes: &str) -> Result<(), PawError> {
         let wanted = note_lines(notes)
             .ok_or_else(|| PawError::InvalidField("notes cannot contain a lone carriage return".into()))?;
-        let blank = |line: &&str| line.trim().is_empty();
-        let start = wanted.iter().position(|line| !blank(line)).unwrap_or(wanted.len());
-        let end = wanted.iter().rposition(|line| !blank(line)).map_or(start, |last| last + 1);
-        let wanted = &wanted[start..end];
+        let wanted = trim_blank(&wanted);
         let current = self.notes();
         if current.split('\n').filter(|_| !current.is_empty()).eq(wanted.iter().copied()) {
             return Ok(());
@@ -539,14 +547,8 @@ impl EntryDoc {
         };
 
         let ending = self.usual_ending();
-        if at == self.lines.len() {
-            match self.lines.last_mut() {
-                None if !wanted.is_empty() => {
-                    self.lines.push(Line { text: Zeroizing::new(String::new()), ending })
-                }
-                Some(last) if last.ending == Ending::None && !wanted.is_empty() => last.ending = ending,
-                _ => {}
-            }
+        if at == self.lines.len() && !wanted.is_empty() {
+            self.end_last_line(ending);
         }
         let at = at.min(self.lines.len()).max(usize::from(!self.lines.is_empty()));
         for (offset, line) in wanted.iter().enumerate() {

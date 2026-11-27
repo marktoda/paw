@@ -70,7 +70,7 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
     let (_, files) = waiting_files(dir)?;
     let mut held = Vec::new();
     for file in files {
-        if !crate::path::is_entry_file(&file.path) {
+        if crate::path::entry_of_file(&file.path).is_none() {
             continue;
         }
         let folder = crate::path::folder_of(&file.path);

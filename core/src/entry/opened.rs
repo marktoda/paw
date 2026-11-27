@@ -7,6 +7,8 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use zeroize::Zeroizing;
+
 use crate::PawError;
 use crate::entry::EntryDoc;
 
@@ -40,7 +42,6 @@ pub struct OtpCode {
     pub code: String,
     /// Seconds until the next code: 1 to `period`.
     pub seconds_left: u32,
-    /// Seconds each code lasts.
     pub period: u32,
 }
 
@@ -78,8 +79,9 @@ impl OpenedEntry {
         Arc::new(Self { doc: Mutex::new(Some(doc)), content_id })
     }
 
-    pub fn decrypted(plaintext: Vec<u8>, content_id: Vec<u8>) -> Result<Arc<Self>, PawError> {
-        Ok(Self::new(EntryDoc::parse(plaintext)?, content_id))
+    pub fn decrypted(plaintext: impl Into<Zeroizing<Vec<u8>>>, content_id: Vec<u8>) -> Result<Arc<Self>, PawError> {
+        let mut plaintext = plaintext.into();
+        Ok(Self::new(EntryDoc::parse(std::mem::take(&mut *plaintext))?, content_id))
     }
 
     fn doc(&self) -> MutexGuard<'_, Option<EntryDoc>> {

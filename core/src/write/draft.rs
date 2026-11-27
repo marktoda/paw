@@ -17,7 +17,7 @@
 
 use zeroize::Zeroizing;
 
-use crate::entry::{EntryDoc, FieldRefusal, has_line_break, key_refusal, note_lines, value_refusal};
+use crate::entry::{EntryDoc, has_line_break, key_refusal, note_lines, value_refusal};
 use crate::generate::{PasswordPolicy, PolicyError, generate};
 use crate::path::{NameRefusal, case_folded, folder_and_parents, folder_refusal, join, name_refusal, split};
 use crate::store::tree::StoreTree;
@@ -179,23 +179,14 @@ fn single_line(field: DraftField, what: &str, value: &str) -> Option<DraftProble
 }
 
 fn value_problem(field: DraftField, what: &str, value: &str) -> Option<DraftProblem> {
-    let message = match value_refusal(value)? {
-        FieldRefusal::ValueReadsAsOther => format!("{what} can't start with // or be a one-time-code address."),
-        _ => format!("{what} can't contain a line break."),
-    };
-    Some(problem(field, message))
+    value_refusal(value).map(|refusal| problem(field, refusal.sentence(what)))
 }
 
 /// The problem with setting the field `key` to `value` (or removing it,
 /// with `None`), as the form words it.
 pub(crate) fn field_problem(key: &str, value: Option<&str>) -> Option<DraftProblem> {
-    let field = || DraftField::Field { key: key.to_owned() };
-    match key_refusal(key) {
-        Some(FieldRefusal::KeyBlank) => Some(problem(field(), "Give the field a name.")),
-        Some(FieldRefusal::KeyLineBreak) => Some(problem(field(), "A field name can't contain a line break.")),
-        Some(_) => Some(problem(field(), "A field name can't contain a colon.")),
-        None => value.and_then(|v| value_problem(field(), &format!("The value of {}", key.trim()), v)),
-    }
+    let refusal = key_refusal(key).or_else(|| value.and_then(value_refusal))?;
+    Some(problem(DraftField::Field { key: key.to_owned() }, refusal.sentence(&format!("The value of {}", key.trim()))))
 }
 
 impl EntryDraft {

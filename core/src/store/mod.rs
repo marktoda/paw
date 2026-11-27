@@ -78,13 +78,6 @@ impl PassStore {
         self.tree.folders()
     }
 
-    /// Paths the scan left out: links, folders nested too deep or that
-    /// could not be read, and names paw refuses. Nothing below one is in
-    /// the lists.
-    pub fn skipped(&self) -> Vec<String> {
-        self.tree.skipped().to_vec()
-    }
-
     pub fn entry(&self, path: String) -> Option<EntryRef> {
         let (folder, _) = crate::path::split(&path);
         self.tree.folder(folder)?.entries.iter().find(|entry| entry.path == path).cloned()

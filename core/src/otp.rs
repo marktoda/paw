@@ -12,9 +12,13 @@ use zeroize::{Zeroize, Zeroizing};
 const SCHEME: &str = "otpauth://";
 /// Longest period accepted, in seconds. Real ones are 30 or 60.
 const MAX_PERIOD: u32 = 300;
+/// The settings of an address that names none, and of a bare setup key.
+const DEFAULT_ALGORITHM: Algorithm = Algorithm::Sha1;
+const DEFAULT_DIGITS: u32 = 6;
+const DEFAULT_PERIOD: u32 = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Algorithm {
+enum Algorithm {
     Sha1,
     Sha256,
     Sha512,
@@ -73,6 +77,17 @@ pub(crate) fn is_address(text: &str) -> bool {
     text.get(..SCHEME.len()).is_some_and(|start| start.eq_ignore_ascii_case(SCHEME))
 }
 
+/// An address after its scheme, split where its type (`totp`) ends.
+fn split_type(rest: &str) -> (&str, &str) {
+    rest.split_at(rest.find(['/', '?']).unwrap_or(rest.len()))
+}
+
+/// What a setup key may hold between its symbols, as keys are shown and
+/// typed: spaces and dashes.
+fn spacing(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'-')
+}
+
 fn hex(byte: u8) -> Option<u8> {
     match byte {
         b'0'..=b'9' => Some(byte - b'0'),
@@ -111,7 +126,7 @@ fn base32(text: &[u8]) -> Result<Zeroizing<Vec<u8>>, OtpProblem> {
     let mut padding = false;
     for &byte in text {
         let value = match byte.to_ascii_uppercase() {
-            b' ' | b'\t' | b'-' => continue,
+            _ if spacing(byte) => continue,
             b'=' => {
                 padding = true;
                 continue;
@@ -147,9 +162,8 @@ impl Totp {
         if !is_address(address) || address.contains(['\n', '\r']) {
             return Err(OtpProblem::NotAnAddress);
         }
-        let rest = &address[SCHEME.len()..];
-        let kind_end = rest.find(['/', '?']).unwrap_or(rest.len());
-        match &rest[..kind_end] {
+        let (kind, rest) = split_type(&address[SCHEME.len()..]);
+        match kind {
             kind if kind.eq_ignore_ascii_case("totp") => {}
             kind if kind.eq_ignore_ascii_case("hotp") => return Err(OtpProblem::CounterBased),
             _ => return Err(OtpProblem::NotAnAddress),
@@ -179,20 +193,21 @@ impl Totp {
         };
         let text = |value: &[u8]| String::from_utf8_lossy(value).trim().to_ascii_uppercase();
         let algorithm = match algorithm.as_deref().map(|value| text(value)).as_deref() {
-            None | Some("SHA1") => Algorithm::Sha1,
+            None => DEFAULT_ALGORITHM,
+            Some("SHA1") => Algorithm::Sha1,
             Some("SHA256") => Algorithm::Sha256,
             Some("SHA512") => Algorithm::Sha512,
             Some(_) => return Err(OtpProblem::UnknownAlgorithm),
         };
         let digits = match digits.as_deref().map(|value| text(value)) {
-            None => 6,
+            None => DEFAULT_DIGITS,
             Some(value) => match value.parse::<u32>() {
                 Ok(n @ 6..=8) => n,
                 _ => return Err(OtpProblem::BadDigits),
             },
         };
         let period = match period.as_deref().map(|value| text(value)) {
-            None => 30,
+            None => DEFAULT_PERIOD,
             Some(value) => match value.parse::<u32>() {
                 Ok(n @ 1..=MAX_PERIOD) => n,
                 _ => return Err(OtpProblem::BadPeriod),
@@ -204,18 +219,14 @@ impl Totp {
     /// A bare base32 setup key, with the usual settings (SHA1, 6 digits,
     /// 30 seconds).
     pub fn from_setup_key(key: &str) -> Result<Self, OtpProblem> {
-        Ok(Self { secret: base32(key.trim().as_bytes())?, algorithm: Algorithm::Sha1, digits: 6, period: 30 })
-    }
-
-    pub fn algorithm(&self) -> Algorithm {
-        self.algorithm
+        let secret = base32(key.trim().as_bytes())?;
+        Ok(Self { secret, algorithm: DEFAULT_ALGORITHM, digits: DEFAULT_DIGITS, period: DEFAULT_PERIOD })
     }
 
     pub fn digits(&self) -> u32 {
         self.digits
     }
 
-    /// Seconds each code lasts.
     pub fn period(&self) -> u32 {
         self.period
     }
@@ -279,7 +290,7 @@ pub fn setup_line(input: &str, label: &str) -> Result<Zeroizing<String>, OtpProb
         }
     }
     line.push_str("?secret=");
-    for byte in input.bytes().filter(|b| !matches!(b, b' ' | b'\t' | b'-' | b'=')) {
+    for byte in input.bytes().filter(|&b| !spacing(b) && b != b'=') {
         line.push(char::from(byte.to_ascii_uppercase()));
     }
     Ok(line)
@@ -291,8 +302,7 @@ pub fn setup_line(input: &str, label: &str) -> Result<Zeroizing<String>, OtpProb
 /// no label. Everything after the type is kept as it was. A label with more
 /// than one `:` is refused.
 fn pass_otp_address(address: &str) -> Result<Zeroizing<String>, OtpProblem> {
-    let rest = &address[SCHEME.len()..];
-    let after = &rest[rest.find(['/', '?']).unwrap_or(rest.len())..];
+    let (_, after) = split_type(&address[SCHEME.len()..]);
     let after = after.strip_prefix('/').unwrap_or(after);
     let Some((label, query)) = after.split_once('?') else { return Err(OtpProblem::NoSecret) };
     if query.is_empty() {

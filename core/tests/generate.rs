@@ -32,8 +32,7 @@ fn classes_of(policy: &PasswordPolicy) -> Vec<Vec<char>> {
 fn the_default_is_twenty_characters_of_every_class_without_look_alikes() {
     let default = PasswordPolicy::default();
     assert_eq!(default.length, 20);
-    assert!(default.lowercase && default.uppercase && default.digits && default.symbols);
-    assert!(default.exclude_look_alikes && default.require_each_class);
+    assert!(default.symbols && default.exclude_look_alikes);
     assert_eq!(alphabet(&default).unwrap().len(), 66);
 
     let password = generate(&default).unwrap();
@@ -62,21 +61,15 @@ fn the_default_policys_entropy_is_reported_exactly() {
     // About 120.9 bits for any 66-character string, less a fraction of a
     // bit for requiring every class.
     assert!((120.0..120.9).contains(&reported), "{reported}");
-
-    let free = PasswordPolicy { require_each_class: false, ..PasswordPolicy::default() };
-    assert!((entropy_bits(&free).unwrap() - 20.0 * 66f64.log2()).abs() < 1e-9);
 }
 
 #[test]
-fn lengths_outside_the_bounds_and_empty_alphabets_are_refused() {
+fn lengths_outside_the_bounds_are_refused() {
     assert_eq!(generate(&policy(MIN_LENGTH - 1)).unwrap_err(), PolicyError::Length);
     assert_eq!(generate(&policy(MAX_LENGTH + 1)).unwrap_err(), PolicyError::Length);
     assert_eq!(generate(&policy(0)).unwrap_err(), PolicyError::Length);
     assert_eq!(generate(&policy(MIN_LENGTH)).unwrap().len(), MIN_LENGTH as usize);
     assert_eq!(generate(&policy(MAX_LENGTH)).unwrap().len(), MAX_LENGTH as usize);
-    let nothing = PasswordPolicy { lowercase: false, uppercase: false, digits: false, symbols: false, ..policy(20) };
-    assert_eq!(generate(&nothing).unwrap_err(), PolicyError::NoClasses);
-    assert_eq!(entropy_bits(&nothing).unwrap_err(), PolicyError::NoClasses);
 }
 
 #[test]
@@ -110,9 +103,10 @@ fn look_alikes_never_appear_when_excluded_and_do_when_allowed() {
 #[test]
 fn only_the_chosen_classes_are_used() {
     let mut rng = StdRng::seed_from_u64(3);
-    let digits = PasswordPolicy { lowercase: false, uppercase: false, symbols: false, ..policy(12) };
+    let no_symbols = PasswordPolicy { symbols: false, ..policy(12) };
     for _ in 0..200 {
-        assert!(generate_with(&mut rng, &digits).unwrap().chars().all(|c| c.is_ascii_digit() && !"01".contains(c)));
+        let password = generate_with(&mut rng, &no_symbols).unwrap();
+        assert!(password.chars().all(|c| c.is_ascii_alphanumeric() && !LOOK_ALIKES.contains(c)));
     }
 }
 

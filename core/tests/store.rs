@@ -405,7 +405,7 @@ fn the_whole_store_and_path_parts_come_from_the_core() {
     let paths: Vec<String> = store.all_entries().into_iter().map(|e| e.path).collect();
     assert_eq!(paths, ["mail/me", "top", "web/github.com", "web/work/jira"]);
     assert_eq!(store.all_folders(), ["mail", "web", "web/work"]);
-    assert_eq!(store.skipped(), ["elsewhere"]);
+    assert_eq!(StoreTree::scan(dir.path()).unwrap().skipped(), ["elsewhere"]);
     assert_eq!(store.entry("web/work/jira".into()).map(|e| e.name), Some("jira".into()));
     assert_eq!(store.entry("web/nothing".into()), None);
 

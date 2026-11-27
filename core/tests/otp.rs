@@ -3,7 +3,7 @@
 
 use paw_core::entry::EntryDoc;
 use paw_core::entry::opened::OpenedEntry;
-use paw_core::otp::{Algorithm, OtpProblem, Totp, setup_line};
+use paw_core::otp::{OtpProblem, Totp, setup_line};
 use proptest::prelude::*;
 
 /// The seeds of RFC 6238 appendix B, in base32.
@@ -29,8 +29,6 @@ fn rfc_6238_appendix_b_vectors() {
     let sha1 = totp(&format!("otpauth://totp/rfc?secret={SEED_SHA1}&digits=8"));
     let sha256 = totp(&format!("otpauth://totp/rfc?secret={SEED_SHA256}&digits=8&algorithm=SHA256"));
     let sha512 = totp(&format!("otpauth://totp/rfc?secret={SEED_SHA512}&digits=8&algorithm=SHA512"));
-    assert_eq!(sha256.algorithm(), Algorithm::Sha256);
-    assert_eq!(sha512.algorithm(), Algorithm::Sha512);
     for (time, one, two, five) in table {
         assert_eq!(sha1.code_at(time).as_str(), one, "SHA1 at {time}");
         assert_eq!(sha256.code_at(time).as_str(), two, "SHA256 at {time}");
@@ -42,7 +40,7 @@ fn rfc_6238_appendix_b_vectors() {
 fn the_common_example_key_with_defaults() {
     // Worked out independently with Python's hmac module.
     let code = totp("otpauth://totp/GitHub:you?secret=JBSWY3DPEHPK3PXP&issuer=GitHub");
-    assert_eq!((code.algorithm(), code.digits(), code.period()), (Algorithm::Sha1, 6, 30));
+    assert_eq!((code.digits(), code.period()), (6, 30));
     for (time, expected) in [(0, "282760"), (59, "996554"), (1_111_111_109, "071271"), (1_700_000_000, "324550")] {
         assert_eq!(code.code_at(time).as_str(), expected, "at {time}");
     }

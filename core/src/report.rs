@@ -94,22 +94,13 @@ fn plain(text: &str) -> String {
     if kept.trim().is_empty() { "unknown".into() } else { kept.trim().to_owned() }
 }
 
-fn store_lines(state_dir: &Path, out: &mut Vec<String>) {
-    let set_up = crate::files::layout::is_set_up(state_dir);
+fn store_lines(state_dir: Option<&Path>, out: &mut Vec<String>) {
+    let set_up = state_dir.is_some_and(crate::files::layout::is_set_up);
     out.push(format!("Store: {}", if set_up { "set up" } else { "not set up" }));
+    let Some(state_dir) = state_dir else { return };
     let repo = crate::files::layout::repo_dir(state_dir);
     match StoreTree::scan(&repo) {
-        Ok(tree) => {
-            let mut folders: Vec<&str> = tree
-                .entries()
-                .iter()
-                .flat_map(|entry| crate::path::folder_and_parents(&entry.folder))
-                .filter(|folder| !folder.is_empty())
-                .collect();
-            folders.sort_unstable();
-            folders.dedup();
-            out.push(format!("Passwords: {} in {} folders", tree.entries().len(), folders.len()));
-        }
+        Ok(tree) => out.push(format!("Passwords: {} in {} folders", tree.entries().len(), tree.folders().len())),
         Err(_) => out.push("Passwords: unreadable".into()),
     }
     match crate::sync::queue::unpushed(&repo) {
@@ -135,10 +126,7 @@ pub fn diagnostics_text(
         format!("Device: {}", plain(&facts.device_model)),
     ];
 
-    match &state_dir {
-        Some(dir) => store_lines(Path::new(dir), &mut out),
-        None => out.push("Store: not set up".into()),
-    }
+    store_lines(state_dir.as_deref().map(Path::new), &mut out);
     let checked = facts.last_checked_ms.map(|ms| format!(", checked {}", utc(ms.div_euclid(1000))));
     match facts.last_sync {
         Some(summary) => out.push(format!("Last sync: {}{}", sync_words(summary), checked.unwrap_or_default())),

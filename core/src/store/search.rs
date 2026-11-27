@@ -117,6 +117,11 @@ fn utf16_ranges(text: &str, ranges: Vec<(usize, usize)>) -> Vec<HighlightRange> 
 
 /// Finds the entries whose path contains every word of `query`, best first.
 /// At most `limit` are returned. An empty query finds nothing.
+/// Where the name starts in `entry`'s path, in characters.
+fn name_origin(entry: &EntryRef) -> usize {
+    if entry.folder.is_empty() { 0 } else { entry.folder.chars().count() + 1 }
+}
+
 pub fn search(entries: &[EntryRef], query: &str, limit: u32) -> Vec<SearchHit> {
     let terms: Vec<Vec<char>> = query
         .split_whitespace()
@@ -132,8 +137,7 @@ pub fn search(entries: &[EntryRef], query: &str, limit: u32) -> Vec<SearchHit> {
     let mut hits: Vec<Scored<'_>> = Vec::new();
     for entry in entries {
         let path = fold(&entry.path);
-        let folder_chars = entry.folder.chars().count();
-        let name_origin = if entry.folder.is_empty() { 0 } else { folder_chars + 1 };
+        let name_origin = name_origin(entry);
         let name_start = path.origin.partition_point(|&origin| origin < name_origin);
 
         let mut score = 0;
@@ -160,7 +164,7 @@ pub fn search(entries: &[EntryRef], query: &str, limit: u32) -> Vec<SearchHit> {
     hits.into_iter()
         .map(|(_, _, entry, ranges)| {
             let folder_chars = entry.folder.chars().count();
-            let name_origin = if entry.folder.is_empty() { 0 } else { folder_chars + 1 };
+            let name_origin = name_origin(entry);
             // A word like `web/git` straddles the `/`: split it in two.
             let in_folder = ranges
                 .iter()
