@@ -12,13 +12,13 @@ use paw_core::task::LoginPurpose;
 use paw_core::task::{KeyOutcome, KeyTaskState};
 use paw_core::sim::SimTouch;
 use paw_core::sync::{Cloned, Connection};
-use support::{GitServer, git};
+use support::{GitServer, Phone, git};
 
 #[test]
 fn a_clone_and_an_entry_open_take_one_pin_entry() {
     let rig = rig(SimTouch::EachUse, SimTouch::EachUse);
     let server = GitServer::start(&[rig.sim.ssh_public_key()]);
-    let dir = tempfile::tempdir().unwrap();
+    let dir = Phone::new();
 
     let driver = Driver::helpful(PIN, &rig.sim);
     let login = paw_core::sim::tasks::SimLogin::start(&rig.port, LoginPurpose::Clone, driver.clone());
@@ -28,7 +28,7 @@ fn a_clone_and_an_entry_open_take_one_pin_entry() {
     let signer = login.signer().unwrap();
     assert_eq!(rig.sim.verify_attempts(), 1);
     let connection = Connection::open(&server.remote(), &signer).unwrap();
-    assert_eq!(steps::clone(&connection, &server.remote(), dir.path()).unwrap(), Cloned::Store);
+    assert_eq!(steps::clone(&connection, &server.remote(), &dir.store).unwrap(), Cloned::Store);
     drop(connection);
     login.finish();
     assert!(matches!(finish(login.task()), KeyTaskState::Done { outcome: KeyOutcome::SignedIn }));

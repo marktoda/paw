@@ -24,6 +24,7 @@ use paw_core::sync::operation::SyncState;
 use paw_core::sync::queue;
 use paw_core::write::held_back::{self, LeftHeldBack, LeftReason, ReencryptReport};
 use paw_core::sync::{self, ChangeKind, Connection};
+use paw_core::files::layout::StoreDirs;
 use paw_core::write::{EntryDraft, Keyring, WriteStore};
 use support::{GitServer, git, move_entry};
 
@@ -46,6 +47,10 @@ impl World {
         self.state.path().join(paw_core::files::layout::REPO)
     }
 
+    fn store(&self) -> StoreDirs {
+        StoreDirs::new(self.state.path())
+    }
+
     fn signer(&self) -> key_common::KeySigner {
         signer(&self.card)
     }
@@ -63,8 +68,8 @@ impl World {
 
     fn pull(&self) {
         let connection = Connection::open(&self.server.remote(), &self.signer()).unwrap();
-        steps::fetch(&connection, &self.repo()).unwrap();
-        sync::integrate(&self.repo()).unwrap();
+        steps::fetch(&connection, &self.store()).unwrap();
+        sync::integrate(&self.store()).unwrap();
     }
 
     fn save(&self, folder: &str, name: &str, password: &str) {
@@ -81,7 +86,7 @@ impl World {
         self.desktop_push(&[(&format!("{folder}/.gpg-id"), text.into_bytes())], "New list.");
         self.pull();
         if accept {
-            Keyring::open(self.state.path()).unwrap().accept_recipients(&paw_core::lock::StoreLock::for_repo(&self.repo()).exclusive().unwrap(), &self.repo(), folder).unwrap();
+            Keyring::open(&self.store()).unwrap().accept_recipients(&self.store().exclusive().unwrap(), folder).unwrap();
         }
     }
 
@@ -90,7 +95,7 @@ impl World {
     }
 
     fn queued(&self) -> Vec<(ChangeKind, String)> {
-        queue::unpushed(&self.repo()).unwrap().into_iter().map(|i| (i.kind, i.entry)).collect()
+        queue::unpushed(&self.store()).unwrap().into_iter().map(|i| (i.kind, i.entry)).collect()
     }
 
     /// The entry's file as the queue has it now, opened with `card` (with
@@ -127,11 +132,11 @@ fn world() -> World {
     let card_fpr = w.card.fingerprint_hex();
     w.desktop_push(&[(".gpg-id", format!("{card_fpr}\n").into_bytes())], "The store.");
     let connection = Connection::open(&w.server.remote(), &w.signer()).unwrap();
-    steps::clone(&connection, &w.server.remote(), &w.repo()).unwrap();
-    let mut keyring = Keyring::open(w.state.path()).unwrap();
-    keyring.pin_card_key(&keyring.lock().exclusive().unwrap(), &w.card.decryption_key().unwrap()).unwrap();
-    keyring.pin_card_key(&keyring.lock().exclusive().unwrap(), &w.other.decryption_key().unwrap()).unwrap();
-    keyring.accept_all_recipients_at_setup(&keyring.lock().exclusive().unwrap(), &w.repo()).unwrap();
+    steps::clone(&connection, &w.server.remote(), &w.store()).unwrap();
+    let mut keyring = Keyring::open(&w.store()).unwrap();
+    keyring.pin_card_key(&w.store().exclusive().unwrap(), &w.card.decryption_key().unwrap()).unwrap();
+    keyring.pin_card_key(&w.store().exclusive().unwrap(), &w.other.decryption_key().unwrap()).unwrap();
+    keyring.accept_all_recipients_at_setup(&w.store().exclusive().unwrap()).unwrap();
     w
 }
 
@@ -178,7 +183,7 @@ fn every_held_back_change_is_re_encrypted_for_the_new_list_with_a_touch_each_and
         assert_eq!(w.open_with(&w.card, entry).unwrap(), password);
     }
 
-    let report = steps::sync(&w.server.remote(), &w.signer(), &w.repo(), w.state.path(), true).unwrap();
+    let report = steps::sync(&w.server.remote(), &w.signer(), &w.store(), true).unwrap();
     assert_eq!(report.state, SyncState::UpToDate);
     assert_eq!(report.pushed, 3);
 }
@@ -225,7 +230,7 @@ fn a_cancel_part_way_keeps_what_was_done_and_a_second_run_does_only_the_rest() {
     assert_eq!(w.open_with(&w.other, "Work/a").unwrap(), "a-pw\n");
     // Nothing is sent while any is held back.
     let tip = w.server.tip();
-    let report = steps::sync(&w.server.remote(), &w.signer(), &w.repo(), w.state.path(), true).unwrap();
+    let report = steps::sync(&w.server.remote(), &w.signer(), &w.store(), true).unwrap();
     assert_eq!(report.state, SyncState::Waiting { unpushed: 3 });
     assert_eq!(w.server.tip(), tip);
 
@@ -293,7 +298,7 @@ fn changes_that_cannot_be_re_encrypted_stay_held_back_and_say_why() {
     assert!(w.open_with(&w.other, "Personal/x").is_err());
     assert_eq!(w.open_with(&w.card, "Personal/x").unwrap(), "x-pw\n");
     let tip = w.server.tip();
-    let report = steps::sync(&w.server.remote(), &w.signer(), &w.repo(), w.state.path(), true).unwrap();
+    let report = steps::sync(&w.server.remote(), &w.signer(), &w.store(), true).unwrap();
     assert!(matches!(report.state, SyncState::Waiting { .. }));
     assert_eq!(w.server.tip(), tip, "nothing sent while some are held back");
 }
@@ -333,7 +338,7 @@ fn a_save_while_each_one_is_opened_does_not_add_up_to_a_failure() {
             .map_err(|e| held_back::OpenFailure::Stop(paw_core::sync::SyncError::Fault { fault: paw_core::fault::Fault::Local { detail: e.to_string() } }))
     };
 
-    let report = held_back::reencrypt_each(&w.repo(), w.state.path(), &mut open, &mut |_, _| {}).unwrap();
+    let report = held_back::reencrypt_each(&w.store(), &mut open, &mut |_, _| {}).unwrap();
 
     assert_eq!(report, ReencryptReport { reencrypted: 5, left: vec![] });
     assert_eq!(saved, 5);

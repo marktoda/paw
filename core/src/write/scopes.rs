@@ -20,7 +20,6 @@
 //! Entry names are returned for the screen only. Nothing here logs them.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::path::Path;
 
 use super::WriteError;
 use super::keyring::{Keyring, LineStatus};
@@ -30,6 +29,7 @@ use crate::path::GPG_ID;
 use crate::store::gpg_id::{governing_gpg_id, key_digits, shown_gpg_id_lines};
 use crate::store::read::{read_entry, read_file};
 use crate::store::tree::StoreTree;
+use crate::lock::Shared;
 
 /// One key a `.gpg-id` names, as the screen shows it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -89,8 +89,9 @@ impl Named {
     }
 }
 
-/// Every `.gpg-id` of the store at `root`, top first, with what it says.
-pub fn recipient_scopes(keyring: &Keyring, root: &Path) -> Result<Vec<RecipientScope>, WriteError> {
+/// Every `.gpg-id` of the keyring's store, top first, with what it says.
+pub fn recipient_scopes(_reading: &Shared, keyring: &Keyring) -> Result<Vec<RecipientScope>, WriteError> {
+    let root = keyring.repo();
     let tree = StoreTree::scan(root)?;
     let mut governed: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut by_folder: BTreeMap<String, String> = BTreeMap::new();

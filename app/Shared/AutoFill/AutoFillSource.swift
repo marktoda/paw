@@ -65,7 +65,7 @@ extension AutoFillSource {
     /// `location`.
     static func open(at location: StoreLocation, on platform: Platform) throws -> AutoFillSource {
         let stateDir = location.stateDir.path
-        let store = try PassStore(dir: location.repoDir.path)
+        let store = try PassStore(stateDir: stateDir)
         let keys = StoreKeys(platform, at: location)
         return AutoFillSource(
             store: store, copies: try keys.openEnrolled(), keyPort: keys.keyPort, keys: platform.keys,

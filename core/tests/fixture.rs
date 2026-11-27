@@ -63,11 +63,13 @@ fn plugged() -> Plugged {
     plugged_key(SimulatedKey::new(PIN.into(), true, 5_000))
 }
 
-fn fixture() -> (tempfile::TempDir, Arc<PassStore>) {
-    let dir = tempfile::tempdir().unwrap();
-    write_fixture_store(dir.path().to_str().unwrap().into()).unwrap();
-    let store = PassStore::open(dir.path().to_str().unwrap().into()).unwrap();
-    (dir, store)
+/// The fixture store in a state directory; returns its working copy too.
+fn fixture() -> (tempfile::TempDir, std::path::PathBuf, Arc<PassStore>) {
+    let state = tempfile::tempdir().unwrap();
+    let repo = state.path().join(paw_core::files::layout::REPO);
+    write_fixture_store(repo.to_str().unwrap().into()).unwrap();
+    let store = PassStore::open(state.path().to_str().unwrap().into()).unwrap();
+    (state, repo, store)
 }
 
 /// Every file under `dir`, by relative path.
@@ -91,19 +93,19 @@ fn files(dir: &Path) -> Vec<(String, Vec<u8>)> {
 
 #[test]
 fn writing_the_fixture_twice_gives_the_same_bytes() {
-    let (first, _) = fixture();
-    let (second, _) = fixture();
-    assert_eq!(files(first.path()), files(second.path()));
+    let (_first_state, first, _) = fixture();
+    let (_second_state, second, _) = fixture();
+    assert_eq!(files(&first), files(&second));
 
     // Writing over an existing copy changes nothing either.
-    let before = files(first.path());
-    write_fixture_store(first.path().to_str().unwrap().into()).unwrap();
-    assert_eq!(files(first.path()), before);
+    let before = files(&first);
+    write_fixture_store(first.to_str().unwrap().into()).unwrap();
+    assert_eq!(files(&first), before);
 }
 
 #[test]
 fn the_card_can_open_everything_but_the_archive() {
-    let (_dir, store) = fixture();
+    let (_state, _, store) = fixture();
     let card = plugged().port.session().unwrap().info().decryption_fingerprint.unwrap();
     let other = other_key_fingerprint_hex().unwrap();
     let other_id = Recipient::KeyId { id: other[other.len() - 16..].to_owned() };
@@ -123,7 +125,7 @@ fn the_card_can_open_everything_but_the_archive() {
 
 #[test]
 fn opening_an_entry_takes_the_pin_and_one_touch() {
-    let (_dir, store) = fixture();
+    let (_state, _, store) = fixture();
     let plugged = plugged();
     assert!(!plugged.port.session().unwrap().holds_pin());
 
@@ -141,7 +143,7 @@ fn opening_an_entry_takes_the_pin_and_one_touch() {
 
 #[test]
 fn every_fixture_entry_for_the_card_opens_as_text() {
-    let (_dir, store) = fixture();
+    let (_state, _, store) = fixture();
     let plugged = plugged();
 
     let mut opened = 0;
@@ -156,7 +158,7 @@ fn every_fixture_entry_for_the_card_opens_as_text() {
 
 #[test]
 fn an_entry_for_another_key_is_refused_before_the_pin_or_a_touch() {
-    let (_dir, store) = fixture();
+    let (_state, _, store) = fixture();
     let plugged = plugged();
 
     // Even a wrong PIN is not sent: the refusal comes first.
@@ -180,12 +182,14 @@ fn an_entry_for_several_keys_costs_one_touch_wherever_the_card_is_listed() {
     let plugged = plugged();
     let on_card = plugged.key.decryption_key().unwrap();
     let other = other_key().unwrap();
-    let dir = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let dir = state.path().join(paw_core::files::layout::REPO);
+    std::fs::create_dir_all(&dir).unwrap();
 
     for (name, recipients) in [("card-last", vec![other.clone(), on_card.clone()]), ("card-first", vec![on_card.clone(), other.clone()])] {
         let entry = encrypt(&recipients, b"shared\n").unwrap();
-        std::fs::write(dir.path().join(format!("{name}.gpg")), entry).unwrap();
-        let store = PassStore::open(dir.path().to_str().unwrap().into()).unwrap();
+        std::fs::write(dir.join(format!("{name}.gpg")), entry).unwrap();
+        let store = PassStore::open(state.path().to_str().unwrap().into()).unwrap();
         let before = plugged.key.decipher_count();
 
         let done = plugged.open(&store, PIN, name);
@@ -198,7 +202,7 @@ fn an_entry_for_several_keys_costs_one_touch_wherever_the_card_is_listed() {
 
 #[test]
 fn a_missing_or_unsafe_entry_is_refused_without_touching_the_card() {
-    let (_dir, store) = fixture();
+    let (_state, _, store) = fixture();
     let plugged = plugged();
 
     for (entry, unsafe_path) in [("web/nothing-here", false), ("../elsewhere", true), (".git/config", true)] {
@@ -215,7 +219,7 @@ fn a_missing_or_unsafe_entry_is_refused_without_touching_the_card() {
 
 #[test]
 fn the_view_of_an_opened_entry_holds_no_secret_values() {
-    let (_dir, store) = fixture();
+    let (_state, _, store) = fixture();
     let opened = plugged().open(&store, PIN, "bank/first-example-bank").result.unwrap();
 
     let view = opened.view();
@@ -238,7 +242,7 @@ fn the_view_of_an_opened_entry_holds_no_secret_values() {
 
 #[test]
 fn a_one_time_code_secret_is_flagged_and_never_handed_out() {
-    let (_dir, store) = fixture();
+    let (_state, _, store) = fixture();
     let opened = plugged().open(&store, PIN, "web/github.com").result.unwrap();
 
     let view = opened.view();
@@ -268,10 +272,12 @@ fn closing_an_opened_entry_takes_everything_away() {
 #[test]
 fn an_entry_that_is_not_text_opens_as_an_error() {
     let key = SimulatedKey::new(PIN.into(), false, 50);
-    let dir = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let dir = state.path().join(paw_core::files::layout::REPO);
+    std::fs::create_dir_all(&dir).unwrap();
     let binary = encrypt(&[key.decryption_key().unwrap()], &[0xFF, 0xD8, 0xFF, 0xE0, 0x00]).unwrap();
-    std::fs::write(dir.path().join("photo.gpg"), binary).unwrap();
-    let store = PassStore::open(dir.path().to_str().unwrap().into()).unwrap();
+    std::fs::write(dir.join("photo.gpg"), binary).unwrap();
+    let store = PassStore::open(state.path().to_str().unwrap().into()).unwrap();
     let refused = plugged_key(key).open(&store, PIN, "photo").result.err().unwrap();
     assert_eq!(refused, KeyError::EntryUnreadable { detail: "it is not text".into() });
     assert!(matches!(OpenedEntry::decrypted(vec![0xC3, 0x28], vec![0; 32]), Err(PawError::NotText)));
@@ -279,9 +285,9 @@ fn an_entry_that_is_not_text_opens_as_an_error() {
 
 #[test]
 fn the_harness_adds_entries_named_without_a_domain_that_open_and_match_by_name() {
-    let (dir, _) = fixture();
-    write_name_match_entries(dir.path().to_str().unwrap().into()).unwrap();
-    let store = PassStore::open(dir.path().to_str().unwrap().into()).unwrap();
+    let (state, repo, _) = fixture();
+    write_name_match_entries(repo.to_str().unwrap().into()).unwrap();
+    let store = PassStore::open(state.path().to_str().unwrap().into()).unwrap();
     let plugged = plugged();
     for entry in ["finance/northwind", "contoso/alice"] {
         let opened = plugged.open(&store, PIN, entry).result.unwrap();
@@ -304,7 +310,7 @@ fn the_harness_adds_entries_named_without_a_domain_that_open_and_match_by_name()
 
 #[test]
 fn the_sites_the_autofill_tests_use_gain_no_name_matches_from_the_fixture() {
-    let (_dir, store) = fixture();
+    let (_state, _, store) = fixture();
     let sites = [
         "https://github.com/login",
         "https://github.com",

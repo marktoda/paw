@@ -25,8 +25,9 @@ pub use transport::{ConnectError, Connection, DOWNLOAD_LIMIT, HostKeyPin, Presen
 
 use crate::PawError;
 use crate::fault::Fault;
+use crate::files::layout::StoreDirs;
 use crate::files::refs;
-use crate::lock::{Exclusive, FETCH_WAIT, Fetching, StoreLock};
+use crate::lock::{Exclusive, FETCH_WAIT, Fetching, Shared};
 use crate::remote::{RefusedPath, RemoteFailure};
 use crate::path::{unsafe_path, unsafe_path_err};
 
@@ -167,18 +168,28 @@ pub(crate) fn git_err(e: git2::Error) -> PawError {
     PawError::Git(e.message().to_owned())
 }
 
-/// Starts a fetch into `repo`: takes the store's fetch lock (one fetch at a
-/// time writes objects and the private refs, so two never write one pack
+/// A store's repository, opened for one operation with paw's settings
+/// applied ([`guard::open`]).
+pub(crate) struct OpenStore {
+    pub(crate) dirs: StoreDirs,
+    pub(crate) repo: Repository,
+}
+
+impl OpenStore {
+    pub(crate) fn open(dirs: &StoreDirs) -> Result<Self, PawError> {
+        Ok(Self { dirs: dirs.clone(), repo: guard::open(dirs.repo_dir())? })
+    }
+}
+
+/// Starts a fetch into `store`: takes the store's fetch lock (one fetch at
+/// a time writes objects and the private refs, so two never write one pack
 /// index) and clears what an earlier fetch left in the private namespace.
 /// The store lock is not taken: saves and reads go on while the transfer
 /// runs.
-pub(crate) fn begin_fetch(store: &StoreLock, repo: &Repository) -> Result<Fetching, PawError> {
-    begin_fetch_within(store, repo, FETCH_WAIT)
-}
-
-pub(crate) fn begin_fetch_within(store: &StoreLock, repo: &Repository, wait: Duration) -> Result<Fetching, PawError> {
-    let fetching = store.fetching(wait)?;
-    crate::lock::remove_stale_fetch_locks(store.repo());
+pub(crate) fn begin_fetch(store: &OpenStore, wait: Duration) -> Result<Fetching, PawError> {
+    let fetching = store.dirs.lock().fetching(wait)?;
+    crate::lock::remove_stale_fetch_locks(store.dirs.repo_dir());
+    let repo = &store.repo;
     for name in fetched_refs(repo)?.into_iter().map(|(name, _)| name) {
         if let Ok(mut reference) = repo.find_reference(&name) {
             let _ = reference.delete();
@@ -203,8 +214,9 @@ fn fetched_refs(repo: &Repository) -> Result<Vec<(String, git2::Oid)>, PawError>
 /// Publishes what a fetch received. The ref updates are the critical
 /// section, so the store lock is held; the fetch lock is released at the
 /// end.
-pub(crate) fn publish_fetched(held: &Exclusive, repo: &Repository, fetching: Fetching) -> Result<(), PawError> {
-    debug_assert!(repo.workdir().is_none_or(|dir| held.covers(dir)));
+pub(crate) fn publish_fetched(held: &Exclusive, store: &OpenStore, fetching: Fetching) -> Result<(), PawError> {
+    debug_assert!(held.covers(store.dirs.lock()));
+    let repo = &store.repo;
     let fetched = fetched_refs(repo)?;
     for (name, target) in &fetched {
         let branch = refs::fetched_branch(name).unwrap_or_default();
@@ -217,9 +229,7 @@ pub(crate) fn publish_fetched(held: &Exclusive, repo: &Repository, fetching: Fet
         }
     }
     drop(fetching);
-    if let Some(dir) = repo.workdir()
-        && !StoreLock::for_repo(dir).push_in_flight()
-    {
+    if !store.dirs.lock().push_in_flight() {
         for name in pushing_refs(repo)? {
             if let Ok(mut marker) = repo.find_reference(&name) {
                 let _ = marker.delete();
@@ -231,14 +241,13 @@ pub(crate) fn publish_fetched(held: &Exclusive, repo: &Repository, fetching: Fet
 
 pub(crate) fn fetch_branches(
     connection: &Connection,
-    store: &StoreLock,
-    repo: &Repository,
+    store: &OpenStore,
     progress: Option<TransferCallback<'_>>,
 ) -> Result<(Option<String>, Exclusive), Fault> {
-    let fetching = begin_fetch(store, repo)?;
-    let default = connection.with_remote(repo, |remote| fetch_connected(remote, progress))?;
-    let held = store.exclusive()?;
-    publish_fetched(&held, repo, fetching)?;
+    let fetching = begin_fetch(store, FETCH_WAIT)?;
+    let default = connection.with_remote(&store.repo, |remote| fetch_connected(remote, progress))?;
+    let held = store.dirs.exclusive()?;
+    publish_fetched(&held, store, fetching)?;
     Ok((default, held))
 }
 
@@ -281,27 +290,27 @@ pub(crate) fn current_branch(repo: &Repository) -> Result<(String, String), PawE
     Ok((full.to_owned(), short.to_owned()))
 }
 
-/// Clones the remote's default branch into `dir`, which must be empty or
-/// not exist yet. An empty repository is not an error here.
+/// Clones the remote's default branch into the store's repository, which
+/// must be empty or not exist yet. An empty repository is not an error
+/// here.
 pub fn clone_with_transfer(
     connection: &Connection,
     remote: &Remote,
-    dir: &Path,
+    dirs: &StoreDirs,
     progress: Option<TransferCallback<'_>>,
 ) -> Result<Cloned, Fault> {
-    // A new repository at `<state>/repo` is made under its store's lock;
-    // one anywhere else is known to nobody until it exists.
     let repo = {
-        let _held = StoreLock::for_repo(dir).exclusive()?;
-        let repo = guard::init(dir)?;
+        let _held = dirs.exclusive()?;
+        let repo = guard::init(dirs.repo_dir())?;
         // Recorded so the copy is readable with ordinary git tools. paw itself
         // always goes through a `Connection`.
         repo.remote("origin", &remote.url()).map_err(git_err)?;
         repo
     };
-    let store = StoreLock::for_repo(dir);
+    let store = OpenStore { dirs: dirs.clone(), repo };
+    let repo = &store.repo;
 
-    let (branch, held) = fetch_branches(connection, &store, &repo, progress)?;
+    let (branch, held) = fetch_branches(connection, &store, progress)?;
     let Some(branch) = branch else {
         return Ok(Cloned::Empty);
     };
@@ -309,7 +318,7 @@ pub fn clone_with_transfer(
     let tip = repo.refname_to_id(&refs::remote_tracking(short)).map_err(git_err)?;
     // Before anything is checked out, or the branch made.
     let tree = repo.find_commit(tip).map_err(git_err)?.tree_id();
-    let refused = guard::check_tree(&repo, tree).map_err(git_err)?;
+    let refused = guard::check_tree(repo, tree).map_err(git_err)?;
     if !refused.is_empty() {
         return Ok(Cloned::Refused(refused));
     }
@@ -328,15 +337,19 @@ pub fn clone_with_transfer(
 /// A sync that failed with [`RemoteFailure::RefusedContent`] failed
 /// because of these: the store and the unpushed changes were left as they
 /// were.
-pub fn refused_remote(dir: &Path) -> Result<Vec<RefusedPath>, Fault> {
-    let _reading = StoreLock::for_repo(dir).shared()?;
-    let repo = guard::open(dir)?;
-    let (_, short) = current_branch(&repo)?;
+pub fn refused_remote(dirs: &StoreDirs) -> Result<Vec<RefusedPath>, Fault> {
+    let reading = dirs.shared()?;
+    refused_fetched(&reading, &OpenStore::open(dirs)?)
+}
+
+pub(crate) fn refused_fetched(_reading: &Shared, store: &OpenStore) -> Result<Vec<RefusedPath>, Fault> {
+    let repo = &store.repo;
+    let (_, short) = current_branch(repo)?;
     let Ok(tip) = repo.refname_to_id(&refs::remote_tracking(&short)) else {
         return Ok(Vec::new());
     };
     let tree = repo.find_commit(tip).map_err(git_err)?.tree_id();
-    Ok(guard::check_tree(&repo, tree).map_err(git_err)?)
+    Ok(guard::check_tree(repo, tree).map_err(git_err)?)
 }
 
 /// Commits `contents` as the file `path` (relative to the store, `/`
@@ -353,14 +366,14 @@ pub fn refused_remote(dir: &Path) -> Result<Vec<RefusedPath>, Fault> {
 /// ("Add given password for web/example to store.") so the history reads the
 /// same whichever tool wrote it.
 pub fn commit(
-    dir: &Path,
+    dirs: &StoreDirs,
     path: &str,
     contents: &[u8],
     message: &str,
     author: &Author,
 ) -> Result<String, Fault> {
-    let held = StoreLock::for_repo(dir).exclusive()?;
-    commit_edits(&held, dir, &[TreeEdit::Write { path, contents }], message, author)
+    let held = dirs.exclusive()?;
+    commit_edits(&held, &OpenStore::open(dirs)?, &[TreeEdit::Write { path, contents }], message, author)
 }
 
 /// One change to one file in a commit made by [`commit_edits`].
@@ -409,18 +422,18 @@ fn check_disk_path(dir: &Path, path: &str) -> Result<(), PawError> {
 /// checkout, is one critical section.
 pub(crate) fn commit_edits(
     held: &Exclusive,
-    dir: &Path,
+    store: &OpenStore,
     edits: &[TreeEdit<'_>],
     message: &str,
     author: &Author,
 ) -> Result<String, Fault> {
-    debug_assert!(held.covers(dir), "commit_edits without its store's lock");
+    debug_assert!(held.covers(store.dirs.lock()), "commit_edits without its store's lock");
     for path in edits.iter().flat_map(TreeEdit::paths) {
         if let Some(why) = unsafe_path(path) {
             return Err(unsafe_path_err(path, why).into());
         }
     }
-    let repo = guard::open(dir)?;
+    let repo = &store.repo;
     let parent = repo
         .head()
         .and_then(|head| head.peel_to_commit())
@@ -429,7 +442,7 @@ pub(crate) fn commit_edits(
 
     for path in edits.iter().flat_map(TreeEdit::paths) {
         history::check_tree_path(&base, path)?;
-        check_disk_path(dir, path)?;
+        check_disk_path(store.dirs.repo_dir(), path)?;
     }
 
     let mut index = git2::Index::new().map_err(git_err)?;
@@ -460,9 +473,9 @@ pub(crate) fn commit_edits(
             }
         }
     }
-    let tree_id = index.write_tree_to(&repo).map_err(git_err)?;
+    let tree_id = index.write_tree_to(repo).map_err(git_err)?;
     // A new name can collide with one already there (`Web/x` beside `web/`).
-    let refused = guard::check_tree(&repo, tree_id).map_err(git_err)?;
+    let refused = guard::check_tree(repo, tree_id).map_err(git_err)?;
     if !refused.is_empty() {
         return Err(Fault::Refused { paths: refused });
     }
@@ -503,16 +516,16 @@ fn pushing_refs(repo: &Repository) -> Result<Vec<String>, PawError> {
 /// left by a push whose process died is removed.
 pub(crate) fn check_not_being_sent(
     _held: &Exclusive,
-    store: &StoreLock,
-    repo: &Repository,
+    store: &OpenStore,
     short: &str,
     removed: git2::Oid,
 ) -> Result<(), SyncError> {
+    let repo = &store.repo;
     let name = refs::pushing(short);
     let Ok(sending) = repo.refname_to_id(&name) else {
         return Ok(());
     };
-    if !store.push_in_flight() {
+    if !store.dirs.lock().push_in_flight() {
         if let Ok(mut stale) = repo.find_reference(&name) {
             let _ = stale.delete();
         }
@@ -551,14 +564,14 @@ impl From<PawError> for PushError {
 #[expect(clippy::too_many_arguments, reason = "the locks held are passed as evidence, one argument each")]
 pub(crate) fn push_tip(
     connection: &Connection,
-    store: &StoreLock,
-    repo: &Repository,
+    store: &OpenStore,
     branch: &str,
     tip: git2::Oid,
     held: Exclusive,
     _pushing: &crate::lock::Pushing,
     record_wait: Duration,
 ) -> Result<(), PushError> {
+    let repo = &store.repo;
     let short = refs::short(branch).ok_or_else(|| PawError::Git("HEAD is not on a branch".into()))?;
     repo.reference(&refs::pushing(short), tip, true, "push").map_err(git_err)?;
     drop(held);
@@ -612,7 +625,7 @@ pub(crate) fn push_tip(
         // The marker goes if the lock comes quickly; if not, the next
         // discard finds no push in flight and removes it.
         Err(error) => {
-            if let Ok(_held) = store.exclusive_within(Duration::from_secs(2)) {
+            if let Ok(_held) = store.dirs.lock().exclusive_within(Duration::from_secs(2)) {
                 clear_marker();
             }
             Err(error)
@@ -623,7 +636,7 @@ pub(crate) fn push_tip(
         // next integrate moves last-seen, and the marker is removed as
         // stale once no push is in flight.
         Ok(()) => {
-            if let Ok(held) = store.exclusive_within(record_wait) {
+            if let Ok(held) = store.dirs.lock().exclusive_within(record_wait) {
                 let _ = record_push(&held, repo, short, tip);
                 clear_marker();
             }

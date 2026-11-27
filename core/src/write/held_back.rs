@@ -2,15 +2,14 @@
 //! and encrypting them again: a send pushes none of the queue while any is
 //! held back ([`holds_back`]).
 
-use std::path::Path;
-
 use git2::Oid;
 
 use super::{Keyring, WriteError, encrypt};
 use crate::fault::Fault;
+use crate::files::layout::StoreDirs;
 use crate::key::KeyError;
-use crate::lock::StoreLock;
-use crate::sync::SyncError;
+use crate::lock::Shared;
+use crate::sync::{OpenStore, SyncError};
 use crate::sync::queue::{Rewritten, WaitingFile, rewrite_ciphertexts, waiting_files};
 
 /// A waiting change whose ciphertext is not encrypted for exactly the
@@ -52,22 +51,26 @@ fn encrypted_for_exactly(found: &crate::recipients::EntryRecipients, keys: &[pgp
 
 /// The waiting changes paw will not push, oldest first: each whose
 /// ciphertext is not encrypted for exactly the recipients its `.gpg-id`
-/// names now, as accepted in the keyring of `state_dir` (see [`HeldBack`]).
+/// names now, as accepted in the store's keyring (see [`HeldBack`]).
 /// Empty if the store's recipients were never recorded (no setup), as
 /// nothing paw saved was then pinned to them.
 ///
 /// What to do with one: its text has to be encrypted again for the new
 /// recipients, which needs the key. Accept the new recipients, then
 /// [`reencrypt_each`] (or take the change back with [`crate::sync::queue::discard`]).
-pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncError> {
-    let _reading = StoreLock::for_repo(dir).shared()?;
-    let keyring = Keyring::open(state_dir)?;
+pub fn held_back(dirs: &StoreDirs) -> Result<Vec<HeldBack>, SyncError> {
+    let reading = dirs.shared()?;
+    held_back_in(&reading, &OpenStore::open(dirs)?)
+}
+
+pub(crate) fn held_back_in(reading: &Shared, store: &OpenStore) -> Result<Vec<HeldBack>, SyncError> {
+    let keyring = Keyring::open(&store.dirs)?;
     // Setup has not recorded who can open the store, so there is nothing to
     // compare against, and the write path refuses every save until it has.
     if !keyring.confirmed() {
         return Ok(Vec::new());
     }
-    let (_, files) = waiting_files(dir)?;
+    let (_, files) = waiting_files(reading, store)?;
     let mut held = Vec::new();
     for file in files {
         if !crate::path::is_entry_file(&file.path) {
@@ -84,7 +87,7 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
             recipients,
             list,
         };
-        let recipients = match keyring.folder_recipients(dir, folder) {
+        let recipients = match keyring.folder_recipients(reading, folder) {
             Ok(recipients) => recipients,
             Err(_) => {
                 held.push(hold(None, Vec::new(), HeldBackList::Unreadable));
@@ -94,7 +97,7 @@ pub fn held_back(dir: &Path, state_dir: &Path) -> Result<Vec<HeldBack>, SyncErro
         let accepted = !recipients.changed;
         let exact = accepted
             && found.as_ref().is_some_and(|found| {
-                keyring.resolve(dir, folder).is_ok_and(|keys| encrypted_for_exactly(found, &keys))
+                keyring.resolve(reading, folder).is_ok_and(|keys| encrypted_for_exactly(found, &keys))
             });
         if !exact {
             let lines = recipients.lines.into_iter().map(|line| line.line).collect();
@@ -200,7 +203,7 @@ fn left_reason(error: WriteError) -> LeftReason {
     }
 }
 
-fn look(item: &HeldBack, files: &[WaitingFile], keyring: &Keyring, dir: &Path) -> Option<Look> {
+fn look(reading: &Shared, item: &HeldBack, files: &[WaitingFile], keyring: &Keyring) -> Option<Look> {
     let file = files.iter().find(|file| file.id == item.id)?;
     match item.list {
         HeldBackList::Unreadable => return Some(Look::Left(LeftReason::NoList)),
@@ -208,7 +211,7 @@ fn look(item: &HeldBack, files: &[WaitingFile], keyring: &Keyring, dir: &Path) -
         HeldBackList::Accepted => {}
     }
     let folder = crate::path::folder_of(&file.path);
-    Some(match keyring.resolve(dir, folder) {
+    Some(match keyring.resolve(reading, folder) {
         Ok(_) => Look::Ready { path: file.path.clone(), blob: file.blob },
         Err(error) => Look::Left(left_reason(error)),
     })
@@ -218,17 +221,17 @@ fn look(item: &HeldBack, files: &[WaitingFile], keyring: &Keyring, dir: &Path) -
 /// ready, and why each other one is not (`skipped` holds those it already
 /// tried, by path and waiting blob).
 fn looked(
-    dir: &Path,
-    state_dir: &Path,
+    dirs: &StoreDirs,
     skipped: &std::collections::HashMap<(String, Oid), LeftReason>,
 ) -> Result<ReencryptCheck, SyncError> {
-    let held = held_back(dir, state_dir)?;
-    let _reading = StoreLock::for_repo(dir).shared()?;
-    let keyring = Keyring::open(state_dir)?;
-    let (_, files) = waiting_files(dir)?;
+    let held = held_back(dirs)?;
+    let reading = dirs.shared()?;
+    let store = OpenStore::open(dirs)?;
+    let keyring = Keyring::open(dirs)?;
+    let (_, files) = waiting_files(&reading, &store)?;
     let mut check = ReencryptCheck { ready: 0, left: Vec::new() };
     for item in &held {
-        let reason = match look(item, &files, &keyring, dir) {
+        let reason = match look(&reading, item, &files, &keyring) {
             Some(Look::Ready { path, blob }) => match skipped.get(&(path, blob)) {
                 Some(reason) => reason.clone(),
                 None => {
@@ -246,8 +249,8 @@ fn looked(
 
 /// How many held-back changes [`reencrypt_each`] could re-encrypt now, and
 /// why the others can't be. No key, no network.
-pub fn reencrypt_check(dir: &Path, state_dir: &Path) -> Result<ReencryptCheck, SyncError> {
-    looked(dir, state_dir, &std::collections::HashMap::new())
+pub fn reencrypt_check(dirs: &StoreDirs) -> Result<ReencryptCheck, SyncError> {
+    looked(dirs, &std::collections::HashMap::new())
 }
 
 /// Encrypts the held-back changes again for their folder's new list, one
@@ -264,12 +267,11 @@ pub fn reencrypt_check(dir: &Path, state_dir: &Path) -> Result<ReencryptCheck, S
 /// once. The store lock is never held while `open` runs; a save in between
 /// only makes it look again.
 pub fn reencrypt_each<S: From<SyncError>>(
-    dir: &Path,
-    state_dir: &Path,
+    dirs: &StoreDirs,
     open: &mut OpenEach<'_, S>,
     progress: &mut dyn FnMut(u32, u32),
 ) -> Result<ReencryptReport, S> {
-    match reencrypt_each_until(dir, state_dir, open, progress) {
+    match reencrypt_each_until(dirs, open, progress) {
         Ok(report) => Ok(report),
         Err(Ended::Failed(error)) => Err(error.into()),
         Err(Ended::Stopped(stop)) => Err(stop),
@@ -277,14 +279,13 @@ pub fn reencrypt_each<S: From<SyncError>>(
 }
 
 fn reencrypt_each_until<S>(
-    dir: &Path,
-    state_dir: &Path,
+    dirs: &StoreDirs,
     open: &mut OpenEach<'_, S>,
     progress: &mut dyn FnMut(u32, u32),
 ) -> Result<ReencryptReport, Ended<S>> {
     use std::collections::HashMap;
     let mut done = 0;
-    let mut total = reencrypt_check(dir, state_dir)?.ready;
+    let mut total = reencrypt_check(dirs)?.ready;
     // Tried and left, by (path, waiting blob): ids change as the queue is
     // rewritten, these do not.
     let mut skipped: HashMap<(String, Oid), LeftReason> = HashMap::new();
@@ -295,11 +296,12 @@ fn reencrypt_each_until<S>(
     let mut moved = 0;
     loop {
         let next = {
-            let held = held_back(dir, state_dir)?;
-            let _reading = StoreLock::for_repo(dir).shared()?;
-            let keyring = Keyring::open(state_dir)?;
-            let (head, files) = waiting_files(dir)?;
-            held.into_iter().find_map(|item| match look(&item, &files, &keyring, dir) {
+            let held = held_back(dirs)?;
+            let reading = dirs.shared()?;
+            let store = OpenStore::open(dirs)?;
+            let keyring = Keyring::open(dirs)?;
+            let (head, files) = waiting_files(&reading, &store)?;
+            held.into_iter().find_map(|item| match look(&reading, &item, &files, &keyring) {
                 Some(Look::Ready { path, blob }) if !skipped.contains_key(&(path.clone(), blob)) => {
                     let bytes = files.iter().find(|file| file.id == item.id).map(|file| file.ciphertext.clone())?;
                     Some((item, path, blob, bytes, head))
@@ -331,6 +333,8 @@ fn reencrypt_each_until<S>(
         let Some(text) = texts.get(&blob) else {
             return Err(Fault::local("internal: a held-back change's text went missing").into());
         };
+        let held = dirs.exclusive()?;
+        let store = OpenStore::open(dirs)?;
         let mut left = None;
         let mut new_blob = None;
         let mut encrypt_again = |at: &str, old: Oid| -> Result<Option<Vec<u8>>, SyncError> {
@@ -338,7 +342,7 @@ fn reencrypt_each_until<S>(
                 return Ok(None);
             }
             let folder = crate::path::folder_of(&path);
-            let keys = match Keyring::open(state_dir)?.resolve(dir, folder) {
+            let keys = match Keyring::open(dirs)?.resolve(&held, folder) {
                 Ok(keys) => keys,
                 Err(WriteError::Fault { fault }) => return Err(fault.into()),
                 Err(other) => {
@@ -350,7 +354,9 @@ fn reencrypt_each_until<S>(
             new_blob = Some(Oid::hash_object(git2::ObjectType::Blob, &ciphertext).map_err(crate::sync::git_err)?);
             Ok(Some(ciphertext))
         };
-        match rewrite_ciphertexts(dir, head, &mut encrypt_again)? {
+        let rewritten = rewrite_ciphertexts(&held, &store, head, &mut encrypt_again)?;
+        drop(held);
+        match rewritten {
             Rewritten::Moved => {
                 // A save or a discard in between: look again (the text is kept).
                 moved += 1;
@@ -373,10 +379,10 @@ fn reencrypt_each_until<S>(
         done += 1;
         progress(done, total);
     }
-    Ok(ReencryptReport { reencrypted: done, left: looked(dir, state_dir, &skipped)?.left })
+    Ok(ReencryptReport { reencrypted: done, left: looked(dirs, &skipped)?.left })
 }
 
 /// Whether any waiting change is held back: a send then pushes nothing.
-pub(crate) fn holds_back(dir: &Path, state_dir: &Path) -> Result<bool, SyncError> {
-    Ok(!held_back(dir, state_dir)?.is_empty())
+pub(crate) fn holds_back(dirs: &StoreDirs) -> Result<bool, SyncError> {
+    Ok(!held_back(dirs)?.is_empty())
 }

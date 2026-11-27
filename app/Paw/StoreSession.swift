@@ -97,13 +97,15 @@ final class LiveStore {
     /// The top of the store, for Home.
     private(set) var home: FolderListing
     private(set) var entryCount: Int
+    let stateDir: String
     let repoDir: String
     let changed = Signal<StoreChanged>()
     let opened = Signal<EntryOpened>()
 
-    init(store: PassStore, repoDir: String) {
+    init(store: PassStore, stateDir: String) {
         self.store = store
-        self.repoDir = repoDir
+        self.stateDir = stateDir
+        repoDir = storeRepoDir(stateDir: stateDir)
         home = store.home()
         entryCount = Int(store.entryCount())
     }
@@ -122,7 +124,7 @@ final class LiveStore {
         var problem: Error?
         if change.rewritesEntries {
             do {
-                store = try PassStore(dir: repoDir)
+                store = try PassStore(stateDir: stateDir)
                 home = store.home()
                 entryCount = Int(store.entryCount())
             } catch {
@@ -148,7 +150,8 @@ final class StoreSession {
     /// What a session is built from. The set-up store and the simulator's
     /// fixture differ only in these.
     struct Parts {
-        let repoDir: String
+        /// Where the store keeps its state; the store itself is in its `repo/`.
+        let stateDir: String
         /// `nil` where Face ID copies cannot be kept.
         let copies: CopyCache?
         /// The copies' clock, the key port's and the clipboard's.
@@ -195,10 +198,10 @@ final class StoreSession {
     let requests: Signal<ScreenRequest>
     private var backgroundWatch: NSObjectProtocol?
 
-    /// Opens the store in `parts.repoDir` and builds everything on it.
+    /// Opens the store in `parts.stateDir` and builds everything on it.
     init(_ parts: Parts) throws {
-        let store = try PassStore(dir: parts.repoDir)
-        let live = LiveStore(store: store, repoDir: parts.repoDir)
+        let store = try PassStore(stateDir: parts.stateDir)
+        let live = LiveStore(store: store, stateDir: parts.stateDir)
         self.live = live
         copies = parts.copies
         clock = parts.clock

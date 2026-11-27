@@ -160,7 +160,7 @@ enum BackgroundRefresh {
 
     private static func openStore() -> (store: PassStore, stateDir: String)? {
         guard let location = try? StoreLocation.standard(),
-              let store = try? PassStore(dir: location.repoDir.path) else { return nil }
+              let store = try? PassStore(stateDir: location.stateDir.path) else { return nil }
         return (store, location.stateDir.path)
     }
 

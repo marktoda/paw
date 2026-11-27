@@ -7,7 +7,6 @@
 mod key_common;
 mod support;
 
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -21,7 +20,7 @@ use paw_core::ssh::SshPublicKey;
 use paw_core::fault::Fault;
 use paw_core::remote::RemoteFailure;
 use paw_core::sync::{self, Author, Cloned, Connection, HostKeyPin, SyncError};
-use support::{GitServer, git};
+use support::{GitServer, Phone, git};
 
 const ENTRY: &str = "web/example.com.gpg";
 const MESSAGE: &str = "Add given password for web/example.com to store.";
@@ -48,8 +47,8 @@ fn author() -> Author {
     Author { name: "iPhone".into(), email: "iphone@example.com".into() }
 }
 
-fn commit_entry(dir: &Path) -> String {
-    sync::commit(dir, ENTRY, b"ciphertext", MESSAGE, &author()).unwrap()
+fn commit_entry(dir: &Phone) -> String {
+    sync::commit(&dir.store, ENTRY, b"ciphertext", MESSAGE, &author()).unwrap()
 }
 
 /// `Connection` has no `Debug`, so `unwrap_err` is not available.
@@ -74,10 +73,10 @@ fn key_refusal(result: Result<Connection, sync::ConnectError>) -> KeyError {
 fn clones_commits_and_pushes_with_the_card() {
     let card = card();
     let server = GitServer::start(&[authorised_line(&card)]);
-    let dir = tempfile::tempdir().unwrap();
+    let dir = Phone::new();
 
     let connection = connect(&server, &card);
-    assert_eq!(steps::clone(&connection, &server.remote(), dir.path()).unwrap(), Cloned::Store);
+    assert_eq!(steps::clone(&connection, &server.remote(), &dir.store).unwrap(), Cloned::Store);
     drop(connection);
 
     assert_eq!(std::fs::read_to_string(dir.path().join("README")).unwrap(), "a password store\n");
@@ -86,7 +85,7 @@ fn clones_commits_and_pushes_with_the_card() {
     // A clone is one login, so one touch.
     assert_eq!(card.authentication_count(), 1);
 
-    let commit = commit_entry(dir.path());
+    let commit = commit_entry(&dir);
     assert_eq!(std::fs::read(dir.path().join(ENTRY)).unwrap(), b"ciphertext");
     assert_eq!(git(dir.path(), &["status", "--porcelain"]), "");
     assert_eq!(git(dir.path(), &["log", "-1", "--format=%s|%an|%ae"]), format!("{MESSAGE}|iPhone|iphone@example.com"));
@@ -94,7 +93,7 @@ fn clones_commits_and_pushes_with_the_card() {
     assert_ne!(server.tip(), commit);
 
     let connection = connect(&server, &card);
-    steps::push(&connection, dir.path()).unwrap();
+    steps::push(&connection, &dir.store).unwrap();
 
     assert_eq!(server.tip(), commit);
     assert_eq!(git(&server.bare(), &["show", &format!("main:{ENTRY}")]), "ciphertext");
@@ -106,14 +105,14 @@ fn clones_commits_and_pushes_with_the_card() {
 fn fetch_and_push_share_one_login() {
     let card = card();
     let server = GitServer::start(&[authorised_line(&card)]);
-    let dir = tempfile::tempdir().unwrap();
-    assert_eq!(steps::clone(&connect(&server, &card), &server.remote(), dir.path()).unwrap(), Cloned::Store);
-    let commit = commit_entry(dir.path());
+    let dir = Phone::new();
+    assert_eq!(steps::clone(&connect(&server, &card), &server.remote(), &dir.store).unwrap(), Cloned::Store);
+    let commit = commit_entry(&dir);
     let touches_before = card.authentication_count();
 
     let connection = connect(&server, &card);
-    let remote_tip = steps::fetch(&connection, dir.path()).unwrap();
-    steps::push(&connection, dir.path()).unwrap();
+    let remote_tip = steps::fetch(&connection, &dir.store).unwrap();
+    steps::push(&connection, &dir.store).unwrap();
 
     assert_ne!(remote_tip, commit);
     assert_eq!(server.tip(), commit);
@@ -127,12 +126,12 @@ fn fetch_and_push_share_one_login() {
 fn fetch_brings_in_what_the_desktop_pushed() {
     let card = card();
     let server = GitServer::start(&[authorised_line(&card)]);
-    let dir = tempfile::tempdir().unwrap();
+    let dir = Phone::new();
     let connection = connect(&server, &card);
-    assert_eq!(steps::clone(&connection, &server.remote(), dir.path()).unwrap(), Cloned::Store);
+    assert_eq!(steps::clone(&connection, &server.remote(), &dir.store).unwrap(), Cloned::Store);
 
     let desktop = server.desktop_commit("desktop.gpg", "from the desktop");
-    let remote_tip = steps::fetch(&connection, dir.path()).unwrap();
+    let remote_tip = steps::fetch(&connection, &dir.store).unwrap();
 
     assert_eq!(remote_tip, desktop);
     assert_eq!(git(dir.path(), &["rev-parse", "origin/main"]), desktop);
@@ -146,18 +145,18 @@ fn fetch_brings_in_what_the_desktop_pushed() {
 fn a_push_onto_a_remote_that_moved_is_refused_and_changes_nothing() {
     let card = card();
     let server = GitServer::start(&[authorised_line(&card)]);
-    let dir = tempfile::tempdir().unwrap();
+    let dir = Phone::new();
     let connection = connect(&server, &card);
-    assert_eq!(steps::clone(&connection, &server.remote(), dir.path()).unwrap(), Cloned::Store);
+    assert_eq!(steps::clone(&connection, &server.remote(), &dir.store).unwrap(), Cloned::Store);
 
     let desktop = server.desktop_commit("desktop.gpg", "from the desktop");
-    commit_entry(dir.path());
+    commit_entry(&dir);
 
     // Before fetching, the remote's new tip is unknown here.
-    assert!(matches!(steps::push(&connection, dir.path()), Err(sync::PushError::NotFastForward)));
+    assert!(matches!(steps::push(&connection, &dir.store), Err(sync::PushError::NotFastForward)));
     // After fetching it is known, and still not an ancestor of ours.
-    steps::fetch(&connection, dir.path()).unwrap();
-    assert!(matches!(steps::push(&connection, dir.path()), Err(sync::PushError::NotFastForward)));
+    steps::fetch(&connection, &dir.store).unwrap();
+    assert!(matches!(steps::push(&connection, &dir.store), Err(sync::PushError::NotFastForward)));
 
     assert_eq!(server.tip(), desktop);
 }
@@ -166,16 +165,16 @@ fn a_push_onto_a_remote_that_moved_is_refused_and_changes_nothing() {
 fn a_push_the_host_refuses_is_reported() {
     let card = card();
     let server = GitServer::start(&[authorised_line(&card)]);
-    let dir = tempfile::tempdir().unwrap();
+    let dir = Phone::new();
     let connection = connect(&server, &card);
-    assert_eq!(steps::clone(&connection, &server.remote(), dir.path()).unwrap(), Cloned::Store);
+    assert_eq!(steps::clone(&connection, &server.remote(), &dir.store).unwrap(), Cloned::Store);
     let before = server.tip();
 
     // As a pre-receive hook that exits with an error would.
     server.sim.set_refuse_pushes(true);
-    commit_entry(dir.path());
+    commit_entry(&dir);
 
-    match steps::push(&connection, dir.path()) {
+    match steps::push(&connection, &dir.store) {
         Err(sync::PushError::Failed(Fault::Remote { failure: RemoteFailure::PushRefused { detail: message } })) => {
             assert!(message.contains("refused the push"), "{message}")
         }
@@ -283,15 +282,15 @@ fn a_login_for_a_short_user_name_fits_one_short_apdu() {
 }
 
 /// A clone of a fresh server's store, for the tests that only commit.
-fn cloned(server: &GitServer, card: &Arc<SimulatedKey>) -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
-    assert_eq!(steps::clone(&connect(server, card), &server.remote(), dir.path()).unwrap(), Cloned::Store);
+fn cloned(server: &GitServer, card: &Arc<SimulatedKey>) -> Phone {
+    let dir = Phone::new();
+    assert_eq!(steps::clone(&connect(server, card), &server.remote(), &dir.store).unwrap(), Cloned::Store);
     dir
 }
 
 /// The reason `commit` gives for refusing `path`.
-fn refused_path(dir: &Path, path: &str) -> String {
-    match sync::commit(dir, path, b"x", MESSAGE, &author()) {
+fn refused_path(dir: &Phone, path: &str) -> String {
+    match sync::commit(&dir.store, path, b"x", MESSAGE, &author()) {
         Err(Fault::Local { detail }) => match detail.strip_prefix("not a safe name for an entry: ") {
             Some(why) => why.to_owned(),
             None => panic!("expected {path:?} to be refused as unsafe, got {detail:?}"),
@@ -317,7 +316,7 @@ fn commit_refuses_names_that_leave_the_store() {
         ("web\\x.gpg", "backslash"),
         ("web/x\0.gpg", "NUL"),
     ] {
-        let said = refused_path(dir.path(), path);
+        let said = refused_path(&dir, path);
         assert!(said.contains(why), "{path:?}: {said}");
     }
     assert_eq!(git(dir.path(), &["rev-parse", "HEAD"]), head);
@@ -342,11 +341,11 @@ fn commit_refuses_gits_own_directory_however_it_is_spelled() {
         ".g\u{200c}it/config",
         "web/.git",
     ] {
-        let said = refused_path(dir.path(), path);
+        let said = refused_path(&dir, path);
         assert!(said.contains("git's own directory"), "{path:?}: {said}");
     }
     // Names that merely resemble it are ordinary entries.
-    sync::commit(dir.path(), "web/.github.gpg", b"x", MESSAGE, &author()).unwrap();
+    sync::commit(&dir.store, "web/.github.gpg", b"x", MESSAGE, &author()).unwrap();
 
     assert_eq!(std::fs::read(dir.path().join(".git/config")).unwrap(), config);
     assert!(!dir.path().join("web/.git").exists());
@@ -368,8 +367,8 @@ fn commit_refuses_to_write_through_a_link_in_the_repository() {
     git(dir.path(), &["commit", "--quiet", "-m", "Links."]);
     let head = git(dir.path(), &["rev-parse", "HEAD"]);
 
-    let through_folder = refused_path(dir.path(), "shared/new.gpg");
-    let through_file = refused_path(dir.path(), "victim.gpg");
+    let through_folder = refused_path(&dir, "shared/new.gpg");
+    let through_file = refused_path(&dir, "victim.gpg");
 
     assert!(through_folder.contains("one of its folders is a link"), "{through_folder}");
     assert!(through_file.contains("it is a link"), "{through_file}");
@@ -389,7 +388,7 @@ fn commit_does_not_follow_a_link_planted_in_the_working_copy() {
 
     let head = git(dir.path(), &["rev-parse", "HEAD"]);
 
-    let said = refused_path(dir.path(), ENTRY);
+    let said = refused_path(&dir, ENTRY);
 
     assert!(said.contains("in the working copy"), "{said}");
     assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
@@ -401,14 +400,14 @@ fn an_entry_named_like_a_pattern_does_not_touch_other_entries() {
     let card = card();
     let server = GitServer::start(&[authorised_line(&card)]);
     let dir = cloned(&server, &card);
-    commit_entry(dir.path());
+    commit_entry(&dir);
     // A change on disk that has not been committed.
     std::fs::write(dir.path().join(ENTRY), "local state").unwrap();
 
     // `pass` allows these characters in names; to git they are a pattern
     // that also matches the entry above.
     for name in ["web/*", "web/example?com.gpg", "web/[a-z]*.gpg", ":/web/example.com.gpg"] {
-        sync::commit(dir.path(), name, b"other", MESSAGE, &author()).unwrap();
+        sync::commit(&dir.store, name, b"other", MESSAGE, &author()).unwrap();
         assert_eq!(std::fs::read(dir.path().join(name)).unwrap(), b"other", "{name}");
     }
 
@@ -438,9 +437,9 @@ fn a_download_larger_than_the_limit_is_stopped() {
     // A clone and a fetch, each with the limit at 1 MiB.
     let connection = connect(&server, &card);
     connection.set_download_limit(1 << 20);
-    let dir = tempfile::tempdir().unwrap();
-    let cloning = steps::clone(&connection, &server.remote(), dir.path());
-    let fetching = steps::fetch(&connection, small.path());
+    let dir = Phone::new();
+    let cloning = steps::clone(&connection, &server.remote(), &dir.store);
+    let fetching = steps::fetch(&connection, &small.store);
 
     for result in [cloning.map(|_| String::new()), fetching] {
         let Err(SyncError::Fault { fault: Fault::Local { detail: message } }) = result else { panic!("{result:?}") };
@@ -451,5 +450,5 @@ fn a_download_larger_than_the_limit_is_stopped() {
 
     // Under the default limit the same store comes in.
     let connection = connect(&server, &card);
-    assert_eq!(steps::fetch(&connection, small.path()).unwrap(), server.tip());
+    assert_eq!(steps::fetch(&connection, &small.store).unwrap(), server.tip());
 }

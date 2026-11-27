@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use paw_core::files::layout::StoreDirs;
 use paw_core::sim::remote::steps;
 use paw_core::github::{
     BackgroundOutcome, GitHubAccount, GitHubError, RefreshDecision, RefreshStep, RepositoryList, SignInState,
@@ -78,6 +79,10 @@ impl World {
 
     fn repo(&self) -> PathBuf {
         self.dir.path().join(paw_core::files::layout::REPO)
+    }
+
+    fn store(&self) -> StoreDirs {
+        StoreDirs::new(self.dir.path())
     }
 
     fn sign_in(&self) {
@@ -199,13 +204,13 @@ fn ssh_twin(w: &World) -> tempfile::TempDir {
     let remote = w.remote.remote().unwrap();
     let signer = signer_with(&w.key, PIN);
     let connection = sync::Connection::open(&remote, &signer).unwrap();
-    steps::clone(&connection, &remote, &twin.path().join(paw_core::files::layout::REPO)).unwrap();
+    steps::clone(&connection, &remote, &StoreDirs::new(twin.path())).unwrap();
     twin
 }
 
 fn ssh_refresh(w: &World, twin: &Path) -> Result<operation::SyncReport, SyncError> {
     let signer = signer_with(&w.key, PIN);
-    steps::sync(&w.remote.remote().unwrap(), &signer, &twin.join(paw_core::files::layout::REPO), twin, false).map_err(key_common::sync_failure)
+    steps::sync(&w.remote.remote().unwrap(), &signer, &StoreDirs::new(twin), false).map_err(key_common::sync_failure)
 }
 
 // --- the device flow ------------------------------------------------------------
@@ -659,7 +664,7 @@ fn a_hostile_tree_fetched_over_https_is_refused_exactly_as_over_ssh() {
         other => panic!("not refused for the remote's content: {other:?}"),
     };
     assert_eq!(refused(&over_https), refused(&over_ssh));
-    assert_eq!(sync::refused_remote(&w.repo()).unwrap(), sync::refused_remote(&twin.path().join(paw_core::files::layout::REPO)).unwrap());
+    assert_eq!(sync::refused_remote(&w.store()).unwrap(), sync::refused_remote(&StoreDirs::new(twin.path())).unwrap());
     assert_eq!(w.head(), head);
     assert!(!w.repo().join("escape").exists());
     w.assert_consistent();
@@ -720,7 +725,7 @@ fn local_changes_are_replayed_onto_a_background_fetch() {
     let w = world();
     w.set_up();
     let author = sync::Author { name: "iPhone".into(), email: "paw@localhost".into() };
-    sync::commit(&w.repo(), "local/mine.gpg", b"mine", "Add given password for local/mine to store.", &author).unwrap();
+    sync::commit(&w.store(), "local/mine.gpg", b"mine", "Add given password for local/mine to store.", &author).unwrap();
     let remote_tip = w.remote.commit_file(NEW_ENTRY.into(), b"x".to_vec(), "Add.".into()).unwrap();
 
     let report = w.account.background_refresh(secs(25));

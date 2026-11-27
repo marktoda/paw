@@ -44,7 +44,7 @@ struct Phone {
 
 fn phone() -> Phone {
     let store_dir = tempfile::tempdir().unwrap();
-    write_fixture_store(store_dir.path().to_str().unwrap().into()).unwrap();
+    write_fixture_store(store_dir.path().join(paw_core::files::layout::REPO).to_str().unwrap().into()).unwrap();
     let store = PassStore::open(store_dir.path().to_str().unwrap().into()).unwrap();
     let window = tempfile::tempdir().unwrap();
     let keystore = SimKeystore::new();
@@ -117,7 +117,7 @@ fn an_entry_changed_by_a_pull_needs_the_key_again() {
     let p = phone();
     p.open_with_key(EIGHT_HOURS);
     // Another device re-encrypted the entry; the pull wrote new bytes.
-    let file = p.store_dir.path().join(format!("{ENTRY}.gpg"));
+    let file = p.store_dir.path().join(paw_core::files::layout::REPO).join(format!("{ENTRY}.gpg"));
     let mut bytes = std::fs::read(&file).unwrap();
     bytes.push(0);
     std::fs::write(&file, bytes).unwrap();

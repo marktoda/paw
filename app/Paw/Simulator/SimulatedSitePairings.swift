@@ -6,7 +6,7 @@ import Foundation
 enum SimulatedSitePairings {
     static func seed(stateDir: String) {
         let pairings = SitePairings.open(stateDir: stateDir)
-        guard let store = try? PassStore(dir: storeRepoDir(stateDir: stateDir)) else { return }
+        guard let store = try? PassStore(stateDir: stateDir) else { return }
         _ = try? pairings.recordPairing(store: store, entry: "email/fastmail", service: "https://www.fastmail.com")
         _ = try? pairings.recordPairing(store: store, entry: "work/Jira", service: "https://jira.com")
     }

@@ -19,7 +19,7 @@
 //! step ([`FollowUp`]). The commits stand whatever happens to those; what
 //! failed is returned with the outcome.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -30,6 +30,7 @@ use crate::PawError;
 use crate::copies::CopyCache;
 use crate::fault::Fault;
 use crate::files::content_id;
+use crate::files::layout::StoreDirs;
 use crate::entry::EntryDoc;
 use crate::entry::opened::OpenedEntry;
 use crate::store::codes::CodeFile;
@@ -37,9 +38,9 @@ use crate::store::pairings::PairingFile;
 use crate::store::gpg_id::recipients_for;
 use crate::store::read::read_file;
 use crate::store::tree::StoreTree;
-use crate::lock::{Exclusive, StoreLock};
+use crate::lock::{Exclusive, Shared};
 use crate::path::{entry_file as file, folder_of, split};
-use crate::sync::{TreeEdit, commit_edits};
+use crate::sync::{OpenStore, TreeEdit, commit_edits};
 
 /// What a write keeps in step with the entry after its commits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -87,8 +88,7 @@ pub struct Deleted {
 /// code marks are), and the Face ID copies its writes keep in step.
 #[derive(Clone)]
 pub struct WriteStore {
-    state_dir: PathBuf,
-    repo: PathBuf,
+    store: StoreDirs,
     copies: Option<Arc<CopyCache>>,
     new_copy_ttl: Duration,
 }
@@ -132,11 +132,7 @@ fn check_path(entry: &str) -> Result<(), WriteError> {
 impl WriteStore {
     /// The store set up in `state_dir` (checked out in its `repo/`).
     pub fn open(state_dir: &Path) -> Self {
-        Self::new(state_dir, &crate::files::layout::repo_dir(state_dir))
-    }
-
-    pub fn new(state_dir: &Path, repo: &Path) -> Self {
-        Self { state_dir: state_dir.to_path_buf(), repo: repo.to_path_buf(), copies: None, new_copy_ttl: Duration::ZERO }
+        Self { store: StoreDirs::new(state_dir), copies: None, new_copy_ttl: Duration::ZERO }
     }
 
     /// The same store, keeping the Face ID copies in `copies` in step: an
@@ -150,13 +146,13 @@ impl WriteStore {
     /// The entry moved from `from` to `to`, or with `None` went: its site
     /// pairings and its one-time-code mark follow it.
     fn entry_moved(&self, from: &str, to: Option<&str>, follow_ups: &mut FollowUps) {
-        let pairings = PairingFile::new(&self.state_dir);
+        let pairings = PairingFile::new(self.store.state_dir());
         let moved = match to {
             Some(to) => pairings.moved(from, to),
             None => pairings.clear(Some(from)),
         };
         follow_ups.io(FollowUp::SitePairings, moved);
-        follow_ups.io(FollowUp::OneTimeCodeMark, CodeFile::new(&self.state_dir).moved(from, to));
+        follow_ups.io(FollowUp::OneTimeCodeMark, CodeFile::new(self.store.state_dir()).moved(from, to));
     }
 
     fn forget_copy(&self, entry: &str, follow_ups: &mut FollowUps) {
@@ -165,44 +161,36 @@ impl WriteStore {
         }
     }
 
-    pub fn repo(&self) -> &Path {
-        &self.repo
+    pub fn dirs(&self) -> &StoreDirs {
+        &self.store
     }
 
-    pub fn state_dir(&self) -> &Path {
-        &self.state_dir
+    /// Every change here takes the store's lock for its whole
+    /// check-then-commit, so two saves never interleave and a check is
+    /// never stale by the time its commit is made.
+    fn exclusive(&self) -> Result<Exclusive, WriteError> {
+        Ok(self.store.exclusive()?)
     }
 
-    /// The store's lock (see [`crate::lock`]). Every change here takes it
-    /// for its whole check-then-commit, so two saves never interleave and a
-    /// check is never stale by the time its commit is made.
-    pub fn lock(&self) -> StoreLock {
-        StoreLock::for_repo(&self.repo)
+    fn keyring(&self) -> Result<Keyring, Fault> {
+        Keyring::open(&self.store)
     }
 
-    pub fn exclusive(&self) -> Result<Exclusive, WriteError> {
-        Ok(self.lock().exclusive()?)
-    }
-
-    pub fn keyring(&self) -> Result<Keyring, Fault> {
-        Keyring::open(&self.state_dir)
-    }
-
-    fn tree(&self) -> Result<StoreTree, WriteError> {
-        Ok(StoreTree::scan(&self.repo)?)
+    fn repo(&self) -> &Path {
+        self.store.repo_dir()
     }
 
     /// The encrypted bytes of `entry`.
-    fn current(&self, entry: &str) -> Result<Vec<u8>, WriteError> {
+    fn current(&self, _reading: &Shared, entry: &str) -> Result<Vec<u8>, WriteError> {
         check_path(entry)?;
-        read_file(&self.repo, &file(entry))?.ok_or_else(|| WriteError::NoSuchEntry { entry: entry.to_owned() })
+        read_file(self.repo(), &file(entry))?.ok_or_else(|| WriteError::NoSuchEntry { entry: entry.to_owned() })
     }
 
     /// Whether entries in the two folders are encrypted for the same
     /// `.gpg-id` lines (in any order).
-    fn same_recipients(&self, a: &str, b: &str) -> Result<bool, WriteError> {
+    fn same_recipients(&self, _reading: &Shared, a: &str, b: &str) -> Result<bool, WriteError> {
         let lines = |folder: &str| -> Result<Vec<String>, WriteError> {
-            let mut lines = recipients_for(&self.repo, folder)?;
+            let mut lines = recipients_for(self.repo(), folder)?;
             lines.sort();
             lines.dedup();
             Ok(lines)
@@ -213,16 +201,16 @@ impl WriteStore {
     /// How the recipients for `folder` are satisfied; `writable` says
     /// whether paw can save there now.
     pub fn folder_recipients(&self, folder: &str) -> Result<FolderRecipients, WriteError> {
-        let _reading = self.lock().shared()?;
-        Ok(self.keyring()?.folder_recipients(&self.repo, folder)?)
+        let reading = self.store.shared()?;
+        Ok(self.keyring()?.folder_recipients(&reading, folder)?)
     }
 
     /// Every `.gpg-id` in the store, top first, with its keys and the
     /// entries under it encrypted for a key it does not name. Reads headers
     /// only; decrypts nothing.
     pub fn recipient_scopes(&self) -> Result<Vec<super::RecipientScope>, WriteError> {
-        let _reading = self.lock().shared()?;
-        super::scopes::recipient_scopes(&self.keyring()?, &self.repo)
+        let reading = self.store.shared()?;
+        super::scopes::recipient_scopes(&reading, &self.keyring()?)
     }
 
     /// After "Who can open … changed": accepts the folder's current
@@ -231,7 +219,7 @@ impl WriteStore {
         // Each keyring change reads, changes and writes the whole file: one
         // critical section, or two changes at once would lose one.
         let held = self.exclusive()?;
-        self.keyring()?.accept_recipients(&held, &self.repo, folder)
+        self.keyring()?.accept_recipients(&held, folder)
     }
 
     /// Saves `draft`: encrypts to every recipient of its folder and commits.
@@ -245,7 +233,7 @@ impl WriteStore {
         }
         // AutoFill learns of a code added or removed here without the
         // entry being opened again.
-        follow_ups.io(FollowUp::OneTimeCodeMark, CodeFile::new(&self.state_dir).mark(&entry, doc.makes_codes()));
+        follow_ups.io(FollowUp::OneTimeCodeMark, CodeFile::new(self.store.state_dir()).mark(&entry, doc.makes_codes()));
         let face_id_until_ms = self.copies.as_ref().and_then(|copies| {
             let text = doc.to_bytes();
             follow_ups.copy(match draft.original_path() {
@@ -267,7 +255,8 @@ impl WriteStore {
     fn save_commits(&self, draft: &EntryDraft) -> Result<Committed, WriteError> {
         let held = self.exclusive()?;
         let held = &held;
-        let tree = self.tree()?;
+        let store = OpenStore::open(&self.store)?;
+        let tree = StoreTree::scan(self.repo())?;
         let problems = draft.problems(Some(&tree));
         if !problems.is_empty() {
             return Err(WriteError::Invalid { problems });
@@ -279,35 +268,35 @@ impl WriteStore {
         let keyring = self.keyring()?;
 
         let Some(original) = draft.original_path() else {
-            if read_file(&self.repo, &file(&target))?.is_some() {
+            if read_file(self.repo(), &file(&target))?.is_some() {
                 return Err(WriteError::AlreadyExists { entry: target });
             }
-            let keys = keyring.resolve(&self.repo, folder)?;
+            let keys = keyring.resolve(held, folder)?;
             let ciphertext = encrypt(&keys, &doc.to_bytes())?;
             let message = if draft.generated() {
                 format!("Add generated password for {target}.")
             } else {
                 format!("Add given password for {target} to store.")
             };
-            let commit = commit_edits(held, &self.repo, &[TreeEdit::Write { path: &file(&target), contents: &ciphertext }], &message, &author)?;
+            let commit = commit_edits(held, &store, &[TreeEdit::Write { path: &file(&target), contents: &ciphertext }], &message, &author)?;
             return Ok(Committed { entry: target, previous: None, content_id: content_id(&ciphertext), commits: vec![commit], doc });
         };
 
-        let current = self.current(original)?;
+        let current = self.current(held, original)?;
         if draft.original_content_id().is_some_and(|id| id != content_id(&current)) {
             return Err(WriteError::ChangedSinceOpened { entry: original.to_owned() });
         }
         let opened = draft.original_doc().ok_or_else(|| WriteError::NoSuchEntry { entry: original.to_owned() })?;
         let changed = *doc.to_bytes() != *opened.to_bytes();
         let moved = target != original;
-        let reencrypt = moved && !self.same_recipients(folder_of(original), folder)?;
+        let reencrypt = moved && !self.same_recipients(held, folder_of(original), folder)?;
         // Everything that can be refused is asked before the first commit.
-        let keys = if changed || reencrypt { Some(keyring.resolve(&self.repo, folder)?) } else { None };
+        let keys = if changed || reencrypt { Some(keyring.resolve(held, folder)?) } else { None };
 
         let mut commits = Vec::new();
         let mut latest = current;
         if moved {
-            let (commit, ciphertext) = self.move_commit(held, original, &target, reencrypt.then_some((opened, keys.as_deref().unwrap_or_default())), &author)?;
+            let (commit, ciphertext) = self.move_commit(held, &store, original, &target, reencrypt.then_some((opened, keys.as_deref().unwrap_or_default())), &author)?;
             commits.push(commit);
             if let Some(ciphertext) = ciphertext {
                 latest = ciphertext;
@@ -316,7 +305,7 @@ impl WriteStore {
         if changed && let Some(keys) = &keys {
             let ciphertext = encrypt(keys, &doc.to_bytes())?;
             let message = format!("Edit password for {target} using paw.");
-            commits.push(commit_edits(held, &self.repo, &[TreeEdit::Write { path: &file(&target), contents: &ciphertext }], &message, &author)?);
+            commits.push(commit_edits(held, &store, &[TreeEdit::Write { path: &file(&target), contents: &ciphertext }], &message, &author)?);
             latest = ciphertext;
         }
         Ok(Committed { entry: target, previous: moved.then(|| original.to_owned()), content_id: content_id(&latest), commits, doc })
@@ -328,6 +317,7 @@ impl WriteStore {
     fn move_commit(
         &self,
         held: &Exclusive,
+        store: &OpenStore,
         from: &str,
         to: &str,
         reencrypt: Option<(&EntryDoc, &[pgp::packet::PublicKey])>,
@@ -337,13 +327,13 @@ impl WriteStore {
         let (from_file, to_file) = (file(from), file(to));
         match reencrypt {
             None => {
-                let commit = commit_edits(held, &self.repo, &[TreeEdit::Rename { from: &from_file, to: &to_file }], &message, author)?;
+                let commit = commit_edits(held, store, &[TreeEdit::Rename { from: &from_file, to: &to_file }], &message, author)?;
                 Ok((commit, None))
             }
             Some((doc, keys)) => {
                 let ciphertext = encrypt(keys, &doc.to_bytes())?;
                 let edits = [TreeEdit::Remove { path: &from_file }, TreeEdit::Write { path: &to_file, contents: &ciphertext }];
-                let commit = commit_edits(held, &self.repo, &edits, &message, author)?;
+                let commit = commit_edits(held, store, &edits, &message, author)?;
                 Ok((commit, Some(ciphertext)))
             }
         }
@@ -354,9 +344,9 @@ impl WriteStore {
     pub fn delete(&self, entry: &str) -> Result<Deleted, WriteError> {
         let commit = {
             let held = self.exclusive()?;
-            self.current(entry)?;
+            self.current(&held, entry)?;
             let message = format!("Remove {entry} from store.");
-            commit_edits(&held, &self.repo, &[TreeEdit::Remove { path: &file(entry) }], &message, &author())?
+            commit_edits(&held, &OpenStore::open(&self.store)?, &[TreeEdit::Remove { path: &file(entry) }], &message, &author())?
         };
         let mut follow_ups = FollowUps::default();
         self.forget_copy(entry, &mut follow_ups);

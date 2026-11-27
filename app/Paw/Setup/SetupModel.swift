@@ -91,7 +91,7 @@ final class SetupModel {
     }
 
     let setup: Setup
-    let repoPath: String
+    let stateDir: String
     /// Shared with Home afterwards, so the PIN typed here is still held.
     let keyPort: KeyPort
     let reader: KeyReader
@@ -124,10 +124,10 @@ final class SetupModel {
 
     private let workQueue = DispatchQueue(label: "paw-setup", qos: .userInitiated)
 
-    init(setup: Setup, repoPath: String, keyPort: KeyPort, keys: any KeyConnector,
+    init(setup: Setup, stateDir: String, keyPort: KeyPort, keys: any KeyConnector,
          finished: @escaping () -> Void, startOver: @escaping () -> Void) {
         self.setup = setup
-        self.repoPath = repoPath
+        self.stateDir = stateDir
         self.keyPort = keyPort
         let reader = KeyReader(port: keyPort, source: keys)
         self.reader = reader
@@ -518,7 +518,7 @@ final class SetupModel {
             unread = true
         }
         do {
-            let store = try PassStore(dir: repoPath)
+            let store = try PassStore(stateDir: stateDir)
             let recipients: [String]
             do {
                 recipients = try store.recipients(folder: "")

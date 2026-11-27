@@ -443,14 +443,15 @@ pub(crate) fn ensure_clean(repo: &Repository) -> Result<(), SyncError> {
 /// back exactly as they were. The working copy must be clean.
 pub(crate) fn move_branch(
     held: &crate::lock::Exclusive,
-    repo: &Repository,
+    store: &super::OpenStore,
     branch: &str,
     from: Oid,
     to: Oid,
     seen: Option<(&str, Oid)>,
     why: &str,
 ) -> Result<(), SyncError> {
-    debug_assert!(repo.workdir().is_none_or(|dir| held.covers(dir)), "move_branch without its store's lock");
+    debug_assert!(held.covers(store.dirs.lock()), "move_branch without its store's lock");
+    let repo = &store.repo;
     if from != to {
         // Nothing reaches the working copy that has not been checked.
         guard::check_commit(repo, to)?;
