@@ -3,8 +3,8 @@ import SwiftUI
 /// Where the one key sheet is. Plain values only: the core decides the stage.
 enum KeySheetStage: Equatable {
     case plugIn
-    /// `triesLeft` is shown before any input whenever fewer than 3 remain.
-    /// `forgotten` adds the line about the PIN being dropped in the background.
+    /// `triesLeft` is shown before any input when few remain
+    /// (`KeySheetWords.warnsBelowTries`). `forgotten` adds the line about the PIN being dropped in the background.
     case pin(triesLeft: Int, forgotten: Bool)
     case wrongPin(triesLeft: Int)
     /// The PIN is asked again for another reason: it was not 6 to 127
@@ -38,7 +38,7 @@ struct KeySheetContent: View {
     let purpose: String
     let stage: KeySheetStage
     @Binding var pin: String
-    /// A line under the steps, e.g. "Afterwards it opens with Face ID until 6:40 PM."
+    /// A line under the steps at Touch (`FaceIdWords.afterKey`).
     var note: String? = nil
     var onContinue: () -> Void = {}
     var onCancel: () -> Void = {}
@@ -145,13 +145,13 @@ struct KeySheetContent: View {
 
     private var words: some View {
         VStack(spacing: 6) {
-            Text(Device.words(headline))
+            Text(Device.words(stage.headline))
                 .font(PawFont.title)
                 .foregroundStyle(PawColor.label)
                 .multilineTextAlignment(.center)
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("key-sheet-headline")
-            if let triesLine {
+            if let triesLine = stage.triesLine {
                 Label(triesLine, systemImage: PawSymbol.warning)
                     .font(PawFont.numeral)
                     .foregroundStyle(PawColor.warning)
@@ -160,7 +160,7 @@ struct KeySheetContent: View {
                     .accessibilityLabel(triesLine)
                     .accessibilityIdentifier("pin-tries-left")
             }
-            if let explanation {
+            if let explanation = stage.explanation {
                 Text(Device.words(explanation))
                     .font(PawFont.subheadline)
                     .foregroundStyle(PawColor.labelSecondary)
@@ -209,14 +209,6 @@ struct KeySheetContent: View {
             .accessibilityIdentifier("key-sheet-cancel")
     }
 
-    private var headline: String {
-        stage.headline
-    }
-
-    private var explanation: String? {
-        stage.explanation
-    }
-
     private static func haptic(for stage: KeySheetStage) -> SensoryFeedback? {
         switch stage {
         case .wrongPin(let triesLeft): return triesLeft == 1 ? .warning : .error
@@ -226,13 +218,8 @@ struct KeySheetContent: View {
         }
     }
 
-    private var triesLine: String? {
-        stage.triesLine
-    }
-
     private var announcement: String {
-        Device.words([headline, triesLine, explanation].compactMap { $0 }.joined(separator: ". ")
-            .replacingOccurrences(of: ".. ", with: ". "))
+        Device.words(spokenSentences(stage.headline, stage.triesLine, stage.explanation))
     }
 
     private var showsSteps: Bool {

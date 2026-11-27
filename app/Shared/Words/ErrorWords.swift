@@ -75,3 +75,13 @@ private func oneLine(_ error: Swift.Error) -> String {
 func sentences(_ parts: String...) -> String {
     parts.filter { !$0.isEmpty }.joined(separator: " ")
 }
+
+/// Lines read out as one label or announcement, each a sentence: a
+/// headline without a full stop gets one, so VoiceOver pauses after it.
+/// Empty lines are left out.
+func spokenSentences(_ lines: String?...) -> String {
+    lines.compactMap { line in
+        guard let line, let last = line.last else { return nil }
+        return ".?!:".contains(last) ? line : line + "."
+    }.joined(separator: " ")
+}

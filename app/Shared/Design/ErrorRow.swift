@@ -18,10 +18,8 @@ struct ErrorRow: View {
     /// A banner stands alone on its own tinted card; a row sits in a list.
     var isBanner = false
 
-    /// The problem is a headline with no full stop; spoken, it gets one.
     private var spoken: String {
-        let ends = problem.last.map { ".?!:".contains($0) } ?? true
-        return Device.words((ends ? problem : problem + ".") + (nextStep.isEmpty ? "" : " " + nextStep))
+        Device.words(spokenSentences(problem, nextStep))
     }
 
     var body: some View {

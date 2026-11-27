@@ -147,12 +147,16 @@ private struct AutoFillList: View {
                         row(entry)
                     }
                 } header: {
-                    PawSectionHeader(model.site.map { "For \($0)" } ?? "Suggested")
-                        .accessibilityIdentifier("autofill-site-section")
+                    siteHeader
                 }
             }
             maybeSection(model.listedMaybe.map { MaybeRow(entry: $0) })
         }
+    }
+
+    private var siteHeader: some View {
+        PawSectionHeader(model.site.map { "For \($0)" } ?? "Suggested")
+            .accessibilityIdentifier("autofill-site-section")
     }
 
     private var emptyLine: String {
@@ -192,8 +196,7 @@ private struct AutoFillList: View {
                 Section {
                     ForEach(ours, id: \.entry.path, content: hitRow)
                 } header: {
-                    PawSectionHeader(model.site.map { "For \($0)" } ?? "Suggested")
-                        .accessibilityIdentifier("autofill-site-section")
+                    siteHeader
                 }
             }
             maybeSection(maybe.map {
@@ -311,8 +314,7 @@ private struct AutoFillConfirm: View {
         case .neutral: ""
         case .warning, .danger: "Warning: "
         }
-        let ends = headline.last.map { ".?!".contains($0) } ?? true
-        return prefix + (ends ? headline : headline + ".") + (line.isEmpty ? "" : " " + line)
+        return prefix + spokenSentences(headline, line)
     }
 
     var body: some View {
@@ -412,7 +414,7 @@ private struct AutoFillKeySheet: View {
         KeyTaskSheet(
             driver: model.keyTask,
             purpose: model.keyEntry.map(model.purpose) ?? "",
-            note: model.keepsCopies ? Device.words(FaceIdWords.afterKey("fills")) : nil,
+            note: model.keepsCopies ? FaceIdWords.afterKey("fills") : nil,
             onCancel: { model.cancelKey() })
             .background(PawColor.surface.ignoresSafeArea())
     }
