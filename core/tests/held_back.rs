@@ -158,13 +158,15 @@ fn every_held_back_change_is_re_encrypted_for_the_new_list_with_a_touch_each_and
     let before = w.queued();
     assert_eq!(w.sync.reencrypt_check().unwrap().ready, 3);
     let driver = Driver::helpful(PIN, &w.card);
+    assert!(!w.port.session().unwrap().holds_pin());
 
     let task = w.reencrypt(&driver);
 
     assert_eq!(reencrypted(&task), ReencryptReport { reencrypted: 3, left: vec![] });
     assert_eq!(w.card.decipher_count(), 3);
     assert_eq!(driver.count(key_common::is_touch), 3, "{:?}", driver.states());
-    assert_eq!(driver.count(key_common::is_pin), 1);
+    // Asked once, at the task's first stage, which the listener is not told about.
+    assert_eq!(driver.count(key_common::is_pin), 0, "{:?}", driver.states());
     for (done, total) in [(0, 3), (1, 3), (2, 3), (3, 3)] {
         assert!(driver.saw(progress(done, total)), "{done} of {total}: {:?}", driver.states());
     }
@@ -355,4 +357,69 @@ fn a_rename_that_kept_its_ciphertext_is_opened_once() {
     assert!(w.held().is_empty());
     assert_eq!(w.open_with(&w.other, "Work/b").unwrap(), "a-pw\n");
     assert!(!Path::new(&w.repo().join("Work/a.gpg")).exists());
+}
+
+/// Starts a re-encrypt with the PIN not held and types it once, at the
+/// task's first stage, as the sheet's field does: nothing types it again.
+fn reencrypt_typing_the_pin_once(w: &World) -> (Arc<KeyTask>, Arc<Driver>) {
+    let toucher = Driver::toucher(&w.card);
+    let task = w.sync.clone().reencrypt_with_key(w.port.clone(), toucher.clone());
+    assert!(matches!(task.state(), KeyTaskState::Pin { .. }), "{:?}", task.state());
+    task.supply_pin(PIN.as_bytes().to_vec());
+    (task, toucher)
+}
+
+#[test]
+fn a_pin_typed_at_the_first_stage_is_the_one_used() {
+    let w = three_held_back();
+
+    let (task, driver) = reencrypt_typing_the_pin_once(&w);
+
+    assert_eq!(reencrypted(&task), ReencryptReport { reencrypted: 3, left: vec![] });
+    assert_eq!(driver.count(key_common::is_pin), 0, "not asked again: {:?}", driver.states());
+    assert!(w.held().is_empty());
+}
+
+#[test]
+fn a_re_encrypt_cancelled_at_the_pin_runs_in_full_when_started_again() {
+    let w = three_held_back();
+    let task = w.sync.clone().reencrypt_with_key(w.port.clone(), Driver::new());
+    assert!(matches!(task.state(), KeyTaskState::Pin { .. }), "{:?}", task.state());
+    task.cancel();
+    assert!(matches!(finish(&task), KeyTaskState::Cancelled));
+    task.join();
+    assert_eq!(w.held(), ["Work/a", "Work/b", "Work/c"]);
+
+    let (task, _) = reencrypt_typing_the_pin_once(&w);
+
+    assert_eq!(reencrypted(&task), ReencryptReport { reencrypted: 3, left: vec![] });
+    assert!(w.held().is_empty());
+}
+
+/// A cancel at the touch can't stop the card's wait: a re-encrypt started
+/// at once waits at `Busy` until that wait ends (the card's touch timeout,
+/// or a touch, whose answer is thrown away), then asks for its own touch.
+#[test]
+fn a_re_encrypt_cancelled_at_the_touch_and_started_at_once_waits_for_the_card_then_runs() {
+    let w = three_held_back();
+    let typist = Driver::typist(PIN);
+    let task = w.sync.clone().reencrypt_with_key(w.port.clone(), typist.clone());
+    typist.drive(&task);
+    typist.wait_for(key_common::is_touch);
+    let cancelled_at = std::time::Instant::now();
+    task.cancel();
+    assert!(matches!(finish(&task), KeyTaskState::Cancelled));
+
+    let driver = Driver::helpful(PIN, &w.card);
+    let again = w.reencrypt(&driver);
+
+    assert!(matches!(again.state(), KeyTaskState::Busy), "{:?}", again.state());
+    driver.wait_for(key_common::is_touch);
+    // The simulated card gives up waiting for a touch after 5 s (`world`).
+    assert!(cancelled_at.elapsed() >= std::time::Duration::from_secs(4), "{:?}", cancelled_at.elapsed());
+    assert_eq!(reencrypted(&again), ReencryptReport { reencrypted: 3, left: vec![] });
+    assert_eq!(driver.count(key_common::is_touch), 3, "{:?}", driver.states());
+    assert_eq!(driver.count(key_common::is_pin), 0, "the PIN is still held");
+    task.join();
+    assert_eq!(w.card.decipher_count(), 3);
 }

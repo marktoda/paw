@@ -184,9 +184,10 @@ impl KeyPort {
         )
     }
 
-    /// A task that deciphers several ciphertexts with the key and hands
-    /// each one's text to `work` (re-encrypting held-back changes). Refused
-    /// before the PIN on a key with no decryption key.
+    /// A task that, once the PIN is verified, deciphers several ciphertexts
+    /// with the key and hands each one's text to `work` (re-encrypting
+    /// held-back changes). Refused before the PIN on a key with no
+    /// decryption key.
     pub(crate) fn decrypt_then(
         self: &Arc<Self>,
         purpose: KeyPurpose,
@@ -202,6 +203,12 @@ impl KeyPort {
             |session| session.decryption_key().map(drop),
             move |task, session| {
                 let key = session.decryption_key()?.clone();
+                // Before `work` shows any progress: a stage other than the
+                // PIN drops a PIN typed at the task's first stage.
+                session.unlocked(task.as_ref(), |_| Ok(()))?;
+                if task.cancelled() {
+                    return Err(KeyError::Cancelled.into());
+                }
                 let side: Arc<dyn TaskSide> = task.clone();
                 let mut open = |ciphertext: &[u8]| -> Result<zeroize::Zeroizing<Vec<u8>>, Halt> {
                     let plan = Plan::new(ciphertext, &key)?;
