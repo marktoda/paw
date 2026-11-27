@@ -1,7 +1,10 @@
 import SwiftUI
 
+/// One setup screen: its step and heading, its content, then the step
+/// under way and the problem it ran into, both from the model, with the
+/// buttons at the bottom.
 struct SetupPage<Content: View, Buttons: View>: View {
-    let step: Int?
+    let model: SetupModel
     let title: String
     var message: String? = nil
     var titleFont = PawFont.title
@@ -16,7 +19,7 @@ struct SetupPage<Content: View, Buttons: View>: View {
         ScrollView {
             VStack(alignment: .leading, spacing: PawMetrics.Spacing.l) {
                 VStack(alignment: .leading, spacing: PawMetrics.Spacing.s) {
-                    if let step {
+                    if let step = model.screen.step {
                         Text("Step \(step) of \(SetupScreen.stepCount)")
                             .font(PawFont.footnote.weight(.semibold))
                             .foregroundStyle(PawColor.labelSecondary)
@@ -40,6 +43,13 @@ struct SetupPage<Content: View, Buttons: View>: View {
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier(identifier)
                 content
+                if let line = model.working?.line {
+                    SetupWorkingLine(text: line)
+                }
+                if let problem = model.problem {
+                    SetupProblemView(
+                        problem: problem, act: { model.performProblemAction() }, offerAct: { model.performOffer() })
+                }
             }
             .frame(maxWidth: PawMetrics.setupTextWidth, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: PadLayout.isPad ? .center : .leading)
@@ -86,31 +96,10 @@ struct SetupCard<Content: View>: View {
     }
 }
 
-/// A primary button whose tap asks for the key: the gold disc leads it
-/// (design.md 2.1, rule 1).
-struct KeyButtonLabel: View {
-    let title: String
-
-    var body: some View {
-        HStack(spacing: PawMetrics.Spacing.s) {
-            KeyDisc(size: .marker)
-            Text(title)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title), needs your key")
-    }
-}
-
 struct SetupProblemView: View {
     let problem: SetupProblem
     let act: () -> Void
     let offerAct: () -> Void
-
-    init(problem: SetupProblem, act: @escaping () -> Void, offer: @escaping () -> Void = {}) {
-        self.problem = problem
-        self.act = act
-        offerAct = offer
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: PawMetrics.Spacing.s) {
@@ -173,52 +162,6 @@ struct SetupWorkingLine: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("setup-working")
-    }
-}
-
-/// A fingerprint broken into groups of four so it can be read aloud and
-/// compared: "SHA256:" then "uNiV ztFv …", on fixed lines.
-struct GroupedFingerprint: View {
-    let fingerprint: String
-
-    var body: some View {
-        FingerprintText(fingerprint: fingerprint, font: PawFont.password, color: PawColor.label)
-    }
-}
-
-/// A fingerprint or key ID to compare by eye: monospace, in groups of four,
-/// four groups a line, with "SHA256:" on a line of its own. Never cut short
-/// or shrunk: at a large text size a line wraps between groups, and the
-/// view grows. A person is never asked to trust what they can't read.
-struct FingerprintText: View {
-    let fingerprint: String
-    var font: Font = PawFont.footnote.monospaced()
-    var color: Color = PawColor.labelSecondary
-
-    var body: some View {
-        Text(Self.lines(fingerprint))
-            .font(font)
-            .foregroundStyle(color)
-            .multilineTextAlignment(.leading)
-            .fixedSize(horizontal: false, vertical: true)
-            .textSelection(.enabled)
-            .accessibilityLabel(fingerprint)
-    }
-
-    /// "SHA256:\nuNiV ztFv 8Wq2 0oYq\n…": a prefix up to a colon on its own
-    /// line, then the rest in groups of four, `perLine` groups a line.
-    static func lines(_ fingerprint: String, perLine: Int = 4) -> String {
-        var prefix = ""
-        var hash = Substring(fingerprint)
-        if let colon = fingerprint.firstIndex(of: ":") {
-            prefix = String(fingerprint[...colon]) + "\n"
-            hash = fingerprint[fingerprint.index(after: colon)...]
-        }
-        let groups = fingerprintGroups(text: String(hash))
-        let rows = stride(from: 0, to: groups.count, by: perLine).map { first in
-            groups[first..<min(first + perLine, groups.count)].joined(separator: " ")
-        }
-        return prefix + rows.joined(separator: "\n")
     }
 }
 

@@ -132,7 +132,7 @@ struct KeyDiagnosticsView: View {
             appBuild: Self.bundleString("CFBundleVersion"),
             systemVersion: "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)",
             deviceModel: Self.deviceModel,
-            lastSync: syncSummary,
+            lastSync: model.storeSession.syncing?.pillState.lastSync,
             lastCheckedMs: model.storeSession.syncing?.lastChecked.map { Int64($0.timeIntervalSince1970 * 1000) })
         let stateDir = model.storeSession.stateDir
         let port = model.storeSession.keyPort
@@ -147,21 +147,6 @@ struct KeyDiagnosticsView: View {
             assembling = false
             Self.copyForDesktop(text)
             copiedReport = text
-        }
-    }
-
-    /// What the sync pill says now, as one fixed word.
-    private var syncSummary: LastSyncState? {
-        guard let syncing = model.storeSession.syncing else { return nil }
-        switch syncing.pillState {
-        case .working: return .working
-        case .upToDate: return .upToDate
-        case .needsKey: return .needsKey
-        case .notChecked: return .notChecked
-        case .notSent: return .notSent
-        case .offline: return .offline
-        case .failed: return .failed
-        case .paused: return .paused
         }
     }
 

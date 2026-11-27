@@ -91,6 +91,20 @@ enum SyncPillState: Equatable {
         case .failed, .paused: .failed
         }
     }
+
+    /// As one fixed word, for Copy diagnostics.
+    var lastSync: LastSyncState {
+        switch self {
+        case .working: .working
+        case .upToDate: .upToDate
+        case .needsKey: .needsKey
+        case .notChecked: .notChecked
+        case .notSent: .notSent
+        case .offline: .offline
+        case .failed: .failed
+        case .paused: .paused
+        }
+    }
 }
 
 /// What a sync brought in, for the dismissible card on Home.

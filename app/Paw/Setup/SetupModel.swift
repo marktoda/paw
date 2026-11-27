@@ -90,6 +90,12 @@ final class SetupModel {
         let recipients: Int
     }
 
+    /// A plain step under way. `line` says it under the screen, e.g.
+    /// "Checking github.com…"; a step such as Back says nothing.
+    struct Working: Equatable {
+        let line: String?
+    }
+
     let setup: Setup
     let repoPath: String
     /// Shared with Home afterwards, so the PIN typed here is still held.
@@ -107,10 +113,9 @@ final class SetupModel {
     private(set) var notAccepted: KeyNotAccepted?
     var problem: SetupProblem?
     /// The core's sentence about the address as typed.
-    var addressProblem: String?
-    /// A plain step under way, e.g. "Checking github.com…".
-    private(set) var working: String?
-    var addressText = ""
+    private(set) var addressProblem: String?
+    private(set) var working: Working?
+    private var typedAddress = ""
     private var sheetPurpose: SetupSheet.Purpose = .download
     private(set) var readiness: SetupWriteReadiness?
     private(set) var storeFacts: StoreFacts?
@@ -137,9 +142,7 @@ final class SetupModel {
         let state = setup.state()
         self.state = state
         started = state != .readKey
-        if case .checkHost(let address, _) = state {
-            addressText = address
-        }
+        fillAddressField()
         if case .done = state {
             learnAboutStore()
         }
@@ -180,17 +183,8 @@ final class SetupModel {
             // The reader keeps the failure for Plug in to say.
             if asked { working = nil }
         case .success(let session):
-            guard screen == .plugIn, sheet == nil, asked || working == nil else { return }
+            guard screen == .plugIn, sheet == nil, asked || !busy else { return }
             stepThroughKey(session)
-        }
-    }
-
-    /// "Try again" under the attach problem on Plug in.
-    func retryAttach() {
-        if screen == .plugIn {
-            readKey()
-        } else {
-            reader.retry()
         }
     }
 
@@ -199,7 +193,7 @@ final class SetupModel {
     /// read is read again.
     func foregrounded() {
         reader.foregrounded()
-        guard keyPresent, keyPort.session() == nil, working == nil else { return }
+        guard keyPresent, keyPort.session() == nil, !busy else { return }
         if screen == .plugIn, sheet == nil {
             readKey()
         } else if started || state != .readKey {
@@ -229,6 +223,44 @@ final class SetupModel {
         }
     }
 
+    /// A plain step is under way: no other starts.
+    var busy: Bool {
+        working != nil
+    }
+
+    /// The address as typed. Changing it clears what the core said about
+    /// the last one.
+    var addressText: String {
+        get { typedAddress }
+        set {
+            guard newValue != typedAddress else { return }
+            typedAddress = newValue
+            addressProblem = nil
+        }
+    }
+
+    /// Connect can be tapped: an address is typed and nothing is under way.
+    var canConnect: Bool {
+        !busy && !trimmedAddress.isEmpty
+    }
+
+    private var trimmedAddress: String {
+        addressText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The field shows the address setup has, once it has one.
+    private func fillAddressField() {
+        if case .checkHost(let address, _) = state {
+            addressText = address
+        }
+    }
+
+    /// After the host's identity changed, the only way on is to start
+    /// again: nothing invites another download.
+    var canDownload: Bool {
+        problem?.action != .startOver
+    }
+
     /// The host of the address set, for sentences: "github.com".
     var host: String {
         storeAddressHost(address: addressSet)
@@ -245,9 +277,8 @@ final class SetupModel {
     /// What paw makes of the address as typed, for the line under the
     /// field; `nil` while it can't be read (the reason shows after Connect).
     var addressReading: AddressReading? {
-        let typed = addressText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !typed.isEmpty else { return nil }
-        return readStoreAddress(text: typed)
+        guard !trimmedAddress.isEmpty else { return nil }
+        return readStoreAddress(text: trimmedAddress)
     }
 
     /// "Set up" on the welcome screen: on to the key.
@@ -258,16 +289,16 @@ final class SetupModel {
     }
 
     func readKey() {
-        guard keyPresent, working == nil else { return }
+        guard keyPresent, !busy else { return }
         problem = nil
-        working = "Reading your key\u{2026}"
+        working = Working(line: "Reading your key\u{2026}")
         readingKey = true
         reader.retry()
     }
 
     private func stepThroughKey(_ session: KeySession) {
         problem = nil
-        working = "Reading your key\u{2026}"
+        working = Working(line: "Reading your key\u{2026}")
         let setup = setup
         let handoff = Handoff(value: session)
         workQueue.async {
@@ -306,6 +337,7 @@ final class SetupModel {
     /// "Connect": the core reads the address, then checks the host and asks
     /// whether it accepts the key. No PIN, no touch.
     func connectToHost() {
+        guard canConnect else { return }
         addressProblem = nil
         problem = nil
         let typed = addressText
@@ -314,6 +346,12 @@ final class SetupModel {
             _ = try setup.setAddress(address: typed)
             return try setup.checkHost()
         }
+    }
+
+    /// An address chosen elsewhere (from GitHub): connects as if typed.
+    func use(address: String) {
+        addressText = address
+        connectToHost()
     }
 
     /// "Trust this key" on the host's fingerprint.
@@ -353,10 +391,8 @@ final class SetupModel {
         problem = nil
         run(nil) { setup in
             try setup.usePortFallback()
-        } then: { [weak self] state in
-            if case .checkHost(let address, _) = state {
-                self?.addressText = address
-            }
+        } then: { [weak self] _ in
+            self?.fillAddressField()
         }
     }
 
@@ -384,10 +420,8 @@ final class SetupModel {
                 run(nil) { setup in try setup.back() }
             }
         case .confirmHost, .download, .check:
-            run(nil) { setup in try setup.back() } then: { [weak self] state in
-                if case .checkHost(let address, _) = state {
-                    self?.addressText = address
-                }
+            run(nil) { setup in try setup.back() } then: { [weak self] _ in
+                self?.fillAddressField()
             }
         }
     }
@@ -438,8 +472,8 @@ final class SetupModel {
                      _ work: @escaping @Sendable (Setup) throws -> SetupState,
                      then: @escaping (SetupState) -> Void = { _ in },
                      failed: ((Error) -> Void)? = nil) {
-        guard working == nil else { return }
-        working = message ?? ""
+        guard !busy else { return }
+        working = Working(line: message)
         let setup = setup
         let time = BackgroundTime.begin("Setup")
         workQueue.async {

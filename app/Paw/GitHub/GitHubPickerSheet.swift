@@ -14,15 +14,13 @@ struct GitHubChooseButton: View {
         Button("Choose from GitHub") {
             let picker = GitHubPicker(access: gitHub, purpose: .pick(chosen: { address in
                 self.picker = nil
-                model.addressText = address
-                model.addressProblem = nil
-                model.connectToHost()
+                model.use(address: address)
             }))
             self.picker = picker
             picker.begin()
         }
         .buttonStyle(.pawSecondary)
-        .disabled(model.working != nil)
+        .disabled(model.busy)
         .accessibilityIdentifier("address-github")
         .pawSheet(item: $picker) { picker in
             GitHubPickerSheet(picker: picker)
