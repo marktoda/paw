@@ -15,9 +15,9 @@
 #   anywhere in the bytes (`grep -a`), which would mean the fixture was
 #   compiled in even if no symbol names it;
 # - with --app, the Swift debug surfaces: the launch arguments that switch
-#   harnesses on, the names of the types the simulator and debug folders
-#   declare at top level (private ones too) and the gallery's root, anywhere
-#   in the bytes (type names are in Swift's metadata even when symbols are
+#   harnesses on and the names of the types the simulator, debug and
+#   gallery folders declare at top level (private ones too), anywhere in
+#   the bytes (type names are in Swift's metadata even when symbols are
 #   gone).
 #
 # --expect keeps the patterns honest: run on a build that has the simulation
@@ -26,8 +26,10 @@
 # fails naming the ones that matched nothing. With --app it checks only the
 # app's patterns: the linker drops core code the app never calls, so the
 # core's are checked on the library.
-#   cargo build --lib && scripts/check-no-sim.sh --expect core/target/debug/libpaw_core.a
-#   cargo build --lib --no-default-features && scripts/check-no-sim.sh core/target/no-sim/...
+# For example, in core/:
+#   cargo build --lib && ../scripts/check-no-sim.sh --expect target/debug/libpaw_core.a
+#   cargo build --lib --no-default-features --target-dir target/no-sim \
+#     && ../scripts/check-no-sim.sh target/no-sim/debug/libpaw_core.a
 set -euo pipefail
 
 expect=no
@@ -71,24 +73,23 @@ needles=(
   'kB+w7P9NzlaYwa0zuD/P3nJG8zxGMSKapeTExcKjUTPp2L4xoi/2K9vmAAAAqE1dnpZNXZ'
 )
 
-# The app's debug surfaces (`#if DEBUG`, and `#if DEBUG &&
-# targetEnvironment(simulator)` for everything simulated): every declared
-# launch argument (scripts/launch-arguments.sh, which also checks the
-# declaration against the UI tests), any `-pawSim…` one, every type the
-# simulator and debug folders declare at the start of a line, with or
-# without `private`, `fileprivate` or `final`, and the gallery's root.
+# The app's debug surfaces, only with --app: every declared launch argument
+# (scripts/launch-arguments.sh), any `-pawSim…` one, and every type the
+# simulator, debug and gallery folders declare at the start of a line.
+# Everything in those folders is under `#if DEBUG` (app/project.yml).
 # Not scanned: types nested in those (short names such as `Row` that the
 # device build has too), and what those folders' extensions add to types
 # declared elsewhere (`View`, `EnvironmentValues`, `KeyReader`): a member's
-# name is not in a stripped build. Only with --app.
+# name is not in a stripped build.
 app_needles=()
 if [[ "$app" == yes ]]; then
   here="$(cd "$(dirname "$0")" && pwd)"
   arguments="$("$here/launch-arguments.sh")"
-  folders=("$here"/../app/Paw/Simulator/*.swift "$here"/../app/Shared/Simulator/*.swift "$here"/../app/Paw/Debug/*.swift)
+  folders=("$here"/../app/Paw/Simulator/*.swift "$here"/../app/Shared/Simulator/*.swift
+    "$here"/../app/Paw/Debug/*.swift "$here"/../app/Paw/Gallery/*.swift)
   types="$(sed -nE 's/^((private|fileprivate) )?(final )?(class|struct|enum|actor) ([A-Za-z]+).*/\5/p' "${folders[@]}" | sort -u)"
   [[ -n "$arguments" && -n "$types" ]] || { echo "check-no-sim: no debug surfaces found in app/" >&2; exit 2; }
-  app_needles=('pawSim' 'GalleryRoot' $arguments $types)
+  app_needles=('pawSim' $arguments $types)
 fi
 
 if [[ "$app" == yes && "$expect" == yes ]]; then
@@ -98,11 +99,14 @@ elif [[ "$app" == yes ]]; then
   needles+=("${app_needles[@]}")
 fi
 
-# `nm` may complain about members it cannot read; only its output counts.
+# `nm` may complain about members it cannot read, so its status is ignored,
+# but every file has some symbols: none at all means nm read nothing.
 names="$(mktemp)"
 trap 'rm -f "$names"' EXIT
 for file in "${files[@]}"; do
-  (nm -a "$file" 2>/dev/null || true) >> "$names"
+  listed="$(nm -a "$file" 2>/dev/null || true)"
+  [[ -n "$listed" ]] || { echo "check-no-sim: nm read no symbols from $file" >&2; exit 2; }
+  echo "$listed" >> "$names"
 done
 
 found=0
