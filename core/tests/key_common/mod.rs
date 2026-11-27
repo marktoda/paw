@@ -17,7 +17,7 @@ use paw_core::sim::fixture::write_fixture_store;
 pub use paw_core::sim::tasks::{SimDriver as Driver, WAIT};
 use paw_core::sim::tasks::{SimLogin, SimSigner, decipher, ending, wait_final};
 use paw_core::sim::{SimOptions, SimTouch, SimulatedKey};
-use paw_core::key::SshSigner;
+use paw_core::key::{SignFailure, SshSigner};
 use paw_core::ssh::SshPublicKey;
 use paw_core::store::PassStore;
 
@@ -209,7 +209,7 @@ impl SshSigner for KeySigner {
         self.signer.public_key()
     }
 
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, KeyError> {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, SignFailure> {
         self.signer.sign(data)
     }
 }

@@ -6,26 +6,10 @@ import Foundation
 /// them here (design.md 2.3 and 2.11); what differs between workflows is a
 /// `Context` value, never a sentence of its own.
 struct KeyErrorWords: Equatable {
-    /// What the key was being used for.
-    enum Purpose {
-        case open, download, send, check
-
-        /// "Nothing was opened.", by what did not happen. Said after Cancel.
-        var nothingHappened: String {
-            switch self {
-            case .open: "Nothing was opened."
-            case .download: "Nothing was downloaded."
-            case .send: "Nothing was sent."
-            case .check: "Nothing was checked."
-            }
-        }
-    }
-
     /// What changes the words between workflows.
     struct Context {
         /// What the key was opening: an entry's name, "your store".
         var entry: String
-        var purpose: Purpose = .open
         /// Said after the key stopped (unplugged, not touched) when work is
         /// still waiting, such as a sync's unsent changes; "" for none.
         var waiting: String = ""
@@ -35,8 +19,8 @@ struct KeyErrorWords: Equatable {
         /// stage is shown again because of it.
         func words(_ error: KeyError, pinAskedAgain: Bool = false) -> KeyErrorWords {
             pinAskedAgain
-                ? KeyErrorWords(pinAskedAgain: error, entry: entry, purpose: purpose, waiting: waiting, table: table)
-                : KeyErrorWords(error, entry: entry, purpose: purpose, waiting: waiting, table: table)
+                ? KeyErrorWords(pinAskedAgain: error, entry: entry, waiting: waiting, table: table)
+                : KeyErrorWords(error, entry: entry, waiting: waiting, table: table)
         }
     }
 
@@ -59,18 +43,15 @@ struct KeyErrorWords: Equatable {
     /// (any but a wrong PIN, which has its own stage). `PinForgotten` there
     /// means the key lost the PIN's verification during the task: paw
     /// dropped the PIN without trying it again, so no try was used.
-    init(
-        pinAskedAgain error: KeyError, entry: String, purpose: Purpose = .open, waiting: String = "",
-        table: WordTable
-    ) {
+    init(pinAskedAgain error: KeyError, entry: String, waiting: String = "", table: WordTable) {
         if case .PinForgotten = error {
             self.init(problem: "Your key asked for its PIN again", nextStep: "Enter it again; no try was used.")
         } else {
-            self.init(error, entry: entry, purpose: purpose, waiting: waiting, table: table)
+            self.init(error, entry: entry, waiting: waiting, table: table)
         }
     }
 
-    init(_ error: KeyError, entry: String, purpose: Purpose = .open, waiting: String = "", table: WordTable) {
+    init(_ error: KeyError, entry: String, waiting: String = "", table: WordTable) {
         switch error {
         case .WrongPin(let triesLeft):
             problem = "Wrong PIN"
@@ -121,9 +102,6 @@ struct KeyErrorWords: Equatable {
         case .Reader(let detail), .Internal(let detail):
             problem = "Your key gave an error"
             nextStep = "Unplug it, plug it back in and try again. The key said: \(detail)."
-        case .Cancelled:
-            problem = "Cancelled"
-            nextStep = purpose.nothingHappened
         }
     }
 

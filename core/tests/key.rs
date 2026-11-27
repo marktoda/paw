@@ -16,7 +16,7 @@ use paw_core::task::LoginPurpose;
 use paw_core::task::{KeyOutcome, KeyTaskState};
 use paw_core::key::CardConnection;
 use paw_core::sim::SimTouch;
-use paw_core::key::SshSigner;
+use paw_core::key::{SignFailure, SshSigner};
 use ring::signature::{ED25519, UnparsedPublicKey};
 
 fn opened(state: &KeyTaskState) -> (String, Option<i64>) {
@@ -889,7 +889,7 @@ fn a_pin_lost_before_a_signature_fails_it_with_pin_forgotten() {
 
     let error = signer.sign(b"a login").unwrap_err();
 
-    assert_eq!(error, KeyError::PinForgotten);
+    assert_eq!(error, SignFailure::Key(KeyError::PinForgotten));
     assert_eq!(failed(&finish(login.task())), KeyError::PinForgotten);
     assert!(!rig.port.session().unwrap().holds_pin());
     assert_eq!(rig.sim.verify_attempts(), 1);

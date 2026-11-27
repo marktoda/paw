@@ -13,6 +13,18 @@ use std::sync::Arc;
 use paw_core::sim::remote::{self, SimRemote, SimRemoteContents, SimRemoteOptions};
 use paw_core::sync::Remote;
 
+/// Adds to the pinned recipients in `state_dir` the record that the
+/// `.gpg-id` line `line` means the pinned key `fingerprint`, as setup
+/// writes it after its test decrypt.
+pub fn bind_recipient(state_dir: &Path, line: &str, fingerprint: &str) {
+    use base64::Engine;
+    let file = state_dir.join(paw_core::files::layout::RECIPIENTS);
+    let mut text = std::fs::read_to_string(&file).unwrap();
+    let line = base64::engine::general_purpose::STANDARD.encode(line.trim());
+    text.push_str(&format!("bind {fingerprint} {line}\n"));
+    std::fs::write(file, text).unwrap();
+}
+
 /// Runs `git` with the developer's own configuration out of the picture, so
 /// the tests neither depend on it nor sign anything with a real key.
 pub fn git(dir: &Path, args: &[&str]) -> String {

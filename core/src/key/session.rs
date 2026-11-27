@@ -65,20 +65,13 @@ pub(crate) enum Halt {
     /// The PIN is needed from the person; `Some` says why it is asked again.
     AskPin(Option<KeyError>),
     Fail(KeyError),
+    /// The task was cancelled.
+    Cancelled,
 }
 
 impl From<KeyError> for Halt {
     fn from(error: KeyError) -> Self {
         Self::Fail(error)
-    }
-}
-
-impl From<Halt> for KeyError {
-    fn from(halt: Halt) -> Self {
-        match halt {
-            Halt::Fail(error) => error,
-            Halt::AskPin(_) => KeyError::Internal { detail: "the PIN was needed where it cannot be asked".into() },
-        }
     }
 }
 
@@ -456,15 +449,15 @@ impl KeySession {
     }
 
     /// Waits until the card is free, showing `Busy` meanwhile.
-    fn acquire(&self, task: &dyn TaskSide) -> Result<CardGuard<'_>, KeyError> {
+    fn acquire(&self, task: &dyn TaskSide) -> Result<CardGuard<'_>, Halt> {
         let mut state = self.lock();
         let mut said_busy = false;
         loop {
             if self.ended() || self.wire.failed() {
-                return Err(KeyError::KeyRemoved);
+                return Err(Halt::Fail(KeyError::KeyRemoved));
             }
             if task.cancelled() {
-                return Err(KeyError::Cancelled);
+                return Err(Halt::Cancelled);
             }
             if !state.card_busy {
                 state.card_busy = true;
@@ -527,11 +520,11 @@ impl KeySession {
         self.apply_background_limit();
         let guard = match self.acquire(task) {
             Ok(guard) => guard,
-            Err(error) => {
+            Err(halt) => {
                 if self.wire.failed() {
                     self.end();
                 }
-                return Err(Halt::Fail(error));
+                return Err(halt);
             }
         };
         task.show_working();

@@ -15,7 +15,7 @@ use crate::key::KeyError;
 use crate::fault::Fault;
 use crate::remote::RemoteFailure;
 use crate::lock::{Exclusive, StoreLock};
-use crate::key::SshSigner;
+use crate::key::{Halt, SignFailure, SshSigner};
 use crate::ssh::SshPublicKey;
 
 /// Where a sync ended.
@@ -91,7 +91,7 @@ impl SshSigner for Counting<'_> {
         self.inner.public_key()
     }
 
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, KeyError> {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, SignFailure> {
         let signature = self.inner.sign(data)?;
         self.count.fetch_add(1, Ordering::SeqCst);
         Ok(signature)
@@ -142,11 +142,11 @@ fn reborrow<'b>(progress: &'b mut Option<TransferCallback<'_>>) -> Option<Transf
 /// change is not encrypted for exactly its entry's accepted recipients
 /// (`crate::write::held_back`), nothing is pushed and the state is
 /// [`SyncState::Waiting`]. Stops between steps once `stop` says so, with
-/// the key's `Cancelled`, and reports each fetch's progress to `progress`.
+/// [`Halt::Cancelled`], and reports each fetch's progress to `progress`.
 ///
 /// Fails with the key's own error if the key did not sign the login, else
 /// with the sync's.
-pub(crate) fn run_until<E: From<KeyError> + From<SyncError>>(
+pub(crate) fn run_until<E: From<KeyError> + From<Halt> + From<SyncError>>(
     remote: &Remote,
     signer: &dyn SshSigner,
     dir: &Path,
@@ -159,10 +159,11 @@ pub(crate) fn run_until<E: From<KeyError> + From<SyncError>>(
     let connection = match Connection::open(remote, &counting) {
         Ok(connection) => connection,
         Err(ConnectError::Key(error)) => return Err(error.into()),
+        Err(ConnectError::Cancelled) => return Err(Halt::Cancelled.into()),
         Err(ConnectError::Fault(error)) => return Err(SyncError::from(error).into()),
     };
     let Some(mut report) = run_on(&connection, dir, holds_back, send, stop, progress)? else {
-        return Err(KeyError::Cancelled.into());
+        return Err(Halt::Cancelled.into());
     };
     report.signatures = counting.count.load(Ordering::SeqCst);
     Ok(report)

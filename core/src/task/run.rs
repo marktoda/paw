@@ -33,7 +33,9 @@ struct Inner {
     queue: VecDeque<KeyTaskState>,
     /// Some thread is giving `queue` to the listener.
     draining: bool,
-    /// A PIN supplied at the PIN stage, not yet taken.
+    /// A PIN typed at a PIN stage and not yet taken. Kept through the
+    /// stages the task shows before it asks for the PIN; wiped when the
+    /// task ends or waits for a key to be plugged in.
     supplied: Option<Zeroizing<Vec<u8>>>,
     /// Past the point where cancel can still stop it.
     committing: bool,
@@ -126,7 +128,7 @@ impl TaskCore {
         if inner.state.is_final() || (!again && new.same_as(&inner.state)) {
             return false;
         }
-        if !matches!(new, KeyTaskState::Pin { .. }) {
+        if new.is_final() || matches!(new, KeyTaskState::PlugIn) {
             inner.supplied = None;
         }
         inner.state = new.clone();
@@ -243,7 +245,7 @@ impl TaskSide for TaskCore {
         let mut inner = self.lock();
         loop {
             if self.cancelled() {
-                return Err(Halt::Fail(KeyError::Cancelled));
+                return Err(Halt::Cancelled);
             }
             if done() {
                 return Ok(());
@@ -268,7 +270,7 @@ impl TaskSide for TaskCore {
         let mut inner = self.lock();
         loop {
             if self.cancelled() {
-                return Err(Halt::Fail(KeyError::Cancelled));
+                return Err(Halt::Cancelled);
             }
             if session.ended() {
                 return Err(Halt::Fail(KeyError::KeyRemoved));
@@ -314,7 +316,7 @@ impl Job<'_> {
         let core = self.0;
         let mut inner = core.lock();
         if core.cancelled() || inner.state.is_final() {
-            return Err(KeyError::Cancelled.into());
+            return Err(TaskFailure::Cancelled);
         }
         inner.committing = true;
         Ok(())
@@ -429,5 +431,67 @@ impl KeyTask {
     /// Stops the task now, at any stage. See the module comment.
     pub fn cancel(&self) {
         self.core.cancel();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+
+    use super::*;
+
+    struct Quiet;
+
+    impl KeyTaskListener for Quiet {
+        fn state_changed(&self, _: KeyTaskState) {}
+    }
+
+    fn at_pin() -> KeyTaskState {
+        KeyTaskState::Pin { tries_left: 3, forgot_after_background: false, last_error: None }
+    }
+
+    /// A starter whose work shows `Busy` and progress before it asks for
+    /// the PIN still finds the PIN typed at the task's first stage.
+    #[test]
+    fn a_pin_typed_at_the_first_stage_outlives_the_stages_shown_before_it_is_asked() {
+        let (typed, wait_typed) = mpsc::channel::<()>();
+        let (held, was_held) = mpsc::channel::<bool>();
+        let body: Body = Box::new(move |task| {
+            wait_typed.recv().unwrap();
+            task.show_busy();
+            Job::of(task).progress(TaskProgress { done: 0, total: 3, bytes: None });
+            task.show_working();
+            held.send(task.lock().supplied.is_some()).unwrap();
+            Ok(KeyOutcome::KeyChecked)
+        });
+        let task = KeyTask::start(KeyPurpose::Reencrypt { count: 3 }, Arc::new(Quiet), at_pin(), body);
+        task.supply_pin(b"123456".to_vec());
+        typed.send(()).unwrap();
+
+        assert!(was_held.recv().unwrap());
+        assert!(!task.join());
+        assert!(matches!(task.state(), KeyTaskState::Done { .. }), "{:?}", task.state());
+        assert!(task.core.lock().supplied.is_none(), "wiped when the task ended");
+    }
+
+    #[test]
+    fn a_pin_not_taken_is_wiped_on_cancel_and_at_plug_in() {
+        let (stop, wait_stop) = mpsc::channel::<()>();
+        let body: Body = Box::new(move |_| {
+            let _ = wait_stop.recv();
+            Err(KeyError::KeyRemoved.into())
+        });
+        let task = KeyTask::start(KeyPurpose::CheckTouchTimeout, Arc::new(Quiet), at_pin(), body);
+        task.supply_pin(b"123456".to_vec());
+        task.cancel();
+        assert!(task.core.lock().supplied.is_none());
+        stop.send(()).unwrap();
+        task.join();
+
+        let mut inner = task.core.lock();
+        inner.state = at_pin();
+        inner.supplied = Some(Zeroizing::new(b"123456".to_vec()));
+        assert!(TaskCore::apply(&mut inner, KeyTaskState::PlugIn, false));
+        assert!(inner.supplied.is_none());
     }
 }

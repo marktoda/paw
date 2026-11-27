@@ -29,7 +29,7 @@ use crate::fault::Fault;
 use crate::PawError;
 use crate::key::KeyError;
 use crate::remote::RemoteFailure;
-use crate::key::SshSigner;
+use crate::key::{SignFailure, SshSigner};
 use crate::ssh::SshPublicKey;
 
 /// How long to wait for the TCP connection and SSH handshake.
@@ -308,7 +308,7 @@ impl russh::Signer for ProbeOnly {
 
 /// Why a login did not finish, in the signer's error type.
 enum LoginError {
-    Key(KeyError),
+    Key(SignFailure),
     /// The session closed during the login.
     Closed,
     /// [`ProbeOnly`] does not sign.
@@ -325,7 +325,8 @@ impl From<russh::SendError> for LoginError {
 impl LoginError {
     fn on(self, remote: &Remote) -> ConnectError {
         match self {
-            Self::Key(error) => ConnectError::Key(error),
+            Self::Key(SignFailure::Key(error)) => ConnectError::Key(error),
+            Self::Key(SignFailure::Cancelled) => ConnectError::Cancelled,
             Self::Closed | Self::OnlyAsking => {
                 ConnectError::Fault(unreachable(&remote.host, "the connection closed during login"))
             }
@@ -406,6 +407,9 @@ pub enum ConnectError {
     /// The key failed to sign the login (no touch, unplugged, PIN gone).
     #[error(transparent)]
     Key(KeyError),
+    /// The key task was cancelled during the login.
+    #[error("cancelled")]
+    Cancelled,
     /// The host, the network or the host key.
     #[error(transparent)]
     Fault(Fault),

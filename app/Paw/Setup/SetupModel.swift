@@ -578,7 +578,7 @@ extension SetupModel {
                 }
             },
             words: { [weak self] in
-                KeyErrorWords.Context(entry: self?.entryName ?? "your store", purpose: purpose == .download ? .download : .check)
+                KeyErrorWords.Context(entry: self?.entryName ?? "your store")
             },
             working: { [weak self] progress in
                 self?.working(purpose, progress) ?? ("", nil)

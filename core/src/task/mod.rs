@@ -31,7 +31,7 @@ pub use run::KeyTask;
 pub enum KeyPurpose {
     OpenEntry { entry: String },
     /// Opens one entry to prove the key works, and keeps nothing. `None`
-    /// when setup found no entry to open.
+    /// when setup found no entry to open or could not open the store.
     CheckKey { entry: Option<String> },
     SignIn { login: LoginPurpose },
     /// Key diagnostics: one signature nobody is meant to touch for, to see
@@ -94,6 +94,9 @@ pub enum TaskFailure {
     Sync(SyncError),
     #[error(transparent)]
     Setup(SetupError),
+    /// The task was cancelled: it has already ended `Cancelled`.
+    #[error("cancelled")]
+    Cancelled,
 }
 
 impl From<KeyError> for TaskFailure {
@@ -104,7 +107,11 @@ impl From<KeyError> for TaskFailure {
 
 impl From<Halt> for TaskFailure {
     fn from(halt: Halt) -> Self {
-        Self::Key(halt.into())
+        match halt {
+            Halt::Fail(error) => Self::Key(error),
+            Halt::AskPin(_) => Self::Key(KeyError::Internal { detail: "the PIN was needed where it cannot be asked".into() }),
+            Halt::Cancelled => Self::Cancelled,
+        }
     }
 }
 
@@ -180,6 +187,7 @@ impl KeyTaskState {
             Err(TaskFailure::Key(error)) => Self::Failed { error },
             Err(TaskFailure::Sync(error)) => Self::SyncFailed { error },
             Err(TaskFailure::Setup(error)) => Self::SetupFailed { error },
+            Err(TaskFailure::Cancelled) => Self::Cancelled,
         }
     }
 

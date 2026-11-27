@@ -225,7 +225,6 @@ pub(crate) fn error_name(error: &KeyError) -> String {
         KeyError::Reader { .. } => "Reader".into(),
         KeyError::Internal { .. } => "Internal".into(),
         KeyError::StoreBusy => "StoreBusy".into(),
-        KeyError::Cancelled => "Cancelled".into(),
     }
 }
 

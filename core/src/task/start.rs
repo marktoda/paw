@@ -175,7 +175,7 @@ impl KeyPort {
                 session.ssh_key()?;
                 session.unlocked(task.as_ref(), |_| Ok(()))?;
                 if task.cancelled() {
-                    return Err(KeyError::Cancelled.into());
+                    return Err(TaskFailure::Cancelled);
                 }
                 task.show_working();
                 let signer = SessionSigner::new(task.clone(), session.clone())?;
@@ -203,11 +203,9 @@ impl KeyPort {
             |session| session.decryption_key().map(drop),
             move |task, session| {
                 let key = session.decryption_key()?.clone();
-                // Before `work` shows any progress: a stage other than the
-                // PIN drops a PIN typed at the task's first stage.
                 session.unlocked(task.as_ref(), |_| Ok(()))?;
                 if task.cancelled() {
-                    return Err(KeyError::Cancelled.into());
+                    return Err(TaskFailure::Cancelled);
                 }
                 let side: Arc<dyn TaskSide> = task.clone();
                 let mut open = |ciphertext: &[u8]| -> Result<zeroize::Zeroizing<Vec<u8>>, Halt> {
@@ -215,7 +213,7 @@ impl KeyPort {
                     let session_key = session.unlocked(task.as_ref(), |job| plan.decipher(job, &side, &key))?;
                     // A late answer is not written anywhere once cancelled.
                     if task.cancelled() {
-                        return Err(Halt::Fail(KeyError::Cancelled));
+                        return Err(Halt::Cancelled);
                     }
                     Ok(plan.finish(session_key)?)
                 };

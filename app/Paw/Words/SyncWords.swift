@@ -186,13 +186,7 @@ extension SyncFailure {
 /// What the key sheet's words name during a sync: the store, and that the
 /// waiting changes are still here when the key stops.
 func syncKeyWords(during kind: SyncKind, unpushed: Int) -> KeyErrorWords.Context {
-    let purpose: KeyErrorWords.Purpose = switch kind {
-    case .send: .send
-    case .refresh: .check
-    case .reencrypt: .open
-    }
-    return KeyErrorWords.Context(
-        entry: "your store", purpose: purpose, waiting: kind == .refresh ? "" : SyncFailure.waiting(unpushed))
+    KeyErrorWords.Context(entry: "your store", waiting: kind == .refresh ? "" : SyncFailure.waiting(unpushed))
 }
 
 /// Why a held-back change can't be re-encrypted, in a few words; `nil`

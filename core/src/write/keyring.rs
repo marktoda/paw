@@ -121,8 +121,6 @@ pub enum LineStatus {
     Ready { fingerprint: String, bound: bool },
     /// No pinned key matches.
     Missing,
-    /// Several pinned keys match; bind the line to one.
-    Ambiguous { fingerprints: Vec<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -323,45 +321,41 @@ impl Keyring {
     }
 
     /// Records that the `.gpg-id` line `line` is satisfied by the pinned key
-    /// `fingerprint`. For setup, once the test decrypt has shown that the
-    /// card opens entries written for that line; or when the person picks a
-    /// key for a line that names it by short ID or by name.
-    pub fn bind(&mut self, held: &Exclusive, line: &str, fingerprint: &str) -> Result<(), WriteError> {
-        let fingerprint = fingerprint.trim().to_ascii_uppercase();
-        if !self.keys.iter().any(|key| key.fingerprint == fingerprint) {
-            return Err(WriteError::NotPinned { fingerprint });
-        }
+    /// `fingerprint`, once setup's test decrypt has shown that the card
+    /// opens entries written for that line.
+    fn bind(&mut self, held: &Exclusive, line: &str, fingerprint: &str) -> Result<(), Fault> {
         let line = line.trim().to_owned();
         self.bindings.retain(|(spec, _)| *spec != line);
-        self.bindings.push((line, fingerprint));
-        Ok(self.save(held)?)
+        self.bindings.push((line, fingerprint.to_owned()));
+        self.save(held)
     }
 
-    /// How `line` is satisfied.
-    pub fn line_status(&self, line: &str) -> LineStatus {
+    /// The pinned key that satisfies `line`, and whether by a binding.
+    /// Several keys named by one long key ID satisfy it no more than none.
+    fn line_key(&self, line: &str) -> Option<(&PinnedKey, bool)> {
         let trimmed = line.trim();
         let bound = self
             .bindings
             .iter()
             .find(|(spec, _)| spec == trimmed)
             .and_then(|(_, fpr)| self.keys.iter().find(|key| key.fingerprint == *fpr));
-        let (key, bound) = match bound {
-            Some(key) => (key, true),
-            None => {
-                let spec = spec(trimmed);
-                let named: Vec<&PinnedKey> = self.keys.iter().filter(|key| spec.names(&key.fingerprint)).collect();
-                match named.as_slice() {
-                    [] => return LineStatus::Missing,
-                    [key] => (*key, false),
-                    several => {
-                        return LineStatus::Ambiguous {
-                            fingerprints: several.iter().map(|key| key.fingerprint.clone()).collect(),
-                        };
-                    }
-                }
-            }
-        };
-        LineStatus::Ready { fingerprint: key.fingerprint.clone(), bound }
+        if let Some(key) = bound {
+            return Some((key, true));
+        }
+        let spec = spec(trimmed);
+        let mut named = self.keys.iter().filter(|key| spec.names(&key.fingerprint));
+        match (named.next(), named.next()) {
+            (Some(key), None) => Some((key, false)),
+            _ => None,
+        }
+    }
+
+    /// How `line` is satisfied.
+    pub fn line_status(&self, line: &str) -> LineStatus {
+        match self.line_key(line) {
+            Some((key, bound)) => LineStatus::Ready { fingerprint: key.fingerprint.clone(), bound },
+            None => LineStatus::Missing,
+        }
     }
 
     /// How the recipients for entries in `folder` of the store at `root`
@@ -412,19 +406,14 @@ impl Keyring {
         }
         let mut missing = Vec::new();
         let mut keys: Vec<PublicKey> = Vec::new();
-        for RecipientLine { line, status } in &recipients.lines {
-            match status {
-                LineStatus::Ready { fingerprint, .. } => {
-                    let Some(key) = self.keys.iter().find(|key| key.fingerprint == *fingerprint) else {
-                        missing.push(line.clone());
-                        continue;
-                    };
-                    if !keys.iter().any(|k| fingerprint_of(k) == *fingerprint) {
+        for RecipientLine { line, .. } in &recipients.lines {
+            match self.line_key(line) {
+                Some((key, _)) => {
+                    if !keys.iter().any(|k| fingerprint_of(k) == key.fingerprint) {
                         keys.push(key.key.clone());
                     }
                 }
-                LineStatus::Missing => missing.push(line.clone()),
-                LineStatus::Ambiguous { .. } => missing.push(format!("{line} (more than one key matches)")),
+                None => missing.push(line.clone()),
             }
         }
         if recipients.lines.is_empty() {
@@ -476,13 +465,13 @@ impl Keyring {
 
     /// After setup's test decrypt opened `entry` (a path in the store,
     /// with or without `.gpg`) whose bytes are `ciphertext`: binds the card's
-    /// key `card_fingerprint` (already pinned) to the one line of the
+    /// key `card_fingerprint` (just pinned) to the one line of the
     /// `.gpg-id` that governs that entry which no pinned key satisfies.
     /// Binds nothing, and returns no lines, unless the entry's own recipient
     /// packets name the card's key (a hidden recipient proves nothing about
-    /// which line is the card's) and no line of that `.gpg-id` already
-    /// means the card. If several lines are open, the person has to choose
-    /// ([`Self::bind`]); that is [`WriteError::MissingRecipients`]. Lines of
+    /// which line is the card's), no line of that `.gpg-id` already means
+    /// the card, and exactly one line is open: with several, nothing says
+    /// which is the card's, and saving there stays refused. Lines of
     /// other `.gpg-id` files are never bound: a top-level line naming a
     /// team key is not the card's because a folder below names the owner.
     pub fn bind_card_for_opened_entry(
@@ -492,11 +481,8 @@ impl Keyring {
         card_fingerprint: &str,
         entry: &str,
         ciphertext: &[u8],
-    ) -> Result<Vec<String>, WriteError> {
+    ) -> Result<Vec<String>, Fault> {
         let card_fingerprint = card_fingerprint.trim().to_ascii_uppercase();
-        if !self.keys.iter().any(|k| k.fingerprint == card_fingerprint) {
-            return Err(WriteError::NotPinned { fingerprint: card_fingerprint });
-        }
         let names_card = crate::recipients::entry_recipients(ciphertext)
             .is_ok_and(|found| crate::recipients::names_key(&found.keys, &card_fingerprint));
         if !names_card {
@@ -514,7 +500,7 @@ impl Keyring {
         held: &Exclusive,
         recipients: FolderRecipients,
         card_fingerprint: &str,
-    ) -> Result<Vec<String>, WriteError> {
+    ) -> Result<Vec<String>, Fault> {
         // A line already means the card's key (it names it, or was bound
         // before): every line still open is someone else's, and binding one
         // of them to the card would encrypt to fewer keys than `.gpg-id`
@@ -533,12 +519,11 @@ impl Keyring {
             .map(|line| line.line.clone())
             .collect();
         match open.as_slice() {
-            [] => Ok(Vec::new()),
             [line] => {
                 self.bind(held, line, card_fingerprint)?;
                 Ok(open)
             }
-            _ => Err(WriteError::MissingRecipients { gpg_id: recipients.gpg_id, missing: open }),
+            _ => Ok(Vec::new()),
         }
     }
 }

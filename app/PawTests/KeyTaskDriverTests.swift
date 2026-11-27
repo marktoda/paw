@@ -120,13 +120,10 @@ final class KeyTaskDriverTests: XCTestCase {
         let rejected = SyncError.Fault(fault: .remote(failure: .keyNotAccepted(host: "h", publicKey: "k")))
         let ended: [KeyTaskState] = [
             .done(outcome: .signedIn), .failed(error: .TouchTimeout), .syncFailed(error: rejected),
-            .setupFailed(error: .EmptyRepository), .cancelled, .failed(error: .Cancelled),
+            .setupFailed(error: .EmptyRepository), .cancelled,
         ]
         for state in ended {
             XCTAssertTrue(state.isFinal, "\(state)")
-        }
-        guard case .cancelled? = KeyTaskEnd<Never>(.failed(error: .Cancelled)) else {
-            return XCTFail("The key's Cancelled is a cancel")
         }
         guard case .stepFailed? = KeyTaskEnd<SyncError>(.syncFailed(error: rejected)),
               case .stepFailed? = KeyTaskEnd<SetupError>(.setupFailed(error: .EmptyRepository)) else {
