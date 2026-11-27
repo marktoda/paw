@@ -83,7 +83,12 @@ fn store_with(files: &[(&str, &[u8])]) -> Store {
     let mut keyring = Keyring::open(&store).unwrap();
     keyring.pin_card_key(&store.exclusive().unwrap(), &card().decryption_key().unwrap()).unwrap();
     keyring.accept_all_recipients_at_setup(&store.exclusive().unwrap()).unwrap();
-    std::fs::write(state.join(paw_core::files::layout::SETUP), "step=done\n").unwrap();
+    let setup = format!(
+        "step=done\nident=0006:1\nssh_public_key={}\ndecryption_fingerprint={}\naddress=git@example.com:store.git\nopened=x\n",
+        card().ssh_public_key(),
+        card().fingerprint_hex()
+    );
+    std::fs::write(state.join(paw_core::files::layout::SETUP), setup).unwrap();
     Store { _root: root, state }
 }
 

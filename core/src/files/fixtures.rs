@@ -96,8 +96,13 @@ fn a_setup_step_with_the_notice_an_earlier_paw_saved_in_words() {
 #[test]
 fn a_finished_setup() {
     let dir = state();
-    put(dir.path(), layout::SETUP, b"step=done\nident=0006:12345678\n");
-    std::fs::create_dir_all(layout::repo_dir(dir.path())).unwrap();
+    let bytes = format!(
+        "step=done\nident=0006:12345678\nssh_public_key={SSH_KEY}\ndecryption_fingerprint={FINGERPRINT}\n\
+         authentication_touch=cached\ndecryption_touch=each-use\naddress=ssh://git@example.com/you/store.git\n\
+         opened=web/example.com\n"
+    );
+    put(dir.path(), layout::SETUP, bytes.as_bytes());
+    std::fs::create_dir_all(layout::repo_dir(dir.path()).join(".git")).unwrap();
     put(&layout::repo_dir(dir.path()), ".gpg-id", b"AAAA1111\n");
     assert!(crate::setup::is_set_up(&dirs(&dir)));
 }

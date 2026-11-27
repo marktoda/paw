@@ -33,11 +33,12 @@ pub fn repo_dir(state_dir: &Path) -> PathBuf {
     state_dir.join(REPO)
 }
 
-/// Whether the checkout at `repo` is a pass store: a `.gpg-id` at its top
-/// that is a file, not a link (a link is never checked out). Every "is the
-/// store here" asks this.
+/// Whether `repo` is a checkout of a pass store: a git repository with a
+/// `.gpg-id` at its top that is a file, not a link (a link is never
+/// checked out). Every "is the store here" asks this.
 pub(crate) fn holds_store(repo: &Path) -> bool {
-    std::fs::symlink_metadata(repo.join(crate::path::GPG_ID)).is_ok_and(|found| found.is_file())
+    repo.join(".git").is_dir()
+        && std::fs::symlink_metadata(repo.join(crate::path::GPG_ID)).is_ok_and(|found| found.is_file())
 }
 
 #[uniffi::export]

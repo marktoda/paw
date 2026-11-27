@@ -64,7 +64,7 @@ impl Setup {
         let flow = self.flow.clone();
         let (expected, found) = {
             let flow = locked(&flow);
-            (flow.expected_key(), flow.pick_test_entry().and_then(|entry| Ok((entry, flow.open_store()?))))
+            (flow.expected_key(), flow.pick_test_entry())
         };
         let (entry, store) = match found {
             Ok(found) => found,
