@@ -363,7 +363,7 @@ fn the_file_keeps_at_most_the_most_recent_entries() {
     assert_eq!(kept.len(), MAX_ENTRIES);
     assert_eq!(kept[0].entry, "site0025");
     assert_eq!(kept.last().unwrap().entry, format!("site{:04}", MAX_ENTRIES + 24));
-    assert!(std::fs::metadata(file.path()).unwrap().len() < 64 * 1024);
+    assert!(std::fs::metadata(dir.path().join(SITE_PAIRINGS)).unwrap().len() < 64 * 1024);
 }
 
 #[test]
@@ -512,7 +512,7 @@ fn a_pairing_moved_to_no_path_is_not_kept() {
     file.record("bank/bankofamerica", "bankofamerica.com", None).unwrap();
     file.moved("bank/bankofamerica", Some("")).unwrap();
     assert!(file.pairings().is_empty());
-    assert!(!std::fs::read_to_string(file.path()).unwrap().contains("\"entry\":\"\""));
+    assert!(!std::fs::read_to_string(dir.path().join(SITE_PAIRINGS)).unwrap().contains("\"entry\":\"\""));
 }
 
 #[test]

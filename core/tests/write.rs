@@ -281,10 +281,11 @@ fn a_changed_gpg_id_stops_saving_until_it_is_accepted() {
 
     let error = s.write().save(&new_entry("Work", "b", "pw")).unwrap_err();
     assert!(
-        matches!(&error, WriteError::RecipientsChanged { gpg_id, before_gpg_id: Some(was), before, after }
-            if gpg_id == ".gpg-id" && was == ".gpg-id" && *before == [fpr.clone()] && *after == [fpr[24..].to_owned()]),
+        matches!(&error, WriteError::RecipientsChanged { gpg_id, before, after }
+            if gpg_id == ".gpg-id" && *before == [fpr.clone()] && *after == [fpr[24..].to_owned()]),
         "{error:?}"
     );
+    assert_eq!(s.write().folder_recipients("Work").unwrap().accepted_gpg_id.as_deref(), Some(".gpg-id"));
     assert!(s.write().folder_recipients("Work").unwrap().changed);
     assert_eq!(s.head(), head);
 
@@ -309,10 +310,11 @@ fn a_gpg_id_a_pull_adds_deeper_stops_saving_in_that_subtree_until_accepted() {
     for folder in ["Work", "Work/Team"] {
         let error = s.write().save(&new_entry(folder, "b", "pw")).unwrap_err();
         assert!(
-            matches!(&error, WriteError::RecipientsChanged { gpg_id, before_gpg_id: Some(was), before, after }
-                if gpg_id == "Work/.gpg-id" && was == ".gpg-id" && *before == [fpr.clone()] && *after == [fpr[24..].to_owned()]),
+            matches!(&error, WriteError::RecipientsChanged { gpg_id, before, after }
+                if gpg_id == "Work/.gpg-id" && *before == [fpr.clone()] && *after == [fpr[24..].to_owned()]),
             "{folder}: {error:?}"
         );
+        assert_eq!(s.write().folder_recipients(folder).unwrap().accepted_gpg_id.as_deref(), Some(".gpg-id"));
         assert!(!s.write().folder_recipients(folder).unwrap().writable);
     }
     // Folders the new file does not govern are as they were.
@@ -334,10 +336,11 @@ fn a_gpg_id_a_pull_removes_stops_saving_in_that_subtree_until_accepted() {
 
     let error = s.write().save(&new_entry("Work/Team", "b", "pw")).unwrap_err();
     assert!(
-        matches!(&error, WriteError::RecipientsChanged { gpg_id, before_gpg_id: Some(was), before, after }
-            if gpg_id == ".gpg-id" && was == "Work/.gpg-id" && *before == [fpr[24..].to_owned()] && *after == [fpr.clone()]),
+        matches!(&error, WriteError::RecipientsChanged { gpg_id, before, after }
+            if gpg_id == ".gpg-id" && *before == [fpr[24..].to_owned()] && *after == [fpr.clone()]),
         "{error:?}"
     );
+    assert_eq!(s.write().folder_recipients("Work/Team").unwrap().accepted_gpg_id.as_deref(), Some("Work/.gpg-id"));
     s.write().save(&new_entry("Personal", "b", "pw")).unwrap();
 
     s.keyring().accept_recipients(&s.dirs().exclusive().unwrap(), "Work").unwrap();

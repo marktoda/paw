@@ -91,9 +91,9 @@ impl OpenedEntry {
     }
 
     fn doc(&self) -> MutexGuard<'_, Option<EntryDoc>> {
-        // A panic while the lock was held cannot leave the text half
-        // written: nothing here edits it.
-        self.doc.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        // Nothing here edits the text, so a panic cannot leave it half
+        // written.
+        crate::locked(&self.doc)
     }
 
     /// What `read` makes of the text; `None` once closed.

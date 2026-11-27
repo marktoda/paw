@@ -146,9 +146,9 @@ pub fn write_fixture_store(dir: String) -> Result<(), PawError> {
     let card_key = SimulatedKey::new(String::new(), false, 0).decryption_key()?;
     let other_key = other_key()?;
 
-    write(&root.join(".gpg-id"), format!("{}\n", hex_fingerprint(&card_key)).as_bytes())?;
+    write(&root.join(crate::path::GPG_ID), format!("{}\n", hex_fingerprint(&card_key)).as_bytes())?;
     write(
-        &root.join(OTHER_KEY_FOLDER).join(".gpg-id"),
+        &root.join(OTHER_KEY_FOLDER).join(crate::path::GPG_ID),
         format!("# The key from the old laptop.\n{}\n", hex_fingerprint(&other_key)).as_bytes(),
     )?;
 
@@ -158,7 +158,7 @@ pub fn write_fixture_store(dir: String) -> Result<(), PawError> {
         for (path, contents) in entries {
             seed += 1;
             let ciphertext = seeded_encrypt(seed, &key, contents)?;
-            write(&root.join(format!("{path}.gpg")), &ciphertext)?;
+            write(&root.join(crate::path::entry_file(path)), &ciphertext)?;
         }
     }
     Ok(())
@@ -174,7 +174,7 @@ pub fn write_name_match_entries(dir: String) -> Result<(), PawError> {
     let card_key = SimulatedKey::new(String::new(), false, 0).decryption_key()?;
     for (seed, (path, contents)) in (1000u64..).zip(NAME_MATCH_ENTRIES) {
         let ciphertext = seeded_encrypt(seed, &card_key, contents)?;
-        write(&root.join(format!("{path}.gpg")), &ciphertext)?;
+        write(&root.join(crate::path::entry_file(path)), &ciphertext)?;
     }
     Ok(())
 }

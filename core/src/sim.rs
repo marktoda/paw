@@ -423,7 +423,7 @@ impl SimulatedKey {
     fn lock(&self) -> MutexGuard<'_, State> {
         // Tests share the key between threads; one that panicked while
         // holding the lock has already failed its test.
-        self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        crate::locked(&self.state)
     }
 
     fn uif(&self, slot: Slot) -> Vec<u8> {

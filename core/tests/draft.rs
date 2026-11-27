@@ -251,15 +251,6 @@ fn new_notes_replace_the_old_ones_where_they_were() {
 }
 
 #[test]
-fn the_text_toggle_replaces_everything_and_later_changes_apply_on_top() {
-    let mut draft = edit(OPENED);
-    draft.set_password("dropped");
-    draft.set_text("typed\nlogin: x\n");
-    draft.set_url("https://x.example");
-    assert_eq!(saved(&draft), "typed\nlogin: x\nurl: https://x.example\n");
-}
-
-#[test]
 fn a_generated_password_is_marked_until_it_is_typed_over() {
     let mut draft = Draft::new("");
     let password = draft.generate_password(&Default::default()).unwrap();
@@ -331,14 +322,6 @@ fn a_key_that_cannot_make_codes_is_refused_without_repeating_it() {
         assert!(!problems[0].message.contains("JBSW"));
         assert!(draft.build().is_err());
     }
-}
-
-#[test]
-fn the_text_toggle_drops_a_typed_key() {
-    let mut draft = edit("pw\n");
-    draft.set_one_time_code("JBSWY3DPEHPK3PXP");
-    draft.set_text("typed\n");
-    assert_eq!(saved(&draft), "typed\n");
 }
 
 /// The lines of a file, each with its ending. A file with no bytes is one

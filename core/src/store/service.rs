@@ -112,7 +112,7 @@ fn ends_in_number(host: &str) -> bool {
 /// (`sharepoint.com`, `atlassian.net`, `zendesk.com`, `wordpress.com`,
 /// `myshopify.com`) is one registrable domain, so one tenant's entry is
 /// offered on every other tenant's site (docs/design.md 2.10).
-pub(crate) fn registrable(host: &str) -> Option<&str> {
+pub fn registrable(host: &str) -> Option<&str> {
     if ends_in_number(host) {
         return None;
     }
@@ -159,14 +159,6 @@ pub fn site_name(host: &str) -> Option<String> {
         return None;
     }
     squeeze(label)
-}
-
-/// The registrable domain a service identifier is on:
-/// `bankofamerica.com` for `https://www.bankofamerica.com/login`. `None`
-/// where there is none: a bare word, an IP address, a public suffix.
-pub fn registrable_domain(service: String) -> Option<String> {
-    let host = host_of(&service)?;
-    registrable(&host).map(str::to_owned)
 }
 
 /// The host of a service identifier as AutoFill names the site, the way

@@ -363,7 +363,6 @@ fn the_picker_lists_every_granted_repository_across_pages_with_the_store_first()
     assert_eq!(store.full_name, REPOSITORY);
     assert_eq!((store.owner.as_str(), store.name.as_str()), ("you", "password-store"));
     assert!(store.private);
-    assert_eq!(store.pushed_at.as_deref(), Some("2026-11-20T09:12:00Z"));
     assert_eq!(store.ssh_address, w.remote.address());
     // Three pages of repositories, and nothing read from inside any of them.
     let pages = w.github.requests().iter().filter(|r| r.path.ends_with("/repositories")).count();

@@ -43,7 +43,7 @@ impl Recipient {
 }
 
 /// Everything an entry's clear-text headers say about who can open it.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntryRecipients {
     /// In file order. Empty when the entry is locked with a passphrase only.
     pub keys: Vec<Recipient>,

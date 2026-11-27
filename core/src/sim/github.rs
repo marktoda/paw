@@ -934,10 +934,6 @@ impl SimPollClock {
     pub fn waits(&self) -> Vec<Duration> {
         locked(&self.waits).clone()
     }
-
-    pub fn advance(&self, by: Duration) {
-        *locked(&self.now) += by;
-    }
 }
 
 impl PollClock for SimPollClock {

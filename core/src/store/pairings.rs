@@ -13,7 +13,7 @@
 //! one more question, never a wrong fill.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -89,10 +89,6 @@ pub struct SitePairings {
 impl SitePairings {
     pub fn new(state_dir: &Path) -> Self {
         Self { list: ListFile::new(state_dir, &LIST) }
-    }
-
-    pub fn path(&self) -> PathBuf {
-        self.list.path()
     }
 
     /// Keeps that `entry` was filled on `site` (a registrable domain), as

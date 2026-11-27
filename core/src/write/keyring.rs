@@ -175,14 +175,14 @@ struct Accepted {
 /// outside hidden folders, as `(path, bytes)`.
 fn all_gpg_ids(root: &Path) -> Result<Vec<(String, Vec<u8>)>, Fault> {
     let git = |e: git2::Error| Fault::local(format!("could not read the store: {}", e.message()));
-    let repo = git2::Repository::open(root).map_err(git)?;
+    let repo = crate::sync::guard::open(root)?;
     let tree = repo.head().and_then(|h| h.peel_to_tree()).map_err(git)?;
     let mut found = Vec::new();
     tree.walk(git2::TreeWalkMode::PreOrder, |folder, entry| {
         let name = entry.name().unwrap_or_default();
         if entry.kind() == Some(git2::ObjectType::Tree) {
             // Hidden folders (`.git`-like, `.extensions`) are not the store's.
-            return if name.starts_with('.') { git2::TreeWalkResult::Skip } else { git2::TreeWalkResult::Ok };
+            return if crate::path::is_hidden(name) { git2::TreeWalkResult::Skip } else { git2::TreeWalkResult::Ok };
         }
         if name == crate::path::GPG_ID
             && entry.filemode() == i32::from(git2::FileMode::Blob)
@@ -319,19 +319,14 @@ impl Keyring {
         self.accepted.is_some()
     }
 
-    fn pin(&mut self, held: &Exclusive, key: PinnedKey) -> Result<Fingerprint, Fault> {
-        let fingerprint = key.fingerprint.clone();
-        self.keys.retain(|old| old.fingerprint != fingerprint);
-        self.keys.push(key);
-        self.save(held)?;
-        Ok(fingerprint)
-    }
-
     /// Pins the card's decryption key (from its key session).
     /// Returns its fingerprint. Pinning it again replaces it.
     pub fn pin_card_key(&mut self, held: &Exclusive, key: &PublicKey) -> Result<Fingerprint, Fault> {
         let fingerprint = Fingerprint::of(key);
-        self.pin(held, PinnedKey { fingerprint, key: key.clone() })
+        self.keys.retain(|old| old.fingerprint != fingerprint);
+        self.keys.push(PinnedKey { fingerprint: fingerprint.clone(), key: key.clone() });
+        self.save(held)?;
+        Ok(fingerprint)
     }
 
     /// Records that the `.gpg-id` line `line` is satisfied by the pinned key
@@ -409,7 +404,6 @@ impl Keyring {
         if recipients.changed {
             return Err(WriteError::RecipientsChanged {
                 gpg_id: recipients.gpg_id,
-                before_gpg_id: recipients.accepted_gpg_id,
                 before: recipients.accepted_lines,
                 after: recipients.lines.into_iter().map(|l| l.line).collect(),
             });
