@@ -2,9 +2,10 @@
 //! names, the entry's own `url:` lines, and the user name it fills.
 
 use paw_core::entry::opened::OpenedEntry;
+use paw_core::open::{check_entry_url, fill_username};
 use paw_core::store::service::{
-    MatchKind, NamePairing, UrlCheck, check_entry_url, display_host, fill_username, host_of, match_services,
-    match_site, path_user, service_host, suggestion_domain, url_site,
+    MatchKind, NamePairing, UrlCheck, display_host, host_of, match_services, match_site, path_user, service_host,
+    suggestion_domain, url_site,
 };
 use paw_core::store::tree::EntryRef;
 

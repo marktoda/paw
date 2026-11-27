@@ -10,7 +10,6 @@ pub mod hosts;
 pub mod integrate;
 pub mod operation;
 pub mod queue;
-mod store_sync;
 mod transport;
 
 use std::time::{Duration, Instant};
@@ -18,7 +17,6 @@ use std::time::{Duration, Instant};
 use git2::{AutotagOption, Direction, FetchOptions, PushOptions, RemoteCallbacks, Repository};
 
 pub use history::{ChangeKind, KeptBoth};
-pub use store_sync::StoreSync;
 pub use integrate::{IntegrateReport, Integration, RecipientsChange, Replaced, accept_replaced_remote};
 pub use transport::{ConnectError, Connection, HostKeyPin, PresentedHostKey, Remote, ServerKey, scan_host_key};
 

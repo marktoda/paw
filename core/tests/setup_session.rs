@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use key_common::{Driver, PIN, WAIT, finish, is_pin, is_touch, port_with};
 use paw_core::setup::Setup;
-use paw_core::sync::StoreSync;
+use paw_core::task::StoreSync;
 use paw_core::key::{KeyError, KeyIdentity, KeyPort, enrolment};
 use paw_core::task::{KeyOutcome, KeyTaskListener, KeyTaskState};
 use paw_core::remote::RemoteFailure;

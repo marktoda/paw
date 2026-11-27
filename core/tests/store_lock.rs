@@ -20,7 +20,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use key_common::{Driver, finish, port_with, signer_with};
 use paw_core::sim::remote::steps;
-use paw_core::sync::StoreSync;
+use paw_core::task::StoreSync;
 use paw_core::setup::Setup;
 use paw_core::task::{KeyOutcome, KeyTaskState};
 use paw_core::github::{Endpoints, GitHubAccount, RepositoryList, SignInState, TokenVault, VaultError};

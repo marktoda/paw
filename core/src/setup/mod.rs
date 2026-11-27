@@ -15,7 +15,7 @@ use crate::fingerprint::Fingerprint;
 use crate::lock::StoreDirs;
 use crate::files::layout;
 use crate::key::enrolment::save_enrolment;
-use crate::key::{CardInfo, KeyError, KeyIdentity, KeyPort, KeySession, KeyTouch, PinKdfStatus};
+use crate::key::{CardInfo, KeyError, KeyIdentity, KeySession, KeyTouch, PinKdfStatus};
 use crate::recipients::Access;
 use crate::ssh::SshPublicKey;
 use crate::store::PassStore;
@@ -26,8 +26,6 @@ use crate::write::{Keyring, LineStatus};
 use crate::fault::Fault;
 use crate::locked;
 use crate::remote::{PortFallback, RemoteFailure};
-use crate::task::workflows;
-use crate::task::{KeyTask, KeyTaskListener};
 
 /// The key as setup shows it on "Your key". Public data only.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -750,12 +748,13 @@ impl SetupFlow {
 /// First-run setup as the setup screens drive it: [`SetupFlow`] behind a
 /// lock. Each call is one step and returns the state to show next.
 ///
-/// The steps that need the key run as a [`KeyTask`] on the [`KeyPort`]'s
-/// session (the `*_with_key` calls), as [`crate::sync::StoreSync`]'s do;
-/// one that fails ends `SetupFailed` for the work after the key.
+/// The steps that need the key run as key tasks on the key port's session
+/// (the `*_with_key` calls, beside the other key tasks' workflows in
+/// `crate::task::workflows`); one that fails ends `SetupFailed` for the
+/// work after the key.
 #[derive(uniffi::Object)]
 pub struct Setup {
-    flow: Arc<Mutex<SetupFlow>>,
+    pub(crate) flow: Arc<Mutex<SetupFlow>>,
 }
 
 impl Setup {
@@ -800,24 +799,6 @@ impl Setup {
     /// `UnusableKey` (`PinKdfUnsupported`), before any PIN is asked.
     pub fn read_key_from_session(&self, session: Arc<KeySession>) -> Result<SetupState, SetupError> {
         self.flow().read_key_from(session.card_info(), session.ssh_key(), session.pin_kdf())
-    }
-
-    /// "Download your store" as a key task (sign-in, `Clone`): the PIN
-    /// stage unless the session holds it, `Working` while connecting,
-    /// `Touch` while the key signs the login, `Working` with progress while
-    /// cloning (objects and bytes received, at most ten times a second),
-    /// then `Done`; read `state` for the next step. A key other than the
-    /// one read at "Your key" is refused before the PIN.
-    pub fn download_with_key(self: Arc<Self>, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
-        workflows::download(&port, self.flow.clone(), listener)
-    }
-
-    /// "Check your key" as a key task (`CheckKey`): opens one entry with
-    /// the held PIN and a touch, wipes the text, then pins the card's key
-    /// for saving, accepts the store's recipients, records the key as the
-    /// store's enrolled key (and gives it to `port`), and setup is done.
-    pub fn test_decrypt_with_key(self: Arc<Self>, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
-        workflows::check_key(&port, self.flow.clone(), listener)
     }
 
     /// "I expected this change", on the changed-host-key screen: forgets

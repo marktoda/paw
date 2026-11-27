@@ -15,7 +15,7 @@ use std::sync::{Arc, OnceLock, Weak};
 
 use key_common::{Driver, PIN, decrypt, finish, signer};
 use paw_core::sim::remote::steps;
-use paw_core::sync::StoreSync;
+use paw_core::task::StoreSync;
 use paw_core::key::{KeyError, KeyPort};
 use paw_core::task::{KeyOutcome, KeyTask, KeyTaskListener, KeyTaskState, TaskProgress};
 use paw_core::sim::copies::SimClock;

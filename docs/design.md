@@ -493,7 +493,7 @@ Rules the layout keeps:
 - `store` works from names and the unencrypted start of each file. It never decrypts and needs neither the key nor the network.
 - `key` knows no workflow. `task` knows every workflow that runs as a key task: what it is for, what it produces, how the work after the key fails.
 - `files` sits below everything that uses it. On-disk names are declared once, in `core/src/files/layout.rs`; Swift asks the core for them.
-- A function that works on a store is given a `StoreDirs` (state directory, the repository at `repo/` in it, and its lock), built from the state directory alone. `OpenStore` (`core/src/sync/mod.rs`) is that repository opened for one operation with paw's git settings applied.
+- A function that works on a store is given a `StoreDirs` (`core/src/lock.rs`: state directory, the repository at `repo/` in it, and its lock), built from the state directory alone. Building one creates nothing: only setup makes the state directory. Code that writes a state file is given the store's lock, held. `OpenStore` (`core/src/sync/mod.rs`) is that repository opened for one operation with paw's git settings applied.
 - The `sim` feature is on by default and off in the device library (5.5).
 
 `scripts/build-core.sh` builds two libraries (device without `sim`, simulator with it) and one set of Swift bindings for each; `scripts/make-xcframework.sh` packs them as the two slices of `app/build/PawCore.xcframework`. The iOS libraries need the Apple SDK (the core contains C: libgit2 and ring), so they are built on macOS; on Linux the script makes the host builds and both bindings.
@@ -531,7 +531,7 @@ Notes:
 | `EntryDraft`, `StoreWriter` | `core/src/write/` | The add and edit form, and saving, deleting, renaming and moving (2.8) |
 | `KeyPort`, `KeySession`, `KeyTask` | `core/src/key/`, `core/src/task/` | 3.4 and 3.5 |
 | `CopyCache` | `core/src/copies/mod.rs` | 3.8 |
-| `StoreSync`, `Setup`, `GitHubAccount` | `core/src/sync/store_sync.rs`, `core/src/setup/mod.rs`, `core/src/github/account.rs` | Sync, first-run setup and the GitHub sign-in as Swift drives them |
+| `StoreSync`, `Setup`, `GitHubAccount` | `core/src/task/store_sync.rs`, `core/src/setup/mod.rs` (its key tasks in `core/src/task/workflows.rs`), `core/src/github/account.rs` | Sync, first-run setup and the GitHub sign-in as Swift drives them |
 
 There is no root object and no observer from the core. Swift builds what a store needs in `StoreSession`, and the one signal that the store changed is Swift's (`LiveStore`). The only callback from the core that reports progress is `KeyTaskListener`. Snapshots carry times, not countdowns: Swift draws "until 18:40" and the code countdown from a deadline.
 

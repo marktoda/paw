@@ -12,15 +12,15 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use super::address::{StoreAddress, saved_address};
-use super::hosts::{KnownHosts, ServerKeys};
-use super::queue::{self, QueueItem};
-use super::{IntegrateReport, ServerKey, SyncError, accept_replaced_remote};
-use crate::lock::StoreDirs;
+use super::workflows;
+use super::{KeyTask, KeyTaskListener, LoginPurpose};
 use crate::key::KeyPort;
+use crate::lock::StoreDirs;
 use crate::remote::{RefusedPath, RemoteFailure};
-use crate::task::workflows;
-use crate::task::{KeyTask, KeyTaskListener, LoginPurpose};
+use crate::sync::address::{StoreAddress, saved_address};
+use crate::sync::hosts::{KnownHosts, ServerKeys};
+use crate::sync::queue::{self, QueueItem};
+use crate::sync::{IntegrateReport, ServerKey, SyncError, accept_replaced_remote, scan_host_key};
 use crate::write::held_back::{self, HeldBack, ReencryptCheck};
 
 /// Keeping a set-up store in step with its remote.
@@ -65,7 +65,7 @@ impl StoreSync {
     /// without logging in, and returns the key it presents, for the person
     /// to compare before [`Self::trust_server_key`]. Network only.
     pub fn check_server_key(&self) -> Result<ServerKey, SyncError> {
-        Ok(super::scan_host_key(self.address.connect_host(), self.address.port)?.described())
+        Ok(scan_host_key(self.address.connect_host(), self.address.port)?.described())
     }
 
     /// The person compared `fingerprint` and trusts it: connects again and
@@ -73,7 +73,7 @@ impl StoreSync {
     /// fingerprint. Refused for a host whose keys ship with paw, and for a
     /// host that already has a saved key (forget it first).
     pub fn trust_server_key(&self, fingerprint: String) -> Result<(), SyncError> {
-        let scan = || super::scan_host_key(self.address.connect_host(), self.address.port);
+        let scan = || scan_host_key(self.address.connect_host(), self.address.port);
         if !self.known_hosts().trust(&self.address, scan, &fingerprint)? {
             return Err(RemoteFailure::HostKeyNotConfirmed { host: self.address.connect_host().to_owned() }.into());
         }
@@ -154,7 +154,7 @@ impl StoreSync {
     /// with why; empty if nothing. A sync that fails with
     /// `RemoteFailure::RefusedContent` names the same paths.
     pub fn refused_remote(&self) -> Result<Vec<RefusedPath>, SyncError> {
-        Ok(super::refused_remote(&self.store)?)
+        Ok(crate::sync::refused_remote(&self.store)?)
     }
 
     /// After `RemoteReplaced`: take the remote's history, keeping or

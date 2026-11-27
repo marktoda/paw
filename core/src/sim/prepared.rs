@@ -15,7 +15,7 @@ use super::remote::SimRemote;
 use super::tasks::{SimDriver, ending, wait_final};
 use crate::PawError;
 use crate::setup::Setup;
-use crate::sync::StoreSync;
+use crate::task::StoreSync;
 use crate::key::KeyPort;
 use crate::setup::SetupState;
 use crate::task::{KeyTask, KeyTaskListener};

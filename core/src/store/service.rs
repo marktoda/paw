@@ -35,11 +35,9 @@
 //! the same name (a lookalike: the app does not offer it).
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use super::pairings::Pairing;
 use super::tree::EntryRef;
-use crate::entry::opened::OpenedEntry;
 
 fn is_host(text: &str) -> bool {
     !text.is_empty()
@@ -397,7 +395,7 @@ pub fn display_host(host: String) -> String {
 }
 
 /// What an entry's own web address says about the site being filled
-/// ([`check_entry_url`]).
+/// ([`crate::open::check_entry_url`]).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum UrlCheck {
     /// No address field with a usable host, or no site to compare with.
@@ -437,8 +435,8 @@ pub fn url_site(value: &str) -> Option<String> {
 }
 
 /// Compares address field values (`url: …` lines) with the sites being
-/// filled ([`check_entry_url`]): [`UrlCheck::Same`] when any address is on
-/// the registrable domain of any of `services`.
+/// filled ([`crate::open::check_entry_url`]): [`UrlCheck::Same`] when any
+/// address is on the registrable domain of any of `services`.
 pub fn check_urls(values: &[&str], services: &[String]) -> UrlCheck {
     let urls: Vec<String> = values.iter().filter_map(|value| url_site(value)).collect();
     let sites: Vec<String> = services
@@ -453,25 +451,6 @@ pub fn check_urls(values: &[&str], services: &[String]) -> UrlCheck {
         return UrlCheck::Same;
     }
     UrlCheck::Differs { url: display_host(url.clone()), site: display_host(site.clone()) }
-}
-
-/// Checks an opened entry's own address fields ([`EntryDoc::addresses`])
-/// against the sites being filled, for AutoFill before it hands the
-/// password over. Reads the fields only; keeps nothing.
-///
-/// [`EntryDoc::addresses`]: crate::entry::EntryDoc::addresses
-#[uniffi::export]
-pub fn check_entry_url(entry: Arc<OpenedEntry>, services: Vec<String>) -> UrlCheck {
-    entry.read(|doc| check_urls(&doc.addresses(), &services)).unwrap_or(UrlCheck::NoUrl)
-}
-
-/// The user name AutoFill fills for the entry at `path`: the entry's own
-/// ([`EntryDoc::filled_username`]), else the path's guess ([`path_user`]).
-///
-/// [`EntryDoc::filled_username`]: crate::entry::EntryDoc::filled_username
-#[uniffi::export]
-pub fn fill_username(entry: Arc<OpenedEntry>, path: String) -> Option<String> {
-    entry.read(|doc| doc.filled_username().map(str::to_owned)).flatten().or_else(|| path_user(&path))
 }
 
 /// The user name a path gives in a `site/user` layout: the entry's name

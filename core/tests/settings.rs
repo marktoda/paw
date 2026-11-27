@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use paw_core::copies::{CopyCache, CopyStatus};
 use paw_core::github::GitHubAccount;
-use paw_core::sync::StoreSync;
+use paw_core::task::StoreSync;
 use paw_core::write::StoreWriter;
 use paw_core::github::{TokenVault, VaultError};
 use paw_core::key::KeyPort;

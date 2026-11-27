@@ -11,12 +11,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-
 use crate::PawError;
 use crate::copies::{CopyCache, CopyStatus};
 use crate::entry::opened::OpenedEntry;
 use crate::files::content_id;
 use crate::store::PassStore;
+use crate::store::service::{self, UrlCheck};
 
 /// Keeps a Face ID copy of `opened`, the entry named `name`, for `ttl`.
 /// `Ok` with when it ends (wall clock), or `None` if the cache kept none.
@@ -65,4 +65,23 @@ impl PassStore {
         let current = content_id(&self.read_entry(&entry)?);
         copies.status(&entry, &current)
     }
+}
+
+/// Checks an opened entry's own address fields ([`EntryDoc::addresses`])
+/// against the sites being filled, for AutoFill before it hands the
+/// password over. Reads the fields only; keeps nothing.
+///
+/// [`EntryDoc::addresses`]: crate::entry::EntryDoc::addresses
+#[uniffi::export]
+pub fn check_entry_url(entry: Arc<OpenedEntry>, services: Vec<String>) -> UrlCheck {
+    entry.read(|doc| service::check_urls(&doc.addresses(), &services)).unwrap_or(UrlCheck::NoUrl)
+}
+
+/// The user name AutoFill fills for the entry at `path`: the entry's own
+/// ([`EntryDoc::filled_username`]), else the path's guess ([`service::path_user`]).
+///
+/// [`EntryDoc::filled_username`]: crate::entry::EntryDoc::filled_username
+#[uniffi::export]
+pub fn fill_username(entry: Arc<OpenedEntry>, path: String) -> Option<String> {
+    entry.read(|doc| doc.filled_username().map(str::to_owned)).flatten().or_else(|| service::path_user(&path))
 }

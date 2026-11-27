@@ -10,6 +10,7 @@
 
 mod run;
 mod start;
+mod store_sync;
 pub(crate) mod workflows;
 
 use std::sync::Arc;
@@ -25,6 +26,7 @@ use crate::sync::operation::SyncReport;
 use crate::write::held_back::ReencryptReport;
 
 pub use run::KeyTask;
+pub use store_sync::StoreSync;
 
 /// What a task is for: the key log names it, and setup's key check says
 /// which entry it opens.
