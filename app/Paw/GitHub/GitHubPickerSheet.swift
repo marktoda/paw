@@ -127,7 +127,6 @@ private struct GitHubCodeView: View {
         components.scheme = "https"
         components.host = "github.com"
         components.path = "/login/device"
-        // Letters, digits and "-" as they are; anything else encoded.
         let plain = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-")
         guard let value = code.userCode.addingPercentEncoding(withAllowedCharacters: plain) else { return nil }
         components.percentEncodedQueryItems = [URLQueryItem(name: "user_code", value: value)]

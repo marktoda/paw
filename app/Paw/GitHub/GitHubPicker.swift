@@ -57,7 +57,6 @@ final class GitHubPicker: Identifiable {
         self.purpose = purpose
     }
 
-    /// Lists at once if a sign-in is kept, else signs in first.
     func begin() {
         if access.signedIn {
             list()
@@ -117,7 +116,6 @@ final class GitHubPicker: Identifiable {
         }
     }
 
-    /// Cancel while the code shows.
     func cancelSignIn() {
         guard case .code = stage else { return }
         endSignIn()
@@ -138,7 +136,6 @@ final class GitHubPicker: Identifiable {
 
     // MARK: Choosing the repository
 
-    /// Lists the repositories the person let paw see.
     func list() {
         generation += 1
         let generation = generation

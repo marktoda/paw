@@ -23,8 +23,13 @@ struct UnpushedSection: View {
 struct UnpushedScreen: View {
     let model: AppModel
 
-    /// The change whose discard is waiting for its confirm; "all" for all.
-    @State private var confirming: String?
+    /// The discard waiting for its confirm.
+    private enum Confirming: Equatable {
+        case one(String)
+        case all
+    }
+
+    @State private var confirming: Confirming?
 
     var body: some View {
         let queue = model.storeSession.syncing?.queue
@@ -56,7 +61,7 @@ struct UnpushedScreen: View {
                 }
                 Section {
                     ForEach(items, id: \.id) { item in
-                        if confirming == item.id {
+                        if confirming == .one(item.id) {
                             InlineConfirmRow(
                                 question: "Discard \u{201C}\(Self.title(item))\u{201D}?",
                                 detail: Self.discardDetail(item),
@@ -69,7 +74,7 @@ struct UnpushedScreen: View {
                                 onCancel: { confirming = nil })
                                 .pawListRow()
                         } else {
-                            QueueRow(item: item) { confirming = item.id }
+                            QueueRow(item: item) { confirming = .one(item.id) }
                         }
                     }
                 } header: {
@@ -77,7 +82,7 @@ struct UnpushedScreen: View {
                         .accessibilityIdentifier("unpushed-count")
                 }
                 Section {
-                    if confirming == "all" {
+                    if confirming == .all {
                         InlineConfirmRow(
                             question: "Discard \(changeCount(items.count))?",
                             detail: "The store goes back to how it was last downloaded.",
@@ -90,7 +95,7 @@ struct UnpushedScreen: View {
                             .pawListRow()
                     } else {
                         Button(items.count == 1 ? "Discard this change" : "Discard all \(items.count) changes") {
-                            confirming = "all"
+                            confirming = .all
                         }
                         .buttonStyle(.pawDestructive)
                         .accessibilityIdentifier("unpushed-discard-all")
