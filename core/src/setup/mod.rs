@@ -9,8 +9,10 @@
 
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::files::values::{self, Values};
+use crate::files::layout::StoreDirs;
 use crate::files::{self, layout};
 use crate::key::enrolment::save_enrolment;
 use crate::key::{CardInfo, KeyError, KeyIdentity, KeyTouch, PinKdfStatus};
@@ -318,6 +320,14 @@ impl SetupFlow {
         crate::files::layout::repo_dir(&self.dir)
     }
 
+    pub(crate) fn store(&self) -> StoreDirs {
+        StoreDirs::new(&self.dir)
+    }
+
+    pub(crate) fn open_store(&self) -> Result<Arc<PassStore>, SetupError> {
+        PassStore::open(self.dir.to_string_lossy().into_owned()).map_err(SetupError::from)
+    }
+
     fn known_hosts(&self) -> KnownHosts {
         KnownHosts::of(&self.dir)
     }
@@ -337,7 +347,7 @@ impl SetupFlow {
     /// The store's lock, held: for removing or replacing the repository,
     /// and for the keyring and enrolment writes.
     fn exclusive(&self) -> Result<crate::lock::Exclusive, SetupError> {
-        crate::lock::StoreLock::for_state_dir(&self.dir).exclusive().map_err(SetupError::from)
+        self.store().exclusive().map_err(SetupError::from)
     }
 
     fn restart_download(&mut self) -> Result<(), SetupError> {
@@ -350,7 +360,7 @@ impl SetupFlow {
     /// step after it (the key check, or opening the store) says what is
     /// wrong.
     fn entry_count(&self) -> u32 {
-        PassStore::open(self.repo_dir().to_string_lossy().into_owned())
+        self.open_store()
             .map(|store| store.entry_count())
             .unwrap_or(0)
     }
@@ -545,13 +555,12 @@ impl SetupFlow {
 
     /// Setup is at "cloning" until
     /// [`Self::finish_download`] or [`Self::abandon_download`].
-    pub(crate) fn begin_download(&mut self) -> Result<(sync::Remote, PathBuf), SetupError> {
+    pub(crate) fn begin_download(&mut self) -> Result<(sync::Remote, StoreDirs), SetupError> {
         self.expect(&[Step::NeedPin], "download")?;
         let remote = self.remote()?;
-        let repo = self.repo_dir();
-        remove_dir(&repo, &self.exclusive()?)?;
+        remove_dir(&self.repo_dir(), &self.exclusive()?)?;
         self.go(Step::Cloning)?;
-        Ok((remote, repo))
+        Ok((remote, self.store()))
     }
 
     /// The download stopped (cancelled, or the login failed): back to the
@@ -603,7 +612,7 @@ impl SetupFlow {
     pub(crate) fn pick_test_entry(&self) -> Result<String, SetupError> {
         self.expect(&[Step::TestDecrypt], "test the key")?;
         let fingerprint = self.key()?.decryption_fingerprint.clone();
-        let store = PassStore::open(self.repo_dir().to_string_lossy().into_owned()).map_err(SetupError::from)?;
+        let store = self.open_store()?;
 
         let mut maybe = None;
         let mut sure = None;
@@ -651,17 +660,16 @@ impl SetupFlow {
         {
             return Err(SetupError::UnusableKey { reason: UnusableKeyReason::CardKeyMismatch });
         }
-        let repo = self.repo_dir();
         // The keyring and the enrolment change as one critical section.
-        let held = self.exclusive()?;
-        let mut keyring = Keyring::open(&self.dir).map_err(write_failed)?;
+        let store = self.store();
+        let held = store.exclusive().map_err(SetupError::from)?;
+        let mut keyring = Keyring::open(&store).map_err(write_failed)?;
         let fingerprint = keyring.pin_card_key(&held, card_key).map_err(write_failed)?;
         // Only the `.gpg-id` that governs the entry just opened, and only if
         // that entry names the card's key, says which line is the card's.
-        let store = PassStore::open(repo.to_string_lossy().into_owned()).map_err(SetupError::from)?;
-        let ciphertext = store.read_entry(&entry).map_err(SetupError::from)?;
-        keyring.bind_card_for_opened_entry(&held, &repo, &fingerprint, &entry, &ciphertext).map_err(write_failed)?;
-        keyring.accept_all_recipients_at_setup(&held, &repo).map_err(write_failed)?;
+        let ciphertext = crate::store::read::read_entry(store.repo_dir(), &entry).map_err(SetupError::from)?;
+        keyring.bind_card_for_opened_entry(&held, &fingerprint, &entry, &ciphertext).map_err(write_failed)?;
+        keyring.accept_all_recipients_at_setup(&held).map_err(write_failed)?;
         save_enrolment(&self.dir, identity).map_err(SetupError::from)?;
         drop(held);
         self.saved.opened = Some(entry);
@@ -672,9 +680,10 @@ impl SetupFlow {
     /// pinned keys and the store; changes nothing.
     pub fn write_readiness(&self) -> Result<SetupWriteReadiness, SetupError> {
         self.expect(&[Step::Done], "say whether entries can be saved")?;
-        let repo = self.repo_dir();
-        let keyring = Keyring::open(&self.dir).map_err(write_failed)?;
-        let top = keyring.folder_recipients(&repo, "").map_err(write_failed)?;
+        let store = self.store();
+        let reading = store.shared().map_err(SetupError::from)?;
+        let keyring = Keyring::open(&store).map_err(write_failed)?;
+        let top = keyring.folder_recipients(&reading, "").map_err(write_failed)?;
         let missing_recipients = if top.writable {
             Vec::new()
         } else {
@@ -685,12 +694,12 @@ impl SetupFlow {
                 .collect()
         };
         let mut folders_needing_keys = Vec::new();
-        for gpg_id in crate::write::keyring::gpg_id_paths(&repo).map_err(write_failed)? {
+        for gpg_id in crate::write::keyring::gpg_id_paths(store.repo_dir()).map_err(write_failed)? {
             let folder = crate::path::folder_of_gpg_id(&gpg_id);
             if folder.is_empty() {
                 continue;
             }
-            let recipients = keyring.folder_recipients(&repo, folder).map_err(write_failed)?;
+            let recipients = keyring.folder_recipients(&reading, folder).map_err(write_failed)?;
             if !recipients.writable {
                 folders_needing_keys.push(gpg_id);
             }

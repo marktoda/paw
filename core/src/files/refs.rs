@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 const HEADS: &str = "refs/heads/";
 /// Where a fetch puts the remote's branches until they are published.
 const FETCHED: &str = "refs/paw/fetch";
-const PUSHING: &str = "refs/paw/pushing/";
 
 pub(crate) fn short(branch: &str) -> Option<&str> {
     branch.strip_prefix(HEADS)
@@ -20,15 +19,6 @@ pub(crate) fn remote_tracking(short: &str) -> String {
 /// does not descend from it means the history was replaced.
 pub(crate) fn last_seen(short: &str) -> String {
     format!("refs/paw/last-seen/{short}")
-}
-
-/// The commit a push of `short` has on the network, while it does.
-pub(crate) fn pushing(short: &str) -> String {
-    format!("{PUSHING}{short}")
-}
-
-pub(crate) fn is_pushing(name: &str) -> bool {
-    name.starts_with(PUSHING)
 }
 
 pub(crate) fn fetch_refspec() -> String {

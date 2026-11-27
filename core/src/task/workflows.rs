@@ -8,10 +8,10 @@ use std::sync::{Arc, Mutex};
 
 use super::{After, DecryptWork, KeyOutcome, KeyPurpose, KeyTask, KeyTaskListener, LoginPurpose, TaskFailure, TaskProgress, Work};
 use crate::key::{Halt, KeyIdentity, KeyPort};
+use crate::files::layout::StoreDirs;
 use crate::locked;
 use crate::remote::RemoteFailure;
 use crate::setup::{SetupError, SetupFlow};
-use crate::store::PassStore;
 use crate::sync::address::StoreAddress;
 use crate::sync::hosts::KnownHosts;
 use crate::sync::{ConnectError, Connection, SyncError, TransferProgress, operation};
@@ -26,7 +26,7 @@ pub(crate) fn download(
 ) -> Arc<KeyTask> {
     let expected = locked(&flow).expected_key();
     let work: Work = Box::new(move |job, signer| {
-        let (remote, repo) = locked(&flow).begin_download()?;
+        let (remote, store) = locked(&flow).begin_download()?;
         let connection = match Connection::open(&remote, &signer) {
             Ok(connection) => connection,
             Err(error) => {
@@ -39,7 +39,7 @@ pub(crate) fn download(
             }
         };
         let mut progress = |update: TransferProgress| job.progress(update.into());
-        let cloned = crate::sync::clone_with_transfer(&connection, &remote, &repo, Some(&mut progress));
+        let cloned = crate::sync::clone_with_transfer(&connection, &remote, &store, Some(&mut progress));
         drop(connection);
         if let Err(cancelled) = job.commit() {
             locked(&flow).abandon_download();
@@ -58,11 +58,10 @@ pub(crate) fn check_key(
     flow: Arc<Mutex<SetupFlow>>,
     listener: Arc<dyn KeyTaskListener>,
 ) -> Arc<KeyTask> {
-    let (expected, picked, repo) = {
+    let (expected, found) = {
         let flow = locked(&flow);
-        (flow.expected_key(), flow.pick_test_entry(), flow.repo_dir())
+        (flow.expected_key(), flow.pick_test_entry().and_then(|entry| Ok((entry, flow.open_store()?))))
     };
-    let found = picked.and_then(|entry| Ok((entry, PassStore::open(repo.to_string_lossy().into_owned())?)));
     let (entry, store) = match found {
         Ok(found) => found,
         Err(error) => return KeyTask::refused(KeyPurpose::CheckKey { entry: None }, listener, error.into()),
@@ -94,11 +93,11 @@ pub(crate) fn sync(
             .remote(&address)
             .map_err(SyncError::from)?
             .ok_or_else(|| SyncError::from(RemoteFailure::NoSavedHostKey { host: address.connect_host().to_owned() }))?;
-        let repo = crate::files::layout::repo_dir(&state_dir);
-        let holds_back = || held_back::holds_back(&repo, &state_dir);
+        let store = StoreDirs::new(&state_dir);
+        let holds_back = || held_back::holds_back(&store);
         let stop = || job.cancelled();
         let mut progress = |update: TransferProgress| job.progress(update.into());
-        let report = operation::run_until::<TaskFailure>(&remote, &signer, &repo, &holds_back, push, &stop, Some(&mut progress))?;
+        let report = operation::run_until::<TaskFailure>(&remote, &signer, &store, &holds_back, push, &stop, Some(&mut progress))?;
         Ok(KeyOutcome::Synced { report })
     });
     let expected = port.expected();
@@ -112,8 +111,8 @@ pub(crate) fn reencrypt(
     listener: Arc<dyn KeyTaskListener>,
     state_dir: PathBuf,
 ) -> Arc<KeyTask> {
-    let repo = crate::files::layout::repo_dir(&state_dir);
-    if let Err(error) = held_back::reencrypt_check(&repo, &state_dir) {
+    let store = StoreDirs::new(&state_dir);
+    if let Err(error) = held_back::reencrypt_check(&store) {
         return KeyTask::refused(KeyPurpose::Reencrypt, listener, error.into());
     }
     let work: DecryptWork = Box::new(move |job, opener| {
@@ -126,7 +125,7 @@ pub(crate) fn reencrypt(
         let mut progress = |done: u32, total: u32| {
             job.progress(TaskProgress { done, total, bytes: None });
         };
-        let report = held_back::reencrypt_each(&repo, &state_dir, &mut open, &mut progress)?;
+        let report = held_back::reencrypt_each(&store, &mut open, &mut progress)?;
         Ok(KeyOutcome::Reencrypted { report })
     });
     port.decrypt_then(listener, work)

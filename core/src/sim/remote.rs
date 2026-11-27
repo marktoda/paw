@@ -1026,61 +1026,74 @@ async fn receive_pack(shared: &Shared, input: &mut Input, out: &mut (impl AsyncW
 /// test support, not how the app syncs (it runs whole syncs as key tasks,
 /// `StoreSync.send_with_key`). Not in device builds.
 pub mod steps {
-    use std::path::Path;
-
-    use crate::lock::{FETCH_WAIT, StoreLock};
-    use crate::key::SshSigner;
-    use crate::sync::operation::{self, SyncReport};
+    use crate::files::layout::StoreDirs;
     use crate::files::refs;
-    use crate::sync::{self, Cloned, Connection, Remote, SyncError, git_err};
+    use crate::key::SshSigner;
+    use crate::lock::FETCH_WAIT;
+    use crate::sync::operation::{self, SyncReport};
+    use crate::fault::Fault;
+    use crate::sync::{self, Cloned, Connection, OpenStore, Remote, SyncError, git_err};
+    use crate::write::{Author, TreeEdit, commit_edits};
 
-    /// Clones the remote's default branch into `dir`, which must be empty
-    /// or not exist yet, as setup's download does.
-    pub fn clone(connection: &Connection, remote: &Remote, dir: &Path) -> Result<Cloned, SyncError> {
-        Ok(sync::clone_with_transfer(connection, remote, dir, None)?)
+    /// Clones the remote's default branch into the store's repository,
+    /// which must be empty or not exist yet, as setup's download does.
+    pub fn clone(connection: &Connection, remote: &Remote, store: &StoreDirs) -> Result<Cloned, SyncError> {
+        Ok(sync::clone_with_transfer(connection, remote, store, None)?)
     }
 
     /// Updates `origin/*` from the remote and returns the new tip of the
     /// current branch's remote counterpart. The working copy is not changed.
-    pub fn fetch(connection: &Connection, dir: &Path) -> Result<String, SyncError> {
-        let store = StoreLock::for_repo(dir);
-        let repo = sync::guard::open(dir)?;
-        let (_, _held) = sync::fetch_branches(connection, &store, &repo, None)?;
-        let (_, short) = sync::current_branch(&repo)?;
-        Ok(repo.refname_to_id(&refs::remote_tracking(&short)).map(|id| id.to_string()).map_err(git_err)?)
+    pub fn fetch(connection: &Connection, store: &StoreDirs) -> Result<String, SyncError> {
+        let store = OpenStore::open(store)?;
+        let (_, _held) = sync::fetch_branches(connection, &store, None)?;
+        let (_, short) = sync::current_branch(&store.repo)?;
+        Ok(store.repo.refname_to_id(&refs::remote_tracking(&short)).map(|id| id.to_string()).map_err(git_err)?)
+    }
+
+    /// Commits `contents` as the file `path` (relative to the store, `/`
+    /// separated) on the current branch, and nothing else, as a save does
+    /// once it has encrypted the entry.
+    pub fn commit(store: &StoreDirs, path: &str, contents: &[u8], message: &str, author: &Author) -> Result<String, Fault> {
+        let held = store.exclusive()?;
+        commit_edits(&held, &OpenStore::open(store)?, &[TreeEdit::Write { path, contents }], message, author)
+    }
+
+    /// Integrates `origin/<branch>` into the current branch, as every
+    /// sync does after its fetch.
+    pub fn integrate(store: &StoreDirs) -> Result<sync::Integration, SyncError> {
+        let held = store.exclusive()?;
+        let store = OpenStore::open(store)?;
+        sync::integrate::apply(&held, &store, sync::integrate::plan(&held, &store)?)
     }
 
     /// Pushes the current branch to the branch of the same name, as a
     /// fast-forward only, as a send does.
-    pub fn push(connection: &Connection, dir: &Path) -> Result<(), sync::PushError> {
-        push_recording_within(connection, dir, crate::lock::RECORD_WAIT)
+    pub fn push(connection: &Connection, store: &StoreDirs) -> Result<(), sync::PushError> {
+        push_recording_within(connection, store, crate::lock::RECORD_WAIT)
     }
 
     /// [`push`], waiting at most `record_wait` to record a push that landed.
     pub fn push_recording_within(
         connection: &Connection,
-        dir: &Path,
+        store: &StoreDirs,
         record_wait: std::time::Duration,
     ) -> Result<(), sync::PushError> {
-        let store = StoreLock::for_repo(dir);
-        let pushing = store.pushing(FETCH_WAIT)?;
-        let repo = sync::guard::open(dir)?;
-        let held = store.exclusive()?;
-        let (branch, _) = sync::current_branch(&repo)?;
-        let tip = repo.refname_to_id(&branch).map_err(git_err)?;
-        sync::push_tip(connection, &store, &repo, &branch, tip, held, &pushing, record_wait)
+        let pushing = store.lock().pushing(FETCH_WAIT)?;
+        let store = OpenStore::open(store)?;
+        let held = store.dirs.exclusive()?;
+        let (branch, _) = sync::current_branch(&store.repo)?;
+        let tip = store.repo.refname_to_id(&branch).map_err(git_err)?;
+        sync::push_tip(connection, &store, &branch, tip, held, &pushing, record_wait)
     }
 
-    /// A whole sync of the store at `dir` (state in `state_dir`) on one
-    /// login, as `StoreSync`'s key tasks run it: a send if `send`, else a
-    /// refresh.
+    /// A whole sync of `store` on one login, as `StoreSync`'s key tasks run
+    /// it: a send if `send`, else a refresh.
     pub fn sync(
         remote: &Remote,
         signer: &dyn SshSigner,
-        dir: &Path,
-        state_dir: &Path,
+        store: &StoreDirs,
         send: bool,
     ) -> Result<SyncReport, crate::task::TaskFailure> {
-        operation::run_until(remote, signer, dir, &|| crate::write::held_back::holds_back(dir, state_dir), send, &|| false, None)
+        operation::run_until(remote, signer, store, &|| crate::write::held_back::holds_back(store), send, &|| false, None)
     }
 }

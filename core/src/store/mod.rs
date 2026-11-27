@@ -13,10 +13,11 @@ pub mod search;
 pub mod service;
 pub mod tree;
 
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::PawError;
+use crate::files::layout::StoreDirs;
 use crate::recipients::Access;
 use search::SearchHit;
 use pairings::SitePairings;
@@ -28,29 +29,22 @@ use tree::{EntryRef, FolderListing, StoreTree};
 /// edit; that is one directory walk.
 #[derive(uniffi::Object)]
 pub struct PassStore {
-    root: PathBuf,
+    store: StoreDirs,
     tree: StoreTree,
-}
-
-impl PassStore {
-    /// A folder that is not a repository has only the in-process lock:
-    /// nothing paw does writes it.
-    fn lock(root: &std::path::Path) -> crate::lock::StoreLock {
-        crate::lock::StoreLock::for_repo(root)
-    }
 }
 
 #[uniffi::export]
 impl PassStore {
+    /// The store kept in `state_dir`, checked out in its `repo/`.
     #[uniffi::constructor(name = "new")]
-    pub fn open(dir: String) -> Result<Arc<Self>, PawError> {
-        let root = PathBuf::from(dir);
+    pub fn open(state_dir: String) -> Result<Arc<Self>, PawError> {
+        let store = StoreDirs::new(Path::new(&state_dir));
         // With the store lock shared: a checkout is never seen half done.
         let tree = {
-            let _reading = Self::lock(&root).shared()?;
-            StoreTree::scan(&root)?
+            let _reading = store.shared()?;
+            StoreTree::scan(store.repo_dir())?
         };
-        Ok(Arc::new(Self { root, tree }))
+        Ok(Arc::new(Self { store, tree }))
     }
 
     pub fn home(&self) -> FolderListing {
@@ -107,8 +101,8 @@ impl PassStore {
 
     /// The keys `.gpg-id` names for entries in `folder`, as written there.
     pub fn recipients(&self, folder: String) -> Result<Vec<String>, PawError> {
-        let _reading = Self::lock(&self.root).shared()?;
-        gpg_id::recipients_for(&self.root, &folder)
+        let _reading = self.store.shared()?;
+        gpg_id::recipients_for(self.store.repo_dir(), &folder)
     }
 
     /// Whether the key whose decryption fingerprint is `card_fingerprint`
@@ -124,12 +118,12 @@ impl PassStore {
 
 impl PassStore {
     /// The encrypted bytes of `entry` ([`read::read_entry`]), read with the
-    /// store lock shared (so
-    /// never a file a checkout is halfway through writing) and released
-    /// before anything slow, such as asking the key to decrypt.
+    /// store lock shared (so never a file a checkout is halfway through
+    /// writing) and released before anything slow, such as asking the key
+    /// to decrypt.
     pub fn read_entry(&self, entry: &str) -> Result<Vec<u8>, PawError> {
-        let _reading = Self::lock(&self.root).shared()?;
-        read::read_entry(&self.root, entry)
+        let _reading = self.store.shared()?;
+        read::read_entry(self.store.repo_dir(), entry)
     }
 
     /// Every entry, sorted by path.

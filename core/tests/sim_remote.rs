@@ -41,7 +41,7 @@ fn clone_tip(host: &SimRemote, key: &Arc<SimulatedKey>) -> String {
     let remote = host.remote().unwrap();
     let connection = Connection::open(&remote, &signer).unwrap();
     let dir = tempfile::tempdir().unwrap();
-    steps::clone(&connection, &remote, &dir.path().join("repo")).unwrap();
+    steps::clone(&connection, &remote, &paw_core::files::layout::StoreDirs::new(dir.path())).unwrap();
     git2::Repository::open(dir.path().join("repo")).unwrap().head().unwrap().target().unwrap().to_string()
 }
 

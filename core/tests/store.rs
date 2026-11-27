@@ -139,8 +139,10 @@ fn folders_without_entries_are_not_listed() {
 
 #[test]
 fn an_empty_store_is_an_empty_home() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = PassStore::open(dir.path().to_str().unwrap().into()).unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let dir = state.path().join(paw_core::files::layout::REPO);
+    std::fs::create_dir_all(&dir).unwrap();
+    let store = PassStore::open(state.path().to_str().unwrap().into()).unwrap();
 
     assert_eq!(store.entry_count(), 0);
     assert!(store.home().folders.is_empty() && store.home().entries.is_empty());
@@ -156,16 +158,18 @@ fn a_store_that_is_not_there_is_an_error() {
 
 #[test]
 fn lists_searches_and_matches_five_thousand_entries() {
-    let dir = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let dir = state.path().join(paw_core::files::layout::REPO);
+    std::fs::create_dir_all(&dir).unwrap();
     for folder in 0..50 {
-        let path = dir.path().join(format!("group-{folder:02}/site"));
+        let path = dir.join(format!("group-{folder:02}/site"));
         std::fs::create_dir_all(&path).unwrap();
         for entry in 0..100 {
             std::fs::write(path.join(format!("entry-{entry:03}.example.com.gpg")), b"").unwrap();
         }
     }
 
-    let store = PassStore::open(dir.path().to_str().unwrap().into()).unwrap();
+    let store = PassStore::open(state.path().to_str().unwrap().into()).unwrap();
     assert_eq!(store.entry_count(), 5000);
     assert_eq!(store.home().folders.len(), 50);
     assert_eq!(store.home().folders[7].entry_count, 100);
@@ -191,7 +195,7 @@ impl Planted {
         put(&outside, "folder/inner.gpg", "OUTSIDE SECRET");
         put(&outside, ".gpg-id", "attacker@example.com\n");
 
-        let store = dir.path().join("store");
+        let store = dir.path().join(paw_core::files::layout::REPO);
         put(&store, "web/github.com.gpg", "inside");
         put(&store, ".gpg-id", "you@example.com\n");
         symlink(outside.join("secret.gpg"), store.join("linked-file.gpg")).unwrap();
@@ -206,7 +210,7 @@ impl Planted {
     }
 
     fn store(&self) -> std::path::PathBuf {
-        self.dir.path().join("store")
+        self.dir.path().join(paw_core::files::layout::REPO)
     }
 }
 
@@ -276,7 +280,7 @@ fn reading_an_entry_refuses_every_way_out_of_the_store() {
 #[test]
 fn nothing_outside_the_store_is_read_through_the_store_object() {
     let planted = Planted::new();
-    let store = PassStore::open(planted.store().to_str().unwrap().into()).unwrap();
+    let store = PassStore::open(planted.dir.path().to_str().unwrap().into()).unwrap();
 
     assert_eq!(store.entry_count(), 1);
     assert_eq!(StoreTree::scan(&planted.store()).unwrap().skipped().len(), 6);
@@ -394,14 +398,16 @@ fn recipients_are_not_read_through_links_or_from_outside() {
 #[test]
 fn the_whole_store_and_path_parts_come_from_the_core() {
     use paw_core::store::tree::{entry_ref, gpg_id_folder, top_folder_of};
-    let dir = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let dir = state.path().join(paw_core::files::layout::REPO);
+    std::fs::create_dir_all(&dir).unwrap();
     for file in ["top.gpg", "web/github.com.gpg", "web/work/jira.gpg", "mail/me.gpg"] {
-        let path = dir.path().join(file);
+        let path = dir.join(file);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, b"").unwrap();
     }
-    std::os::unix::fs::symlink("/", dir.path().join("elsewhere")).unwrap();
-    let store = PassStore::open(dir.path().to_str().unwrap().into()).unwrap();
+    std::os::unix::fs::symlink("/", dir.join("elsewhere")).unwrap();
+    let store = PassStore::open(state.path().to_str().unwrap().into()).unwrap();
     let paths: Vec<String> = store.all_entries().into_iter().map(|e| e.path).collect();
     assert_eq!(paths, ["mail/me", "top", "web/github.com", "web/work/jira"]);
     assert_eq!(store.all_folders(), ["mail", "web", "web/work"]);

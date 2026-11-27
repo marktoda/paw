@@ -16,7 +16,7 @@ final class CredentialIdentitiesTests: XCTestCase {
             try Data("not encrypted".utf8).write(to: file)
         }
         try Data("0000\n".utf8).write(to: repo.appendingPathComponent(".gpg-id"))
-        let store = try PassStore(dir: repo.path)
+        let store = try PassStore(stateDir: stateDir.path)
         let pairings = SitePairings.open(stateDir: stateDir.path)
         XCTAssertTrue(try pairings.recordPairing(store: store, entry: "alaskaair", service: "https://www.alaskaair.com"))
 

@@ -112,7 +112,7 @@ fn store_lines(state_dir: &Path, out: &mut Vec<String>) {
         }
         Err(_) => out.push("Passwords: unreadable".into()),
     }
-    match crate::sync::queue::unpushed(&repo) {
+    match crate::sync::queue::unpushed(&crate::files::layout::StoreDirs::new(state_dir)) {
         Ok(items) => out.push(format!("Changes not sent: {}", items.len())),
         Err(_) => out.push("Changes not sent: unknown".into()),
     }

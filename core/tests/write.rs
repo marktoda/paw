@@ -22,6 +22,7 @@ use paw_core::store::PassStore;
 use paw_core::sim::copies::{SimClock, SimKeystore};
 use paw_core::sync::ChangeKind;
 use paw_core::sync::queue;
+use paw_core::files::layout::StoreDirs;
 use paw_core::write::{
     DraftField, EntryDraft, FolderRecipients, Keyring, LineStatus, WriteError, WriteStore,
 };
@@ -54,11 +55,15 @@ struct Store {
 
 impl Store {
     fn write(&self) -> WriteStore {
-        WriteStore::new(&self.state, &self.repo)
+        WriteStore::open(&self.state)
+    }
+
+    fn dirs(&self) -> StoreDirs {
+        StoreDirs::new(&self.state)
     }
 
     fn keyring(&self) -> Keyring {
-        Keyring::open(&self.state).unwrap()
+        Keyring::open(&self.dirs()).unwrap()
     }
 
     fn git(&self, args: &[&str]) -> String {
@@ -87,7 +92,7 @@ impl Store {
     }
 
     fn queued(&self) -> Vec<(ChangeKind, String, Option<String>)> {
-        queue::unpushed(&self.repo).unwrap().into_iter().map(|i| (i.kind, i.entry, i.previous)).collect()
+        queue::unpushed(&self.dirs()).unwrap().into_iter().map(|i| (i.kind, i.entry, i.previous)).collect()
     }
 
     fn clean(&self) {
@@ -121,9 +126,9 @@ fn store_with(gpg_id: &str, files: &[(&str, &[u8])]) -> Store {
     let state = root.path().join("state");
     let repo = state.join(paw_core::files::layout::REPO);
     git(root.path(), &["clone", "--quiet", bare.to_str().unwrap(), repo.to_str().unwrap()]);
-    let mut keyring = Keyring::open(&state).unwrap();
-    keyring.pin_card_key(&keyring.lock().exclusive().unwrap(), &card_key()).unwrap();
-    keyring.accept_all_recipients_at_setup(&keyring.lock().exclusive().unwrap(), &repo).unwrap();
+    let mut keyring = Keyring::open(&StoreDirs::new(&state)).unwrap();
+    keyring.pin_card_key(&StoreDirs::new(&state).exclusive().unwrap(), &card_key()).unwrap();
+    keyring.accept_all_recipients_at_setup(&StoreDirs::new(&state).exclusive().unwrap()).unwrap();
     Store { root, state, repo }
 }
 
@@ -229,7 +234,7 @@ fn a_gpg_id_naming_the_primary_key_needs_the_setup_binding_for_the_card() {
     ));
 
     // Setup, after the test decrypt of an entry for the card succeeded.
-    let bound = s.keyring().bind_card_for_opened_entry(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, &card().fingerprint_hex(), "x", &encrypted("pw\n")).unwrap();
+    let bound = s.keyring().bind_card_for_opened_entry(&s.dirs().exclusive().unwrap(), &card().fingerprint_hex(), "x", &encrypted("pw\n")).unwrap();
     assert_eq!(bound, std::slice::from_ref(&primary));
     assert_eq!(
         s.write().folder_recipients("").unwrap().lines[0].status,
@@ -246,7 +251,7 @@ fn a_gpg_id_naming_the_primary_key_needs_the_setup_binding_for_the_card() {
 fn the_card_binding_needs_one_open_line() {
     let s = store_with("AAAA1111\nBBBB2222\n", &[]);
     // Two lines no key satisfies: paw cannot tell which is the card's.
-    let bound = s.keyring().bind_card_for_opened_entry(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, &card().fingerprint_hex(), "x", &encrypted("pw\n")).unwrap();
+    let bound = s.keyring().bind_card_for_opened_entry(&s.dirs().exclusive().unwrap(), &card().fingerprint_hex(), "x", &encrypted("pw\n")).unwrap();
     assert!(bound.is_empty());
     assert!(matches!(
         s.write().save(&new_entry("", "x", "pw")).unwrap_err(),
@@ -278,7 +283,7 @@ fn a_changed_gpg_id_stops_saving_until_it_is_accepted() {
     assert!(s.write().folder_recipients("Work").unwrap().changed);
     assert_eq!(s.head(), head);
 
-    s.keyring().accept_recipients(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, "Work").unwrap();
+    s.keyring().accept_recipients(&s.dirs().exclusive().unwrap(), "Work").unwrap();
     s.write().save(&new_entry("Work", "b", "pw")).unwrap();
 }
 
@@ -309,7 +314,7 @@ fn a_gpg_id_a_pull_adds_deeper_stops_saving_in_that_subtree_until_accepted() {
     s.write().save(&new_entry("Personal", "b", "pw")).unwrap();
     s.write().save(&new_entry("", "c", "pw")).unwrap();
 
-    s.keyring().accept_recipients(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, "Work").unwrap();
+    s.keyring().accept_recipients(&s.dirs().exclusive().unwrap(), "Work").unwrap();
     s.write().save(&new_entry("Work", "b", "pw")).unwrap();
     s.write().save(&new_entry("Work/Team", "b", "pw")).unwrap();
     assert_eq!(s.decrypt("Work/Team/b"), "pw\n");
@@ -330,7 +335,7 @@ fn a_gpg_id_a_pull_removes_stops_saving_in_that_subtree_until_accepted() {
     );
     s.write().save(&new_entry("Personal", "b", "pw")).unwrap();
 
-    s.keyring().accept_recipients(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, "Work").unwrap();
+    s.keyring().accept_recipients(&s.dirs().exclusive().unwrap(), "Work").unwrap();
     s.write().save(&new_entry("Work/Team", "b", "pw")).unwrap();
     s.write().save(&new_entry("Work", "c", "pw")).unwrap();
     // Putting the file back is a change again.
@@ -342,16 +347,16 @@ fn a_gpg_id_a_pull_removes_stops_saving_in_that_subtree_until_accepted() {
 fn nothing_is_saved_before_setup_accepts_who_can_open_the_store() {
     let s = store();
     std::fs::remove_file(s.state.join(paw_core::files::layout::RECIPIENTS)).unwrap();
-    s.keyring().pin_card_key(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &card_key()).unwrap();
+    s.keyring().pin_card_key(&s.dirs().exclusive().unwrap(), &card_key()).unwrap();
     let head = s.head();
     assert!(matches!(s.write().save(&new_entry("Work", "a", "pw")).unwrap_err(), WriteError::RecipientsNotConfirmed));
     assert!(!s.write().folder_recipients("Work").unwrap().writable);
     // Saving does not accept anything by itself, and accepting one folder
     // is not setup.
-    assert!(matches!(s.keyring().accept_recipients(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, "Work").unwrap_err(), WriteError::RecipientsNotConfirmed));
+    assert!(matches!(s.keyring().accept_recipients(&s.dirs().exclusive().unwrap(), "Work").unwrap_err(), WriteError::RecipientsNotConfirmed));
     assert_eq!(s.head(), head);
 
-    s.keyring().accept_all_recipients_at_setup(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo).unwrap();
+    s.keyring().accept_all_recipients_at_setup(&s.dirs().exclusive().unwrap()).unwrap();
     s.write().save(&new_entry("Work", "a", "pw")).unwrap();
 }
 
@@ -557,9 +562,9 @@ fn store_with_shared_folder() -> (Store, String) {
     let other = paw_core::sim::fixture::other_key().unwrap();
     let other_fpr = hex(other.fingerprint().as_bytes());
     s.desktop("Shared/.gpg-id", format!("{}\n{other_fpr}\n", card().fingerprint_hex()).as_bytes());
-    s.keyring().pin_card_key(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &other).unwrap();
+    s.keyring().pin_card_key(&s.dirs().exclusive().unwrap(), &other).unwrap();
     // The folder arrived after setup: the person has seen and accepted it.
-    s.keyring().accept_recipients(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, "Shared").unwrap();
+    s.keyring().accept_recipients(&s.dirs().exclusive().unwrap(), "Shared").unwrap();
     (s, other_fpr)
 }
 
@@ -595,7 +600,7 @@ fn a_move_to_a_folder_missing_a_key_is_refused_even_when_open() {
     // Not yet accepted: that comes first.
     let error = move_entry(&s.write(), "Work/github.com", "Shared/github.com", Some(&doc)).unwrap_err();
     assert!(matches!(error, WriteError::RecipientsChanged { .. }), "{error:?}");
-    s.keyring().accept_recipients(&paw_core::lock::StoreLock::for_repo(&s.repo).exclusive().unwrap(), &s.repo, "Shared").unwrap();
+    s.keyring().accept_recipients(&s.dirs().exclusive().unwrap(), "Shared").unwrap();
     let error = move_entry(&s.write(), "Work/github.com", "Shared/github.com", Some(&doc)).unwrap_err();
 
     assert!(matches!(error, WriteError::MissingRecipients { missing, .. } if missing == ["backup@example.com"]));
@@ -635,7 +640,7 @@ fn every_change_is_in_the_queue_with_its_kind_newest_first() {
          Edit password for Work/github.com using paw.\n\nM\tWork/github.com.gpg\n\
          Add given password for Work/new to store.\n\nA\tWork/new.gpg"
     );
-    let items = queue::unpushed(&s.repo).unwrap();
+    let items = queue::unpushed(&s.dirs()).unwrap();
     assert!(items.windows(2).all(|pair| pair[0].when >= pair[1].when));
     assert!(items[0].when > 1_700_000_000);
 }
@@ -646,13 +651,13 @@ fn each_change_can_be_undone_newest_first() {
     let pushed = s.head();
     five_changes(&s);
 
-    queue::undo_last(&s.repo).unwrap();
+    queue::undo_last(&s.dirs()).unwrap();
     assert!(s.repo.join("Work/new.gpg").exists() && !s.repo.join("Work/newer.gpg").exists());
-    queue::undo_last(&s.repo).unwrap();
+    queue::undo_last(&s.dirs()).unwrap();
     assert_eq!(s.decrypt("Work/Jira"), "jira-pw\n");
-    queue::undo_last(&s.repo).unwrap();
+    queue::undo_last(&s.dirs()).unwrap();
     assert!(s.decrypt("Work/github.com").starts_with("old-pw\n"));
-    queue::undo_last(&s.repo).unwrap();
+    queue::undo_last(&s.dirs()).unwrap();
     assert!(!s.repo.join("Work/new.gpg").exists());
     assert_eq!(s.head(), pushed);
     s.clean();
@@ -663,14 +668,14 @@ fn one_change_can_be_discarded_and_everything_can_be_discarded() {
     let s = store();
     let pushed = s.head();
     five_changes(&s);
-    let edit = queue::unpushed(&s.repo).unwrap()[2].id.clone();
+    let edit = queue::unpushed(&s.dirs()).unwrap()[2].id.clone();
 
-    queue::discard(&s.repo, &edit).unwrap();
+    queue::discard(&s.dirs(), &edit).unwrap();
     assert!(s.decrypt("Work/github.com").starts_with("old-pw\n"));
     assert!(s.repo.join("Work/newer.gpg").exists());
     assert_eq!(s.queued().len(), 3);
 
-    queue::discard_all(&s.repo).unwrap();
+    queue::discard_all(&s.dirs()).unwrap();
     assert_eq!(s.head(), pushed);
     assert!(s.repo.join("Work/Jira.gpg").exists());
     s.clean();
@@ -683,7 +688,7 @@ fn a_move_with_re_encryption_can_be_undone() {
     let before = s.file("Work/github.com");
     move_entry(&s.write(), "Work/github.com", "Shared/github.com", Some(&doc)).unwrap();
 
-    queue::undo_last(&s.repo).unwrap();
+    queue::undo_last(&s.dirs()).unwrap();
 
     assert_eq!(s.file("Work/github.com"), before);
     assert!(!s.repo.join("Shared/github.com.gpg").exists());
@@ -885,7 +890,7 @@ fn the_ffi_draft_reports_problems_and_a_name_already_used() {
     draft.set_name("Jira".into());
     assert!(draft.problems(None).is_empty());
     // From the names already read, without the lock.
-    let names = PassStore::open(s.repo.to_str().unwrap().into()).unwrap();
+    let names = PassStore::open(s.state.to_str().unwrap().into()).unwrap();
     assert_eq!(draft.problems(Some(names.clone()))[0].message, "There's already an entry called 'Jira' in Work.");
     draft.set_name("jira-2".into());
     assert!(draft.problems(Some(names)).is_empty());

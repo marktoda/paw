@@ -16,8 +16,8 @@
 //! It is bounded by a deadline and stops between whole steps once past it
 //! or once its `stop` says so (the transfer is also cut at the next chunk);
 //! every request is cut at the deadline too ([`Http`]). It waits at most
-//! [`BACKGROUND_LOCK_WAIT`] for the store or another fetch, and ends `Busy`
-//! instead. The store lock is held for the local steps only (publish,
+//! [`BACKGROUND_LOCK_WAIT`] for the store or another fetch, and ends
+//! `Failed` with [`Fault::StoreBusy`] instead. The store lock is held for the local steps only (publish,
 //! check, integrate), never across the network.
 //! Being killed at any point leaves the store consistent: the token
 //! rotation is one vault write; libgit2 writes the pack and then the
@@ -25,7 +25,7 @@
 //! together (`sync::integrate`); a fetch without its integrate is picked
 //! up by the next refresh.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -35,18 +35,20 @@ use super::http::Http;
 use super::transport::HttpsRemote;
 use super::{GitHubError, Secret};
 use crate::fault::Fault;
+use crate::files::layout::StoreDirs;
 use crate::files::{layout, values};
 use crate::remote::{AboutRemote, RemoteFailure};
-use crate::lock::{Exclusive, Fetching, StoreLock};
+use crate::lock::{Exclusive, Shared};
 use crate::sync::address::{StoreAddress, github_repository, saved_address};
-use crate::sync::integrate::{IntegrateReport, RecipientsChange, Replaced};
+use crate::sync::integrate::{self, IntegrateReport, RecipientsChange, Replaced};
 use crate::sync::operation::{SyncReport, SyncState};
 use crate::remote::RefusedPath;
-use crate::sync::{SyncError, TransferProgress};
+use crate::sync::{OpenStore, SyncError, TransferProgress};
 
 /// The longest a background refresh waits for the store lock or for
-/// another fetch of the store: past it the run ends `Busy`, having changed
-/// nothing. Short, because the app in front (a save, a sync) comes first.
+/// another fetch of the store: past it the run fails with
+/// [`Fault::StoreBusy`], having changed nothing. Short, because the app in
+/// front (a save, a sync) comes first.
 pub const BACKGROUND_LOCK_WAIT: Duration = Duration::from_secs(3);
 
 /// The GitHub repository chosen for a store. Not secret.
@@ -98,7 +100,7 @@ pub fn is_github_repository(address: String, full_name: String, ssh_address: Str
     StoreAddress::parse(&address).is_ok_and(|store| is_repository(&store.address, &full_name, &ssh_address))
 }
 
-/// The steps of a token refresh, for stopping between them.
+/// The steps of a background refresh, for stopping between them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum RefreshStep {
     /// Getting a usable access token (may refresh it: network).
@@ -160,8 +162,8 @@ impl BackgroundRefreshReport {
 }
 
 impl GitHubAccount {
-    fn repo_dir(&self) -> PathBuf {
-        crate::files::layout::repo_dir(&self.state_dir)
+    fn store(&self) -> StoreDirs {
+        StoreDirs::new(&self.state_dir)
     }
 
     /// The chosen repository, if the store's remote is it. Reads files only.
@@ -174,51 +176,25 @@ impl GitHubAccount {
         Ok(link)
     }
 
-    fn fetch_once(
-        &self,
-        http: &Http,
-        link: &GitHubLink,
-        token: Secret,
-        fetch_wait: Duration,
-        progress: Option<crate::sync::TransferCallback<'_>>,
-    ) -> Result<Fetching, SyncError> {
-        let repo = crate::sync::guard::open(&self.repo_dir())?;
-        // The transfer runs without the store lock, under the fetch lock,
-        // into private refs; [`Self::publish`] moves them.
-        let fetching = crate::sync::begin_fetch_within(&self.store_lock(), &repo, fetch_wait)?;
-        let remote = HttpsRemote::new(http.clone(), &link.full_name, token, self.download_limit());
-        remote.with_remote(&repo, |r| crate::sync::fetch_connected(r, progress))?;
-        Ok(fetching)
-    }
-
-    fn store_lock(&self) -> StoreLock {
-        StoreLock::for_state_dir(&self.state_dir)
-    }
-
-    /// With the store lock: what [`Self::fetch_with_token`] received
-    /// becomes the store's `origin/*`. Returns the lock, held.
-    fn publish(&self, fetching: Fetching, wait: Duration) -> Result<Exclusive, SyncError> {
-        let held = self.store_lock().exclusive_within(wait)?;
-        let repo = crate::sync::guard::open(&self.repo_dir())?;
-        crate::sync::publish_fetched(&held, &repo, fetching)?;
-        Ok(held)
-    }
-
-    /// Fetches every branch of the chosen repository over HTTPS, without
-    /// the store lock, into private refs for [`Self::publish`]. Changes
-    /// nothing else.
+    /// Fetches every branch of the chosen repository over HTTPS into
+    /// `origin/*` ([`crate::sync::fetch_into`]), again with a new token if
+    /// GitHub refused this one. Returns the store lock, held.
     fn fetch_with_token(
         &self,
+        store: &OpenStore,
         http: &Http,
         link: &GitHubLink,
         fetch_wait: Duration,
+        store_wait: &dyn Fn() -> Duration,
         mut progress: Option<crate::sync::TransferCallback<'_>>,
-    ) -> Result<Fetching, SyncError> {
-        let fetch = |token| {
+    ) -> Result<Exclusive, SyncError> {
+        let fetch = |token: Secret| {
             let progress = progress.as_mut().map(|p| &mut **p as crate::sync::TransferCallback<'_>);
-            self.fetch_once(http, link, token, fetch_wait, progress)
+            let remote = HttpsRemote::new(http.clone(), &link.full_name, token, self.download_limit());
+            let transfer = |repo: &git2::Repository| remote.with_remote(repo, |r| crate::sync::fetch_connected(r, progress));
+            crate::sync::fetch_into(store, fetch_wait, store_wait, transfer)
         };
-        self.with_token(http, fetch)
+        Ok(self.with_token(http, fetch)?.1)
     }
 
     /// The background refresh: see the module comment. Ends by `budget`
@@ -262,46 +238,40 @@ impl GitHubAccount {
             return out_of_time();
         }
         let http = Http::new(&self.endpoints, Some(deadline));
-        // Refreshed here if need be, so the fetch below starts with a good one.
         if let Err(e) = self.keeper.access_token(&http, None) {
             return failed(e.into());
         }
         if stopping(RefreshStep::Fetch) {
             return out_of_time();
         }
+        let store = match OpenStore::open(&self.store()) {
+            Ok(store) => store,
+            Err(e) => return failed(e.into()),
+        };
         let mut in_time = |_: TransferProgress| !stopping(RefreshStep::Fetch);
-        let fetching = match self.fetch_with_token(&http, &link, lock_wait(), Some(&mut in_time)) {
-            Ok(fetching) => fetching,
+        let held = match self.fetch_with_token(&store, &http, &link, lock_wait(), &lock_wait, Some(&mut in_time)) {
+            Ok(held) => held,
             Err(_) if stopping(RefreshStep::Fetch) => return out_of_time(),
             Err(e) => return failed(e),
         };
         // From here to the end, local work only, with the store lock held:
-        // published, checked and integrated as one step.
-        // Stopped after the transfer: nothing published, nothing changed.
+        // checked and integrated as one step. Stopped here, `origin/*` has
+        // moved and nothing else: the next refresh integrates it.
         if stopping(RefreshStep::Check) {
             return out_of_time();
         }
-        let held = match self.publish(fetching, lock_wait()) {
-            Ok(held) => held,
+        let plan = match integrate::plan(&held, &store) {
+            Ok(plan) => plan,
             Err(e) => return failed(e),
         };
-
-        if stopping(RefreshStep::Check) {
-            return out_of_time();
-        }
-        let dir = self.repo_dir();
         let mut decisions = Vec::new();
-        match crate::sync::refused_remote(&dir) {
-            Ok(paths) if !paths.is_empty() => decisions.push(RefreshDecision::RefusedRemote { paths }),
-            Ok(_) => {}
-            Err(e) => return failed(e.into()),
+        if !plan.refused.is_empty() {
+            decisions.push(RefreshDecision::RefusedRemote { paths: plan.refused.clone() });
         }
-        match crate::sync::integrate::pending_recipients_changes(&dir) {
-            Ok(changes) if !changes.is_empty() => decisions.push(RefreshDecision::RecipientsChanged { changes }),
-            Ok(_) => {}
-            Err(e) => return failed(e),
+        if !plan.recipients_changes.is_empty() {
+            decisions.push(RefreshDecision::RecipientsChanged { changes: plan.recipients_changes.clone() });
         }
-        let Waiting { held_back, unpushed } = Waiting::count(&dir, &self.state_dir);
+        let Waiting { held_back, unpushed } = Waiting::count(&held, &store);
         if held_back > 0 {
             decisions.push(RefreshDecision::HeldBack { count: held_back });
         }
@@ -313,7 +283,7 @@ impl GitHubAccount {
         if stopping(RefreshStep::Integrate) {
             return out_of_time();
         }
-        let report = match crate::sync::operation::integrate_fetched(&held, &dir) {
+        let report = match crate::sync::operation::integrate_fetched(&held, &store, plan) {
             Ok(report) => report,
             Err(e) => return failed(e),
         };
@@ -347,10 +317,10 @@ struct Waiting {
 }
 
 impl Waiting {
-    fn count(dir: &Path, state_dir: &Path) -> Self {
+    fn count(reading: &Shared, store: &OpenStore) -> Self {
         Self {
-            held_back: crate::write::held_back::held_back(dir, state_dir).map_or(0, |held| held.len() as u32),
-            unpushed: crate::sync::queue::unpushed(dir).map_or(0, |queue| queue.len() as u32),
+            held_back: crate::write::held_back::held_back_in(reading, store).map_or(0, |held| held.len() as u32),
+            unpushed: crate::sync::queue::waiting(reading, store).map_or(0, |queue| queue.commits.len() as u32),
         }
     }
 }
@@ -391,9 +361,10 @@ impl GitHubAccount {
         }
         let link = self.checked_link()?;
         let http = Http::new(&self.endpoints, None);
-        let fetching = self.fetch_with_token(&http, &link, crate::lock::FETCH_WAIT, None)?;
-        let held = self.publish(fetching, crate::lock::DEFAULT_WAIT)?;
-        crate::sync::operation::integrate_fetched(&held, &self.repo_dir())
+        let store = OpenStore::open(&self.store())?;
+        let held =
+            self.fetch_with_token(&store, &http, &link, crate::lock::FETCH_WAIT, &|| crate::lock::DEFAULT_WAIT, None)?;
+        crate::sync::operation::integrate_fetched(&held, &store, integrate::plan(&held, &store)?)
     }
 
     /// The background refresh: at most `seconds` long, never asks anyone

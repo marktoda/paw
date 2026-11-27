@@ -130,7 +130,7 @@ final class StoreRootModel {
     private func makeSetup(_ setup: Setup, _ base: Base) -> SetupModel {
         let location = base.location, keyPort = base.keyPort
         return SetupModel(
-            setup: setup, repoPath: location.repoDir.path, keyPort: keyPort, keys: platform.keys,
+            setup: setup, stateDir: location.stateDir.path, keyPort: keyPort, keys: platform.keys,
             finished: { [weak self] in self?.openHome() },
             startOver: { [weak self] in self?.startOver() })
     }
@@ -145,7 +145,7 @@ final class StoreRootModel {
             // Setup pinned the key and accepted the recipients: saving
             // works from here with no further step.
             let session = try StoreSession(StoreSession.Parts(
-                repoDir: location.repoDir.path, copies: copies, clock: platform.clock, keyPort: base.keyPort,
+                stateDir: stateDir, copies: copies, clock: platform.clock, keyPort: base.keyPort,
                 keys: platform.keys,
                 writing: StoreSession.Writing(
                     writer: StoreWriter.open(stateDir: stateDir), sync: Result { try StoreSync.open(stateDir: stateDir) },

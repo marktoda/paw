@@ -283,7 +283,7 @@ fn state_with(paths: &[&str]) -> (tempfile::TempDir, Arc<PassStore>, Arc<SitePai
         std::fs::write(file, "not encrypted").unwrap();
     }
     std::fs::write(repo.join(".gpg-id"), "0000\n").unwrap();
-    let store = PassStore::open(repo.to_str().unwrap().into()).unwrap();
+    let store = PassStore::open(dir.path().to_str().unwrap().into()).unwrap();
     let pairings = SitePairings::open(dir.path().to_str().unwrap().into());
     (dir, store, pairings)
 }

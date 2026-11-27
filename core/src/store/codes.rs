@@ -294,7 +294,7 @@ mod tests {
         std::fs::create_dir_all(repo.join("web")).unwrap();
         std::fs::write(repo.join(".gpg-id"), "0000\n").unwrap();
         std::fs::write(repo.join("web/github.com.gpg"), b"x").unwrap();
-        let store = PassStore::open(repo.to_str().unwrap().into()).unwrap();
+        let store = PassStore::open(d.path().to_str().unwrap().into()).unwrap();
         let file = file_on(d.path());
         file.mark("web/gone.example", true).unwrap();
         file.mark("web/github.com", true).unwrap();

@@ -13,6 +13,7 @@ use std::process::{Command, Stdio};
 use paw_core::files::content_id;
 use paw_core::entry::EntryDoc;
 use paw_core::recipients::{Recipient, entry_recipients};
+use paw_core::files::layout::StoreDirs;
 use paw_core::write::{EntryDraft, Keyring, WriteError, WriteStore};
 use pgp::composed::{Deserializable, SignedPublicKey};
 use pgp::packet::{PubKeyInner, PublicKey};
@@ -126,12 +127,16 @@ impl Store {
         std::fs::write(repo.join(".gpg-id"), gpg_id).unwrap();
         git(&repo, &["add", ".gpg-id"]);
         git(&repo, &["commit", "--quiet", "-m", "Set the store's key."]);
-        Keyring::open(&state).unwrap().accept_all_recipients_at_setup(&paw_core::lock::StoreLock::for_repo(&repo).exclusive().unwrap(), &repo).unwrap();
+        Keyring::open(&StoreDirs::new(&state)).unwrap().accept_all_recipients_at_setup(&StoreDirs::new(&state).exclusive().unwrap()).unwrap();
         Self { _root: root, state, repo }
     }
 
     fn write(&self) -> WriteStore {
-        WriteStore::new(&self.state, &self.repo)
+        WriteStore::open(&self.state)
+    }
+
+    fn dirs(&self) -> StoreDirs {
+        StoreDirs::new(&self.state)
     }
 
     fn file(&self, entry: &str) -> Vec<u8> {
@@ -147,8 +152,8 @@ impl Store {
         let key = PubKeyInner::new(subkey.version(), subkey.algorithm(), subkey.created_at(), None, subkey.public_params().clone())
             .and_then(PublicKey::from_inner)
             .unwrap();
-        let mut keyring = Keyring::open(&self.state).unwrap();
-        let held = keyring.lock().exclusive().unwrap();
+        let mut keyring = Keyring::open(&self.dirs()).unwrap();
+        let held = self.dirs().exclusive().unwrap();
         let fingerprint = keyring.pin_card_key(&held, &key).unwrap();
         for line in lines {
             support::bind_recipient(&self.state, line, &fingerprint);

@@ -694,7 +694,7 @@ fn a_team_line_at_the_top_is_not_bound_to_the_card_that_opened_a_personal_entry(
 
     let state = set_up(&sim, &server);
 
-    let keyring = paw_core::write::Keyring::open(state.path()).unwrap();
+    let keyring = paw_core::write::Keyring::open(&paw_core::files::layout::StoreDirs::new(state.path())).unwrap();
     assert_eq!(keyring.line_status("team@example.com"), LineStatus::Missing);
     assert!(matches!(keyring.line_status("owner@example.com"), LineStatus::Ready { bound: true, .. }));
     let readiness = open_setup(state.path()).write_readiness().unwrap();
@@ -715,7 +715,7 @@ fn the_one_line_of_the_gpg_id_that_governs_the_opened_entry_is_bound() {
 
     let state = set_up(&sim, &server);
 
-    let keyring = paw_core::write::Keyring::open(state.path()).unwrap();
+    let keyring = paw_core::write::Keyring::open(&paw_core::files::layout::StoreDirs::new(state.path())).unwrap();
     assert!(matches!(keyring.line_status("owner@example.com"), LineStatus::Ready { bound: true, .. }));
     let readiness = open_setup(state.path()).write_readiness().unwrap();
     assert!(readiness.can_save, "{readiness:?}");
@@ -740,7 +740,7 @@ fn nothing_is_bound_when_the_opened_entry_does_not_name_the_card() {
 
     let state = set_up(&sim, &server);
 
-    let keyring = paw_core::write::Keyring::open(state.path()).unwrap();
+    let keyring = paw_core::write::Keyring::open(&paw_core::files::layout::StoreDirs::new(state.path())).unwrap();
     assert_eq!(keyring.line_status("owner@example.com"), LineStatus::Missing);
     let readiness = open_setup(state.path()).write_readiness().unwrap();
     assert_eq!(readiness.missing_recipients, ["owner@example.com"]);

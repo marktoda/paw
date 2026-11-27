@@ -79,9 +79,10 @@ fn store_with(files: &[(&str, &[u8])]) -> Store {
     let state = root.path().join("state");
     let repo = state.join(paw_core::files::layout::REPO);
     git(root.path(), &["clone", "--quiet", bare.to_str().unwrap(), repo.to_str().unwrap()]);
-    let mut keyring = Keyring::open(&state).unwrap();
-    keyring.pin_card_key(&keyring.lock().exclusive().unwrap(), &card().decryption_key().unwrap()).unwrap();
-    keyring.accept_all_recipients_at_setup(&keyring.lock().exclusive().unwrap(), &repo).unwrap();
+    let store = paw_core::files::layout::StoreDirs::new(&state);
+    let mut keyring = Keyring::open(&store).unwrap();
+    keyring.pin_card_key(&store.exclusive().unwrap(), &card().decryption_key().unwrap()).unwrap();
+    keyring.accept_all_recipients_at_setup(&store.exclusive().unwrap()).unwrap();
     std::fs::write(state.join(paw_core::files::layout::SETUP), format!("{}\n", paw_core::files::layout::SETUP_DONE)).unwrap();
     Store { _root: root, state }
 }

@@ -13,9 +13,9 @@
 //!   store's canonical directory, so threads queue (a waiting writer goes
 //!   before new readers).
 //! - **Between processes**, an advisory `flock` on a lock file
-//!   ([`crate::files::layout::STORE_LOCK`] in the state directory), taken with the standard
-//!   library's `File::try_lock`/`try_lock_shared` (Rust 1.89): no new crate
-//!   and no C. The kernel drops it when its holder dies, so a killed
+//!   ([`crate::files::layout::STORE_LOCK`] in the state directory), taken
+//!   with the standard library's `File::try_lock`/`try_lock_shared` (Rust
+//!   1.89): no new crate and no C. The kernel drops it when its holder dies, so a killed
 //!   extension never leaves the store locked.
 //!
 //! Every wait is bounded ([`DEFAULT_WAIT`] to change, [`SHARED_WAIT`] to
@@ -27,20 +27,22 @@
 //! callback into the app. A process suspended while holding a file lock in
 //! the App Group container is killed by iOS (`0xdead10cc`), so nothing
 //! slow may be under it. The fetch and push locks are in-process only:
-//! only the app fetches and sends (the extension must never do either).
+//! only the app fetches and sends (the extension must never do either), so
+//! the push lock also keeps what a push has on the network
+//! ([`StoreLock::being_sent`]).
 //!
-//! **Which lock.** A store set up by paw has its repository at
-//! `<state>/repo`, so its lock is the state directory's. A repository
-//! anywhere else (tests, tools) is a store of its own, locked in
-//! `<repo>/.git/paw/`.
+//! **Which lock.** A store's repository is always `<state>/repo`
+//! ([`crate::files::layout::StoreDirs`]), and its lock is the state
+//! directory's.
 //!
 //! **Evidence, not re-entry.** Code that changes a store takes an
-//! [`Exclusive`] as a parameter, so it cannot be called without the lock
-//! held; public entry points take the lock and pass it down. As a safety
-//! net a thread that already holds a store's lock and asks for it again
-//! gets a nested guard instead of waiting on itself (asking to change a
-//! store it is only reading is refused with an error), so no public
-//! function can deadlock on its own thread.
+//! [`Exclusive`] as a parameter, and code that reads it under the lock a
+//! [`Shared`] (an [`Exclusive`] is one too), so neither can be called
+//! without the lock held; public entry points take the lock and pass it
+//! down. As a safety net a thread that already holds a store's lock and
+//! asks for it again gets a nested guard instead of waiting on itself
+//! (asking to change a store it is only reading is refused with an error),
+//! so no public function can deadlock on its own thread.
 //!
 //! **Stale git locks.** paw writes git's own files only with the exclusive
 //! lock held, so a `*.lock` file that git left in `.git` (`index.lock`,
@@ -74,8 +76,6 @@ pub const SHARED_WAIT: Duration = Duration::from_secs(30);
 pub const RECORD_WAIT: Duration = Duration::from_secs(120);
 /// The longest a fetch waits for another fetch of the same store to finish.
 pub const FETCH_WAIT: Duration = Duration::from_secs(60);
-/// Where a repository outside a state directory keeps its lock files.
-const GIT_LOCK_DIR: &str = "paw";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
@@ -90,14 +90,10 @@ struct Lock {
 }
 
 /// A store's locks. Cheap to make; nothing is taken until asked.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoreLock {
-    /// The canonical directory that names the store.
+    /// The store's state directory, canonical.
     root: PathBuf,
-    /// Where the lock files go; `None` for a folder that is not a git
-    /// repository (nothing paw writes, so the in-process gate is enough).
-    files: Option<PathBuf>,
-    repo: PathBuf,
 }
 
 fn canonical(path: &Path) -> PathBuf {
@@ -110,31 +106,11 @@ impl StoreLock {
     /// be.
     pub fn for_state_dir(state_dir: &Path) -> Self {
         let _ = std::fs::create_dir_all(state_dir);
-        let root = canonical(state_dir);
-        Self { files: Some(root.clone()), repo: crate::files::layout::repo_dir(&root), root }
-    }
-
-    /// The lock of the store checked out at `repo`: its state directory's
-    /// if `repo` is `<state>/repo`, else the repository's own.
-    pub fn for_repo(repo: &Path) -> Self {
-        if let Some(state_dir) = crate::files::layout::state_dir_of(repo) {
-            return Self::for_state_dir(state_dir);
-        }
-        let root = canonical(repo);
-        let git = root.join(".git");
-        let files = git.is_dir().then(|| git.join(GIT_LOCK_DIR));
-        if let Some(files) = &files {
-            let _ = std::fs::create_dir_all(files);
-        }
-        Self { repo: root.clone(), root, files }
-    }
-
-    pub fn repo(&self) -> &Path {
-        &self.repo
+        Self { root: canonical(state_dir) }
     }
 
     fn store(&self) -> Lock {
-        Lock { key: self.root.join("#store"), file: self.files.as_ref().map(|dir| dir.join(crate::files::layout::STORE_LOCK)) }
+        Lock { key: self.root.join("#store"), file: Some(self.root.join(crate::files::layout::STORE_LOCK)) }
     }
 
     fn in_process(&self, kind: &str) -> Lock {
@@ -149,9 +125,9 @@ impl StoreLock {
     pub fn exclusive_within(&self, wait: Duration) -> Result<Exclusive, PawError> {
         let held = acquire(&self.store(), Mode::Exclusive, wait)?;
         if !held.nested {
-            remove_stale_git_locks(&self.repo);
+            remove_stale_git_locks(&crate::files::layout::repo_dir(&self.root));
         }
-        Ok(Exclusive { held, store: self.clone() })
+        Ok(Exclusive { held: Shared { held }, store: self.clone() })
     }
 
     /// Takes the store for reading it. Readers share; none overlaps a writer.
@@ -160,7 +136,7 @@ impl StoreLock {
     }
 
     pub fn shared_within(&self, wait: Duration) -> Result<Shared, PawError> {
-        Ok(Shared { _held: acquire(&self.store(), Mode::Shared, wait)? })
+        Ok(Shared { held: acquire(&self.store(), Mode::Shared, wait)? })
     }
 
     /// Takes the store's fetch lock: one fetch at a time writes objects and
@@ -177,47 +153,54 @@ impl StoreLock {
 
     /// Takes the store's push lock, held by a send from before it reads the
     /// tip it will push until it has recorded the result: one send at a
-    /// time, and [`Self::push_in_flight`] can tell a push is under way.
-    /// Like the fetch lock, in this process only (only the app sends) and
-    /// never taken while this thread holds the store.
+    /// time. Like the fetch lock, in this process only (only the app sends)
+    /// and never taken while this thread holds the store.
     pub(crate) fn pushing(&self, wait: Duration) -> Result<Pushing, PawError> {
         if holds(&self.store().key).is_some() {
             return Err(PawError::Store("paw asked for the push lock while holding the store".into()));
         }
-        Ok(Pushing { _held: acquire(&self.in_process("push"), Mode::Exclusive, wait)? })
+        Ok(Pushing { _held: acquire(&self.in_process("push"), Mode::Exclusive, wait)?, root: self.root.clone() })
     }
 
-    /// Whether another thread holds the push lock now: a push is on the
-    /// network.
-    pub(crate) fn push_in_flight(&self) -> bool {
-        acquire(&self.in_process("push"), Mode::Exclusive, Duration::ZERO).is_err()
+    /// The commit a push of this store has on the network now, if one does
+    /// ([`Pushing::sending`]).
+    pub(crate) fn being_sent(&self) -> Option<git2::Oid> {
+        SENDING.lock().unwrap_or_else(|p| p.into_inner()).get(&self.root).copied()
     }
 }
 
 /// The store, held for changing it. Functions that change a store take
 /// one of these: proof, checked by the compiler, that the caller holds the
-/// lock.
+/// lock. It is a [`Shared`] too, for what reads the store under the lock.
 pub struct Exclusive {
-    held: Held,
+    held: Shared,
     store: StoreLock,
 }
 
 impl Exclusive {
-    /// Whether this is the lock of the store checked out at `repo`.
-    pub fn covers(&self, repo: &Path) -> bool {
-        StoreLock::for_repo(repo).root == self.store.root
+    /// Whether this is `store`'s lock.
+    pub fn covers(&self, store: &StoreLock) -> bool {
+        self.store == *store
+    }
+}
+
+impl std::ops::Deref for Exclusive {
+    type Target = Shared;
+
+    fn deref(&self) -> &Shared {
+        &self.held
     }
 }
 
 impl std::fmt::Debug for Exclusive {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Exclusive").field("store", &self.store.root).field("nested", &self.held.nested).finish()
+        f.debug_struct("Exclusive").field("store", &self.store.root).field("nested", &self.held.held.nested).finish()
     }
 }
 
 /// The store, held for reading it.
 pub struct Shared {
-    _held: Held,
+    held: Held,
 }
 
 pub(crate) struct Fetching {
@@ -226,6 +209,30 @@ pub(crate) struct Fetching {
 
 pub(crate) struct Pushing {
     _held: Held,
+    root: PathBuf,
+}
+
+/// What each store's push has on the network, by the store's root. Only
+/// this process sends, so this is where it is known.
+static SENDING: LazyLock<Mutex<HashMap<PathBuf, git2::Oid>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+impl Pushing {
+    /// Records `tip` as on the network until the returned guard is
+    /// dropped. One push lock per store, so one record.
+    pub(crate) fn sending(&self, tip: git2::Oid) -> Sending<'_> {
+        SENDING.lock().unwrap_or_else(|p| p.into_inner()).insert(self.root.clone(), tip);
+        Sending { pushing: self }
+    }
+}
+
+pub(crate) struct Sending<'p> {
+    pushing: &'p Pushing,
+}
+
+impl Drop for Sending<'_> {
+    fn drop(&mut self) {
+        SENDING.lock().unwrap_or_else(|p| p.into_inner()).remove(&self.pushing.root);
+    }
 }
 
 // --- the two layers --------------------------------------------------------------------
@@ -414,27 +421,22 @@ impl Drop for Held {
 /// Called with the exclusive store lock held, which every writer of those
 /// files in paw holds, so none of them is being written now. The private
 /// refs of a fetch (`refs/paw/fetch/`) and `shallow.lock`, which are
-/// written under the fetch lock instead, and paw's own lock files
-/// (`.git/paw/`) are left alone.
-pub fn remove_stale_git_locks(repo: &Path) -> Vec<PathBuf> {
+/// written under the fetch lock instead, are left alone.
+fn remove_stale_git_locks(repo: &Path) {
     let git = repo.join(".git");
-    let mut removed = Vec::new();
     let Ok(top) = std::fs::read_dir(&git) else {
-        return removed;
+        return;
     };
     for child in top.flatten() {
         let path = child.path();
-        let fetchs = child.file_name() == SHALLOW_LOCK;
-        if child.file_type().is_ok_and(|t| t.is_file()) && is_lock(&path) && !fetchs && std::fs::remove_file(&path).is_ok()
-        {
-            removed.push(path);
+        if child.file_type().is_ok_and(|t| t.is_file()) && is_lock(&path) && child.file_name() != SHALLOW_LOCK {
+            let _ = std::fs::remove_file(&path);
         }
     }
     let skip = crate::files::refs::fetched_dirs(&git);
     for dir in [git.join("refs"), git.join("logs")] {
-        remove_locks_under(&dir, &skip, 0, &mut removed);
+        remove_locks_under(&dir, &skip, 0);
     }
-    removed
 }
 
 /// What libgit2 writes while a fetch updates `.git/shallow`.
@@ -444,7 +446,7 @@ fn is_lock(path: &Path) -> bool {
     path.extension().is_some_and(|e| e == "lock")
 }
 
-fn remove_locks_under(dir: &Path, skip: &[PathBuf], depth: usize, removed: &mut Vec<PathBuf>) {
+fn remove_locks_under(dir: &Path, skip: &[PathBuf], depth: usize) {
     // Ref names are short; a deeper tree is not git's.
     if depth > 32 || skip.iter().any(|s| s == dir) {
         return;
@@ -456,9 +458,9 @@ fn remove_locks_under(dir: &Path, skip: &[PathBuf], depth: usize, removed: &mut 
         let path = child.path();
         let Ok(kind) = child.file_type() else { continue };
         if kind.is_dir() {
-            remove_locks_under(&path, skip, depth + 1, removed);
-        } else if kind.is_file() && is_lock(&path) && std::fs::remove_file(&path).is_ok() {
-            removed.push(path);
+            remove_locks_under(&path, skip, depth + 1);
+        } else if kind.is_file() && is_lock(&path) {
+            let _ = std::fs::remove_file(&path);
         }
     }
 }
@@ -469,9 +471,8 @@ fn remove_locks_under(dir: &Path, skip: &[PathBuf], depth: usize, removed: &mut 
 pub(crate) fn remove_stale_fetch_locks(repo: &Path) {
     let git = repo.join(".git");
     let _ = std::fs::remove_file(git.join(SHALLOW_LOCK));
-    let mut removed = Vec::new();
     for dir in crate::files::refs::fetched_dirs(&git) {
-        remove_locks_under(&dir, &[], 0, &mut removed);
+        remove_locks_under(&dir, &[], 0);
     }
     if let Ok(packs) = std::fs::read_dir(git.join("objects/pack")) {
         for child in packs.flatten() {
@@ -533,20 +534,21 @@ mod tests {
     }
 
     #[test]
-    fn stale_git_locks_go_but_a_fetchs_private_refs_and_paws_own_files_stay() {
+    fn stale_git_locks_go_but_a_fetchs_private_refs_stay() {
         let dir = tempfile::tempdir().unwrap();
-        git2::Repository::init(dir.path()).unwrap();
-        let git = dir.path().join(".git");
+        let repo = crate::files::layout::repo_dir(dir.path());
+        git2::Repository::init(&repo).unwrap();
+        let git = repo.join(".git");
         let stale = [git.join("index.lock"), git.join("refs/heads/main.lock"), git.join("logs/HEAD.lock")];
         let kept = [git.join("refs/paw/fetch/main.lock"), git.join("objects/pack/pack-1.idx.lock")];
         for path in stale.iter().chain(&kept) {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, b"").unwrap();
         }
-        let held = StoreLock::for_repo(dir.path()).exclusive().unwrap();
+        let held = StoreLock::for_state_dir(dir.path()).exclusive().unwrap();
         assert!(stale.iter().all(|p| !p.exists()));
         assert!(kept.iter().all(|p| p.exists()));
-        assert!(git.join(GIT_LOCK_DIR).join(crate::files::layout::STORE_LOCK).exists());
+        assert!(dir.path().join(crate::files::layout::STORE_LOCK).exists());
         drop(held);
     }
 
@@ -554,15 +556,18 @@ mod tests {
     fn a_push_in_flight_is_seen_from_another_thread() {
         let dir = tempfile::tempdir().unwrap();
         let store = StoreLock::for_state_dir(dir.path());
-        assert!(!store.push_in_flight());
+        assert_eq!(store.being_sent(), None);
         let pushing = store.pushing(Duration::ZERO).unwrap();
+        let tip = git2::Oid::hash_object(git2::ObjectType::Blob, b"tip").unwrap();
+        let sending = pushing.sending(tip);
         let other = std::thread::spawn({
             let store = store.clone();
-            move || store.push_in_flight()
+            move || store.being_sent()
         });
-        assert!(other.join().unwrap());
+        assert_eq!(other.join().unwrap(), Some(tip));
+        drop(sending);
+        assert_eq!(store.being_sent(), None);
         drop(pushing);
-        assert!(!store.push_in_flight());
         // Never under the store lock.
         let _held = store.exclusive().unwrap();
         assert!(store.pushing(Duration::ZERO).is_err());
@@ -570,16 +575,10 @@ mod tests {
     }
 
     #[test]
-    fn a_repository_named_repo_shares_its_state_directorys_lock() {
-        let dir = tempfile::tempdir().unwrap();
-        let repo = dir.path().join("repo");
-        let held = StoreLock::for_state_dir(dir.path()).exclusive().unwrap();
-        assert!(held.covers(&repo));
-        let elsewhere = tempfile::tempdir().unwrap();
-        git2::Repository::init(elsewhere.path()).unwrap();
-        assert!(!held.covers(elsewhere.path()));
-        let other = StoreLock::for_repo(elsewhere.path()).exclusive().unwrap();
-        assert!(other.covers(elsewhere.path()));
-        assert!(elsewhere.path().join(".git/paw").join(crate::files::layout::STORE_LOCK).exists());
+    fn a_guard_covers_its_own_store_only() {
+        let (one, other) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let held = StoreLock::for_state_dir(one.path()).exclusive().unwrap();
+        assert!(held.covers(&StoreLock::for_state_dir(one.path())));
+        assert!(!held.covers(&StoreLock::for_state_dir(other.path())));
     }
 }

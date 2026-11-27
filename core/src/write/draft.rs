@@ -60,12 +60,13 @@ enum OtpEdit {
     Remove,
 }
 
-struct Original {
-    path: String,
-    doc: EntryDoc,
+/// The entry being edited, as it was opened.
+pub(crate) struct Original {
+    pub(crate) path: String,
+    pub(crate) doc: EntryDoc,
     /// The content id of the file it was opened from: saving is refused if
     /// the file has changed since.
-    content_id: Vec<u8>,
+    pub(crate) content_id: Vec<u8>,
 }
 
 pub struct EntryDraft {
@@ -226,16 +227,8 @@ impl EntryDraft {
     }
 
     /// The entry being edited, as it was opened; `None` for a new one.
-    pub fn original_path(&self) -> Option<&str> {
-        self.original.as_ref().map(|o| o.path.as_str())
-    }
-
-    pub(crate) fn original_doc(&self) -> Option<&EntryDoc> {
-        self.original.as_ref().map(|o| &o.doc)
-    }
-
-    pub(crate) fn original_content_id(&self) -> Option<&[u8]> {
-        self.original.as_ref().map(|o| o.content_id.as_slice())
+    pub(crate) fn original(&self) -> Option<&Original> {
+        self.original.as_ref()
     }
 
     /// Whether the password was made by the generator and not changed
@@ -368,7 +361,7 @@ impl EntryDraft {
         problems.extend(folder_problems(&self.folder));
         if problems.is_empty()
             && let Some(tree) = tree
-            && let Some(taken) = collision(tree, &self.path(), self.original_path())
+            && let Some(taken) = collision(tree, &self.path(), self.original.as_ref().map(|o| o.path.as_str()))
         {
             problems.push(taken);
         }

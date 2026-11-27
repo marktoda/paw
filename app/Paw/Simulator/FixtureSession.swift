@@ -55,15 +55,12 @@ struct FixtureSession {
             .appendingPathComponent("paw-fixture-\(UUID().uuidString)", isDirectory: true)
         let copiesDir = root.appendingPathComponent("window", isDirectory: true)
         try FileManager.default.createDirectory(at: copiesDir, withIntermediateDirectories: true)
-        let repoDir: String
+        let stateDir = root.appendingPathComponent("state", isDirectory: true).path
         let writing: StoreSession.Writing?
         if writable {
-            let stateDir = root.appendingPathComponent("state", isDirectory: true).path
             writing = try Self.setUp(stateDir: stateDir)
-            repoDir = storeRepoDir(stateDir: stateDir)
         } else {
-            repoDir = root.appendingPathComponent("store", isDirectory: true).path
-            try writeFixtureStore(dir: repoDir)
+            try writeFixtureStore(dir: storeRepoDir(stateDir: stateDir))
             writing = nil
         }
         // Settings' AutoFill sections work on the fixture's own state; its
@@ -72,7 +69,7 @@ struct FixtureSession {
             AutoFillSuggestions(stateDir: writing.stateDir, submit: { _ in Task {} })
         }
         session = try StoreSession(StoreSession.Parts(
-            repoDir: repoDir, copies: platform.copies(in: copiesDir), clock: platform.clock,
+            stateDir: stateDir, copies: platform.copies(in: copiesDir), clock: platform.clock,
             keyPort: platform.keyPort(keyLog: keyLog ? root.path : nil), keys: platform.keys,
             writing: writing, gitHub: nil, autoFill: autoFill, setUp: nil))
     }

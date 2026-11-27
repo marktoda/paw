@@ -54,7 +54,7 @@ pub fn sim(decrypt: SimTouch, auth: SimTouch, touch_timeout: Duration) -> Arc<Si
 /// A key whose slots need a touch for every use, not yet plugged in.
 pub fn rig_unplugged(decrypt: SimTouch, auth: SimTouch) -> Rig {
     let store_dir = tempfile::tempdir().unwrap();
-    write_fixture_store(store_dir.path().to_string_lossy().into_owned()).unwrap();
+    write_fixture_store(store_dir.path().join(paw_core::files::layout::REPO).to_string_lossy().into_owned()).unwrap();
     let store = PassStore::open(store_dir.path().to_string_lossy().into_owned()).unwrap();
     let copies_dir = tempfile::tempdir().unwrap();
     let clock = SimClock::new(1_790_000_000_000);
@@ -75,8 +75,8 @@ pub fn rig_unplugged(decrypt: SimTouch, auth: SimTouch) -> Rig {
 
 impl Rig {
     /// Where the fixture store is, to add crafted entries to it.
-    pub fn store_dir(&self) -> &std::path::Path {
-        self._dirs.0.path()
+    pub fn store_dir(&self) -> std::path::PathBuf {
+        self._dirs.0.path().join(paw_core::files::layout::REPO)
     }
 }
 

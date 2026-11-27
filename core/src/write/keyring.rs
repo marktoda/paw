@@ -38,7 +38,7 @@
 //! addresses), always `-` for the card's key. No phone was ever given such
 //! a key; its `key` and `sub` lines are not read.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
@@ -50,8 +50,9 @@ use crate::fault::Fault;
 use crate::recipients::{fingerprint_of, hex, key_id};
 use crate::path::{folder_and_parents, folder_of, folder_of_gpg_id, gpg_id_in, governing};
 use crate::store::gpg_id::{governing_gpg_id, gpg_id_text, key_digits, parse_gpg_id};
+use crate::files::layout::StoreDirs;
 use crate::files::{MAX_FILE_BYTES, read_bounded, write_atomic};
-use crate::lock::{Exclusive, StoreLock};
+use crate::lock::{Exclusive, Shared};
 
 const HEADER: &str = "# paw pinned recipients, version 1";
 const TEMP_PREFIX: &str = ".recipients.tmp-";
@@ -169,7 +170,7 @@ fn all_gpg_ids(root: &Path) -> Result<Vec<(String, Vec<u8>)>, Fault> {
             // Hidden folders (`.git`-like, `.extensions`) are not the store's.
             return if name.starts_with('.') { git2::TreeWalkResult::Skip } else { git2::TreeWalkResult::Ok };
         }
-        if name == ".gpg-id"
+        if name == crate::path::GPG_ID
             && entry.filemode() == i32::from(git2::FileMode::Blob)
             && let Ok(blob) = repo.find_blob(entry.id())
         {
@@ -189,7 +190,7 @@ pub(crate) fn gpg_id_paths(root: &Path) -> Result<Vec<String>, Fault> {
 
 /// The pinned keys, bindings and `.gpg-id` pins of one store.
 pub struct Keyring {
-    file: PathBuf,
+    store: StoreDirs,
     keys: Vec<PinnedKey>,
     /// `(line, fingerprint)`: the line, trimmed, is satisfied by the key.
     bindings: Vec<(String, String)>,
@@ -226,23 +227,17 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
 
+fn file(store: &StoreDirs) -> std::path::PathBuf {
+    store.state_dir().join(crate::files::layout::RECIPIENTS)
+}
+
 impl Keyring {
-    /// The store's repository, whose lock covers the keyring.
-    fn repo(&self) -> PathBuf {
-        crate::files::layout::repo_dir(self.file.parent().unwrap_or(Path::new(".")))
-    }
-
-    /// The lock to hold while changing the keyring: its store's.
-    pub fn lock(&self) -> StoreLock {
-        StoreLock::for_repo(&self.repo())
-    }
-
-    /// Empty if nothing has been pinned yet.
-    pub fn open(state_dir: &Path) -> Result<Self, Fault> {
-        let file = state_dir.join(crate::files::layout::RECIPIENTS);
-        let bytes = read_bounded(&file, MAX_FILE_BYTES).map_err(|e| failed("read", e))?.unwrap_or_default();
+    /// The keyring of `store`; empty if nothing has been pinned yet. Its
+    /// changes take the store's lock.
+    pub fn open(store: &StoreDirs) -> Result<Self, Fault> {
+        let bytes = read_bounded(&file(store), MAX_FILE_BYTES).map_err(|e| failed("read", e))?.unwrap_or_default();
         let text = String::from_utf8(bytes).map_err(|e| failed("read", e))?;
-        let mut keyring = Self { file, keys: Vec::new(), bindings: Vec::new(), accepted: None };
+        let mut keyring = Self { store: store.clone(), keys: Vec::new(), bindings: Vec::new(), accepted: None };
         for line in text.lines() {
             let parts: Vec<&str> = line.split(' ').collect();
             match parts.as_slice() {
@@ -276,8 +271,12 @@ impl Keyring {
         Ok(keyring)
     }
 
+    pub(crate) fn repo(&self) -> &Path {
+        self.store.repo_dir()
+    }
+
     fn save(&self, held: &Exclusive) -> Result<(), Fault> {
-        debug_assert!(held.covers(&self.repo()), "the keyring changed without its store's lock");
+        debug_assert!(held.covers(self.store.lock()), "the keyring changed without its store's lock");
         let mut text = format!("{HEADER}\n");
         for key in &self.keys {
             text.push_str(&format!("key {} card - - - - {}\n", key.fingerprint, B64.encode(key_bytes(&key.key)?)));
@@ -291,9 +290,8 @@ impl Keyring {
                 text.push_str(&format!("gpgid {} {} {}\n", record.sha, b64(&record.path), b64(&record.text)));
             }
         }
-        let dir = self.file.parent().unwrap_or(Path::new("."));
-        std::fs::create_dir_all(dir).map_err(|e| failed("save", e))?;
-        write_atomic(&self.file, TEMP_PREFIX, text.as_bytes()).map_err(|e| failed("save", e))
+        std::fs::create_dir_all(self.store.state_dir()).map_err(|e| failed("save", e))?;
+        write_atomic(&file(&self.store), TEMP_PREFIX, text.as_bytes()).map_err(|e| failed("save", e))
     }
 
     pub fn keys(&self) -> &[PinnedKey] {
@@ -350,7 +348,6 @@ impl Keyring {
         }
     }
 
-    /// How `line` is satisfied.
     pub fn line_status(&self, line: &str) -> LineStatus {
         match self.line_key(line) {
             Some((key, bound)) => LineStatus::Ready { fingerprint: key.fingerprint.clone(), bound },
@@ -358,11 +355,11 @@ impl Keyring {
         }
     }
 
-    /// How the recipients for entries in `folder` of the store at `root`
-    /// are satisfied, and whether they are the ones accepted. Reads the
-    /// working copy; changes nothing.
-    pub fn folder_recipients(&self, root: &Path, folder: &str) -> Result<FolderRecipients, Fault> {
-        let (gpg_id, bytes) = governing_gpg_id(root, folder)?;
+    /// How the recipients for entries in `folder` are satisfied, and
+    /// whether they are the ones accepted. Reads the working copy; changes
+    /// nothing.
+    pub fn folder_recipients(&self, _reading: &Shared, folder: &str) -> Result<FolderRecipients, Fault> {
+        let (gpg_id, bytes) = governing_gpg_id(self.repo(), folder)?;
         let text = gpg_id_text(&gpg_id, &bytes)?;
         let accepted = self.accepted.as_deref().and_then(|all| {
             let path = governing(folder, |file| all.iter().any(|a| a.path == file))?;
@@ -391,8 +388,8 @@ impl Keyring {
     /// key, in `.gpg-id` order. Refused unless the recipients are the
     /// accepted ones and every line is satisfied; every unsatisfied line is
     /// named. Accepts nothing by itself.
-    pub fn resolve(&self, root: &Path, folder: &str) -> Result<Vec<PublicKey>, WriteError> {
-        let recipients = self.folder_recipients(root, folder)?;
+    pub fn resolve(&self, reading: &Shared, folder: &str) -> Result<Vec<PublicKey>, WriteError> {
+        let recipients = self.folder_recipients(reading, folder)?;
         if !recipients.confirmed {
             return Err(WriteError::RecipientsNotConfirmed);
         }
@@ -429,8 +426,8 @@ impl Keyring {
     /// any earlier record. The only acceptance that is not about one folder
     /// the person reviewed; call it once the store is cloned and shown. One
     /// that is not text is left out: nothing can be saved under it.
-    pub fn accept_all_recipients_at_setup(&mut self, held: &Exclusive, root: &Path) -> Result<(), Fault> {
-        let all = all_gpg_ids(root)?
+    pub fn accept_all_recipients_at_setup(&mut self, held: &Exclusive) -> Result<(), Fault> {
+        let all = all_gpg_ids(self.repo())?
             .into_iter()
             .filter_map(|(path, bytes)| {
                 let text = gpg_id_text(&path, &bytes).ok()?.to_owned();
@@ -445,8 +442,8 @@ impl Keyring {
     /// what changed: the `.gpg-id` that governs it now is recorded, and any
     /// accepted one between it and the folder that no longer exists is
     /// dropped. Other folders' records are left as they are.
-    pub fn accept_recipients(&mut self, held: &Exclusive, root: &Path, folder: &str) -> Result<(), WriteError> {
-        let (path, bytes) = governing_gpg_id(root, folder)?;
+    pub fn accept_recipients(&mut self, held: &Exclusive, folder: &str) -> Result<(), WriteError> {
+        let (path, bytes) = governing_gpg_id(self.repo(), folder)?;
         let Some(accepted) = self.accepted.as_mut() else {
             return Err(WriteError::RecipientsNotConfirmed);
         };
@@ -477,7 +474,6 @@ impl Keyring {
     pub fn bind_card_for_opened_entry(
         &mut self,
         held: &Exclusive,
-        root: &Path,
         card_fingerprint: &str,
         entry: &str,
         ciphertext: &[u8],
@@ -489,7 +485,7 @@ impl Keyring {
             return Ok(Vec::new());
         }
         let folder = folder_of(entry);
-        let recipients = self.folder_recipients(root, folder)?;
+        let recipients = self.folder_recipients(held, folder)?;
         self.bind_one_open_line(held, recipients, &card_fingerprint)
     }
 

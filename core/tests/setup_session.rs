@@ -191,7 +191,7 @@ fn a_send_over_a_change_paw_did_not_make_still_finds_the_remote_replaced() {
     std::fs::write(repo.join("two.gpg"), "2").unwrap();
     support::git(&repo, &["add", "one.gpg", "two.gpg"]);
     support::git(&repo, &["commit", "--quiet", "-m", "Two at once, by another tool."]);
-    assert!(paw_core::sync::queue::unpushed(&repo).is_err());
+    assert!(paw_core::sync::queue::unpushed(&paw_core::files::layout::StoreDirs::new(w.dir.path())).is_err());
     // The desktop starts the remote over.
     let desktop = w.server.desktop();
     support::git(desktop.path(), &["checkout", "--quiet", "--orphan", "fresh"]);

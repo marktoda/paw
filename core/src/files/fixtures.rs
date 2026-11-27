@@ -154,21 +154,21 @@ fn pinned_recipients(keys: &str) -> String {
     )
 }
 
-fn store_with_recipients(bytes: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+fn store_with_recipients(bytes: &str) -> (tempfile::TempDir, layout::StoreDirs) {
     let dir = state();
     put(dir.path(), layout::RECIPIENTS, bytes.as_bytes());
-    let repo = layout::repo_dir(dir.path());
-    std::fs::create_dir_all(&repo).unwrap();
-    put(&repo, ".gpg-id", b"AAAA1111\n");
-    (dir, repo)
+    let store = layout::StoreDirs::new(dir.path());
+    std::fs::create_dir_all(store.repo_dir()).unwrap();
+    put(store.repo_dir(), ".gpg-id", b"AAAA1111\n");
+    (dir, store)
 }
 
 #[test]
 fn the_pinned_recipients() {
     let bytes = pinned_recipients(CARD_KEY_LINE);
-    let (dir, repo) = store_with_recipients(&bytes);
-    let mut keyring = crate::write::Keyring::open(dir.path()).unwrap();
-    let folder = keyring.folder_recipients(&repo, "").unwrap();
+    let (dir, store) = store_with_recipients(&bytes);
+    let mut keyring = crate::write::Keyring::open(&store).unwrap();
+    let folder = keyring.folder_recipients(&store.shared().unwrap(), "").unwrap();
     assert!(folder.confirmed);
     assert!(!folder.changed);
     assert!(folder.writable);
@@ -176,7 +176,7 @@ fn the_pinned_recipients() {
     assert_eq!(folder.lines[0].status, crate::write::LineStatus::Ready { fingerprint: CARD_KEY.into(), bound: true });
 
     // Pinning the card's key again saves the file again, as it was.
-    let held = keyring.lock().exclusive().unwrap();
+    let held = store.exclusive().unwrap();
     let key = keyring.keys()[0].key.clone();
     keyring.pin_card_key(&held, &key).unwrap();
     assert_eq!(get(dir.path(), layout::RECIPIENTS), bytes.as_bytes());
@@ -190,10 +190,10 @@ fn pinned_recipients_with_a_key_from_a_certificate_still_read() {
         FEDCBA9876543210FEDCBA9876543210FEDCBA98 1800000000 FEDCBA9876543210FEDCBA9876543210FEDCBA98 \
         team@example.com AAAA\nsub 0123456789ABCDEF0123456789ABCDEF01234567 \
         1111222233334444555566667777888899990000 cmV2b2tlZA==\n";
-    let (dir, repo) = store_with_recipients(&pinned_recipients(&format!("{CARD_KEY_LINE}{certificate}")));
-    let keyring = crate::write::Keyring::open(dir.path()).unwrap();
+    let (_dir, store) = store_with_recipients(&pinned_recipients(&format!("{CARD_KEY_LINE}{certificate}")));
+    let keyring = crate::write::Keyring::open(&store).unwrap();
     assert_eq!(keyring.keys().iter().map(|k| k.fingerprint.as_str()).collect::<Vec<_>>(), [CARD_KEY]);
-    assert!(keyring.folder_recipients(&repo, "").unwrap().writable);
+    assert!(keyring.folder_recipients(&store.shared().unwrap(), "").unwrap().writable);
 }
 
 #[test]

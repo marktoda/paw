@@ -13,6 +13,30 @@ use std::sync::Arc;
 use paw_core::sim::remote::{self, SimRemote, SimRemoteContents, SimRemoteOptions};
 use paw_core::sync::Remote;
 
+/// A phone's store in a temporary state directory, as setup lays it out:
+/// the clone goes in its `repo/`.
+pub struct Phone {
+    _state: tempfile::TempDir,
+    pub store: paw_core::files::layout::StoreDirs,
+}
+
+impl Phone {
+    pub fn new() -> Self {
+        let state = tempfile::tempdir().unwrap();
+        let store = paw_core::files::layout::StoreDirs::new(state.path());
+        Self { _state: state, store }
+    }
+
+    /// The working copy.
+    pub fn path(&self) -> &Path {
+        self.store.repo_dir()
+    }
+
+    pub fn state(&self) -> &Path {
+        self.store.state_dir()
+    }
+}
+
 /// Adds to the pinned recipients in `state_dir` the record that the
 /// `.gpg-id` line `line` means the pinned key `fingerprint`, as setup
 /// writes it after its test decrypt.
@@ -194,7 +218,7 @@ pub fn move_entry(
         Some(doc) => doc.duplicate(),
         None => EntryDoc::parse(b"placeholder\n".to_vec()).unwrap(),
     };
-    let before = std::fs::read(store.repo().join(format!("{from}.gpg"))).ok();
+    let before = std::fs::read(store.dirs().repo_dir().join(format!("{from}.gpg"))).ok();
     let id = paw_core::files::content_id(before.as_deref().unwrap_or_default());
     let mut draft = paw_core::write::EntryDraft::edit(from, doc, id);
     let (folder, name) = to.rsplit_once('/').unwrap_or(("", to));
@@ -202,7 +226,7 @@ pub fn move_entry(
     draft.set_name(name);
     let saved = store.save(&draft)?;
     if placeholder {
-        let after = std::fs::read(store.repo().join(format!("{to}.gpg"))).ok();
+        let after = std::fs::read(store.dirs().repo_dir().join(format!("{to}.gpg"))).ok();
         assert_eq!(before, after, "a move without the open entry re-encrypted a placeholder");
     }
     Ok(saved)

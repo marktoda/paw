@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::key::{KeyPort, KeySession};
+use crate::files::layout::StoreDirs;
 use crate::locked;
 use crate::remote::{RefusedPath, RemoteFailure};
 use crate::setup::{SetupError, SetupFlow, SetupState, SetupWriteReadiness};
@@ -127,8 +128,8 @@ pub struct StoreSync {
 }
 
 impl StoreSync {
-    fn repo(&self) -> PathBuf {
-        crate::files::layout::repo_dir(&self.state_dir)
+    fn store(&self) -> StoreDirs {
+        StoreDirs::new(&self.state_dir)
     }
 
     fn known_hosts(&self) -> KnownHosts {
@@ -243,7 +244,7 @@ impl StoreSync {
 
     /// The "not yet pushed" list, newest first.
     pub fn unpushed(&self) -> Result<Vec<QueueItem>, SyncError> {
-        queue::unpushed(&self.repo())
+        queue::unpushed(&self.store())
     }
 
     /// The waiting changes "Send" will not push, because their ciphertext
@@ -254,14 +255,14 @@ impl StoreSync {
     /// should be for; the person accepts the new recipients, then
     /// re-encrypts them with `reencrypt_with_key`, or discards one outright.
     pub fn held_back(&self) -> Result<Vec<HeldBack>, SyncError> {
-        held_back::held_back(&self.repo(), &self.state_dir)
+        held_back::held_back(&self.store())
     }
 
     /// How many held-back changes "Re-encrypt" can do now (their folder's
     /// new list is accepted and paw has every key on it), and why each
     /// other one can't be done. No key, no network.
     pub fn reencrypt_check(&self) -> Result<ReencryptCheck, SyncError> {
-        held_back::reencrypt_check(&self.repo(), &self.state_dir)
+        held_back::reencrypt_check(&self.store())
     }
 
     /// "Re-encrypt" as a key task (`Reencrypt`): opens each held-back
@@ -278,15 +279,15 @@ impl StoreSync {
     }
 
     pub fn discard(&self, id: String) -> Result<Vec<QueueItem>, SyncError> {
-        queue::discard(&self.repo(), &id)
+        queue::discard(&self.store(), &id)
     }
 
     pub fn undo_last(&self) -> Result<Vec<QueueItem>, SyncError> {
-        queue::undo_last(&self.repo())
+        queue::undo_last(&self.store())
     }
 
     pub fn discard_all(&self) -> Result<(), SyncError> {
-        queue::discard_all(&self.repo())
+        queue::discard_all(&self.store())
     }
 
     /// What the fetched remote holds that paw will not check out (links,
@@ -294,12 +295,12 @@ impl StoreSync {
     /// with why; empty if nothing. A sync that fails with
     /// `RemoteFailure::RefusedContent` names the same paths.
     pub fn refused_remote(&self) -> Result<Vec<RefusedPath>, SyncError> {
-        Ok(crate::sync::refused_remote(&self.repo())?)
+        Ok(crate::sync::refused_remote(&self.store())?)
     }
 
     /// After `RemoteReplaced`: take the remote's history, keeping or
     /// discarding this device's unpushed changes.
     pub fn accept_replaced_remote(&self, keep_changes: bool) -> Result<IntegrateReport, SyncError> {
-        accept_replaced_remote(&self.repo(), keep_changes)
+        accept_replaced_remote(&self.store(), keep_changes)
     }
 }

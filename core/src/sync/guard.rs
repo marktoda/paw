@@ -17,7 +17,7 @@ use git2::{ConfigLevel, Oid, Repository};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::PawError;
-use crate::path::{is_gpg_id_alias, is_hfs_ignored, unsafe_part};
+use crate::path::{GPG_ID, is_gpg_id_alias, is_hfs_ignored, unsafe_part};
 use crate::remote::{RefusedPath, RefusedReason};
 
 /// The repository contains something paw will not check out.
@@ -61,8 +61,6 @@ fn folded(component: &str) -> [String; SCHEMES] {
 const TREE: i32 = 0o040000;
 const BLOB: i32 = 0o100644;
 const BLOB_EXECUTABLE: i32 = 0o100755;
-/// Written by very old versions of git; read as a plain file.
-const BLOB_GROUP_WRITABLE: i32 = 0o100664;
 const LINK: i32 = 0o120000;
 const GITLINK: i32 = 0o160000;
 
@@ -138,11 +136,13 @@ pub(crate) fn check_tree(repo: &Repository, tree: Oid) -> Result<Vec<RefusedPath
             });
             let mut reasons = Vec::new();
             match mode {
-                TREE if name == ".gpg-id" => reasons.push(RefusedReason::GpgIdNotFile),
+                TREE if name == GPG_ID => reasons.push(RefusedReason::GpgIdNotFile),
                 TREE if depth + 1 >= MAX_DEPTH => reasons.push(RefusedReason::NestedTooDeep),
-                TREE | BLOB | BLOB_EXECUTABLE | BLOB_GROUP_WRITABLE => {}
+                TREE | BLOB | BLOB_EXECUTABLE => {}
                 LINK => reasons.push(RefusedReason::SymbolicLink),
                 GITLINK => reasons.push(RefusedReason::Submodule),
+                // libgit2 gives every entry one of the modes above (an old
+                // `100664` comes as `BLOB`); anything else is refused.
                 _ => reasons.push(RefusedReason::NotRegularFile),
             }
             let first = (0..SCHEMES).find_map(|scheme| seen.get(&(scheme, folded_path[scheme].clone())));
@@ -166,10 +166,15 @@ pub(crate) fn check_tree(repo: &Repository, tree: Oid) -> Result<Vec<RefusedPath
     Ok(refused)
 }
 
-pub(crate) fn check_commit(repo: &Repository, commit: Oid) -> Result<(), CheckError> {
-    let tree = repo.find_commit(commit)?.tree_id();
+/// [`check_tree`], failing if it refuses anything.
+pub(crate) fn refuse(repo: &Repository, tree: Oid) -> Result<(), CheckError> {
     let refused = check_tree(repo, tree)?;
     if refused.is_empty() { Ok(()) } else { Err(CheckError::Refused(Refused(refused))) }
+}
+
+/// [`refuse`] for `commit`'s tree.
+pub(crate) fn check_commit(repo: &Repository, commit: Oid) -> Result<(), CheckError> {
+    refuse(repo, repo.find_commit(commit)?.tree_id())
 }
 
 pub(crate) enum CheckError {
@@ -180,6 +185,16 @@ pub(crate) enum CheckError {
 impl From<git2::Error> for CheckError {
     fn from(error: git2::Error) -> Self {
         Self::Git(error)
+    }
+}
+
+/// A change paw is making refused, rather than something the remote holds.
+impl From<CheckError> for crate::fault::Fault {
+    fn from(error: CheckError) -> Self {
+        match error {
+            CheckError::Refused(Refused(paths)) => Self::Refused { paths },
+            CheckError::Git(error) => super::git_err(error).into(),
+        }
     }
 }
 
@@ -216,7 +231,6 @@ const SETTINGS: [(&str, bool); 5] = [
 const ATTRIBUTES: &str = "# Written by paw: the store is ciphertext, so checkout converts nothing.\n\
 * -text -crlf -ident -filter\n";
 
-/// Applies [`SETTINGS`] and [`ATTRIBUTES`] to `repo`.
 pub(crate) fn harden(repo: &Repository) -> Result<(), PawError> {
     let config = repo.config().map_err(super::git_err)?;
     let mut local = config.open_level(ConfigLevel::Local).map_err(super::git_err)?;

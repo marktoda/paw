@@ -16,6 +16,9 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::PawError;
+use crate::lock::{Exclusive, Shared, StoreLock};
+
 pub const REPO: &str = "repo";
 pub const SETUP: &str = "setup";
 /// The first line of [`SETUP`] once setup has finished.
@@ -35,11 +38,42 @@ pub fn repo_dir(state_dir: &Path) -> PathBuf {
     state_dir.join(REPO)
 }
 
-pub(crate) fn state_dir_of(repo: &Path) -> Option<&Path> {
-    if repo.file_name()? != REPO {
-        return None;
+/// One store: its state directory, the repository in it at [`REPO`], and
+/// its lock. Every function that works on a store is given this.
+#[derive(Clone, Debug)]
+pub struct StoreDirs {
+    state: PathBuf,
+    repo: PathBuf,
+    lock: StoreLock,
+}
+
+impl StoreDirs {
+    /// The store kept in `state_dir`, which is created if need be.
+    pub fn new(state_dir: &Path) -> Self {
+        Self { state: state_dir.to_path_buf(), repo: repo_dir(state_dir), lock: StoreLock::for_state_dir(state_dir) }
     }
-    repo.parent().filter(|parent| !parent.as_os_str().is_empty())
+
+    pub fn state_dir(&self) -> &Path {
+        &self.state
+    }
+
+    pub fn repo_dir(&self) -> &Path {
+        &self.repo
+    }
+
+    pub fn lock(&self) -> &StoreLock {
+        &self.lock
+    }
+
+    /// Takes the store for changing it ([`StoreLock::exclusive`]).
+    pub fn exclusive(&self) -> Result<Exclusive, PawError> {
+        self.lock.exclusive()
+    }
+
+    /// Takes the store for reading it ([`StoreLock::shared`]).
+    pub fn shared(&self) -> Result<Shared, PawError> {
+        self.lock.shared()
+    }
 }
 
 /// Setup finished and the store is here. Reads two files and writes
@@ -62,8 +96,6 @@ pub fn store_repo_dir(state_dir: String) -> String {
     repo_dir(Path::new(&state_dir)).to_string_lossy().into_owned()
 }
 
-/// Whether setup finished for the store kept in `state_dir` and the store
-/// is there. Reads two files; creates nothing.
 #[uniffi::export]
 pub fn store_is_set_up(state_dir: String) -> bool {
     is_set_up(Path::new(&state_dir))
@@ -78,8 +110,6 @@ pub fn files_refused(state_dir: &Path) -> bool {
         .any(|path| std::fs::File::open(path).is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied))
 }
 
-/// Whether the system refuses to open the store's files in `state_dir`:
-/// then a failure to open the store may only mean the iPhone is locked.
 #[uniffi::export]
 pub fn store_files_refused(state_dir: String) -> bool {
     files_refused(Path::new(&state_dir))
@@ -102,12 +132,5 @@ mod tests {
         if std::fs::File::open(&setup).is_err() {
             assert!(files_refused(dir.path()));
         }
-    }
-
-    #[test]
-    fn only_a_repository_named_repo_has_a_state_directory() {
-        assert_eq!(state_dir_of(Path::new("/s/repo")), Some(Path::new("/s")));
-        assert_eq!(state_dir_of(Path::new("/s/store")), None);
-        assert_eq!(state_dir_of(Path::new("repo")), None);
     }
 }

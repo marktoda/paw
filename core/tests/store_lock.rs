@@ -24,6 +24,7 @@ use paw_core::ffi::sync::StoreSync;
 use paw_core::ffi::sync::Setup;
 use paw_core::task::{KeyOutcome, KeyTaskState};
 use paw_core::github::{Endpoints, GitHubAccount, RepositoryList, SignInState, TokenVault, VaultError};
+use paw_core::files::layout::StoreDirs;
 use paw_core::lock::StoreLock;
 use paw_core::files::layout::STORE_LOCK;
 use paw_core::setup::SetupState;
@@ -177,6 +178,10 @@ impl World {
         self.state().join(paw_core::files::layout::REPO)
     }
 
+    fn store(&self) -> StoreDirs {
+        StoreDirs::new(self.state())
+    }
+
     fn writer(&self) -> WriteStore {
         WriteStore::open(self.state())
     }
@@ -197,7 +202,7 @@ impl World {
 
     fn send(&self) -> Result<operation::SyncReport, sync::SyncError> {
         let signer = signer_with(&self.key, PIN);
-        steps::sync(&self.remote.remote().unwrap(), &signer, &self.repo(), self.state(), true)
+        steps::sync(&self.remote.remote().unwrap(), &signer, &self.store(), true)
             .map_err(key_common::sync_failure)
     }
 
@@ -242,7 +247,7 @@ fn save_in(writer: &WriteStore, name: &str) -> Result<paw_core::write::Saved, Wr
 /// Moves `lock/from` to `lock/to` as the edit form does.
 fn move_in(writer: &WriteStore, from: &str, to: &str) -> Result<paw_core::write::Saved, WriteError> {
     let doc = paw_core::entry::EntryDoc::parse(format!("pw-{from}\n").into_bytes()).unwrap();
-    let file = std::fs::read(writer.repo().join(format!("lock/{from}.gpg"))).unwrap_or_default();
+    let file = std::fs::read(writer.dirs().repo_dir().join(format!("lock/{from}.gpg"))).unwrap_or_default();
     let mut draft = EntryDraft::edit(&format!("lock/{from}"), doc, paw_core::files::content_id(&file));
     draft.set_name(to);
     writer.save(&draft)
@@ -343,7 +348,7 @@ fn refresh_save_undo_read_and_send_at_once_lose_nothing() {
             for n in 0..10 {
                 let name = format!("u-{n}");
                 let Ok(saved) = w.save(&name) else { continue };
-                let taken_back = queue::discard(&w.repo(), &saved.commits[0]).is_ok();
+                let taken_back = queue::discard(&w.store(), &saved.commits[0]).is_ok();
                 undone.lock().unwrap().insert(name, taken_back);
             }
         }));
@@ -355,7 +360,7 @@ fn refresh_save_undo_read_and_send_at_once_lose_nothing() {
         workers.push(std::thread::spawn(move || {
             while !stop.load(Ordering::SeqCst) {
                 let _reading = StoreLock::for_state_dir(w.state()).shared().unwrap();
-                let store = PassStore::open(w.repo().to_string_lossy().into_owned()).unwrap();
+                let store = PassStore::open(w.state().to_string_lossy().into_owned()).unwrap();
                 for entry in store.entries() {
                     let bytes = store.read_entry(&entry.path).unwrap();
                     assert!(!bytes.is_empty(), "{} read empty", entry.path);
@@ -441,7 +446,7 @@ fn refresh_save_undo_read_and_send_at_once_lose_nothing() {
     for n in 0..20 {
         assert!(w.local_has(&format!("desktop/d{n}")), "desktop/d{n} was lost");
     }
-    assert!(queue::unpushed(&w.repo()).unwrap().is_empty());
+    assert!(queue::unpushed(&w.store()).unwrap().is_empty());
     let counts = (reads.load(Ordering::SeqCst), refreshes.load(Ordering::SeqCst), sends.load(Ordering::SeqCst));
     eprintln!("reads, refreshes, sends: {counts:?}");
     assert!(counts.0 > 0 && counts.1 > 0 && counts.2 > 0, "{counts:?}");
@@ -495,7 +500,7 @@ fn a_reader_never_sees_a_checkout_halfway() {
                 while !stop.load(Ordering::SeqCst) {
                     // One reading moment: the listing and every file.
                     let _reading = StoreLock::for_state_dir(w.state()).shared().unwrap();
-                    let store = PassStore::open(w.repo().to_string_lossy().into_owned()).unwrap();
+                    let store = PassStore::open(w.state().to_string_lossy().into_owned()).unwrap();
                     let mut seen = Vec::new();
                     for entry in store.entries().iter().filter(|e| e.path.starts_with("bulk/")) {
                         let bytes = store.read_entry(&entry.path).unwrap();
@@ -515,7 +520,7 @@ fn a_reader_never_sees_a_checkout_halfway() {
         let (w, stop) = (w.clone(), stop.clone());
         std::thread::spawn(move || {
             while !stop.load(Ordering::SeqCst) {
-                let store = PassStore::open(w.repo().to_string_lossy().into_owned()).unwrap();
+                let store = PassStore::open(w.state().to_string_lossy().into_owned()).unwrap();
                 for i in 0..60 {
                     if let Ok(bytes) = store.read_entry(&format!("bulk/e{i:02}")) {
                         assert_eq!(bytes.len(), 4096, "a file written halfway");
@@ -559,7 +564,7 @@ fn a_save_and_a_read_finish_while_a_fetch_is_stalled_mid_transfer() {
     within(Duration::from_secs(5), "a save during a stalled fetch", move || w2.save("during-fetch").unwrap());
     let w2 = w.clone();
     let listed = within(Duration::from_secs(5), "a listing during a stalled fetch", move || {
-        PassStore::open(w2.repo().to_string_lossy().into_owned()).unwrap().entry_count()
+        PassStore::open(w2.state().to_string_lossy().into_owned()).unwrap().entry_count()
     });
     assert!(listed > 0);
     // Taking the store lock outright works too: the fetch does not hold it.
@@ -599,7 +604,7 @@ fn a_save_finishes_while_a_send_waits_for_a_touch() {
     within(Duration::from_secs(5), "a save during a touch wait", move || w2.save("during-touch").unwrap());
     let w2 = w.clone();
     let queued = within(Duration::from_secs(5), "the queue during a touch wait", move || {
-        queue::unpushed(&w2.repo()).unwrap().len()
+        queue::unpushed(&w2.store()).unwrap().len()
     });
     assert_eq!(queued, 2);
     assert!(key.waiting_for_touch(), "still waiting");
@@ -609,7 +614,7 @@ fn a_save_finishes_while_a_send_waits_for_a_touch() {
     // The send may or may not include the save made while it waited; what
     // it did not send is still waiting, never lost.
     assert!(report.pushed >= 1, "{report:?}");
-    let left = queue::unpushed(&w.repo()).unwrap().len() as u32;
+    let left = queue::unpushed(&w.store()).unwrap().len() as u32;
     assert_eq!(report.pushed + left, 2);
     key.set_authentication_touch(SimTouch::Off);
     w.send().unwrap();
@@ -823,9 +828,9 @@ fn every_mutating_entry_point_returns_even_when_its_thread_holds_the_lock() {
             let w = w2;
             let _outer = nested.then(|| StoreLock::for_state_dir(w.state()).exclusive().unwrap());
             let tag = if nested { "n" } else { "p" };
-            let repo = w.repo();
+            let repo = w.store();
             let writer = w.writer();
-            let author = sync::Author { name: "t".into(), email: "t@example.com".into() };
+            let author = paw_core::write::Author { name: "t".into(), email: "t@example.com".into() };
             let mut results: Vec<(&'static str, Result<(), String>)> = Vec::new();
             let mut note = |what, result: Result<(), String>| results.push((what, result));
             let text = |e: &dyn std::fmt::Display| e.to_string();
@@ -837,9 +842,9 @@ fn every_mutating_entry_point_returns_even_when_its_thread_holds_the_lock() {
             note("discard", queue::discard(&repo, &saved.commits[0]).map(drop).map_err(|e| text(&e)));
             save_in(&writer, &format!("{tag}-d")).unwrap();
             note("undo_last", queue::undo_last(&repo).map(drop).map_err(|e| text(&e)));
-            note("commit", sync::commit(&repo, &format!("lock/{tag}-e.gpg"), b"x", "Add.", &author).map(drop).map_err(|e| text(&e)));
+            note("commit", steps::commit(&repo, &format!("lock/{tag}-e.gpg"), b"x", "Add.", &author).map(drop).map_err(|e| text(&e)));
             note("discard_all", queue::discard_all(&repo).map_err(|e| text(&e)));
-            note("integrate", sync::integrate(&repo).map(drop).map_err(|e| text(&e)));
+            note("integrate", steps::integrate(&repo).map(drop).map_err(|e| text(&e)));
             note("accept_replaced_remote", sync::accept_replaced_remote(&repo, true).map(drop).map_err(|e| text(&e)));
             let hosts = paw_core::sync::hosts::KnownHosts::of(w.state());
             note("known_hosts.forget", hosts.forget("elsewhere.example", 22).map_err(|e| text(&e)));
@@ -914,7 +919,7 @@ fn two_processes_saving_and_integrating_at_once_lose_no_entry() {
         assert!(w.local_has(&format!("lock/parent-{n}")), "parent-{n} lost");
         assert!(w.local_has(&format!("lock/child-{n}")), "child-{n} lost");
     }
-    assert_eq!(queue::unpushed(&w.repo()).unwrap().len(), 40);
+    assert_eq!(queue::unpushed(&w.store()).unwrap().len(), 40);
     w.assert_consistent();
     w.send().unwrap();
     assert!(w.remote_has("lock/child-19") && w.remote_has("lock/parent-19"));
@@ -933,12 +938,6 @@ fn origin(w: &World) -> String {
     repo.refname_to_id("refs/remotes/origin/main").unwrap().to_string()
 }
 
-fn markers(w: &World) -> Vec<String> {
-    let repo = git2::Repository::open(w.repo()).unwrap();
-    let mut names = repo.references_glob("refs/paw/pushing/*").unwrap();
-    names.names().map(|n| n.unwrap().to_owned()).collect()
-}
-
 #[test]
 fn taking_back_a_change_that_is_being_sent_is_refused() {
     let w = Arc::new(world());
@@ -948,7 +947,7 @@ fn taking_back_a_change_that_is_being_sent_is_refused() {
         let (w, id) = (w.clone(), saved.commits[0].clone());
         // While the push is on the network (the host is receiving it).
         w.remote.clone().before_next_push(move || {
-            let _ = tell.send(queue::discard(&w.repo(), &id).map_err(|e| e.to_string()));
+            let _ = tell.send(queue::discard(&w.store(), &id).map_err(|e| e.to_string()));
         });
     }
     let report = w.send().unwrap();
@@ -956,26 +955,20 @@ fn taking_back_a_change_that_is_being_sent_is_refused() {
     let refused = told.recv_timeout(Duration::from_secs(10)).unwrap().unwrap_err();
     assert!(refused.contains("being sent right now"), "{refused}");
     assert!(w.local_has("lock/on-the-wire") && w.remote_has("lock/on-the-wire"));
-    assert!(markers(&w).is_empty());
     w.assert_consistent();
 }
 
 #[test]
-fn a_push_record_left_by_a_crash_does_not_block_taking_a_change_back() {
+fn a_push_record_left_by_an_earlier_paw_does_not_block_taking_a_change_back() {
     let w = world();
     let saved = w.save("after-crash").unwrap();
-    // A send was killed on the network: its record is left, its lock gone.
+    // An earlier paw kept the commit on the network in a ref; one whose
+    // send was killed left it behind.
     let repo = git2::Repository::open(w.repo()).unwrap();
     let id = git2::Oid::from_str(&saved.commits[0]).unwrap();
     repo.reference("refs/paw/pushing/main", id, true, "a send that died").unwrap();
-    queue::discard(&w.repo(), &saved.commits[0]).unwrap();
+    queue::discard(&w.store(), &saved.commits[0]).unwrap();
     assert!(!w.local_has("lock/after-crash"));
-    assert!(markers(&w).is_empty(), "the stale record was removed");
-
-    // One left behind is also cleared by the next fetch.
-    repo.reference("refs/paw/pushing/main", repo.head().unwrap().target().unwrap(), true, "again").unwrap();
-    w.account.refresh_store().unwrap();
-    assert!(markers(&w).is_empty());
     w.assert_consistent();
 }
 
@@ -1000,7 +993,7 @@ fn a_push_that_landed_is_success_even_if_recording_it_has_to_wait_too_long() {
     }
     let connection = connect(&w);
     let before = origin(&w);
-    let pushed = steps::push_recording_within(&connection, &w.repo(), Duration::from_millis(300));
+    let pushed = steps::push_recording_within(&connection, &w.store(), Duration::from_millis(300));
     pushed.unwrap();
     assert!(w.remote_has("lock/landed"));
     assert_eq!(origin(&w), before, "not recorded: the lock was not to be had");
@@ -1009,8 +1002,7 @@ fn a_push_that_landed_is_success_even_if_recording_it_has_to_wait_too_long() {
     // The next fetch heals it.
     w.account.refresh_store().unwrap();
     assert_eq!(origin(&w), w.remote.tip().unwrap());
-    assert!(queue::unpushed(&w.repo()).unwrap().is_empty());
-    assert!(markers(&w).is_empty());
+    assert!(queue::unpushed(&w.store()).unwrap().is_empty());
     w.assert_consistent();
 }
 
@@ -1033,7 +1025,7 @@ fn a_refused_push_reports_the_refusal_not_busy_while_the_store_is_held() {
         });
     }
     let connection = connect(&w);
-    let error = steps::push(&connection, &w.repo()).unwrap_err();
+    let error = steps::push(&connection, &w.store()).unwrap_err();
     release.send(()).unwrap();
     assert!(
         matches!(
@@ -1043,7 +1035,7 @@ fn a_refused_push_reports_the_refusal_not_busy_while_the_store_is_held() {
         "{error}"
     );
     assert!(!w.remote_has("lock/refused"));
-    assert_eq!(queue::unpushed(&w.repo()).unwrap().len(), 1, "still waiting");
+    assert_eq!(queue::unpushed(&w.store()).unwrap().len(), 1, "still waiting");
 }
 
 #[test]
