@@ -17,12 +17,19 @@ import Foundation
 /// the same key material and no touch, so the key the screens use keeps
 /// its PIN tries and touches.
 ///
-/// `-pawSimRecipients changed` then has another computer give `work/` its
-/// own `.gpg-id` naming the same key, and paw downloads it: saving in
-/// `work` asks for a review first. `-pawSimRecipients missing` adds a
-/// second key paw has no copy of to it as well: after the review, paw
-/// can't save there.
+/// `-pawSimRecipients` changes who can open `work/` (`Recipients`).
 struct FixtureSession {
+    /// `-pawSimRecipients <mode>`.
+    enum Recipients: String {
+        /// Another computer gives `work/` its own `.gpg-id` naming the same
+        /// key, and paw downloads it: saving in `work` asks for a review
+        /// first.
+        case changed
+        /// As `changed`, with a second key paw has no copy of: after the
+        /// review, paw can't save there.
+        case missing
+    }
+
     /// The PIN of every simulated key the fixture makes.
     static let pin = SimulatedKeyConnector.defaultPin
 
@@ -65,11 +72,10 @@ struct FixtureSession {
         }
         // Settings' AutoFill sections work on the fixture's own state; its
         // entries never reach the system's suggestions.
-        let autoFill = writing.map { writing in
-            AutoFillSuggestions(stateDir: writing.stateDir, submit: { _ in Task {} })
-        }
+        let autoFill = writable ? AutoFillSuggestions(stateDir: stateDir, submit: { _ in Task {} }) : nil
         session = try StoreSession(StoreSession.Parts(
             stateDir: stateDir, copies: platform.copies(in: copiesDir), clock: platform.clock,
+            pasteboardLifetime: platform.pasteboardLifetime,
             keyPort: platform.keyPort(keyLog: keyLog ? root.path : nil), keys: platform.keys,
             writing: writing, gitHub: nil, autoFill: autoFill, setUp: nil))
     }
@@ -81,15 +87,14 @@ struct FixtureSession {
         SimRemoteHandle.shared.register(host, key: key)
         try host.setUpStore(key: key, pin: pin, stateDir: stateDir)
         let sync = Result { try StoreSync.open(stateDir: stateDir) }
-        if let mode = LaunchArgument.simRecipients.string, case .success = sync {
-            try host.giveWorkItsOwnKeys(key: key, pin: pin, stateDir: stateDir, missingKey: mode == "missing")
+        if let mode = LaunchArgument.simRecipients.string.flatMap(Recipients.init(rawValue:)), case .success = sync {
+            try host.giveWorkItsOwnKeys(key: key, pin: pin, stateDir: stateDir, missingKey: mode == .missing)
         }
         if LaunchArgument.simPairings.bool {
             SimulatedSitePairings.seed(stateDir: stateDir)
         }
-        // Only now: setup's own download must not be refused or cut off.
         SimRemoteHandle.shared.storeReady(repoDir: storeRepoDir(stateDir: stateDir))
-        return StoreSession.Writing(writer: StoreWriter.open(stateDir: stateDir), sync: sync, stateDir: stateDir)
+        return StoreSession.Writing(writer: StoreWriter.open(stateDir: stateDir), sync: sync)
     }
 }
 

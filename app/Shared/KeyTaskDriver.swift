@@ -229,8 +229,9 @@ final class KeyTaskDriver {
     /// What the sheet shows. A key that could not be read shows as the
     /// failed stage, with Try again, while its task still waits at Plug in.
     var stage: KeySheetStage {
-        guard let problem = readProblem, let job else { return mapped }
-        let words = KeyErrorWords(problem, table: job.words().table)
+        guard readProblem != nil, let job, let words = reader?.problemWords(table: job.words().table) else {
+            return mapped
+        }
         return .failed(problem: words.problem, nextStep: words.nextStep)
     }
 
@@ -248,9 +249,6 @@ final class KeyTaskDriver {
     var isFollowing: Bool {
         followed != nil
     }
-
-    /// What the followed task is for, or the last one's once it ended.
-    @ObservationIgnored private(set) var taskPurpose: KeyPurpose?
 
     /// Puts the sheet up for `job`'s task. A task the sheet followed until
     /// now is let go of.
@@ -285,7 +283,6 @@ final class KeyTaskDriver {
     func retry() {
         if readFailed {
             reader?.retry()
-            show(.plugIn)
             return
         }
         guard shown != nil, let job else { return }
@@ -335,7 +332,6 @@ final class KeyTaskDriver {
         let hold = job.hold()
         let task = job.begin(listener)
         tasks[id] = Running(task: task, job: job, hold: hold)
-        taskPurpose = task.purpose()
         followed = id
         // The listener's word comes a main-queue turn later; whoever
         // started the job reads the sheet in this one.

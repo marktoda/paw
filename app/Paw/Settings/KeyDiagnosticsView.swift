@@ -130,13 +130,13 @@ struct KeyDiagnosticsView: View {
             appVersion: Self.bundleString("CFBundleShortVersionString"),
             appBuild: Self.bundleString("CFBundleVersion"),
             systemVersion: "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)",
-            deviceModel: Self.deviceModel,
+            deviceModel: Device.model,
             lastSync: model.storeSession.syncing?.pillState.lastSync,
             lastCheckedMs: model.storeSession.syncing?.lastChecked.map { Int64($0.timeIntervalSince1970 * 1000) })
         let stateDir = model.storeSession.stateDir
         let port = model.storeSession.keyPort
         let github = model.storeSession.gitHub?.core
-        let copies = model.storeSession.copies
+        let copies = model.copies.cache
         assembling = true
         Task {
             // Reads the store, the queue and the keychain: off the main thread.
@@ -151,19 +151,6 @@ struct KeyDiagnosticsView: View {
 
     private static func bundleString(_ key: String) -> String {
         Bundle.main.object(forInfoDictionaryKey: key) as? String ?? "not recorded"
-    }
-
-    /// The model identifier, e.g. "iPhone17,1"; the simulator's says which
-    /// device it simulates.
-    private static var deviceModel: String {
-        if let simulated = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] {
-            return simulated
-        }
-        var info = utsname()
-        uname(&info)
-        return withUnsafeBytes(of: &info.machine) { raw in
-            String(decoding: raw.prefix(while: { $0 != 0 }), as: UTF8.self)
-        }
     }
 
     // MARK: Key log

@@ -6,7 +6,8 @@ import SwiftUI
 /// `-pawSimUnplugged`), a simulated
 /// Face ID (`-pawSimFaceId ok|cancel|nomatch|lockout|notenrolled`) and a
 /// simulated clock that the settings sheet can move on, and that moves on
-/// by `-pawSimAwayMs` each time paw goes to the background. Simulator only.
+/// by `-pawSimAwayMs` each time paw comes back from the background.
+/// Simulator only.
 /// `-pawAppearance dark|light` picks the theme. The store can be written
 /// (`FixtureSession`, `-pawSimRecipients changed|missing`).
 enum FixtureLaunch {

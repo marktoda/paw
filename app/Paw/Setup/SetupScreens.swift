@@ -43,11 +43,7 @@ struct SetupFlowView: View {
             SetupKeySheet(model: model)
         }
         .onChange(of: scenePhase) {
-            switch scenePhase {
-            case .background: model.reader.backgrounded()
-            case .active: model.foregrounded()
-            default: break
-            }
+            model.scenePhaseChanged(scenePhase)
         }
         #if DEBUG && targetEnvironment(simulator)
         .modifier(SimSetupHostWatch(model: model))
@@ -153,7 +149,6 @@ private struct PlugInScreen: View {
                     KeyButtonLabel(title: "Try again")
                 }
                 .buttonStyle(.pawPrimary)
-                .disabled(model.busy)
                 .accessibilityIdentifier("plug-in-retry")
             }
         }
@@ -406,11 +401,9 @@ private struct ConfirmHostScreen: View {
         } buttons: {
             Button("Trust this key") { model.trustHost(fingerprint: fingerprint) }
                 .buttonStyle(.pawPrimary)
-                .disabled(model.busy)
                 .accessibilityIdentifier("host-trust")
             Button("Back") { model.back() }
                 .buttonStyle(.pawSecondary)
-                .disabled(model.busy)
                 .accessibilityIdentifier("host-back")
         }
     }
@@ -472,7 +465,6 @@ private struct KeyNotAcceptedScreen: View {
         } buttons: {
             Button("Check again") { model.checkAgain() }
                 .buttonStyle(.pawPrimary)
-                .disabled(model.busy)
                 .accessibilityIdentifier("check-again")
         }
         .copyToast($toast)
@@ -522,7 +514,6 @@ private struct DownloadScreen: View {
                     KeyButtonLabel(title: "Download")
                 }
                 .buttonStyle(.pawPrimary)
-                .disabled(model.busy)
                 .accessibilityIdentifier("download-start")
             }
         }
@@ -560,7 +551,6 @@ private struct CheckScreen: View {
                 KeyButtonLabel(title: "Check my key")
             }
             .buttonStyle(.pawPrimary)
-            .disabled(model.busy)
             .accessibilityIdentifier("check-start")
         }
     }

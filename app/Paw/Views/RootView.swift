@@ -110,8 +110,8 @@ struct RouteScreen: View {
             FolderScreen(model: model, path: path)
         case .entry(let id):
             EntryRoute(model: model, id: id)
-        case .anotherKey(let path):
-            AnotherKeyScreen(model: model, entry: EntryRef(path: path))
+        case .anotherKey(let path, let recipients):
+            AnotherKeyScreen(entry: EntryRef(path: path), recipients: recipients)
         case .unpushed:
             UnpushedScreen(model: model)
         case .sync(let route):

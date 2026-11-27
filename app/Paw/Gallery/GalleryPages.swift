@@ -9,7 +9,6 @@ struct ColoursPage: View {
         ("labelSecondary", PawColor.labelSecondary), ("labelTertiary", PawColor.labelTertiary),
         ("action", PawColor.action), ("onAction", PawColor.onAction),
         ("panel", PawColor.panel), ("onPanel", PawColor.onPanel),
-        ("onPanelSecondary", PawColor.onPanelSecondary),
     ]
     private static let gold: [(String, Color)] = [
         ("keyGold", PawColor.keyGold), ("keyGoldRim", PawColor.keyGoldRim),
@@ -38,7 +37,6 @@ struct ColoursPage: View {
                     .foregroundStyle(PawColor.labelSecondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("On panel").foregroundStyle(PawColor.onPanel)
-                    Text("Second line on panel").foregroundStyle(PawColor.onPanelSecondary)
                 }
                 .font(PawFont.subheadline)
                 .padding(PawMetrics.Spacing.m)

@@ -167,7 +167,7 @@ jobs:
               if pad:
                   parts.append({"name": "ipad", "only": "IPadTests", "skip": "", "family": "iPad"})
           for p in parts:
-              p.setdefault("family", "iPad" if "IPadTests" in p["only"] else "iPhone")
+              p.setdefault("family", "iPhone")
               p.setdefault("unit", "0")
               print(p["name"], p["family"], "only:", p["only"] or "-", "skip:", p["skip"] or "-", "unit:", p["unit"], file=sys.stderr)
           assert [p["unit"] for p in parts].count("1") == 1, "exactly one part runs the unit tests"

@@ -5,7 +5,7 @@ struct EditProblem: Equatable {
     let problem: String
     let nextStep: String
     /// "Review who can open this folder" applies.
-    var reviewFolder: String? = nil
+    var offersReview = false
 }
 
 /// A refused write in one sentence: `editProblem`'s first line.
@@ -34,6 +34,37 @@ func whoCanOpenChanged(_ folder: String) -> String {
     "Who can open \(recipientsPlace(folder)) changed"
 }
 
+/// The step after `whoCanOpenChanged`: "here" on a form saving in the
+/// folder, "there" elsewhere.
+func reviewBeforeSaving(here: Bool) -> String {
+    "Review the new list before saving \(here ? "here" : "there")."
+}
+
+/// A key on a folder's list that paw can't encrypt for.
+enum MissingKeyWords {
+    static let thisKey = "paw doesn't have this key"
+    /// A folder paw can't save in, as a choice on the form.
+    static let folder = "Needs a key paw doesn't have"
+}
+
+extension RecipientLine {
+    /// "your key", or "key 9A1C 03F2" by the last 8 hex digits.
+    var spokenName: String {
+        switch status {
+        case .ready: return "your key"
+        default: return "key \(RecipientLineWords.ending(line))"
+        }
+    }
+
+    /// How this line is satisfied, in words.
+    var statusWords: String {
+        switch status {
+        case .ready: return "Your key"
+        case .missing: return MissingKeyWords.thisKey
+        }
+    }
+}
+
 extension FolderProblem {
     /// Why paw can't save in `folder`, with the step that fixes it.
     func words(folder: String) -> EditProblem {
@@ -46,7 +77,7 @@ extension FolderProblem {
         case .changed:
             return EditProblem(
                 problem: whoCanOpenChanged(folder),
-                nextStep: "Review the new list before saving here.", reviewFolder: folder)
+                nextStep: reviewBeforeSaving(here: true), offersReview: true)
         case .notConfirmed:
             return EditProblem(
                 problem: "paw hasn't confirmed who can open this store",

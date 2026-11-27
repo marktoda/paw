@@ -12,17 +12,23 @@ struct Platform {
     let keys: any KeyConnector
     /// The copies' clock, the key port's and the clipboard's.
     let clock: Clock
+    /// How long the system keeps a password paw copied, where it is not
+    /// as long as paw does (`Clipboard`): the simulator's UI tests read the
+    /// pasteboard after that and check paw's own time on `clock` instead.
+    let pasteboardLifetime: TimeInterval?
     private let makeCopies: (_ dir: String) -> CopyCache?
     private let wipeKeychain: () throws -> Void
     private let lockedOut: @MainActor () -> Error?
 
     private init(
         process: StoreProcess, keys: any KeyConnector, clock: Clock, copies: @escaping (_ dir: String) -> CopyCache?,
-        resetKeychain: @escaping () throws -> Void, lockedOut: @escaping @MainActor () -> Error?
+        resetKeychain: @escaping () throws -> Void, lockedOut: @escaping @MainActor () -> Error?,
+        pasteboardLifetime: TimeInterval? = nil
     ) {
         self.process = process
         self.keys = keys
         self.clock = clock
+        self.pasteboardLifetime = pasteboardLifetime
         makeCopies = copies
         wipeKeychain = resetKeychain
         self.lockedOut = lockedOut
@@ -44,12 +50,12 @@ struct Platform {
     /// what reading the store's files throws.
     static func simulated(
         _ process: StoreProcess, keys: SimulatedKeyConnector, clock: Clock, keystore: DeviceKeystore?,
-        lockedOut: @escaping @MainActor () -> Error? = { nil }
+        lockedOut: @escaping @MainActor () -> Error? = { nil }, pasteboardLifetime: TimeInterval? = nil
     ) -> Platform {
         Platform(
             process: process, keys: keys, clock: clock,
             copies: { dir in keystore.map { CopyCache(dir: dir, keystore: $0, clock: clock) } },
-            resetKeychain: { try keystore?.reset() }, lockedOut: lockedOut)
+            resetKeychain: { try keystore?.reset() }, lockedOut: lockedOut, pasteboardLifetime: pasteboardLifetime)
     }
     #endif
 

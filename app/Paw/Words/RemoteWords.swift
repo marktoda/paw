@@ -162,6 +162,18 @@ func hostIdentityChanged(_ host: String) -> String {
     "\(host)'s identity changed"
 }
 
+/// The details under `hostIdentityChanged`: the keys it was expected to
+/// present, and the one it did.
+enum HostKeyWords {
+    static func expected(_ keys: String) -> String {
+        "Expected \(keys)"
+    }
+
+    static func presented(_ key: String) -> String {
+        "It presented \(key)"
+    }
+}
+
 /// Why a host's key can't be forgotten or replaced: paw ships with it.
 func hostKeyBundled(_ host: String) -> String {
     "\(host)'s keys come with paw and can't be forgotten. A different key means this connection isn't reaching "

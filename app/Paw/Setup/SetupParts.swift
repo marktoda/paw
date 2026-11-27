@@ -61,7 +61,9 @@ struct SetupPage<Content: View, Buttons: View>: View {
         .scrollBounceBehavior(.basedOnSize)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: PawMetrics.Spacing.s) {
+                // One step at a time: none starts while another is under way.
                 buttons
+                    .disabled(model.busy)
                 #if DEBUG && targetEnvironment(simulator)
                 SimulatorStrip(actions: simulatorActions)
                 #endif

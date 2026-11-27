@@ -185,7 +185,6 @@ final class KeyTaskDriverTests: XCTestCase {
         guard case .done(.opened)? = owner.ends.first else {
             return XCTFail("The open should end done, it ended \(String(describing: owner.ends.first))")
         }
-        XCTAssertEqual(driver.taskPurpose, .openEntry(entry: "web/github.com"))
         XCTAssertFalse(driver.isFollowing)
         XCTAssertEqual(driver.pendingTasks, 0)
         XCTAssertTrue(driver.isShown, "Done shows")

@@ -1,23 +1,5 @@
 import SwiftUI
 
-/// A button title after the gold disc: this tap asks for the key.
-struct KeyActionLabel: View {
-    let title: String
-
-    init(_ title: String) {
-        self.title = title
-    }
-
-    var body: some View {
-        HStack(spacing: PawMetrics.Spacing.s) {
-            KeyDisc(size: .marker)
-            Text(title)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title). Needs your key.")
-    }
-}
-
 /// "and 3 more", under a list that names the first `namedAtMost`.
 struct AndMoreRow: View {
     let count: Int
@@ -41,7 +23,7 @@ struct ReencryptButton: View {
         Button {
             syncing.startReencrypt()
         } label: {
-            KeyActionLabel(reencryptTitle(syncing.reencryptReady))
+            KeyButtonLabel(title: reencryptTitle(syncing.reencryptReady))
         }
         .buttonStyle(.pawPrimary)
         .disabled(syncing.running != nil)
@@ -58,9 +40,31 @@ struct SendButton: View {
         Button {
             syncing.start(.send)
         } label: {
-            KeyActionLabel(syncing.queue.sendTitle)
+            KeyButtonLabel(title: syncing.queue.sendTitle)
         }
         .buttonStyle(.pawPrimary)
+        .disabled(syncing.running != nil)
+        .accessibilityIdentifier(identifier)
+    }
+}
+
+/// "Check for changes": with the gold disc when the check asks for the key,
+/// and off while any sync is under way. The caller gives the style.
+struct CheckButton: View {
+    let syncing: SyncModel
+    let title: String
+    let identifier: String
+
+    var body: some View {
+        Button {
+            syncing.check()
+        } label: {
+            if syncing.checkNeedsKey {
+                KeyButtonLabel(title: title)
+            } else {
+                Text(syncing.running == .refresh ? "Checking for changes\u{2026}" : title)
+            }
+        }
         .disabled(syncing.running != nil)
         .accessibilityIdentifier(identifier)
     }
@@ -82,7 +86,6 @@ struct HomeSyncPill: View {
                     SyncPill(status: state.status, text: text)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(state == .needsKey ? "Sync status: \(text). Needs your key." : "Sync status: \(text)")
                 .accessibilityIdentifier("sync-pill")
             }
         }
@@ -197,7 +200,7 @@ struct SyncSummarySection: View {
     private func recipientsRow(_ folder: String) -> some View {
         return ErrorRow(
             kind: .warning, problem: whoCanOpenChanged(folder),
-            nextStep: "Review the new list before saving there.",
+            nextStep: reviewBeforeSaving(here: false),
             actionTitle: "Review"
         ) {
             model.show(.sync(.review(folder: folder)))
@@ -274,10 +277,13 @@ struct SyncSendSection: View {
                     .listRowBackground(Color.clear)
                 }
             } footer: {
-                Text("To \(syncing.host). Needs your key.")
-                    .font(PawFont.footnote)
-                    .foregroundStyle(PawColor.labelSecondary)
-                    .accessibilityIdentifier("unpushed-send-footer")
+                // Under Send only: it says where Send goes.
+                if syncing.heldBack.isEmpty && syncing.canSend {
+                    Text("To \(syncing.host). Needs your key.")
+                        .font(PawFont.footnote)
+                        .foregroundStyle(PawColor.labelSecondary)
+                        .accessibilityIdentifier("unpushed-send-footer")
+                }
             }
         }
     }
@@ -550,8 +556,8 @@ private struct SyncStatusSheet: View {
         }
     }
 
-    /// Send (or Re-encrypt, while changes are held back) and Check, each
-    /// with the gold disc: that says they need the key.
+    /// Re-encrypt and Send when they are offered, then Check; the gold disc
+    /// marks each that asks for the key.
     private var actions: some View {
         VStack(spacing: PawMetrics.Spacing.s) {
             if syncing.canReencrypt {
@@ -560,18 +566,8 @@ private struct SyncStatusSheet: View {
             if syncing.canSend {
                 SendButton(syncing: syncing, identifier: "sync-send")
             }
-            Button {
-                syncing.check()
-            } label: {
-                if syncing.checkNeedsKey {
-                    KeyActionLabel("Check for changes")
-                } else {
-                    Text(syncing.running == .refresh ? "Checking for changes\u{2026}" : "Check for changes")
-                }
-            }
-            .buttonStyle(PawButtonStyle(kind: syncing.canSend || syncing.canReencrypt ? .secondary : .primary))
-            .disabled(syncing.running != nil)
-            .accessibilityIdentifier("sync-check")
+            CheckButton(syncing: syncing, title: "Check for changes", identifier: "sync-check")
+                .buttonStyle(PawButtonStyle(kind: syncing.canSend || syncing.canReencrypt ? .secondary : .primary))
         }
         .padding(.horizontal, PawMetrics.screenMargin)
         .padding(.top, PawMetrics.Spacing.m)

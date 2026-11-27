@@ -181,7 +181,7 @@ private struct EntryFormView: View {
             Button {
                 form.chooseFolder("")
             } label: {
-                FolderChoiceLabel(title: "Not in a folder", chosen: form.newFolder == nil && form.folder.isEmpty)
+                FolderChoiceLabel(title: FolderWords.top, chosen: form.newFolder == nil && form.folder.isEmpty)
             }
             ForEach(form.folders, id: \.self) { folder in
                 let writable = form.folderOpenable[folder] ?? true
@@ -192,7 +192,7 @@ private struct EntryFormView: View {
                         FolderChoiceLabel(title: folder, chosen: form.newFolder == nil && form.folder == folder)
                     } else {
                         Text(folder)
-                        Text("Needs a key paw doesn't have")
+                        Text(MissingKeyWords.folder)
                     }
                 }
                 .disabled(!writable)
@@ -233,7 +233,7 @@ private struct EntryFormView: View {
 
     private var folderTitle: String {
         if form.newFolder != nil { return "New folder" }
-        return form.folder.isEmpty ? "Not in a folder" : form.folder
+        return FolderWords.place(form.folder)
     }
 
     private var loginSection: some View {
@@ -337,7 +337,7 @@ private struct EntryFormView: View {
 
     /// What saving does to the code the entry has: a key typed replaces it.
     private var otpState: String {
-        if !form.setupKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if form.typesSetupKey {
             return "Replaced when you save"
         }
         return form.removingOneTimeCode ? "Removed when you save" : "Has a one-time code"
@@ -405,7 +405,7 @@ private struct EntryFormView: View {
             if let problem = form.saveProblem {
                 ErrorRow(
                     kind: .error, problem: problem.problem, nextStep: problem.nextStep,
-                    actionTitle: problem.reviewFolder == nil ? nil : "Review",
+                    actionTitle: problem.offersReview ? "Review" : nil,
                     action: { reviewing = true })
                     .pawListRow()
                     .id("footer")

@@ -29,7 +29,8 @@ struct UndoOffer: Identifiable, Equatable {
 /// Adding, editing, deleting and undoing: the form, the delete confirm and
 /// the Undo offer, and every write behind them. None needs the key or the
 /// network: encryption uses the public keys pinned at setup, and each
-/// change is one local commit. Each write is announced on the live store;
+/// change is one local commit. Each write takes the store lock, so it runs
+/// inside background time, and is announced on the live store;
 /// what the screens should show next is asked through `requests`.
 @MainActor @Observable
 final class StoreEdits {
@@ -41,23 +42,20 @@ final class StoreEdits {
     private(set) var form: EntryFormPurpose?
     /// The open entry whose delete is waiting for its inline confirm.
     private(set) var confirmingDelete: UUID?
-    private(set) var undoOffer: UndoOffer?
+    /// The last delete's Undo, until it is taken or its toast goes.
+    private var offered: UndoOffer?
 
     @ObservationIgnored private let live: LiveStore
-    @ObservationIgnored private let copies: CopyCache?
+    @ObservationIgnored private let copies: LiveCopies
     @ObservationIgnored private let requests: Signal<ScreenRequest>
 
-    init(writer: StoreWriter, queue: ChangeQueue?, live: LiveStore, copies: CopyCache?,
+    init(writer: StoreWriter, queue: ChangeQueue?, live: LiveStore, copies: LiveCopies,
          requests: Signal<ScreenRequest>) {
         self.writer = writer
         self.queue = queue
         self.live = live
         self.copies = copies
         self.requests = requests
-        // Made before this, the queue has read itself again by now.
-        live.changed.subscribe(self) { edits, _ in
-            edits.dropStaleUndoOffer()
-        }
     }
 
     // MARK: The form
@@ -93,7 +91,7 @@ final class StoreEdits {
     /// other; an edited one stays on screen with the text just saved.
     /// `false` if the form refused or said why not.
     func save(_ form: EntryFormModel) -> Bool {
-        guard let saved = write("Save", { form.save(copies: copies) }) else { return false }
+        guard let saved = BackgroundTime.run("Save", { form.save(copies: copies.cache) }) else { return false }
         let renamed = saved.previous.map { StoreChange.Renamed(from: $0, to: saved.entry) }
         live.announce(.wrote(entries: [saved.previous, saved.entry].compactMap { $0 }, renamed: renamed))
         if case .edit(let id, _) = form.purpose {
@@ -107,14 +105,8 @@ final class StoreEdits {
     }
 
     func acceptRecipients(folder: String) throws {
-        try write("Accept list") { try writer.acceptRecipients(folder: folder) }
+        try BackgroundTime.run("Accept list") { try writer.acceptRecipients(folder: folder) }
         live.announce(.recipientsAccepted(folder: folder))
-    }
-
-    /// Every write here, and the queue's (`ChangeQueue.change`): it takes
-    /// the store lock, so it runs inside background time (`BackgroundTime`).
-    private func write<T>(_ name: String, _ work: () throws -> T) rethrows -> T {
-        try BackgroundTime.run(name, work)
     }
 
     // MARK: Deleting and undoing
@@ -132,7 +124,9 @@ final class StoreEdits {
         confirmingDelete = nil
         let deleted: Deleted
         do {
-            deleted = try write("Delete") { try writer.delete(entry: session.ref.path, copies: copies) }
+            deleted = try BackgroundTime.run("Delete") {
+                try writer.delete(entry: session.ref.path, copies: copies.cache)
+            }
         } catch let error as WriteError {
             let words = editProblem(error, folder: session.ref.folder)
             requests.send(.notice(Notice(problem: words.problem, nextStep: words.nextStep)))
@@ -146,20 +140,21 @@ final class StoreEdits {
         if let notice = followUpNotice(deleted.followUpFailures) {
             requests.send(.notice(notice))
         }
-        if queue != nil {
-            undoOffer = UndoOffer(
-                message: "Deleted \(session.ref.name).", entryName: session.ref.name, change: deleted.commit)
-        }
+        offered = UndoOffer(
+            message: "Deleted \(session.ref.name).", entryName: session.ref.name, change: deleted.commit)
     }
 
-    /// Undo on the delete toast: only if that change is still the newest.
+    /// Undo is offered while its change is the newest one waiting: a change
+    /// undone, discarded, sent or made after it ends the offer.
+    var undoOffer: UndoOffer? {
+        guard let offered, queue?.unpushed.first?.id == offered.change else { return nil }
+        return offered
+    }
+
+    /// Undo on the delete toast.
     func undo(_ offer: UndoOffer) {
-        guard let queue else { return }
-        undoOffer = nil
-        guard queue.unpushed.first?.id == offer.change else {
-            requests.send(.toast("Not undone: other changes came after it."))
-            return
-        }
+        guard let queue, undoOffer?.id == offer.id else { return }
+        offered = nil
         if queue.undoLast() {
             requests.send(.toast("\(offer.entryName) is back."))
         } else {
@@ -168,16 +163,8 @@ final class StoreEdits {
     }
 
     func undoOfferEnded(_ offer: UndoOffer) {
-        if undoOffer?.id == offer.id {
-            undoOffer = nil
-        }
-    }
-
-    /// Undo is offered while its change is the newest one waiting: a change
-    /// undone, discarded, sent or made after it ends the offer.
-    private func dropStaleUndoOffer() {
-        if let offer = undoOffer, queue?.unpushed.first?.id != offer.change {
-            undoOffer = nil
+        if offered?.id == offer.id {
+            offered = nil
         }
     }
 }

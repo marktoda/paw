@@ -126,6 +126,9 @@ final class SetupModel {
     /// "Set up", Plug in or Try again asked for the key to be read: the
     /// next read that works is setup's first step.
     @ObservationIgnored private var readingKey = false
+    /// The entry the last check opens, as its task says: the key sheet's
+    /// words name it.
+    @ObservationIgnored private var checkedEntry: String?
 
     private let workQueue = DispatchQueue(label: "paw-setup", qos: .userInitiated)
 
@@ -168,7 +171,7 @@ final class SetupModel {
     /// Why the key in could not be read (its session not opened), or that
     /// this iPhone can't read one, for the Plug in screen.
     var attachProblem: KeyErrorWords? {
-        reader.problem.map { KeyErrorWords($0, table: .app) }
+        reader.problemWords(table: .app)
     }
 
     /// The key was read, or reading it failed. On Plug in, a key read is
@@ -188,16 +191,17 @@ final class SetupModel {
         }
     }
 
-    /// The setup flow is back in the foreground: the session hears of it
-    /// (it may drop a PIN held too long), and a key that is in but was not
-    /// read is read again.
-    func foregrounded() {
-        reader.foregrounded()
-        guard keyPresent, keyPort.session() == nil, !busy else { return }
-        if screen == .plugIn, sheet == nil {
-            readKey()
-        } else if started || state != .readKey {
-            reader.read()
+    /// The setup flow went to the background or came back (`KeyReader`).
+    /// A key that is in but was not read is read on coming back: on Plug
+    /// in as setup's first step, and not on the welcome screen.
+    func scenePhaseChanged(_ phase: ScenePhase) {
+        reader.scenePhaseChanged(phase) { [self] in
+            guard !busy else { return }
+            if screen == .plugIn, sheet == nil {
+                readKey()
+            } else if started || state != .readKey {
+                reader.read()
+            }
         }
     }
 
@@ -525,10 +529,8 @@ final class SetupModel {
     }
 
     private var entryName: String {
-        if case .checkKey(let entry?)? = keyTask.taskPurpose, !entry.isEmpty {
-            return EntryRef(path: entry).name
-        }
-        return "your store"
+        guard let checkedEntry, !checkedEntry.isEmpty else { return StoreWords.asEntry }
+        return EntryRef(path: checkedEntry).name
     }
 
     /// Setup's step after a key task: the core may have moved on, or put
@@ -602,14 +604,20 @@ extension SetupModel {
         let setup = setup
         let port = keyPort
         return KeyJob(
-            begin: { listener in
-                switch purpose {
+            begin: { [weak self] listener in
+                let task = switch purpose {
                 case .download: setup.downloadWithKey(port: port, listener: listener)
                 case .check: setup.testDecryptWithKey(port: port, listener: listener)
                 }
+                if case .checkKey(let entry) = task.purpose() {
+                    self?.checkedEntry = entry
+                } else {
+                    self?.checkedEntry = nil
+                }
+                return task
             },
             words: { [weak self] in
-                KeyErrorWords.Context(entry: self?.entryName ?? "your store")
+                KeyErrorWords.Context(entry: self?.entryName ?? StoreWords.asEntry)
             },
             working: { [weak self] progress in
                 self?.working(purpose, progress) ?? ("", nil)

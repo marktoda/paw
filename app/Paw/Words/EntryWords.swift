@@ -5,6 +5,22 @@ import Foundation
     "Clears in \(Int(Clipboard.lifetime)) seconds."
 }
 
+/// A folder as the screens name it: its name, or `top` for the top of the
+/// store.
+enum FolderWords {
+    static let top = "Not in a folder"
+
+    static func place(_ folder: String) -> String {
+        folder.isEmpty ? top : folder
+    }
+}
+
+/// The store where a sentence names an entry, as a key error does for a
+/// sync or setup: "your store".
+enum StoreWords {
+    static let asEntry = "your store"
+}
+
 /// Lock now's toast: how many passwords need the key again.
 func lockedToast(ended: Int) -> String {
     "Locked. \(passwordCount(ended)) \(ended == 1 ? "needs" : "need") your key again."

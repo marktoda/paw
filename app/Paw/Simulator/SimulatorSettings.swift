@@ -26,30 +26,10 @@ struct SimulatorSettingsSection: View {
             Button("Move the clock 1 hour on") { advanceClock(hours: 1) }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-advance-1h")
-            Button("Move the clock 9 hours on") { advanceClock(hours: 9) }
-                .foregroundStyle(PawColor.label)
-                .accessibilityIdentifier("sim-advance-9h")
             // A touch that comes after the sheet was closed.
             Button("Touch the simulated key") { keys?.key.touch() }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-touch-key")
-            Button("Let the key answer when read") { keys?.stopAttachFailures() }
-                .foregroundStyle(PawColor.label)
-                .accessibilityIdentifier("sim-key-answers")
-            Button("Let the next open finish after Cancel") { keys?.finishesNextAfterCancel = true }
-                .foregroundStyle(PawColor.label)
-                .accessibilityIdentifier("sim-late-cancel-next")
-            // Ends a touch wait the sheet let go of, as the key's timeout would.
-            Button("Time out the key's touch") { keys?.key.timeOutTouch() }
-                .foregroundStyle(PawColor.label)
-                .accessibilityIdentifier("sim-time-out-touch")
-            // What the system says just before the iPhone locks.
-            Button("Lock the iPhone") {
-                NotificationCenter.default.post(
-                    name: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil)
-            }
-            .foregroundStyle(PawColor.label)
-            .accessibilityIdentifier("sim-device-lock")
             // Read inside paw, so the system asks no paste permission.
             Button("Read the pasteboard") { pasteboard = UIPasteboard.general.string ?? "" }
                 .foregroundStyle(PawColor.label)

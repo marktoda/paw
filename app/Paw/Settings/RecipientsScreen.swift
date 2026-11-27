@@ -52,7 +52,7 @@ private struct RecipientScopeSection: View {
     @State private var namesShown = false
 
     private var title: String {
-        if scope.folder.isEmpty { return only ? "All passwords" : "Not in a folder" }
+        if scope.folder.isEmpty { return only ? "All passwords" : FolderWords.top }
         return scope.folder
     }
 
@@ -165,7 +165,7 @@ private struct RecipientKeyRow: View {
         case .ready:
             return nil
         case .missing:
-            return "paw doesn't have this key. Can't save here."
+            return "\(MissingKeyWords.thisKey). Can't save here."
         }
     }
 

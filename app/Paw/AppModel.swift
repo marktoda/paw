@@ -6,8 +6,9 @@ enum Route: Hashable {
     case folder(String)
     /// An opened entry, by the id of its `OpenSession`.
     case entry(UUID)
-    /// An entry the plugged-in key cannot open, explained.
-    case anotherKey(String)
+    /// An entry the plugged-in key cannot open, explained, with the keys
+    /// its file is encrypted for.
+    case anotherKey(String, recipients: [Recipient])
     /// Changes saved on this iPhone and not sent yet.
     case unpushed
     /// A screen about sync: held-back changes, a refused remote, replaced
@@ -31,14 +32,6 @@ struct KeyRequest: Identifiable {
     /// The sheet's run: the same across Try again.
     let id: UUID
     let entry: EntryRef
-}
-
-/// A problem shown inline at the top of the list it happened in.
-struct Notice: Equatable {
-    let problem: String
-    let nextStep: String
-    /// When set, the notice offers to open this entry with the key instead.
-    var keyEntry: EntryRef? = nil
 }
 
 /// A short line at the bottom of the screen: a copy, or what a feature
@@ -67,7 +60,6 @@ final class AppModel {
     /// The key sheet's task: opening an entry with the key.
     let keyTask: KeyTaskDriver
     let faceId: FaceIdOpener
-    let copies: LiveCopies
 
     /// The navigation stack. Changed only through `setPath`, `show` and
     /// `leave`, which close what leaves it.
@@ -107,7 +99,6 @@ final class AppModel {
         storeSession = session
         keyTask = session.keyTasks.make()
         faceId = FaceIdOpener()
-        copies = LiveCopies(session.copies)
         notice = session.syncProblem.map { Notice(problem: SyncWords.off, nextStep: describe($0)) }
         session.reader.onRead = { [weak self] read in
             if case .success(let keySession) = read {
@@ -120,16 +111,19 @@ final class AppModel {
         session.requests.subscribe(self) { model, request in
             model.asked(request)
         }
-        copies.listed.subscribe(self) { model, _ in
+        session.copies.listed.subscribe(self) { model, _ in
             model.closeEntriesWhoseCopyEnded()
         }
-        copies.change { try $0.sweep() }
         watchDeviceLock()
     }
 
     /// The store as it is now: read again after each change.
     var store: PassStore {
         storeSession.live.store
+    }
+
+    var copies: LiveCopies {
+        storeSession.copies
     }
 
     private var keyPort: KeyPort {
@@ -160,10 +154,11 @@ final class AppModel {
 
     // MARK: Plugging the key in and out
 
-    /// Why the key could not be read the last time paw tried, as the
-    /// sheet's Plug in stage says it. `nil` once a read works.
+    /// Why the key that is in could not be read, or that this iPhone can't
+    /// read keys, for Key diagnostics; `nil` once a read works or the key
+    /// is out.
     var attachProblem: KeyErrorWords? {
-        reader.problem.map { KeyErrorWords($0, table: .app) }
+        reader.problemWords(table: .app)
     }
 
     private func keyRead(_ session: KeySession) {
@@ -228,8 +223,8 @@ final class AppModel {
         notice = nil
         guard !keyTask.isShown else { return }
         closeSplitEntryForNextOpen()
-        if keyPort.session() != nil, case .notForThisKey = accessByPath[entry.path] {
-            show(.anotherKey(entry.path))
+        if keyPort.session() != nil, case .notForThisKey(let recipients) = accessByPath[entry.path] {
+            show(.anotherKey(entry.path, recipients: recipients))
             return
         }
         pendingRoute = nil
@@ -333,20 +328,6 @@ final class AppModel {
             .map { $0 == renamed?.from ? (renamed?.to ?? $0) : $0 }
             .filter { exists.contains($0) }
         learnAccess()
-        // A copy of an entry that is gone (a discarded add, a rename, a
-        // delete) would otherwise sit on Home until its time ran out.
-        let gone = copies.list.map(\.entry).filter { !exists.contains($0) }
-        copies.change { cache in
-            var failure: Error?
-            for entry in gone {
-                do {
-                    try cache.forgetEntry(entry: entry)
-                } catch {
-                    failure = error
-                }
-            }
-            if let failure { throw failure }
-        }
     }
 
     // MARK: Navigation
@@ -376,7 +357,6 @@ final class AppModel {
             if let opened = saved.opened {
                 replaceSession(id, ref: EntryRef(path: saved.entry), entry: opened)
             } else {
-                // Saved, but the screen can't show the new text: close it.
                 leave(.entry(id))
             }
         case .deleted(let id):
@@ -453,10 +433,10 @@ final class AppModel {
     /// away, on the same clock (design 2.5). Coming back also reads a key
     /// whose earlier read failed.
     func scenePhaseChanged(_ phase: ScenePhase) {
+        reader.scenePhaseChanged(phase)
         switch phase {
         case .background:
             backgroundedAtMs = clock.monotonicMs()
-            reader.backgrounded()
         case .active:
             if let away = backgroundedAtMs {
                 backgroundedAtMs = nil
@@ -464,11 +444,9 @@ final class AppModel {
                     closeAllSessions(because: .away)
                 }
             }
-            reader.foregrounded()
             storeSession.cameForward()
             storeSession.clipboard.clearIfExpired()
             copies.change { try $0.sweep() }
-            reader.readIfNeeded()
         default:
             break
         }
@@ -495,8 +473,8 @@ extension AppModel {
             },
             failed: { [weak self] error in
                 // Said before any PIN or touch: say which keys can.
-                guard case .NotForThisKey = error else { return .standard }
-                self?.show(.anotherKey(entry.path))
+                guard case .NotForThisKey(let recipients) = error else { return .standard }
+                self?.show(.anotherKey(entry.path, recipients: recipients))
                 return .close
             },
             lateCopyKept: { [weak self] in
@@ -524,7 +502,6 @@ extension AppModel {
     /// was asked for and not kept is said on Home.
     private func opened(_ opened: KeyOpen.Opened, entry: EntryRef) {
         noteOpened(opened.entry, path: entry.path)
-        copies.reread()
         let session = OpenSession(
             ref: entry, entry: opened.entry, view: opened.entry.view(), hadCopy: opened.faceIdUntilMs != nil)
         sessions[session.id] = session
@@ -532,17 +509,5 @@ extension AppModel {
         if let error = opened.copyFailed {
             notice = Notice(problem: "Face ID couldn't keep a copy", nextStep: describe(error))
         }
-    }
-}
-
-extension EntryRef {
-    /// An entry from its full path, e.g. `web/github.com`.
-    init(path: String) {
-        self = entryRef(path: path)
-    }
-
-    /// The top-level folder, which picks the tint; `nil` at the top.
-    var topFolder: String? {
-        topFolderOf(folder: folder)
     }
 }

@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Settings › Store, Face ID copies on a device, and Key diagnostics
-/// (design.md 2.12).
+/// Settings › Store, the GitHub sign-in and Key diagnostics (design.md
+/// 2.12).
 struct StoreSettingsSections: View {
     let model: AppModel
     @State private var showsDiagnostics = false
@@ -13,18 +13,6 @@ struct StoreSettingsSections: View {
     }
 
     var body: some View {
-        if model.storeSession.setUp != nil {
-            if model.storeSession.copies == nil {
-                Section {
-                    Text(Device.words("Not available on this iPhone. Every password needs your key."))
-                        .font(PawFont.footnote)
-                        .foregroundStyle(PawColor.labelSecondary)
-                        .accessibilityIdentifier("settings-no-copies")
-                } header: {
-                    PawSectionHeader(Device.biometrics)
-                }
-            }
-        }
         storeSection
         GitHubSettingsSection(address: setUpAddress, gitHub: model.storeSession.gitHub)
         Section {
@@ -107,7 +95,7 @@ struct RemoveStoreSection: View {
                     InlineConfirmRow(
                         question: "Remove this store?", detail: warning,
                         confirmTitle: "Remove", cancelTitle: "Keep it",
-                        identifier: "settings-remove", questionIdentifier: "settings-remove-warning",
+                        identifier: "settings-remove",
                         onConfirm: { remove(setUp) },
                         onCancel: { confirmingRemove = false })
                 } else {

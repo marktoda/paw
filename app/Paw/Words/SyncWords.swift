@@ -109,7 +109,7 @@ extension SyncFailure {
             problem = hostIdentityChanged(host)
             nextStep = "Sync is stopped and nothing was sent. If the server's admin confirms the change, "
                 + "remove the store in Settings and set it up again."
-            details = ["Expected \(expected.joined(separator: " or "))", "It presented \(presented)"]
+            details = [HostKeyWords.expected(expected.joined(separator: " or ")), HostKeyWords.presented(presented)]
             pill = "Sync stopped \u{00B7} Review"
         case .keyNotAccepted:
             self.kind = .keyNotAccepted
@@ -171,21 +171,12 @@ extension SyncFailure {
         default: "Try again"
         }
     }
-
-    /// Whether that step asks for the key (the disc on the button): Try
-    /// again does.
-    var actionNeedsKey: Bool {
-        switch kind {
-        case .hostKeyChanged, .cancelled: false
-        default: true
-        }
-    }
 }
 
 /// What the key sheet's words name during a sync: the store, and that the
 /// waiting changes are still here when the key stops.
 func syncKeyWords(during kind: SyncKind, unpushed: Int) -> KeyErrorWords.Context {
-    KeyErrorWords.Context(entry: "your store", waiting: kind == .refresh ? "" : SyncFailure.waiting(unpushed))
+    KeyErrorWords.Context(entry: StoreWords.asEntry, waiting: kind == .refresh ? "" : SyncFailure.waiting(unpushed))
 }
 
 /// Why a held-back change can't be re-encrypted, in a few words; `nil`
@@ -217,7 +208,7 @@ extension BackgroundRun.Outcome {
         case .locked: "iPhone was locked"
         case .noStore: "No store yet"
         case .notSignedIn: "Not signed in to GitHub"
-        case .notLinked: "No store chosen"
+        case .notLinked: GitHubWords.noStoreChosen
         case .upToDate: "Up to date"
         case .broughtIn: "Brought in changes"
         case .paused: "Paused"

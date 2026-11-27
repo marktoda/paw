@@ -33,7 +33,6 @@ struct SyncPill: View {
         .background(status == .failed ? PawColor.warningFill : PawColor.fill, in: Capsule())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(status == .needsKey ? "Sync status: \(text). Needs your key." : "Sync status: \(text)")
-        .accessibilityIdentifier("sync-pill")
     }
 
     private var symbol: String {

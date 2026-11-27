@@ -83,7 +83,7 @@ enum SetupWords {
         var words = SetupProblem(
             problem: hostIdentityChanged(host),
             nextStep: "\(warning) \(advice)",
-            details: expected.map { "Expected \($0)" } + ["It presented \(presented)"],
+            details: expected.map(HostKeyWords.expected) + [HostKeyWords.presented(presented)],
             action: .startOver, actionTitle: "Start setup again")
         if !bundled {
             words.offer = SetupProblem.Offer(
@@ -136,11 +136,12 @@ enum SetupWords {
         switch reason {
         case .noDecryptionKey, .noAuthenticationKey:
             let words = KeyErrorWords(
-                reason == .noDecryptionKey ? .NoDecryptionKey : .NoAuthenticationKey, entry: "your store", table: .app)
+                reason == .noDecryptionKey ? .NoDecryptionKey : .NoAuthenticationKey, entry: StoreWords.asEntry,
+                table: .app)
             return SetupProblem(problem: words.problem, nextStep: words.nextStep)
         case .authenticationKeyNotEd25519(let algorithm):
             let words = KeyErrorWords(
-                .AuthenticationKeyNotEd25519(algorithm: algorithm), entry: "your store", table: .app)
+                .AuthenticationKeyNotEd25519(algorithm: algorithm), entry: StoreWords.asEntry, table: .app)
             return SetupProblem(problem: words.problem, nextStep: words.nextStep)
         case .pinKdfUnsupported(let detail):
             return SetupProblem(

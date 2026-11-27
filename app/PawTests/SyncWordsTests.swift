@@ -22,7 +22,6 @@ final class SyncWordsTests: XCTestCase {
         XCTAssertEqual(failure.details, ["timed out"])
         XCTAssertEqual(failure.pill, "Offline")
         XCTAssertEqual(failure.actionTitle, "Try again")
-        XCTAssertTrue(failure.actionNeedsKey)
     }
 
     func testAChangedHostKeyStopsSyncAndPointsToSettings() {
@@ -35,7 +34,6 @@ final class SyncWordsTests: XCTestCase {
         XCTAssertEqual(failure.details, ["Expected SHA256:aaa or SHA256:bbb", "It presented SHA256:ccc"])
         XCTAssertEqual(failure.pill, "Sync stopped \u{00B7} Review")
         XCTAssertEqual(failure.actionTitle, "Open Settings")
-        XCTAssertFalse(failure.actionNeedsKey)
     }
 
     func testARejectedKeySaysWhatWasNotDone() {
@@ -96,7 +94,6 @@ final class SyncWordsTests: XCTestCase {
         XCTAssertEqual(send.problem, "Sending was cancelled.")
         XCTAssertEqual(send.pill, "")
         XCTAssertNil(send.actionTitle)
-        XCTAssertFalse(send.actionNeedsKey)
         XCTAssertEqual(SyncFailure.cancelled(during: .refresh, unpushed: 0).problem, "Checking was cancelled.")
     }
 

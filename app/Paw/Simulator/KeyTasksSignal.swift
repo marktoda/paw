@@ -7,9 +7,7 @@ import SwiftUI
 /// out). A test waits for "0" before checking that nothing happened.
 /// Polled, because the key's state is not observable.
 struct KeyTasksSignal: View {
-    /// The key the tasks read.
     let keys: SimulatedKeyConnector?
-    /// Key tasks not yet ended, read on every tick.
     let tasks: @MainActor () -> Int
 
     var body: some View {

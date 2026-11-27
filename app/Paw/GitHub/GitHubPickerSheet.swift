@@ -114,16 +114,14 @@ private struct GitHubCodeView: View {
             code.userCode, localOnly: true, expiry: Date().addingTimeInterval(TimeInterval(code.expiresIn)))
     }
 
-    static let gitHubDevicePage = "https://github.com/login/device"
+    private static let gitHubDevicePage = "https://github.com/login/device"
 
     /// The page to open: GitHub's own page carries the code (GitHub may
     /// ignore it); any other address opens exactly as the core gave it.
     static func pageURL(_ code: DeviceCode) -> URL? {
-        guard code.verificationUri == gitHubDevicePage else { return URL(string: code.verificationUri) }
-        var components = URLComponents()
-        components.scheme = "https"
-        components.host = "github.com"
-        components.path = "/login/device"
+        guard code.verificationUri == gitHubDevicePage, var components = URLComponents(string: gitHubDevicePage) else {
+            return URL(string: code.verificationUri)
+        }
         let plain = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-")
         guard let value = code.userCode.addingPercentEncoding(withAllowedCharacters: plain) else { return nil }
         components.percentEncodedQueryItems = [URLQueryItem(name: "user_code", value: value)]
@@ -204,14 +202,14 @@ private struct GitHubCodeView: View {
     /// simulated GitHub's own address would mean nothing in a picture.
     static func shown(_ uri: String) -> String {
         #if DEBUG && targetEnvironment(simulator)
-        return "github.com/login/device"
+        var text = gitHubDevicePage
         #else
         var text = uri
+        #endif
         for scheme in ["https://", "http://"] where text.hasPrefix(scheme) {
             text.removeFirst(scheme.count)
         }
         return text
-        #endif
     }
 }
 

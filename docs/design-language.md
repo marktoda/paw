@@ -35,7 +35,6 @@ Use the system colour in code; the hex is for reference. "Worst" is the lowest r
 | `labelTertiary` | #8B8A96 | #7E7D8A | Chevrons, placeholders. Never meaningful text | worst 3.0 / 3.4 |
 | `action` / `onAction` | #1B1A2B / #FFFFFF | #F1F0F7 / #16151F | The one primary button, the current step pill | 17.1 / 16.0 |
 | `panel` / `onPanel` | #1B1A2B / #FFFFFF | #26243A / #FFFFFF | Key status banner, copy confirmation | 17.1 / 15.0 |
-| `onPanelSecondary` | #D4D2E4 | #D4D2E4 | Second line on `panel` | 11.5 / 10.1 |
 
 For Increase Contrast, give `labelSecondary` #3F3E4C / #C9C8D6.
 
@@ -279,7 +278,6 @@ enum PawColor {
     static let action = dyn(0x1B1A2B, 0xF1F0F7)
     static let onAction = dyn(0xFFFFFF, 0x16151F)
     static let panel = dyn(0x1B1A2B, 0x26243A)
-    static let onPanelSecondary = Color(hex: 0xD4D2E4)
     static let keyGold = Color(hex: 0xF5B301)      // the key disc only
     static let keyGoldRim = Color(hex: 0xB26A00)
     static let success = dyn(0x005729, 0x81F0A3)

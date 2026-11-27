@@ -64,14 +64,6 @@ private struct AutoFillLoad {
     }
 }
 
-/// A Face ID problem from the last tap, said at the top of the list.
-struct AutoFillNotice: Equatable {
-    let problem: String
-    let nextStep: String
-    /// Offers to fill this entry with the key instead.
-    var keyEntry: EntryRef? = nil
-}
-
 /// The AutoFill screens' one model: the list for a site, search, and a
 /// fill by Face ID copy or by the key. The same code runs in the extension
 /// and, in debug builds, in the app's harness (`-pawHostProvider`), both
@@ -135,7 +127,7 @@ final class AutoFillModel {
     private(set) var hits: [SearchHit] = []
     /// Entries with a live Face ID copy.
     private var live: Set<String> = []
-    private(set) var notice: AutoFillNotice?
+    private(set) var notice: Notice?
     private(set) var keyEntry: EntryRef?
     /// The key sheet's task: opening `keyEntry` with the key. Done fills at
     /// once, with no pause: the request ends there. The PIN is forgotten
@@ -377,7 +369,7 @@ final class AutoFillModel {
     /// Whether opening `entry` now takes the key rather than Face ID, as
     /// its row and the url warning say: Face ID if it has a live copy.
     func opensWithKey(_ entry: EntryRef) -> Bool {
-        !(live.contains(entry.path) && source?.copies != nil)
+        !live.contains(entry.path)
     }
 
     private func open(_ entry: EntryRef) {
@@ -421,9 +413,9 @@ final class AutoFillModel {
         }
     }
 
-    private static func faceIdNotice(_ error: Error, entry: EntryRef) -> AutoFillNotice {
+    private static func faceIdNotice(_ error: Error, entry: EntryRef) -> Notice {
         let words = FaceIdWords.notice(error, entry: entry.name, table: .autoFill)
-        return AutoFillNotice(problem: words.problem, nextStep: words.nextStep, keyEntry: words.offersKey ? entry : nil)
+        return Notice(problem: words.problem, nextStep: words.nextStep, keyEntry: words.offersKey ? entry : nil)
     }
 
     // MARK: The key

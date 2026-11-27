@@ -54,6 +54,20 @@ final class SyncModelTests: XCTestCase {
         XCTAssertEqual(sync.pillState, .needsKey, "A cancel leaves the pill as it was")
     }
 
+    func testTryAgainAsksForTheKeyAndOpenSettingsAndACancelDoNot() throws {
+        let sync = try syncModel(try Fixture(writable: true))
+        let offline = SyncFailure(
+            SyncError.Fault(fault: .remote(failure: .unreachable(host: "github.com", detail: "timed out"))),
+            during: .send, unpushed: 1, host: "github.com")
+        XCTAssertTrue(sync.actionNeedsKey(after: offline))
+        let hostKey = SyncFailure(
+            SyncError.Fault(fault: .remote(failure: .hostKeyChanged(
+                host: "git.example", expected: ["SHA256:aaa"], presented: "SHA256:ccc", bundled: false))),
+            during: .refresh, unpushed: 0, host: "git.example")
+        XCTAssertFalse(sync.actionNeedsKey(after: hostKey))
+        XCTAssertFalse(sync.actionNeedsKey(after: SyncFailure.cancelled(during: .send, unpushed: 1)))
+    }
+
     func testSendingAsksForThePinOnceEmptiesTheQueueAndASecondSendAsksForNoPin() async throws {
         let fixture = try Fixture(writable: true)
         let model = fixture.model

@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// A primary button whose tap asks for the key: the gold disc leads it
-/// (design.md 2.1, rule 1).
+/// A button title after the gold disc: this tap asks for the key (design.md
+/// 2.1, rule 1).
 struct KeyButtonLabel: View {
     let title: String
 
@@ -11,6 +11,6 @@ struct KeyButtonLabel: View {
             Text(title)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title), needs your key")
+        .accessibilityLabel("\(title). Needs your key.")
     }
 }
