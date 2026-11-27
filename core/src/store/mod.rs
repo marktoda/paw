@@ -39,13 +39,7 @@ impl PassStore {
     /// The store kept in `state_dir`, checked out in its `repo/`.
     #[uniffi::constructor(name = "new")]
     pub fn open(state_dir: String) -> Result<Arc<Self>, PawError> {
-        let store = StoreDirs::new(Path::new(&state_dir));
-        // With the store lock shared: a checkout is never seen half done.
-        let tree = {
-            let _reading = store.shared()?;
-            StoreTree::scan(store.repo_dir())?
-        };
-        Ok(Arc::new(Self { store, tree }))
+        Self::of(StoreDirs::new(Path::new(&state_dir)))
     }
 
     pub fn home(&self) -> FolderListing {
@@ -101,16 +95,24 @@ impl PassStore {
 
     /// Whether the key whose decryption fingerprint is `card_fingerprint`
     /// (`CardInfo.decryption_fingerprint`) can open `entry`. Ask before
-    /// asking for a PIN or a touch.
+    /// asking for a PIN or a touch. Text that is no fingerprint names no
+    /// key. It comes as text, not as a [`Fingerprint`], because a failed
+    /// lift traps in a method that cannot throw.
     pub fn access(&self, entry: String, card_fingerprint: String) -> Access {
-        match self.read_entry(&entry) {
-            Ok(bytes) => crate::recipients::access(&bytes, &card_fingerprint),
-            Err(e) => Access::Unreadable { reason: e.to_string() },
-        }
+        self.key_access(&entry, Fingerprint::parse(&card_fingerprint).as_ref())
     }
 }
 
 impl PassStore {
+    pub(crate) fn of(store: StoreDirs) -> Result<Arc<Self>, PawError> {
+        // With the store lock shared: a checkout is never seen half done.
+        let tree = {
+            let _reading = store.shared()?;
+            StoreTree::scan(store.repo_dir())?
+        };
+        Ok(Arc::new(Self { store, tree }))
+    }
+
     /// The encrypted bytes of `entry` ([`read::read_entry`]), read with the
     /// store lock shared (so never a file a checkout is halfway through
     /// writing) and released before anything slow, such as asking the key
@@ -121,9 +123,9 @@ impl PassStore {
     }
 
     /// [`Self::access`] for a fingerprint already read.
-    pub(crate) fn key_access(&self, entry: &str, card: &Fingerprint) -> Access {
+    pub(crate) fn key_access(&self, entry: &str, card: Option<&Fingerprint>) -> Access {
         match self.read_entry(entry) {
-            Ok(bytes) => crate::recipients::key_access(&bytes, Some(card)),
+            Ok(bytes) => crate::recipients::key_access(&bytes, card),
             Err(e) => Access::Unreadable { reason: e.to_string() },
         }
     }

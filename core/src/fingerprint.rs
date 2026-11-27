@@ -3,8 +3,9 @@
 //!
 //! It is made where a fingerprint comes in (the card, a `.gpg-id` line, a
 //! file in the state directory, a key) and compared as it is from then on.
-//! Swift sees it as text: a `String` it hands back is read again, and one
-//! that is no fingerprint is refused.
+//! Swift sees it as text. Text Swift hands back is read again, and lifting
+//! text that is no fingerprint fails, which traps in a method that cannot
+//! throw; such a method takes a `String` and parses it itself.
 
 use std::fmt;
 

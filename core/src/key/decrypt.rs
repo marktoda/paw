@@ -58,7 +58,7 @@ pub(crate) struct Plan<'a> {
 
 impl<'a> Plan<'a> {
     /// Refuses, before the PIN or a touch, an entry the key cannot open,
-    /// by the rule Home's badge uses ([`recipients::access`]), so the two
+    /// by the rule Home's badge uses ([`recipients::key_access`]), so the two
     /// never disagree.
     pub(crate) fn new(ciphertext: &'a [u8], key: &PublicKey) -> Result<Self, KeyError> {
         let not_for_this_key = |keys: &[recipients::Recipient]| KeyError::NotForThisKey { recipients: keys.to_vec() };

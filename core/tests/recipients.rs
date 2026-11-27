@@ -11,7 +11,8 @@ use std::sync::Arc;
 
 mod key_common;
 
-use paw_core::recipients::{Access, EntryRecipients, Recipient, access, entry_recipients};
+use paw_core::fingerprint::Fingerprint;
+use paw_core::recipients::{Access, EntryRecipients, Recipient, entry_recipients, key_access};
 use paw_core::sim::SimulatedKey;
 use key_common::{PIN, decrypt_text, port_with};
 use paw_core::PawError;
@@ -36,6 +37,12 @@ fn for_card(text: &str) -> Vec<u8> {
 
 fn card_fingerprint() -> String {
     card().fingerprint_hex()
+}
+
+/// What `PassStore::access` answers for `bytes`, given the fingerprint as
+/// the text the app passes.
+fn access(bytes: &[u8], card_fingerprint: &str) -> Access {
+    key_access(bytes, Fingerprint::parse(card_fingerprint).as_ref())
 }
 
 fn key_id(fingerprint: &str) -> Recipient {

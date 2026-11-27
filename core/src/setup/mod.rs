@@ -404,12 +404,8 @@ impl SetupFlow {
         Ok(flow)
     }
 
-    pub fn repo_dir(&self) -> &Path {
-        self.store.repo_dir()
-    }
-
     fn open_store(&self) -> Result<Arc<PassStore>, SetupError> {
-        PassStore::open(self.store.state_dir().to_string_lossy().into_owned()).map_err(SetupError::from)
+        PassStore::of(self.store.clone()).map_err(SetupError::from)
     }
 
     fn known_hosts(&self) -> KnownHosts {
@@ -661,7 +657,7 @@ impl SetupFlow {
         let mut maybe = None;
         let mut sure = None;
         for entry in store.entries() {
-            match store.key_access(&entry.path, fingerprint) {
+            match store.key_access(&entry.path, Some(fingerprint)) {
                 Access::CanOpen => {
                     sure = Some(entry.path.clone());
                     break;

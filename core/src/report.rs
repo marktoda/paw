@@ -12,7 +12,7 @@ use std::sync::Arc;
 use crate::copies::CopyCache;
 use crate::github::GitHubAccount;
 use crate::key::KeyPort;
-use crate::store::tree::StoreTree;
+use crate::store::PassStore;
 
 /// The last sync, as the pill on Home last said it. A fixed word, so no
 /// text from git or the server can reach the report.
@@ -79,8 +79,8 @@ fn store_lines(state_dir: Option<&Path>, out: &mut Vec<String>) {
     let set_up = store.as_ref().is_some_and(crate::setup::is_set_up);
     out.push(format!("Store: {}", if set_up { "set up" } else { "not set up" }));
     let Some(store) = store else { return };
-    match StoreTree::scan(store.repo_dir()) {
-        Ok(tree) => out.push(format!("Passwords: {} in {} folders", tree.entries().len(), tree.folders().len())),
+    match PassStore::of(store.clone()) {
+        Ok(passwords) => out.push(format!("Passwords: {} in {} folders", passwords.entry_count(), passwords.all_folders().len())),
         Err(_) => out.push("Passwords: unreadable".into()),
     }
     match crate::sync::queue::unpushed(&store) {

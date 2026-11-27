@@ -52,6 +52,8 @@ use crate::path::{folder_and_parents, folder_of, folder_of_gpg_id, gpg_id_in, go
 use crate::store::gpg_id::{governing_gpg_id, gpg_id_text, key_digits, parse_gpg_id};
 use crate::files::{MAX_FILE_BYTES, read_bounded, write_atomic};
 use crate::lock::{Exclusive, Shared, StoreDirs};
+use crate::sync::OpenStore;
+use crate::sync::history::is_regular;
 
 const HEADER: &str = "# paw pinned recipients, version 1";
 
@@ -170,37 +172,6 @@ struct Accepted {
     text: String,
 }
 
-/// Every `.gpg-id` committed in the store at `root` (its current branch),
-/// outside hidden folders, as `(path, bytes)`.
-fn all_gpg_ids(root: &Path) -> Result<Vec<(String, Vec<u8>)>, Fault> {
-    let git = |e: git2::Error| Fault::local(format!("could not read the store: {}", e.message()));
-    let repo = crate::sync::guard::open(root)?;
-    let tree = repo.head().and_then(|h| h.peel_to_tree()).map_err(git)?;
-    let mut found = Vec::new();
-    tree.walk(git2::TreeWalkMode::PreOrder, |folder, entry| {
-        let name = entry.name().unwrap_or_default();
-        if entry.kind() == Some(git2::ObjectType::Tree) {
-            // Hidden folders (`.git`-like, `.extensions`) are not the store's.
-            return if crate::path::is_hidden(name) { git2::TreeWalkResult::Skip } else { git2::TreeWalkResult::Ok };
-        }
-        if name == crate::path::GPG_ID
-            && entry.filemode() == i32::from(git2::FileMode::Blob)
-            && let Ok(blob) = repo.find_blob(entry.id())
-        {
-            found.push((format!("{folder}{name}"), blob.content().to_vec()));
-        }
-        git2::TreeWalkResult::Ok
-    })
-    .map_err(git)?;
-    Ok(found)
-}
-
-/// The paths of every `.gpg-id` committed in the store at `root`, outside
-/// hidden folders, e.g. `.gpg-id` and `archive/.gpg-id`.
-pub(crate) fn gpg_id_paths(root: &Path) -> Result<Vec<String>, Fault> {
-    Ok(all_gpg_ids(root)?.into_iter().map(|(path, _)| path).collect())
-}
-
 /// The pinned keys, bindings and `.gpg-id` pins of one store.
 pub struct Keyring {
     store: StoreDirs,
@@ -289,6 +260,32 @@ impl Keyring {
 
     pub(crate) fn repo(&self) -> &Path {
         self.store.repo_dir()
+    }
+
+    /// Every `.gpg-id` committed in the store (its current branch), outside
+    /// hidden folders, as `(path, bytes)`, e.g. `.gpg-id` and
+    /// `archive/.gpg-id`.
+    pub(crate) fn committed_gpg_ids(&self) -> Result<Vec<(String, Vec<u8>)>, Fault> {
+        let git = |e: git2::Error| Fault::local(format!("could not read the store: {}", e.message()));
+        let OpenStore { repo, .. } = OpenStore::open(&self.store)?;
+        let tree = repo.head().and_then(|h| h.peel_to_tree()).map_err(git)?;
+        let mut found = Vec::new();
+        tree.walk(git2::TreeWalkMode::PreOrder, |folder, entry| {
+            let name = entry.name().unwrap_or_default();
+            if entry.kind() == Some(git2::ObjectType::Tree) {
+                // Hidden folders (`.git`-like, `.extensions`) are not the store's.
+                return if crate::path::is_hidden(name) { git2::TreeWalkResult::Skip } else { git2::TreeWalkResult::Ok };
+            }
+            if name == crate::path::GPG_ID
+                && is_regular(entry.filemode() as u32)
+                && let Ok(blob) = repo.find_blob(entry.id())
+            {
+                found.push((format!("{folder}{name}"), blob.content().to_vec()));
+            }
+            git2::TreeWalkResult::Ok
+        })
+        .map_err(git)?;
+        Ok(found)
     }
 
     fn save(&self, held: &Exclusive) -> Result<(), Fault> {
@@ -433,7 +430,8 @@ impl Keyring {
     /// the person reviewed; call it once the store is cloned and shown. One
     /// that is not text is left out: nothing can be saved under it.
     pub fn accept_all_recipients_at_setup(&mut self, held: &Exclusive) -> Result<(), Fault> {
-        let all = all_gpg_ids(self.repo())?
+        let all = self
+            .committed_gpg_ids()?
             .into_iter()
             .filter_map(|(path, bytes)| {
                 let text = gpg_id_text(&path, &bytes).ok()?.to_owned();

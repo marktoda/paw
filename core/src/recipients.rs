@@ -228,17 +228,11 @@ fn access_for(recipients: &EntryRecipients, card: Option<&Fingerprint>) -> Acces
 
 /// Whether the key whose decryption fingerprint is `card` can open the
 /// entry whose bytes are `bytes`.
-pub(crate) fn key_access(bytes: &[u8], card: Option<&Fingerprint>) -> Access {
+pub fn key_access(bytes: &[u8], card: Option<&Fingerprint>) -> Access {
     match entry_recipients(bytes) {
         Ok(recipients) => access_for(&recipients, card),
         Err(PawError::NotAnEntry(reason)) => Access::Unreadable { reason },
         Err(other) => Access::Unreadable { reason: other.to_string() },
     }
-}
-
-/// [`key_access`] for a fingerprint given as text, as the card reports it
-/// or a person pastes it. Text that is no fingerprint names no key.
-pub fn access(bytes: &[u8], card_fingerprint: &str) -> Access {
-    key_access(bytes, Fingerprint::parse(card_fingerprint).as_ref())
 }
 

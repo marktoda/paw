@@ -25,7 +25,7 @@ use paw_core::ssh::SshPublicKey;
 use paw_core::sync::hosts::{self, KnownHosts};
 use paw_core::remote::RefusedReason;
 use paw_core::sync::{Connection, HostKeyPin};
-use paw_core::write::LineStatus;
+use paw_core::write::{Draft, LineStatus, WriteStore};
 use support::{GitServer, git};
 
 /// A key whose slots both ask for a touch as `touch` says.
@@ -721,6 +721,34 @@ fn the_one_line_of_the_gpg_id_that_governs_the_opened_entry_is_bound() {
     assert!(matches!(keyring.line_status("owner@example.com"), LineStatus::Ready { bound: true, .. }));
     let readiness = open_setup(state.path()).write_readiness().unwrap();
     assert!(readiness.can_save, "{readiness:?}");
+}
+
+#[test]
+fn an_executable_gpg_id_is_accepted_at_setup_like_any_file() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sim = key(SimTouch::Off);
+    let server = GitServer::start(&[sim.ssh_public_key()]);
+    let mine = sim.decryption_key().unwrap();
+    let desktop = server.desktop();
+    std::fs::write(desktop.path().join(".gpg-id"), b"owner@example.com\n").unwrap();
+    std::fs::set_permissions(desktop.path().join(".gpg-id"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(desktop.path().join("bank.gpg"), encrypted_for(&[mine], "mine\n")).unwrap();
+    git(desktop.path(), &["add", "-A"]);
+    git(desktop.path(), &["update-index", "--chmod=+x", ".gpg-id"]);
+    git(desktop.path(), &["commit", "--quiet", "-m", "The store."]);
+    git(desktop.path(), &["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
+
+    let state = set_up(&sim, &server);
+
+    let writer = WriteStore::open(state.path());
+    let recipients = writer.folder_recipients("").unwrap();
+    assert!(recipients.confirmed && !recipients.changed && recipients.writable, "{recipients:?}");
+    let mut draft = Draft::new("");
+    draft.set_name("new-site");
+    draft.set_password("a new password");
+    writer.save(&draft).unwrap();
+    assert!(state.path().join("repo/new-site.gpg").is_file());
 }
 
 #[test]
