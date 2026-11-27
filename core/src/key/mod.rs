@@ -18,8 +18,7 @@ mod wire;
 
 use std::time::Duration;
 
-pub use card::{CardConnection, CardInfo, ConnectionError, KeyTouch};
-pub use decrypt::MAX_DECIPHERS;
+pub use card::{CardConnection, CardInfo, ConnectionError, KeySlot, KeyTouch};
 pub use enrolment::{KeyIdentity, KeyMismatch};
 pub use kdf::PinKdfStatus;
 pub use keylog::{KeyLogLine, clear_key_log, key_log, key_log_text};

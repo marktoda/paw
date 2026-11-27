@@ -6,7 +6,6 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 use super::{After, DecryptWork, KeyOutcome, KeyPurpose, KeyTask, KeyTaskListener, LoginPurpose, TaskFailure, TaskProgress, Work};
 use crate::key::{Halt, KeyIdentity, KeyPort};
@@ -40,7 +39,6 @@ pub(crate) fn download(
                 });
             }
         };
-        locked(&flow).note_login();
         let mut progress = |update: TransferProgress| job.progress(update.into());
         let cloned = crate::sync::clone_with_transfer(&connection, &remote, &repo, Some(&mut progress));
         drop(connection);
@@ -83,15 +81,13 @@ pub(crate) fn check_key(
 }
 
 /// A send (`login` is `Push`) or a refresh of the set-up store in
-/// `state_dir`, on one login. `last_login` is when the authentication
-/// slot last signed, for a cached touch policy.
+/// `state_dir`, on one login.
 pub(crate) fn sync(
     port: &Arc<KeyPort>,
     listener: Arc<dyn KeyTaskListener>,
     login: LoginPurpose,
     state_dir: PathBuf,
     address: StoreAddress,
-    last_login: Arc<Mutex<Option<Instant>>>,
 ) -> Arc<KeyTask> {
     let push = matches!(login, LoginPurpose::Push);
     let work: Work = Box::new(move |job, signer| {
@@ -104,9 +100,6 @@ pub(crate) fn sync(
         let stop = || job.cancelled();
         let mut progress = |update: TransferProgress| job.progress(update.into());
         let report = operation::run_until::<TaskFailure>(&remote, &signer, &repo, &holds_back, push, &stop, Some(&mut progress))?;
-        if report.signatures > 0 {
-            *locked(&last_login) = Some(Instant::now());
-        }
         Ok(KeyOutcome::Synced { report })
     });
     let expected = port.expected();

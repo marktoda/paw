@@ -340,8 +340,8 @@ private struct SyncSheetHost: View {
     /// key whose touch is cached and was touched in the last 15 seconds
     /// signs without one.
     private var touchNote: String? {
-        guard let policy = model.storeSession.keyPort.session()?.info().authenticationTouch else { return nil }
-        switch syncing.sync.touchExpectation(policy: policy) {
+        guard let session = model.storeSession.keyPort.session() else { return nil }
+        switch session.touchExpectation(slot: .authentication) {
         case .notNeeded, .needed: return nil
         case .mayBeNeeded: return "If it isn't blinking, no touch is needed."
         }

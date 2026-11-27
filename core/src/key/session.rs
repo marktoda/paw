@@ -11,7 +11,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use openpgp_card::Card;
 use openpgp_card::state::Open;
@@ -21,11 +21,13 @@ use super::kdf::{self, PinKdf};
 use super::keylog::{self, KeyLog, Sink};
 use super::apdu::{self, Verify};
 use super::task::TaskSide;
+use super::touch::{self, TouchWatch};
+use super::touch_clock::{TouchClock, TouchExpectation};
 use super::wire::Wire;
 use super::{FAST_REFUSAL, KeyError, MAX_PIN_LEN, MIN_PIN_LEN, PIN_BACKGROUND_LIMIT};
 use crate::clock::Clock;
 use crate::ssh::SshPublicKey;
-use super::card::{self, CardConnection, CardInfo};
+use super::card::{self, CardConnection, CardInfo, KeySlot};
 use super::enrolment::{KeyIdentity, KeyMismatch};
 
 /// A user PIN of a plausible length, wiped when dropped. It has no
@@ -103,6 +105,18 @@ struct State {
     forgets: u64,
     /// Tasks to wake when the session ends.
     tasks: Vec<Weak<dyn TaskSide>>,
+    /// When each slot last answered the command that may wait for a touch.
+    decryption_touch: TouchClock,
+    authentication_touch: TouchClock,
+}
+
+impl State {
+    fn touch_clock(&mut self, slot: KeySlot) -> &mut TouchClock {
+        match slot {
+            KeySlot::Decryption => &mut self.decryption_touch,
+            KeySlot::Authentication => &mut self.authentication_touch,
+        }
+    }
 }
 
 /// One connected key, from plug-in to removal.
@@ -181,6 +195,8 @@ impl KeySession {
         let ssh_key = card::card_ssh_public_key(wire.clone()).map_err(|e| read_error(&wire, e))?;
         let pin_kdf = PinKdf::read(&wire)?;
         let tries_left = info.pin_tries_left;
+        let (decryption_touch, authentication_touch) =
+            (TouchClock::new(info.decryption_touch), TouchClock::new(info.authentication_touch));
         Ok(Arc::new_cyclic(|me| Self {
             me: me.clone(),
             wire,
@@ -196,6 +212,8 @@ impl KeySession {
                 deverify_pending: false,
                 forgets: 0,
                 tasks: Vec::new(),
+                decryption_touch,
+                authentication_touch,
             }),
             card_free: Condvar::new(),
         }))
@@ -422,6 +440,48 @@ impl KeySession {
         self.lock().pin.as_ref().map(Pin::copy)
     }
 
+    /// Runs `op`, which sends `slot`'s command that may wait for a touch
+    /// (PSO:DECIPHER or INTERNAL AUTHENTICATE), in a card job: `Touch` is
+    /// shown as the slot's policy says, and the slot's touch clock notes an
+    /// answer. A failure the card explains ends in a [`Halt`]: the key went
+    /// away, refused for its security conditions ([`Self::refused`]), or
+    /// answered another status word. `Ok(Err(_))` is a failure of `op`
+    /// after the card said yes, or nothing.
+    pub(super) fn touch_op<T, E>(
+        &self,
+        task: &Arc<dyn TaskSide>,
+        slot: KeySlot,
+        op: impl FnOnce() -> Result<T, E>,
+    ) -> Result<Result<T, E>, Halt> {
+        let info = self.card_info();
+        let (policy, ins, step, name) = match slot {
+            KeySlot::Decryption => (info.decryption_touch, apdu::PSO, "decrypting", "decryption"),
+            KeySlot::Authentication => {
+                (info.authentication_touch, apdu::INTERNAL_AUTHENTICATE, "signing", "authentication")
+            }
+        };
+        let _watch = TouchWatch::arm(&self.wire, task, policy, name);
+        self.wire.clear_last();
+        let sent = Instant::now();
+        let error = match op() {
+            Ok(answer) => {
+                self.lock().touch_clock(slot).used_at(Instant::now());
+                return Ok(Ok(answer));
+            }
+            Err(error) => error,
+        };
+        if self.wire.failed() {
+            return Err(Halt::Fail(KeyError::KeyRemoved));
+        }
+        match self.wire.last() {
+            Some((last, sw)) if last == ins && apdu::security_refusal(sw) => {
+                Err(self.refused(task.as_ref(), step, sw, touch::possible(policy), sent.elapsed()))
+            }
+            Some((_, sw)) if sw != apdu::SW_OK => Err(Halt::Fail(apdu::unexpected(step, sw))),
+            _ => Ok(Err(error)),
+        }
+    }
+
     /// What it means that the card refused PSO:DECIPHER or INTERNAL
     /// AUTHENTICATE with `sw` (`6982` or `6985`) after `elapsed`.
     /// `touch_possible` says the slot's policy can ask for a touch. Called
@@ -446,7 +506,7 @@ impl KeySession {
     ///
     /// A card that cannot say whether the PIN is verified is judged on the
     /// time alone.
-    pub(crate) fn refused(&self, task: &dyn TaskSide, step: &str, sw: u16, touch_possible: bool, elapsed: Duration) -> Halt {
+    fn refused(&self, task: &dyn TaskSide, step: &str, sw: u16, touch_possible: bool, elapsed: Duration) -> Halt {
         let check = match self.wire.send(&apdu::CHECK_PIN) {
             Ok((_, check)) => check,
             Err(error) => return Halt::Fail(error),
@@ -730,6 +790,12 @@ impl KeySession {
     /// does not support is refused there, before any PIN is asked.
     pub fn pin_kdf(&self) -> super::kdf::PinKdfStatus {
         self.identity.pin_kdf.status()
+    }
+
+    /// Whether `slot`'s next use will wait for a touch, by its policy and
+    /// when it last answered on this key: a cached touch lasts a while.
+    pub fn touch_expectation(&self, slot: KeySlot) -> TouchExpectation {
+        self.lock().touch_clock(slot).expectation()
     }
 
     /// Whether paw holds the PIN, so the next task skips the PIN stage.

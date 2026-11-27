@@ -6,13 +6,10 @@
 //! signature fails.
 
 use std::sync::Arc;
-use std::time::Instant;
 
 use super::session::{CardJob, Halt, KeySession, card_error};
-use super::apdu;
 use super::task::TaskSide;
-use super::touch::{self, TouchWatch};
-use super::KeyError;
+use super::{KeyError, KeySlot};
 use crate::ssh::SshPublicKey;
 
 /// Something that can sign an SSH login: the card today, a device key later.
@@ -54,30 +51,15 @@ impl SessionSigner {
 pub(crate) fn authenticate(job: &mut CardJob<'_>, task: &Arc<dyn TaskSide>, data: &[u8]) -> Result<Vec<u8>, Halt> {
     let session = job.session();
     let wire = session.wire().clone();
-    let policy = session.card_info().authentication_touch;
     let mut tx = job.card.transaction().map_err(|e| card_error(&wire, "starting to sign", e))?;
-    let _watch = TouchWatch::arm(&wire, task, policy, "authentication");
-    wire.clear_last();
-    let sent = Instant::now();
-    let error = match tx.card().internal_authenticate(data.to_vec()) {
-        Ok(signature) if signature.len() == 64 => return Ok(signature),
-        Ok(signature) => {
-            return Err(Halt::Fail(KeyError::Reader {
-                detail: format!("expected a 64-byte signature, the key returned {} bytes", signature.len()),
-            }));
-        }
-        Err(e) => e,
-    };
-    if wire.failed() {
-        return Err(Halt::Fail(KeyError::KeyRemoved));
-    }
-    match wire.last() {
-        // A lost PIN cannot be asked for while the server waits: the
-        // signature fails with `PinForgotten` (see `sign`).
-        Some((apdu::INTERNAL_AUTHENTICATE, sw)) if apdu::security_refusal(sw) => {
-            Err(session.refused(task.as_ref(), "signing", sw, touch::possible(policy), sent.elapsed()))
-        }
-        _ => Err(Halt::Fail(card_error(&wire, "signing", error))),
+    // A lost PIN cannot be asked for while the server waits: the signature
+    // fails with `PinForgotten` (see `sign`).
+    match session.touch_op(task, KeySlot::Authentication, || tx.card().internal_authenticate(data.to_vec()))? {
+        Ok(signature) if signature.len() == 64 => Ok(signature),
+        Ok(signature) => Err(Halt::Fail(KeyError::Reader {
+            detail: format!("expected a 64-byte signature, the key returned {} bytes", signature.len()),
+        })),
+        Err(error) => Err(Halt::Fail(KeyError::Reader { detail: format!("signing: {error}") })),
     }
 }
 

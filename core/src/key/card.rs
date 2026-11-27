@@ -60,6 +60,14 @@ pub enum KeyTouch {
     Unknown,
 }
 
+/// One of the two key slots paw uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum KeySlot {
+    Decryption,
+    /// Signs SSH logins.
+    Authentication,
+}
+
 fn key_touch(tx: &mut Card<Transaction<'_>>, slot: KeyType) -> Result<KeyTouch, CardError> {
     use openpgp_card::ocard::data::TouchPolicy;
     Ok(match tx.user_interaction_flag(slot) {
