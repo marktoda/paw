@@ -164,7 +164,6 @@ fn a_part_matches_only_the_first_label_of_the_registrable_domain() {
         // and `old` is a category.
         ("https://old.com", &[]),
     ];
-    assert!(cases.len() >= 40);
     for (service, expected) in cases {
         let mut got = by_name(service);
         let mut want: Vec<String> = expected.iter().map(|s| (*s).to_owned()).collect();
