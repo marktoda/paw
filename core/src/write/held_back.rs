@@ -79,18 +79,17 @@ struct Held {
 }
 
 /// The held-back changes, oldest first, and the branch tip they were read
-/// at: everything [`held_back`], [`reencrypt_check`] and
-/// [`reencrypt_each`] say about them, read once.
+/// at (none if nothing could be held back): everything [`held_back`],
+/// [`reencrypt_check`] and [`reencrypt_each`] say about them, read once.
 struct Survey {
-    head: Oid,
+    head: Option<Oid>,
     held: Vec<Held>,
 }
 
 fn survey(reading: &Shared, store: &OpenStore) -> Result<Survey, SyncError> {
     let keyring = Keyring::open(&store.dirs)?;
-    // With nothing held back, no rewrite reads the tip.
     if !keyring.confirmed() {
-        return Ok(Survey { head: Oid::ZERO_SHA1, held: Vec::new() });
+        return Ok(Survey { head: None, held: Vec::new() });
     }
     let (head, files) = waiting_files(reading, store)?;
     let mut held = Vec::new();
@@ -127,7 +126,7 @@ fn survey(reading: &Shared, store: &OpenStore) -> Result<Survey, SyncError> {
         };
         held.push(Held { item, path: file.path, ciphertext: file.ciphertext, blob: file.blob, look });
     }
-    Ok(Survey { head, held })
+    Ok(Survey { head: Some(head), held })
 }
 
 /// Why [`reencrypt_each`] left a held-back change as it was. It stays held
@@ -303,7 +302,7 @@ fn reencrypt_each_until<S>(
             survey(&reading, &OpenStore::open(dirs)?)?
         };
         let next = held.into_iter().find(|held| matches!(held.look, Look::Ready) && !skipped.contains_key(&(held.path.clone(), held.blob)));
-        let Some(Held { item, path, blob, ciphertext: bytes, .. }) = next else { break };
+        let (Some(head), Some(Held { item, path, blob, ciphertext: bytes, .. })) = (head, next) else { break };
         if written.contains(&(path.clone(), blob)) {
             return Err(Fault::local("a change paw re-encrypted is still held back; nothing was sent").into());
         }
