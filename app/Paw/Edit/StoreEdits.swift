@@ -124,7 +124,9 @@ final class StoreEdits {
         confirmingDelete = nil
         let deleted: Deleted
         do {
-            deleted = try BackgroundTime.run("Delete") { try writer.delete(entry: session.ref.path, copies: copies.cache) }
+            deleted = try BackgroundTime.run("Delete") {
+                try writer.delete(entry: session.ref.path, copies: copies.cache)
+            }
         } catch let error as WriteError {
             let words = editProblem(error, folder: session.ref.folder)
             requests.send(.notice(Notice(problem: words.problem, nextStep: words.nextStep)))
