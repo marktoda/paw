@@ -193,7 +193,7 @@ final class GitHubTests: PawUITestCase {
         expectAbsent("key-sheet-purpose", "Checking with the GitHub sign-in should never ask for the key")
         expectAbsent("pin-field", "Checking with the GitHub sign-in should never ask for the PIN")
         snapshot("summary")
-        tap("sync-pill")
+        tapWhenHittable(expect("sync-pill"), "The sync pill")
         expect("sync-sheet")
         let check = expect("sync-check")
         XCTAssertFalse(check.label.contains("Needs your key"), "Checking with the sign-in has no key disc")
