@@ -384,6 +384,8 @@ final class SyncModel {
                 return
             }
             if let error = error as? SyncError {
+                // It went to GitHub over HTTPS, whatever host the store's
+                // SSH address names (ssh.github.com, say).
                 failure = SyncFailure(error, during: .refresh, unpushed: unpushed, host: "github.com")
             } else {
                 failure = SyncFailure.signInCheckFailed(error, unpushed: unpushed)

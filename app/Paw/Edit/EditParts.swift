@@ -7,10 +7,9 @@ struct InlineConfirmRow: View {
     let detail: String
     let confirmTitle: String
     let cancelTitle: String
-    /// `<identifier>-confirm` and `<identifier>-cancel` for the buttons.
+    /// `<identifier>-question` for the question, `<identifier>-confirm` and
+    /// `<identifier>-cancel` for the buttons.
     let identifier: String
-    /// The question's own identifier, where it isn't `<identifier>-question`.
-    var questionIdentifier: String? = nil
     let onConfirm: () -> Void
     let onCancel: () -> Void
 
@@ -29,7 +28,7 @@ struct InlineConfirmRow: View {
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isHeader)
-            .accessibilityIdentifier(questionIdentifier ?? "\(identifier)-question")
+            .accessibilityIdentifier("\(identifier)-question")
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: PawMetrics.Spacing.s) { buttons }
                 VStack(spacing: PawMetrics.Spacing.s) { buttons }
@@ -78,7 +77,7 @@ struct RecipientsFooter: View {
             if let problem = recipients.problem?.words(folder: folder) {
                 ErrorRow(
                     kind: .warning, problem: problem.problem, nextStep: problem.nextStep,
-                    actionTitle: problem.reviewFolder == nil ? nil : "Review", action: onReview)
+                    actionTitle: problem.offersReview ? "Review" : nil, action: onReview)
             } else {
                 HStack(alignment: .firstTextBaseline, spacing: PawMetrics.Spacing.s) {
                     Image(systemName: "person.badge.key")
@@ -184,8 +183,12 @@ struct RecipientsReviewScreen: View {
         .listStyle(.insetGrouped)
         .navigationTitle("Who can open \(recipientsPlace(folder))")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            recipients = Result { try edits.writer.folderRecipients(folder: folder) }
+        .task {
+            // It takes the store's lock: off the main thread.
+            let writer = edits.writer, folder = folder
+            recipients = await Task.detached(priority: .userInitiated) {
+                Result { try writer.folderRecipients(folder: folder) }
+            }.value
         }
     }
 

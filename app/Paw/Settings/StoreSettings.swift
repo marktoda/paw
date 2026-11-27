@@ -95,7 +95,7 @@ struct RemoveStoreSection: View {
                     InlineConfirmRow(
                         question: "Remove this store?", detail: warning,
                         confirmTitle: "Remove", cancelTitle: "Keep it",
-                        identifier: "settings-remove", questionIdentifier: "settings-remove-warning",
+                        identifier: "settings-remove",
                         onConfirm: { remove(setUp) },
                         onCancel: { confirmingRemove = false })
                 } else {

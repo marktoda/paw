@@ -5,7 +5,7 @@ struct EditProblem: Equatable {
     let problem: String
     let nextStep: String
     /// "Review who can open this folder" applies.
-    var reviewFolder: String? = nil
+    var offersReview = false
 }
 
 /// A refused write in one sentence: `editProblem`'s first line.
@@ -77,7 +77,7 @@ extension FolderProblem {
         case .changed:
             return EditProblem(
                 problem: whoCanOpenChanged(folder),
-                nextStep: reviewBeforeSaving(here: true), reviewFolder: folder)
+                nextStep: reviewBeforeSaving(here: true), offersReview: true)
         case .notConfirmed:
             return EditProblem(
                 problem: "paw hasn't confirmed who can open this store",

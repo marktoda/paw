@@ -337,7 +337,7 @@ private struct EntryFormView: View {
 
     /// What saving does to the code the entry has: a key typed replaces it.
     private var otpState: String {
-        if !form.setupKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if form.typesSetupKey {
             return "Replaced when you save"
         }
         return form.removingOneTimeCode ? "Removed when you save" : "Has a one-time code"
@@ -405,7 +405,7 @@ private struct EntryFormView: View {
             if let problem = form.saveProblem {
                 ErrorRow(
                     kind: .error, problem: problem.problem, nextStep: problem.nextStep,
-                    actionTitle: problem.reviewFolder == nil ? nil : "Review",
+                    actionTitle: problem.offersReview ? "Review" : nil,
                     action: { reviewing = true })
                     .pawListRow()
                     .id("footer")

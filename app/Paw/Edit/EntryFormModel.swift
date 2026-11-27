@@ -75,6 +75,11 @@ final class EntryFormModel {
     /// The entry's one-time code goes when it is saved.
     private(set) var removingOneTimeCode = false
 
+    /// A setup key is typed: it replaces the code, Remove or not.
+    var typesSetupKey: Bool {
+        !setupKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     /// The generator's options. Length and the two switches are the ones
     /// offered; the rest stay as the core's default policy has them.
     var policy: PasswordPolicy = defaultPasswordPolicy()
@@ -86,6 +91,8 @@ final class EntryFormModel {
     private(set) var fieldProblems: [UUID: String] = [:]
     /// Fields typed in, so a message is not shown before anything was typed.
     private(set) var touched: Set<Field> = []
+    /// What a refused save named: its messages show, typed in or not.
+    private var namedBySave: Set<DraftField> = []
     private(set) var recipients: Result<FolderRecipients, Error>?
     var saveProblem: EditProblem?
     var confirmingDiscard = false
@@ -297,9 +304,9 @@ final class EntryFormModel {
             setIfChanged(.password, password, original.password) { draft.setPassword(password: $0) }
         }
         applyFields(to: draft)
-        // One slot in the draft, replaced each time: a key typed wins over
-        // Remove, and a blank one leaves the line as it was.
-        if removingOneTimeCode && setupKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        // One slot in the draft, replaced each time: a blank setup key
+        // leaves the line as it was.
+        if removingOneTimeCode && !typesSetupKey {
             draft.removeOneTimeCode()
         } else {
             draft.setOneTimeCode(setup: setupKey)
@@ -415,7 +422,6 @@ final class EntryFormModel {
         key.trimmingCharacters(in: .whitespaces).lowercased()
     }
 
-    /// What the core says is wrong with `field`.
     func problem(for field: DraftField) -> String? {
         problems.first { $0.field == field }?.message
     }
@@ -423,7 +429,9 @@ final class EntryFormModel {
     /// What the core says is wrong with `field`, once it was typed in or a
     /// refused save named it.
     func shownProblem(_ field: Field) -> String? {
-        guard touched.contains(field), let named = draftField(field) else { return nil }
+        guard let named = draftField(field), touched.contains(field) || namedBySave.contains(named) else {
+            return nil
+        }
         return problem(for: named)
     }
 
@@ -441,14 +449,6 @@ final class EntryFormModel {
         }
     }
 
-    /// The fields the core's `field` names: an extra field's key can be in
-    /// more than one row.
-    private func fields(named field: DraftField) -> [Field] {
-        let all: [Field] = [.name, .folder, .username, .password, .website, .notes, .setupKey]
-            + extraFields.map { .extra($0.id) }
-        return all.filter { draftField($0) == field }
-    }
-
     /// Something was typed or changed: Cancel then asks first.
     var hasChanges: Bool {
         name != original.name || effectiveFolder != original.folder || username != original.username
@@ -459,7 +459,7 @@ final class EntryFormModel {
                     : field.originalKey != field.key || field.originalValue != field.value
             }
             || openedFieldKeys.count != extraFields.filter { $0.originalKey != nil }.count
-            || !setupKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || removingOneTimeCode
+            || typesSetupKey || removingOneTimeCode
     }
 
     /// Whether the folder can be saved in now; `nil` while not known or
@@ -493,7 +493,7 @@ final class EntryFormModel {
         } catch let error as WriteError {
             if case .Invalid(let found) = error {
                 problems = found
-                found.forEach { touched.formUnion(fields(named: $0.field)) }
+                namedBySave.formUnion(found.map(\.field))
             } else if case .AlreadyExists = error {
                 touched.insert(.name)
                 problems = [DraftProblem(field: .name, message: editProblem(error, folder: effectiveFolder).problem)]
