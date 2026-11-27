@@ -96,15 +96,6 @@ enum KeyTaskEnd<Step: KeyStepError> {
             return nil
         }
     }
-
-    /// It failed, and not on the key's answer: the workflow's own step,
-    /// the reader, or paw itself.
-    var failedNotByKey: Bool {
-        switch self {
-        case .stepFailed, .failed(.Reader), .failed(.Internal): true
-        case .done, .failed, .cancelled: false
-        }
-    }
 }
 
 extension KeyTaskState {

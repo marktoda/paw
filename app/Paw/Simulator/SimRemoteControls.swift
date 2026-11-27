@@ -160,10 +160,6 @@ final class SimRemoteHandle: @unchecked Sendable {
         host?.setDropMidClone(drop: true)
     }
 
-    var droppingNext: Bool {
-        lock.withLock { dropsNext }
-    }
-
     /// A sync failed: a dropped connection drops only once.
     func syncFailed() {
         let wasDropping: Bool = lock.withLock {
