@@ -37,8 +37,8 @@ extension View {
         }
     }
 
-    /// Lists and scroll views keep to the readable width on iPad (560pt,
-    /// design-language 3), with the ground filling the rest.
+    /// Lists and scroll views keep to the readable width on iPad
+    /// (design-language 3), with the ground filling the rest.
     @MainActor
     func padReadableWidth() -> some View {
         modifier(PadReadableWidth())

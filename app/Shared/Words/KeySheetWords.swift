@@ -86,8 +86,8 @@ extension KeySheetStage {
         }
     }
 
-    /// How many PIN tries are left, said before any input whenever fewer
-    /// than 3 remain.
+    /// How many PIN tries are left, said before any input when fewer than
+    /// `KeySheetWords.warnsBelowTries` remain.
     var triesLine: String? {
         guard let triesLeft, triesLeft < KeySheetWords.warnsBelowTries else { return nil }
         return KeySheetWords.triesLeft(triesLeft, afterWrongPin: followsRefusedPin)

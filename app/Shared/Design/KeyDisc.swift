@@ -4,11 +4,11 @@ import SwiftUI
 /// Flat, always with its rim. Draw it only where a tap will ask for the key.
 struct KeyDisc: View {
     enum Size {
-        /// 14pt, trailing mark on a row.
+        /// Trailing mark on a row.
         case marker
-        /// 36pt, leading mark on a banner.
+        /// Leading mark on a banner.
         case banner
-        /// 92pt, the key sheet.
+        /// The key sheet.
         case hero
 
         var diameter: CGFloat {

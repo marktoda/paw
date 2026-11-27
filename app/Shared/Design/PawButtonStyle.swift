@@ -3,7 +3,6 @@ import SwiftUI
 /// The two capsule buttons. A screen has at most one primary button.
 struct PawButtonStyle: ButtonStyle {
     enum Kind {
-        /// The one primary button on a screen.
         case primary
         case secondary
         /// The step that loses something. It asks before it acts.

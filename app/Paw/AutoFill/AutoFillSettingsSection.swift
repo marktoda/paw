@@ -2,7 +2,7 @@ import AuthenticationServices
 import SwiftUI
 
 /// Settings › AutoFill: whether paw is turned on as a password provider,
-/// and the way to turn it on. App target only.
+/// and the way to turn it on.
 struct AutoFillSettingsSection: View {
     /// The set-up store's suggestions; `nil` for a fixture.
     let suggestions: AutoFillSuggestions?

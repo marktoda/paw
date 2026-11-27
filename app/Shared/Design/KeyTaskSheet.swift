@@ -3,7 +3,6 @@ import SwiftUI
 /// The key sheet for the task a `KeyTaskDriver` follows.
 struct KeyTaskSheet: View {
     @Bindable var driver: KeyTaskDriver
-    /// What the key is for, e.g. "Open Fastmail".
     let purpose: String
     var note: String? = nil
     let onCancel: () -> Void

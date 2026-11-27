@@ -29,12 +29,8 @@ enum AutoFillOpening: @unchecked Sendable {
 }
 
 /// Opens the store paw set up, for the extension. Reads only: no `Setup`
-/// (which creates folders), no sync, no GitHub, no network. The files
-/// it writes besides a Face ID copy are `site-pairings.json`, after a
-/// confirmed fill by name, and `one-time-codes.json`, whether an entry it
-/// filled has a code, while the owner has that list on (each written by
-/// rename, safe for two processes). What the core
-/// loads: one walk of the store's folder names (`PassStore`), the enrolled
+/// (which creates folders), no sync, no GitHub, no network; what it writes
+/// is listed at `StoreLocation`. What the core loads: one walk of the store's folder names (`PassStore`), the enrolled
 /// key's identity (`enrolled-key`, a few lines), and, only when a list is
 /// shown, the copies' small metadata files. Nothing is decrypted.
 enum StoreForAutoFill {
