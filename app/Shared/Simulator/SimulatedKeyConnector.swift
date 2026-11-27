@@ -36,13 +36,6 @@ final class SimulatedKeyConnector: KeyConnector, @unchecked Sendable {
 
     let key: SimulatedKey
 
-    /// "Let the next open finish after Cancel": the next task that
-    /// finishes while the sheet follows it ends as if Cancel had been
-    /// tapped just as the card answered, past the point where the core can
-    /// stop it. The sheet closes, and the task's end goes where a late end
-    /// goes. The simulated key cannot be cancelled that late by itself.
-    @MainActor var finishesNextAfterCancel = false
-
     private let connection: @Sendable () -> CardConnection
     private let lock = NSLock()
     private var attachFailuresLeft: Int
@@ -112,22 +105,6 @@ final class SimulatedKeyConnector: KeyConnector, @unchecked Sendable {
             attachFailuresLeft -= 1
             return true
         }
-    }
-
-    /// `job` as the sheet runs it on this key: with "finish the next open
-    /// after Cancel" set, its next end that is done goes where a late end
-    /// goes, and the sheet closes.
-    @MainActor func adapted<Step>(_ job: KeyJob<Step>) -> KeyJob<Step> {
-        var job = job
-        let ended = job.ended
-        let letGo = job.letGo
-        job.ended = { [weak self] end in
-            guard let self, self.finishesNextAfterCancel, case .done = end else { return ended(end) }
-            self.finishesNextAfterCancel = false
-            letGo(end)
-            return .close
-        }
-        return job
     }
 }
 
