@@ -15,7 +15,7 @@ use std::sync::{Arc, OnceLock, Weak};
 
 use key_common::{Driver, PIN, decrypt, finish, signer};
 use paw_core::sim::remote::steps;
-use paw_core::ffi::sync::StoreSync;
+use paw_core::sync::StoreSync;
 use paw_core::key::{KeyError, KeyPort};
 use paw_core::task::{KeyOutcome, KeyTask, KeyTaskListener, KeyTaskState, TaskProgress};
 use paw_core::sim::copies::SimClock;
@@ -25,7 +25,7 @@ use paw_core::sync::queue;
 use paw_core::write::held_back::{self, LeftHeldBack, LeftReason, ReencryptReport};
 use paw_core::sync::{ChangeKind, Connection};
 use paw_core::files::layout::StoreDirs;
-use paw_core::write::{EntryDraft, Keyring, WriteStore};
+use paw_core::write::{Draft, Keyring, WriteStore};
 use support::{GitServer, git, move_entry};
 
 /// A fingerprint no key paw has is for.
@@ -73,7 +73,7 @@ impl World {
     }
 
     fn save(&self, folder: &str, name: &str, password: &str) {
-        let mut draft = EntryDraft::new(folder);
+        let mut draft = Draft::new(folder);
         draft.set_name(name);
         draft.set_password(password);
         WriteStore::open(self.state.path()).save(&draft).unwrap();

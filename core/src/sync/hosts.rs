@@ -19,7 +19,7 @@
 use std::path::{Path, PathBuf};
 
 use super::address::StoreAddress;
-use super::transport::{HostKeyPin, PresentedHostKey, Remote};
+use super::transport::{HostKeyPin, PresentedHostKey, Remote, ServerKey};
 use crate::PawError;
 use crate::fault::Fault;
 use crate::remote::{PortFallback, RemoteFailure};
@@ -165,6 +165,16 @@ fn refuse_if_bundled(host: &str, port: u16) -> Result<(), Fault> {
     Ok(())
 }
 
+/// The store's server and the keys paw accepts from it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ServerKeys {
+    pub host: String,
+    pub port: u16,
+    /// The keys ship with paw; they cannot be forgotten.
+    pub bundled: bool,
+    pub keys: Vec<ServerKey>,
+}
+
 /// Host keys confirmed by the person, one host per line:
 /// `host port algorithm base64`, in the store's state directory.
 pub struct KnownHosts {
@@ -237,6 +247,18 @@ impl KnownHosts {
         }
     }
 
+    /// The server `address` connects to, and the keys it must present: none
+    /// while it is not confirmed.
+    pub fn server_keys(&self, address: &StoreAddress) -> Result<ServerKeys, Fault> {
+        let (host, port) = (address.connect_host(), address.port);
+        Ok(ServerKeys {
+            host: host.to_owned(),
+            port,
+            bundled: is_bundled(host, port),
+            keys: self.pin(host, port)?.map(|pin| pin.described()).unwrap_or_default(),
+        })
+    }
+
     /// The remote at `address`, held to its host's keys; `None` while the
     /// host is not confirmed.
     pub fn remote(&self, address: &StoreAddress) -> Result<Option<Remote>, Fault> {
@@ -268,16 +290,17 @@ impl KnownHosts {
     }
 
     /// The person compared the fingerprint `checked` and trusts it: pins
-    /// the key `presented` gives, if it is the one with that fingerprint.
-    /// `Ok(false)`, pinning nothing, if it is another. Refused, before
-    /// `presented` is asked, for a host whose keys ship with paw.
+    /// the key `presented` gives for the host `address` connects to, if it
+    /// is the one with that fingerprint. `Ok(false)`, pinning nothing, if
+    /// it is another. Refused, before `presented` is asked, for a host
+    /// whose keys ship with paw.
     pub fn trust(
         &self,
-        host: &str,
-        port: u16,
+        address: &StoreAddress,
         presented: impl FnOnce() -> Result<PresentedHostKey, Fault>,
         checked: &str,
     ) -> Result<bool, Fault> {
+        let (host, port) = (address.connect_host(), address.port);
         refuse_if_bundled(host, port)?;
         let presented = presented()?;
         if presented.fingerprint() != checked.trim() {
@@ -287,11 +310,12 @@ impl KnownHosts {
         Ok(true)
     }
 
-    /// Forgets the key pinned for `host`: Settings › Store › Forget server
-    /// key, or "I expected this change" in setup. Refused for a host whose
-    /// keys ship with paw: a different key from one of them is always
-    /// refused.
-    pub fn forget(&self, host: &str, port: u16) -> Result<(), Fault> {
+    /// Forgets the key pinned for the host `address` connects to: Settings
+    /// › Store › Forget server key, or "I expected this change" in setup.
+    /// Refused for a host whose keys ship with paw: a different key from
+    /// one of them is always refused.
+    pub fn forget(&self, address: &StoreAddress) -> Result<(), Fault> {
+        let (host, port) = (address.connect_host(), address.port);
         refuse_if_bundled(host, port)?;
         let _held = self.lock()?;
         let mut entries = self.read()?;

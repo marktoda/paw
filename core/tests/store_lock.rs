@@ -20,8 +20,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use key_common::{Driver, finish, port_with, signer_with};
 use paw_core::sim::remote::steps;
-use paw_core::ffi::sync::StoreSync;
-use paw_core::ffi::sync::Setup;
+use paw_core::sync::StoreSync;
+use paw_core::setup::Setup;
 use paw_core::task::{KeyOutcome, KeyTaskState};
 use paw_core::github::{Endpoints, GitHubAccount, RepositoryList, SignInState, TokenVault, VaultError};
 use paw_core::files::layout::StoreDirs;
@@ -33,7 +33,7 @@ use paw_core::sim::remote::SimRemote;
 use paw_core::sim::{SimTouch, SimulatedKey};
 use paw_core::store::PassStore;
 use paw_core::sync::{self, operation, queue};
-use paw_core::write::{EntryDraft, WriteError, WriteStore};
+use paw_core::write::{Draft, WriteError, WriteStore};
 
 const PIN: &str = "123456";
 
@@ -238,7 +238,7 @@ impl World {
 }
 
 fn save_in(writer: &WriteStore, name: &str) -> Result<paw_core::write::Saved, WriteError> {
-    let mut draft = EntryDraft::new("lock");
+    let mut draft = Draft::new("lock");
     draft.set_name(name);
     draft.set_password(&format!("pw-{name}"));
     writer.save(&draft)
@@ -248,7 +248,7 @@ fn save_in(writer: &WriteStore, name: &str) -> Result<paw_core::write::Saved, Wr
 fn move_in(writer: &WriteStore, from: &str, to: &str) -> Result<paw_core::write::Saved, WriteError> {
     let doc = paw_core::entry::EntryDoc::parse(format!("pw-{from}\n").into_bytes()).unwrap();
     let file = std::fs::read(writer.dirs().repo_dir().join(format!("lock/{from}.gpg"))).unwrap_or_default();
-    let mut draft = EntryDraft::edit(&format!("lock/{from}"), doc, paw_core::files::content_id(&file));
+    let mut draft = Draft::edit(&format!("lock/{from}"), doc, paw_core::files::content_id(&file));
     draft.set_name(to);
     writer.save(&draft)
 }
@@ -847,9 +847,9 @@ fn every_mutating_entry_point_returns_even_when_its_thread_holds_the_lock() {
             note("integrate", steps::integrate(&repo).map(drop).map_err(|e| text(&e)));
             note("accept_replaced_remote", sync::accept_replaced_remote(&repo, true).map(drop).map_err(|e| text(&e)));
             let hosts = paw_core::sync::hosts::KnownHosts::of(w.state());
-            note("known_hosts.forget", hosts.forget("elsewhere.example", 22).map_err(|e| text(&e)));
+            note("known_hosts.forget", hosts.forget(&paw_core::sync::address::StoreAddress::parse("git@elsewhere.example:store.git").unwrap().address).map_err(|e| text(&e)));
 
-            let ffi_writer = paw_core::ffi::write::StoreWriter::open(w.state().to_string_lossy().into_owned());
+            let ffi_writer = paw_core::write::StoreWriter::open(w.state().to_string_lossy().into_owned());
             note("accept_recipients", ffi_writer.accept_recipients(String::new()).map_err(|e| text(&e)));
             note("pin_as_card", w.key.clone().pin_as_card(w.state().to_string_lossy().into_owned()).map(drop).map_err(|e| text(&e)));
             let sync_api = StoreSync::open(w.state().to_string_lossy().into_owned()).unwrap();

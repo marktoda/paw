@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use key_common::*;
-use paw_core::ffi::sync::Setup;
+use paw_core::setup::Setup;
 use paw_core::key::KeyError;
 use paw_core::task::LoginPurpose;
 use paw_core::task::KeyTaskState;

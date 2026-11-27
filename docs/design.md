@@ -521,7 +521,6 @@ core/                 paw-core
     github/           GitHub sign-in and repositories
     files/            the state directory's files
     entry/, entry.rs  an entry's text and an opened entry
-    ffi/              UniFFI exports
     sim/, sim.rs      feature `sim`: simulated key, keystore, clock, git host, fixture store
     bin/              uniffi-bindgen
   tests/

@@ -220,7 +220,7 @@ pub fn move_entry(
     };
     let before = std::fs::read(store.dirs().repo_dir().join(format!("{from}.gpg"))).ok();
     let id = paw_core::files::content_id(before.as_deref().unwrap_or_default());
-    let mut draft = paw_core::write::EntryDraft::edit(from, doc, id);
+    let mut draft = paw_core::write::Draft::edit(from, doc, id);
     let (folder, name) = to.rsplit_once('/').unwrap_or(("", to));
     draft.set_folder(folder);
     draft.set_name(name);

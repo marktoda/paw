@@ -15,8 +15,8 @@ use std::time::Duration;
 
 use paw_core::copies::{CopyCache, CopyStatus};
 use paw_core::github::GitHubAccount;
-use paw_core::ffi::sync::StoreSync;
-use paw_core::ffi::write::StoreWriter;
+use paw_core::sync::StoreSync;
+use paw_core::write::StoreWriter;
 use paw_core::github::{TokenVault, VaultError};
 use paw_core::key::KeyPort;
 use paw_core::report::{DiagnosticsFacts, LastSyncState, diagnostics_text};
@@ -305,8 +305,7 @@ fn bundled_server_keys_are_typed_and_cannot_be_forgotten() {
     let keys = sync.server_keys().unwrap();
     assert_eq!(keys.host, "github.com");
     assert!(keys.bundled);
-    let shown: Vec<(String, String)> = keys.keys.iter().map(|k| (k.key_type.clone(), k.fingerprint.clone())).collect();
-    assert_eq!(shown, paw_core::sync::hosts::bundled("github.com", 22).unwrap().described());
+    assert_eq!(keys.keys, paw_core::sync::hosts::bundled("github.com", 22).unwrap().described());
     let error = sync.forget_host_key().unwrap_err();
     assert!(
         matches!(

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use key_common::{Driver, PIN, WAIT, finish, is_touch, port_with};
-use paw_core::ffi::sync::Setup;
+use paw_core::setup::Setup;
 use paw_core::key::{KeyError, KeyPort, KeySlot, KeyTouch};
 use paw_core::task::KeyTaskState;
 use paw_core::sync::address::{AddressProblem, StoreAddress};
@@ -638,7 +638,7 @@ fn a_known_hosts_entry_is_only_replaced_by_forgetting_it() {
     known.add("git.example.org", 22, &support::ed25519_host_key()).unwrap();
 
     assert!(known.add("git.example.org", 22, &support::ecdsa_host_key()).is_err());
-    known.forget("git.example.org", 22).unwrap();
+    known.forget(&StoreAddress::parse("git@git.example.org:store.git").unwrap().address).unwrap();
     known.add("git.example.org", 22, &support::ecdsa_host_key()).unwrap();
     let pin = known.lookup("git.example.org", 22).unwrap().unwrap();
     assert_eq!(pin.fingerprints(), HostKeyPin::parse(&support::ecdsa_host_key()).unwrap().fingerprints());

@@ -19,11 +19,11 @@
 //! step ([`FollowUp`]). The commits stand whatever happens to those; what
 //! failed is returned with the outcome.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::draft::{EntryDraft, Original, folder_problems, name_problems};
+use super::draft::{Draft, EntryDraft, Original, folder_problems, name_problems};
 use super::keyring::{FolderRecipients, Keyring};
 use super::{WriteError, author, encrypt};
 use crate::PawError;
@@ -225,7 +225,7 @@ impl WriteStore {
     /// Saves `draft`: encrypts to every recipient of its folder and commits.
     /// Returns what was done, with the entry as saved, open. No key, PIN or
     /// network is involved.
-    pub fn save(&self, draft: &EntryDraft) -> Result<Saved, WriteError> {
+    pub fn save(&self, draft: &Draft) -> Result<Saved, WriteError> {
         let Committed { entry, previous, content_id, commits, doc } = self.save_commits(draft)?;
         let mut follow_ups = FollowUps::default();
         if let Some(previous) = &previous {
@@ -252,7 +252,7 @@ impl WriteStore {
         })
     }
 
-    fn save_commits(&self, draft: &EntryDraft) -> Result<Committed, WriteError> {
+    fn save_commits(&self, draft: &Draft) -> Result<Committed, WriteError> {
         let held = self.exclusive()?;
         let held = &held;
         let store = OpenStore::open(&self.store)?;
@@ -354,4 +354,68 @@ impl WriteStore {
         Ok(Deleted { commit, follow_up_failures: follow_ups.0 })
     }
 
+}
+
+/// Writing to the store set up in a state directory. Every call works
+/// without the key and without the network.
+#[derive(uniffi::Object)]
+pub struct StoreWriter {
+    store: WriteStore,
+}
+
+#[uniffi::export]
+impl StoreWriter {
+    #[uniffi::constructor]
+    pub fn open(state_dir: String) -> Arc<Self> {
+        Arc::new(Self { store: WriteStore::open(&PathBuf::from(state_dir)) })
+    }
+
+    /// A blank "New entry" form in `folder`.
+    pub fn new_draft(&self, folder: String) -> Arc<EntryDraft> {
+        EntryDraft::wrap(Draft::new(&folder))
+    }
+
+    /// An edit form for `entry`, filled from `opened` (which must be that
+    /// entry). Saving is refused if the file changed since it was opened.
+    pub fn edit_draft(&self, opened: Arc<OpenedEntry>, entry: String) -> Result<Arc<EntryDraft>, WriteError> {
+        let doc = opened.duplicate_doc().ok_or_else(|| WriteError::from(crate::fault::Fault::local("the entry was closed")))?;
+        let content_id = opened.content_id().to_vec();
+        Ok(EntryDraft::wrap(Draft::edit(&entry, doc, content_id)))
+    }
+
+    /// Saves `draft` as one commit (two if an edit also moved it). With
+    /// `copies`: an entry that had a live Face ID copy gets it re-sealed with
+    /// the new text for the time it had left; a new entry gets a copy for
+    /// `new_copy_ttl_secs` (0 keeps none).
+    pub fn save(
+        &self,
+        draft: Arc<EntryDraft>,
+        copies: Option<Arc<CopyCache>>,
+        new_copy_ttl_secs: u32,
+    ) -> Result<Saved, WriteError> {
+        let store = self.store.with_copies(copies, Duration::from_secs(new_copy_ttl_secs.into()));
+        store.save(&draft.draft())
+    }
+
+    /// Deletes `entry` (it stays in the git history) and wipes its copy.
+    pub fn delete(&self, entry: String, copies: Option<Arc<CopyCache>>) -> Result<Deleted, WriteError> {
+        self.store.with_copies(copies, Duration::ZERO).delete(&entry)
+    }
+
+    /// Which keys can open entries in `folder`, and whether paw can save
+    /// there (`writable`). For the folder picker and the recipients screen.
+    pub fn folder_recipients(&self, folder: String) -> Result<FolderRecipients, WriteError> {
+        self.store.folder_recipients(&folder)
+    }
+
+    /// "Who can open these passwords"; see [`WriteStore::recipient_scopes`].
+    pub fn recipient_scopes(&self) -> Result<Vec<super::RecipientScope>, WriteError> {
+        self.store.recipient_scopes()
+    }
+
+    /// After "Who can open … changed": accepts the folder's current
+    /// `.gpg-id`.
+    pub fn accept_recipients(&self, folder: String) -> Result<(), WriteError> {
+        self.store.accept_recipients(&folder)
+    }
 }

@@ -7,16 +7,15 @@
 //! [`SetupFlow::open`] picks up where it stopped; a download that was
 //! interrupted is removed and starts again.
 
-
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::files::values::{self, Values};
 use crate::fingerprint::Fingerprint;
 use crate::files::layout::StoreDirs;
 use crate::files::layout;
 use crate::key::enrolment::save_enrolment;
-use crate::key::{CardInfo, KeyError, KeyIdentity, KeyTouch, PinKdfStatus};
+use crate::key::{CardInfo, KeyError, KeyIdentity, KeyPort, KeySession, KeyTouch, PinKdfStatus};
 use crate::recipients::Access;
 use crate::ssh::SshPublicKey;
 use crate::store::PassStore;
@@ -25,7 +24,10 @@ use crate::sync::hosts::{self, KnownHosts};
 use crate::sync::{self, Cloned, Connection, PresentedHostKey};
 use crate::write::{Keyring, LineStatus};
 use crate::fault::Fault;
+use crate::locked;
 use crate::remote::{PortFallback, RemoteFailure};
+use crate::task::workflows;
+use crate::task::{KeyTask, KeyTaskListener};
 
 /// The key as setup shows it on "Your key". Public data only.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -568,7 +570,7 @@ impl SetupFlow {
         let Some((address, key)) = self.unconfirmed.take() else {
             return Err(SetupError::WrongStep { message: "no host key is waiting to be confirmed".into() });
         };
-        let trusted = self.known_hosts().trust(address.connect_host(), address.port, || Ok(key.clone()), fingerprint)?;
+        let trusted = self.known_hosts().trust(&address, || Ok(key.clone()), fingerprint)?;
         if !trusted {
             let host = address.host.clone();
             self.unconfirmed = Some((address, key));
@@ -584,7 +586,7 @@ impl SetupFlow {
     /// Refused for a host whose keys ship with paw ([`KnownHosts::forget`]).
     pub fn forget_host_key(&mut self) -> Result<SetupState, SetupError> {
         let reached = self.reached(&[Step::CheckHost, Step::NeedPin], "forget the host's key")?;
-        self.known_hosts().forget(reached.address.connect_host(), reached.address.port)?;
+        self.known_hosts().forget(&reached.address)?;
         self.go(Saved::CheckHost(reached))
     }
 
@@ -762,6 +764,104 @@ impl SetupFlow {
             decryption_fingerprint: Some(key.decryption.to_string()),
             authentication_fingerprint: None,
         })
+    }
+}
+
+/// First-run setup as the setup screens drive it: [`SetupFlow`] behind a
+/// lock. Each call is one step and returns the state to show next.
+///
+/// The steps that need the key run as a [`KeyTask`] on the [`KeyPort`]'s
+/// session (the `*_with_key` calls), as [`crate::sync::StoreSync`]'s do;
+/// one that fails ends `SetupFailed` for the work after the key.
+#[derive(uniffi::Object)]
+pub struct Setup {
+    flow: Arc<Mutex<SetupFlow>>,
+}
+
+impl Setup {
+    fn flow(&self) -> MutexGuard<'_, SetupFlow> {
+        locked(&self.flow)
+    }
+}
+
+#[uniffi::export]
+impl Setup {
+    #[uniffi::constructor]
+    pub fn open(state_dir: String) -> Result<Arc<Self>, SetupError> {
+        let flow = SetupFlow::open(&PathBuf::from(state_dir))?;
+        Ok(Arc::new(Self { flow: Arc::new(Mutex::new(flow)) }))
+    }
+
+    pub fn state(&self) -> SetupState {
+        self.flow().state()
+    }
+
+    pub fn back(&self) -> Result<SetupState, SetupError> {
+        self.flow().back()
+    }
+
+    pub fn set_address(&self, address: String) -> Result<SetupState, SetupError> {
+        self.flow().set_address(&address)
+    }
+
+    /// Checks the host and whether it accepts the key. No PIN, no touch.
+    pub fn check_host(&self) -> Result<SetupState, SetupError> {
+        self.flow().check_host()
+    }
+
+    /// Pins the host key whose fingerprint `ConfirmHost` showed.
+    pub fn confirm_host(&self, fingerprint: String) -> Result<SetupState, SetupError> {
+        self.flow().confirm_host(&fingerprint)
+    }
+
+    /// "Your key", from the plugged-in key's session: what the session read
+    /// when the key was plugged in. No PIN, no touch, no card exchange. A
+    /// key whose PIN KDF paw does not support is refused here with
+    /// `UnusableKey` (`PinKdfUnsupported`), before any PIN is asked.
+    pub fn read_key_from_session(&self, session: Arc<KeySession>) -> Result<SetupState, SetupError> {
+        self.flow().read_key_from(session.card_info(), session.ssh_key(), session.pin_kdf())
+    }
+
+    /// "Download your store" as a key task (sign-in, `Clone`): the PIN
+    /// stage unless the session holds it, `Working` while connecting,
+    /// `Touch` while the key signs the login, `Working` with progress while
+    /// cloning (objects and bytes received, at most ten times a second),
+    /// then `Done`; read `state` for the next step. A key other than the
+    /// one read at "Your key" is refused before the PIN.
+    pub fn download_with_key(self: Arc<Self>, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
+        workflows::download(&port, self.flow.clone(), listener)
+    }
+
+    /// "Check your key" as a key task (`CheckKey`): opens one entry with
+    /// the held PIN and a touch, wipes the text, then pins the card's key
+    /// for saving, accepts the store's recipients, records the key as the
+    /// store's enrolled key (and gives it to `port`), and setup is done.
+    pub fn test_decrypt_with_key(self: Arc<Self>, port: Arc<KeyPort>, listener: Arc<dyn KeyTaskListener>) -> Arc<KeyTask> {
+        workflows::check_key(&port, self.flow.clone(), listener)
+    }
+
+    /// "I expected this change", on the changed-host-key screen: forgets
+    /// the host's pinned key without leaving setup; `check_host` then shows
+    /// the key it presents now for confirmation. Refused with
+    /// `RemoteFailure::HostKeyBundled` for a host whose keys ship with
+    /// paw, such as github.com.
+    pub fn forget_host_key(&self) -> Result<SetupState, SetupError> {
+        self.flow().forget_host_key()
+    }
+
+    /// After `RemoteFailure::NoConnection` with a `fallback` (no
+    /// connection at all to github.com on port 22): switches the address to
+    /// that endpoint and goes back to the host check (`CheckHost`, with a
+    /// notice saying why); call `check_host` next. Its keys ship with paw,
+    /// so nothing is confirmed. Never used unless the person says so.
+    pub fn use_port_fallback(&self) -> Result<SetupState, SetupError> {
+        self.flow().use_port_fallback()
+    }
+
+    /// Once setup is done: whether new entries can be saved with no
+    /// further step, and if not, which recipients paw needs keys for.
+    pub fn write_readiness(&self) -> Result<SetupWriteReadiness, SetupError> {
+        self.flow().write_readiness()
     }
 }
 

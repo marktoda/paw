@@ -106,10 +106,9 @@ impl HostKeyPin {
         self.0.iter().map(fingerprint_of).collect()
     }
 
-    /// Each pinned key's type as people know it ("Ed25519", "ECDSA",
-    /// "RSA") and its `SHA256:...` fingerprint, preferred first.
-    pub fn described(&self) -> Vec<(String, String)> {
-        self.0.iter().map(|key| (key_type_words(key.algorithm().as_ref()), fingerprint_of(key))).collect()
+    /// Each pinned key as Settings shows it, preferred first.
+    pub fn described(&self) -> Vec<ServerKey> {
+        self.0.iter().map(ServerKey::of).collect()
     }
 
     /// The host key algorithms to offer: the pinned keys' types, preferred
@@ -132,8 +131,23 @@ impl HostKeyPin {
     }
 }
 
+/// One host key the store's server must present.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ServerKey {
+    /// "Ed25519", "ECDSA P-256", "RSA".
+    pub key_type: String,
+    /// `SHA256:...`, as `ssh-keygen -lf` and the host's documentation show it.
+    pub fingerprint: String,
+}
+
+impl ServerKey {
+    fn of(key: &PublicKey) -> Self {
+        Self { key_type: key_type_words(key.algorithm().as_ref()), fingerprint: fingerprint_of(key) }
+    }
+}
+
 /// An SSH algorithm name in the words a server's documentation uses.
-pub fn key_type_words(algorithm: &str) -> String {
+fn key_type_words(algorithm: &str) -> String {
     match algorithm {
         "ssh-ed25519" => "Ed25519".into(),
         "ecdsa-sha2-nistp256" => "ECDSA P-256".into(),
@@ -156,6 +170,10 @@ impl PresentedHostKey {
     /// The `SHA256:...` form to show for confirmation.
     pub fn fingerprint(&self) -> String {
         fingerprint_of(&self.0)
+    }
+
+    pub fn described(&self) -> ServerKey {
+        ServerKey::of(&self.0)
     }
 
     /// The algorithm name, e.g. `ssh-ed25519`.

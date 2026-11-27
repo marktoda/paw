@@ -11,7 +11,8 @@ mod support;
 use std::sync::Arc;
 
 use key_common::{Driver, PIN, WAIT, finish, is_pin, is_touch, port_with};
-use paw_core::ffi::sync::{Setup, StoreSync};
+use paw_core::setup::Setup;
+use paw_core::sync::StoreSync;
 use paw_core::key::{KeyError, KeyIdentity, KeyPort, enrolment};
 use paw_core::task::{KeyOutcome, KeyTaskListener, KeyTaskState};
 use paw_core::remote::RemoteFailure;
@@ -19,7 +20,7 @@ use paw_core::setup::{SetupError, SetupState, UnusableKeyReason};
 use paw_core::sim::copies::SimClock;
 use paw_core::sim::fixture::other_key_fingerprint_hex;
 use paw_core::sim::{SimTouch, SimulatedKey};
-use paw_core::write::{EntryDraft, WriteError, WriteStore};
+use paw_core::write::{Draft, WriteError, WriteStore};
 use support::GitServer;
 
 /// The fixture store has 29 entries, 27 of them for the simulated key.
@@ -113,8 +114,8 @@ fn writer(w: &World) -> WriteStore {
     WriteStore::open(w.dir.path())
 }
 
-fn new_entry(name: &str) -> EntryDraft {
-    let mut draft = EntryDraft::new("");
+fn new_entry(name: &str) -> Draft {
+    let mut draft = Draft::new("");
     draft.set_name(name);
     draft.set_password("a new password");
     draft

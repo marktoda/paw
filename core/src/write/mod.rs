@@ -26,9 +26,9 @@ use rand::rngs::OsRng;
 use crate::fault::Fault;
 pub use commit::Author;
 pub(crate) use commit::{TreeEdit, commit_edits};
-pub use draft::{DraftField, DraftProblem, EntryDraft};
+pub use draft::{Draft, DraftField, DraftProblem, EntryDraft};
 pub use keyring::{FolderRecipients, Keyring, LineStatus, RecipientLine};
-pub use ops::{Deleted, FollowUp, FollowUpFailure, Saved, WriteStore};
+pub use ops::{Deleted, FollowUp, FollowUpFailure, Saved, StoreWriter, WriteStore};
 pub use scopes::{RecipientScope, ScopeKey};
 
 /// Why a change was not made. In every case nothing in the store changed.

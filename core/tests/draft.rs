@@ -3,7 +3,7 @@
 
 use paw_core::entry::EntryDoc;
 use paw_core::store::tree::StoreTree;
-use paw_core::write::{DraftField, DraftProblem, EntryDraft};
+use paw_core::write::{DraftField, DraftProblem, Draft};
 use proptest::prelude::*;
 
 fn parse(text: &str) -> EntryDoc {
@@ -14,11 +14,11 @@ fn text(doc: &EntryDoc) -> String {
     String::from_utf8(doc.to_bytes().to_vec()).unwrap()
 }
 
-fn edit(text: &str) -> EntryDraft {
-    EntryDraft::edit("Work/github.com", parse(text), vec![0; 32])
+fn edit(text: &str) -> Draft {
+    Draft::edit("Work/github.com", parse(text), vec![0; 32])
 }
 
-fn saved(draft: &EntryDraft) -> String {
+fn saved(draft: &Draft) -> String {
     text(&draft.build().unwrap())
 }
 
@@ -40,7 +40,7 @@ fn messages(problems: &[DraftProblem]) -> Vec<&str> {
 }
 
 fn name_problem(name: &str) -> Vec<String> {
-    let mut draft = EntryDraft::new("Work");
+    let mut draft = Draft::new("Work");
     draft.set_name(name);
     draft.problems(None).into_iter().map(|p| p.message).collect()
 }
@@ -68,7 +68,7 @@ fn names_are_refused_with_a_sentence_saying_why() {
 #[test]
 fn folders_under_dot_directories_and_odd_folder_names_are_refused() {
     let problem = |folder: &str| {
-        let mut draft = EntryDraft::new(folder);
+        let mut draft = Draft::new(folder);
         draft.set_name("x");
         draft.problems(None).into_iter().map(|p| (p.field, p.message)).collect::<Vec<_>>()
     };
@@ -80,7 +80,7 @@ fn folders_under_dot_directories_and_odd_folder_names_are_refused() {
     assert!(problem("").is_empty());
     assert!(problem("Work/new folder").is_empty());
     // Leading and trailing slashes are only tidied away.
-    let mut draft = EntryDraft::new("");
+    let mut draft = Draft::new("");
     draft.set_folder("/Work/");
     assert_eq!(draft.folder(), "Work");
 }
@@ -89,7 +89,7 @@ fn folders_under_dot_directories_and_odd_folder_names_are_refused() {
 fn a_name_that_is_taken_by_an_entry_or_a_folder_is_refused() {
     let (_dir, tree) = tree();
     let problems = |folder: &str, name: &str| {
-        let mut draft = EntryDraft::new(folder);
+        let mut draft = Draft::new(folder);
         draft.set_name(name);
         draft.problems(Some(&tree)).into_iter().map(|p| p.message).collect::<Vec<_>>()
     };
@@ -116,7 +116,7 @@ fn an_edit_may_keep_its_own_name() {
 
 #[test]
 fn single_line_values_and_field_names_are_checked() {
-    let mut draft = EntryDraft::new("");
+    let mut draft = Draft::new("");
     draft.set_name("x");
     draft.set_password("one\ntwo");
     draft.set_username("you\r");
@@ -145,7 +145,7 @@ fn single_line_values_and_field_names_are_checked() {
 
 #[test]
 fn problems_never_repeat_a_secret_value() {
-    let mut draft = EntryDraft::new("");
+    let mut draft = Draft::new("");
     draft.set_name("x");
     draft.set_password("hunter2\nsecret");
     draft.set_field("pin", "4071\n9");
@@ -159,7 +159,7 @@ fn problems_never_repeat_a_secret_value() {
 
 #[test]
 fn a_new_entry_is_laid_out_password_login_url_fields_notes() {
-    let mut draft = EntryDraft::new("Work");
+    let mut draft = Draft::new("Work");
     draft.set_name("github.com");
     draft.set_notes("Recovery codes are in the blue notebook.\nSecond line.");
     draft.set_url("https://github.com/login");
@@ -176,7 +176,7 @@ fn a_new_entry_is_laid_out_password_login_url_fields_notes() {
 
 #[test]
 fn a_new_entry_with_only_a_password_is_one_line() {
-    let mut draft = EntryDraft::new("");
+    let mut draft = Draft::new("");
     draft.set_name("phone-pin");
     draft.set_password("4071");
     draft.set_username("");
@@ -261,7 +261,7 @@ fn the_text_toggle_replaces_everything_and_later_changes_apply_on_top() {
 
 #[test]
 fn a_generated_password_is_marked_until_it_is_typed_over() {
-    let mut draft = EntryDraft::new("");
+    let mut draft = Draft::new("");
     let password = draft.generate_password(&Default::default()).unwrap();
     assert!(draft.generated());
     assert_eq!(draft.build().unwrap().password(), password.as_str());
@@ -283,7 +283,7 @@ note
     assert!(draft.problems(None).is_empty());
     assert_eq!(saved(&draft), format!("pw\nlogin: you\nnote\n{KEY_LINE}\n"));
 
-    let mut draft = EntryDraft::new("Work");
+    let mut draft = Draft::new("Work");
     draft.set_name("github.com");
     draft.set_password("pw");
     draft.set_one_time_code("JBSWY3DPEHPK3PXP");

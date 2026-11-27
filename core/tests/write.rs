@@ -16,7 +16,7 @@ use paw_core::files::content_id;
 use paw_core::fingerprint::Fingerprint;
 use paw_core::entry::EntryDoc;
 use paw_core::entry::opened::OpenedEntry;
-use paw_core::ffi::write::StoreWriter;
+use paw_core::write::StoreWriter;
 use paw_core::recipients::{Recipient, entry_recipients};
 use paw_core::sim::SimulatedKey;
 use paw_core::store::PassStore;
@@ -25,7 +25,7 @@ use paw_core::sync::ChangeKind;
 use paw_core::sync::queue;
 use paw_core::files::layout::StoreDirs;
 use paw_core::write::{
-    DraftField, EntryDraft, FolderRecipients, Keyring, LineStatus, WriteError, WriteStore,
+    DraftField, Draft, FolderRecipients, Keyring, LineStatus, WriteError, WriteStore,
 };
 use pgp::packet::PublicKey;
 use pgp::types::KeyDetails;
@@ -153,16 +153,16 @@ fn store() -> Store {
     )
 }
 
-fn new_entry(folder: &str, name: &str, password: &str) -> EntryDraft {
-    let mut draft = EntryDraft::new(folder);
+fn new_entry(folder: &str, name: &str, password: &str) -> Draft {
+    let mut draft = Draft::new(folder);
     draft.set_name(name);
     draft.set_password(password);
     draft
 }
 
-fn open(s: &Store, entry: &str) -> EntryDraft {
+fn open(s: &Store, entry: &str) -> Draft {
     let doc = EntryDoc::parse(s.decrypt(entry).into_bytes()).unwrap();
-    EntryDraft::edit(entry, doc, content_id(&s.file(entry)))
+    Draft::edit(entry, doc, content_id(&s.file(entry)))
 }
 
 /// Every file under `dir`, with its path.
@@ -391,7 +391,7 @@ fn adding_commits_one_file_with_pass_wording_as_paw() {
 #[test]
 fn a_generated_password_is_committed_as_generated_and_new_folders_appear() {
     let s = store();
-    let mut draft = EntryDraft::new("Bank/cards");
+    let mut draft = Draft::new("Bank/cards");
     draft.set_name("credit");
     let password = draft.generate_password(&Default::default()).unwrap();
 
@@ -802,7 +802,7 @@ fn a_save_returns_the_entry_as_saved_open() {
 
 #[test]
 fn one_field_row_is_checked_as_the_form_checks_it() {
-    use paw_core::ffi::write::field_problem;
+    use paw_core::write::draft::field_problem;
     assert_eq!(field_problem("a:b".into(), "x".into()).unwrap().message, "A field name can't contain a colon.");
     assert_eq!(
         field_problem("pin".into(), "otpauth://totp/x?secret=A".into()).unwrap().message,

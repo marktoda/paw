@@ -14,7 +14,7 @@ use paw_core::files::content_id;
 use paw_core::entry::EntryDoc;
 use paw_core::recipients::{Recipient, entry_recipients};
 use paw_core::files::layout::StoreDirs;
-use paw_core::write::{EntryDraft, Keyring, WriteError, WriteStore};
+use paw_core::write::{Draft, Keyring, WriteError, WriteStore};
 use pgp::composed::{Deserializable, SignedPublicKey};
 use pgp::packet::{PubKeyInner, PublicKey};
 use pgp::types::KeyDetails;
@@ -161,8 +161,8 @@ impl Store {
     }
 }
 
-fn new_entry(folder: &str, name: &str, password: &str) -> EntryDraft {
-    let mut draft = EntryDraft::new(folder);
+fn new_entry(folder: &str, name: &str, password: &str) -> Draft {
+    let mut draft = Draft::new(folder);
     draft.set_name(name);
     draft.set_password(password);
     draft
@@ -253,7 +253,7 @@ fn an_entry_written_by_gpg_and_edited_by_paw_differs_only_in_the_edited_line() {
 
     let ciphertext = store.file("Bank/acme");
     let opened = EntryDoc::parse(gpg.decrypt(&ciphertext).0.into_bytes()).unwrap();
-    let mut draft = EntryDraft::edit("Bank/acme", opened, content_id(&ciphertext));
+    let mut draft = Draft::edit("Bank/acme", opened, content_id(&ciphertext));
     draft.set_field("security answer", "Rex");
     store.write().save(&draft).unwrap();
 

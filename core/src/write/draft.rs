@@ -7,7 +7,7 @@
 //! entry starts from an empty document and is laid out as design 2.8 says:
 //! password, `login:`, `url:`, other fields, notes.
 //!
-//! Nothing is checked as it is typed; [`EntryDraft::problems`] lists what
+//! Nothing is checked as it is typed; [`Draft::problems`] lists what
 //! would stop a save, each with a sentence a person can act on.
 //!
 //! Words for people are the app's, with one exception: these sentences
@@ -15,12 +15,16 @@
 //! include) are made here, beside the rules they explain, and shown as they
 //! are.
 
+use std::sync::{Arc, Mutex, MutexGuard};
+
 use zeroize::Zeroizing;
 
 use crate::entry::{EntryDoc, has_line_break, key_refusal, note_lines, value_refusal};
 use crate::generate::{PasswordPolicy, PolicyError, generate};
 use crate::path::{NameRefusal, case_folded, folder_and_parents, folder_refusal, join, name_refusal, split};
+use crate::store::PassStore;
 use crate::store::tree::StoreTree;
+use super::WriteError;
 
 /// Which part of the form a problem is about.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -69,7 +73,7 @@ pub(crate) struct Original {
     pub(crate) content_id: Vec<u8>,
 }
 
-pub struct EntryDraft {
+pub struct Draft {
     original: Option<Original>,
     name: String,
     folder: String,
@@ -83,12 +87,12 @@ pub struct EntryDraft {
     otp: Option<OtpEdit>,
 }
 
-impl std::fmt::Debug for EntryDraft {
+impl std::fmt::Debug for Draft {
     /// Names only; never a value.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "EntryDraft {{ path: {:?}, editing: {:?}, contents withheld }}",
+            "Draft {{ path: {:?}, editing: {:?}, contents withheld }}",
             self.path(),
             self.original.as_ref().map(|o| &o.path)
         )
@@ -185,12 +189,12 @@ fn value_problem(field: DraftField, what: &str, value: &str) -> Option<DraftProb
 
 /// The problem with setting the field `key` to `value` (or removing it,
 /// with `None`), as the form words it.
-pub(crate) fn field_problem(key: &str, value: Option<&str>) -> Option<DraftProblem> {
+fn field_edit_problem(key: &str, value: Option<&str>) -> Option<DraftProblem> {
     let refusal = key_refusal(key).or_else(|| value.and_then(value_refusal))?;
     Some(problem(DraftField::Field { key: key.to_owned() }, refusal.sentence(&format!("The value of {}", key.trim()))))
 }
 
-impl EntryDraft {
+impl Draft {
     pub fn new(folder: &str) -> Self {
         Self {
             original: None,
@@ -327,8 +331,8 @@ impl EntryDraft {
         }
         for edit in &self.fields {
             let found = match edit {
-                FieldEdit::Set { key, value } => field_problem(key, Some(value)),
-                FieldEdit::Remove { key } => field_problem(key, None),
+                FieldEdit::Set { key, value } => field_edit_problem(key, Some(value)),
+                FieldEdit::Remove { key } => field_edit_problem(key, None),
             };
             problems.extend(found);
         }
@@ -420,4 +424,95 @@ impl EntryDraft {
         Ok(doc)
     }
 
+}
+
+/// The add or edit form as Swift holds it: a [`Draft`] behind a lock. Make
+/// one with [`super::StoreWriter::new_draft`] or
+/// [`super::StoreWriter::edit_draft`].
+#[derive(uniffi::Object)]
+pub struct EntryDraft {
+    inner: Mutex<Draft>,
+}
+
+impl EntryDraft {
+    pub(crate) fn draft(&self) -> MutexGuard<'_, Draft> {
+        // Each setter replaces one value whole.
+        crate::locked(&self.inner)
+    }
+
+    pub(crate) fn wrap(draft: Draft) -> Arc<Self> {
+        Arc::new(Self { inner: Mutex::new(draft) })
+    }
+}
+
+#[uniffi::export]
+impl EntryDraft {
+    pub fn set_name(&self, name: String) {
+        self.draft().set_name(&name);
+    }
+
+    pub fn set_folder(&self, folder: String) {
+        self.draft().set_folder(&folder);
+    }
+
+    pub fn set_password(&self, password: String) {
+        self.draft().set_password(&password);
+    }
+
+    /// The Generate button: puts a new password in the form and returns it
+    /// to show.
+    pub fn generate_password(&self, policy: PasswordPolicy) -> Result<String, WriteError> {
+        Ok(self.draft().generate_password(&policy)?.as_str().to_owned())
+    }
+
+    pub fn set_username(&self, username: String) {
+        self.draft().set_username(&username);
+    }
+
+    pub fn set_url(&self, url: String) {
+        self.draft().set_url(&url);
+    }
+
+    pub fn set_field(&self, key: String, value: String) {
+        self.draft().set_field(&key, &value);
+    }
+
+    pub fn remove_field(&self, key: String) {
+        self.draft().remove_field(&key);
+    }
+
+    pub fn set_notes(&self, notes: String) {
+        self.draft().set_notes(&notes);
+    }
+
+    /// A base32 setup key or an `otpauth://` address for the one-time code,
+    /// replacing any the entry has. Blank undoes an earlier set or remove.
+    pub fn set_one_time_code(&self, setup: String) {
+        self.draft().set_one_time_code(&setup);
+    }
+
+    pub fn remove_one_time_code(&self) {
+        self.draft().remove_one_time_code();
+    }
+
+    /// The "Text" toggle: replaces the whole entry with `text`.
+    pub fn set_text(&self, text: String) {
+        self.draft().set_text(&text);
+    }
+
+    /// What would stop the draft from saving: the values typed and, with
+    /// `store`, a name already used among the names it read when it was
+    /// opened. No lock and no disk, so the form can ask on every keystroke;
+    /// `store` can be out of date, and saving checks again with the store
+    /// locked.
+    pub fn problems(&self, store: Option<Arc<PassStore>>) -> Vec<DraftProblem> {
+        self.draft().problems(store.as_ref().map(|store| store.tree()))
+    }
+}
+
+/// What would stop the form from setting the field `key` to `value`, if
+/// anything. For one row of the form, before it goes into the draft.
+#[uniffi::export]
+pub fn field_problem(key: String, value: String) -> Option<DraftProblem> {
+    field_edit_problem(&key, Some(&value))
 }

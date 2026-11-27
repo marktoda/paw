@@ -13,7 +13,7 @@ use std::time::Duration;
 use key_common::*;
 use paw_core::key::CardConnection;
 use paw_core::key::keylog::KEEP_LINES;
-use paw_core::ffi::sync::Setup;
+use paw_core::setup::Setup;
 use paw_core::key::{KeyError, KeyPort, clear_key_log, key_log, key_log_text};
 use paw_core::setup::SetupState;
 use paw_core::sim::copies::SimClock;
