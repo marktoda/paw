@@ -421,6 +421,8 @@ final class SyncModel {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self else { return }
+                    // Asking the core about a stale copy removes it.
+                    if !handoff.value.endedCopies.isEmpty { self.copies.reread() }
                     if !handoff.value.isEmpty || !handoff.value.endedCopies.isEmpty {
                         self.summary = handoff.value
                     }
