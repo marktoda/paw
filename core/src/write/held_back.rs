@@ -10,7 +10,7 @@ use crate::files::layout::StoreDirs;
 use crate::key::KeyError;
 use crate::lock::Shared;
 use crate::sync::{OpenStore, SyncError};
-use crate::sync::queue::{Rewritten, WaitingFile, rewrite_ciphertexts, waiting_files};
+use crate::sync::queue::{Rewritten, rewrite_ciphertexts, waiting_files};
 
 /// A waiting change whose ciphertext is not encrypted for exactly the
 /// recipients its entry has now: its `.gpg-id` changed after it was saved
@@ -64,13 +64,36 @@ pub fn held_back(dirs: &StoreDirs) -> Result<Vec<HeldBack>, SyncError> {
 }
 
 pub(crate) fn held_back_in(reading: &Shared, store: &OpenStore) -> Result<Vec<HeldBack>, SyncError> {
+    Ok(survey(reading, store)?.held.into_iter().map(|held| held.item).collect())
+}
+
+/// A held-back change, with what re-encrypting it needs.
+struct Held {
+    item: HeldBack,
+    path: String,
+    /// Its waiting ciphertext, and that blob's id.
+    ciphertext: Vec<u8>,
+    blob: Oid,
+    look: Look,
+}
+
+/// The held-back changes, oldest first, and the branch tip they were read
+/// at: everything [`held_back`], [`reencrypt_check`] and
+/// [`reencrypt_each`] say about them, read once.
+struct Survey {
+    head: Oid,
+    held: Vec<Held>,
+}
+
+fn survey(reading: &Shared, store: &OpenStore) -> Result<Survey, SyncError> {
     let keyring = Keyring::open(&store.dirs)?;
     // Setup has not recorded who can open the store, so there is nothing to
     // compare against, and the write path refuses every save until it has.
+    // With nothing held back, no rewrite reads the tip.
     if !keyring.confirmed() {
-        return Ok(Vec::new());
+        return Ok(Survey { head: Oid::ZERO_SHA1, held: Vec::new() });
     }
-    let (_, files) = waiting_files(reading, store)?;
+    let (head, files) = waiting_files(reading, store)?;
     let mut held = Vec::new();
     for file in files {
         if !crate::path::is_entry_file(&file.path) {
@@ -78,34 +101,34 @@ pub(crate) fn held_back_in(reading: &Shared, store: &OpenStore) -> Result<Vec<He
         }
         let folder = crate::path::folder_of(&file.path);
         let found = crate::recipients::entry_recipients(&file.ciphertext).ok();
-        let encrypted_for = found.as_ref().map(|f| f.keys.clone()).unwrap_or_default();
-        let hold = |gpg_id: Option<String>, recipients: Vec<String>, list: HeldBackList| HeldBack {
-            id: file.id.clone(),
-            entry: file.entry.clone(),
+        let (gpg_id, recipients, list, look) = match keyring.folder_recipients(reading, folder) {
+            Err(_) => (None, Vec::new(), HeldBackList::Unreadable, Look::Left(LeftReason::NoList)),
+            Ok(recipients) if recipients.changed => {
+                let lines = recipients.lines.into_iter().map(|line| line.line).collect();
+                (Some(recipients.gpg_id), lines, HeldBackList::NotAccepted, Look::Left(LeftReason::NotAccepted))
+            }
+            Ok(recipients) => {
+                let keys = keyring.resolve(reading, folder);
+                let exact = found.as_ref().is_some_and(|found| keys.as_ref().is_ok_and(|keys| encrypted_for_exactly(found, keys)));
+                if exact {
+                    continue;
+                }
+                let lines = recipients.lines.into_iter().map(|line| line.line).collect();
+                let look = keys.map_or_else(|error| Look::Left(left_reason(error)), |_| Look::Ready);
+                (Some(recipients.gpg_id), lines, HeldBackList::Accepted, look)
+            }
+        };
+        let item = HeldBack {
+            id: file.id,
+            entry: file.entry,
             gpg_id,
-            encrypted_for: encrypted_for.clone(),
+            encrypted_for: found.map(|found| found.keys).unwrap_or_default(),
             recipients,
             list,
         };
-        let recipients = match keyring.folder_recipients(reading, folder) {
-            Ok(recipients) => recipients,
-            Err(_) => {
-                held.push(hold(None, Vec::new(), HeldBackList::Unreadable));
-                continue;
-            }
-        };
-        let accepted = !recipients.changed;
-        let exact = accepted
-            && found.as_ref().is_some_and(|found| {
-                keyring.resolve(reading, folder).is_ok_and(|keys| encrypted_for_exactly(found, &keys))
-            });
-        if !exact {
-            let lines = recipients.lines.into_iter().map(|line| line.line).collect();
-            let list = if accepted { HeldBackList::Accepted } else { HeldBackList::NotAccepted };
-            held.push(hold(Some(recipients.gpg_id), lines, list));
-        }
+        held.push(Held { item, path: file.path, ciphertext: file.ciphertext, blob: file.blob, look });
     }
-    Ok(held)
+    Ok(Survey { head, held })
 }
 
 /// Why [`reencrypt_each`] left a held-back change as it was. It stays held
@@ -190,7 +213,7 @@ impl<S, E: Into<SyncError>> From<E> for Ended<S> {
 }
 
 enum Look {
-    Ready { path: String, blob: Oid },
+    Ready,
     Left(LeftReason),
 }
 
@@ -203,20 +226,6 @@ fn left_reason(error: WriteError) -> LeftReason {
     }
 }
 
-fn look(reading: &Shared, item: &HeldBack, files: &[WaitingFile], keyring: &Keyring) -> Option<Look> {
-    let file = files.iter().find(|file| file.id == item.id)?;
-    match item.list {
-        HeldBackList::Unreadable => return Some(Look::Left(LeftReason::NoList)),
-        HeldBackList::NotAccepted => return Some(Look::Left(LeftReason::NotAccepted)),
-        HeldBackList::Accepted => {}
-    }
-    let folder = crate::path::folder_of(&file.path);
-    Some(match keyring.resolve(reading, folder) {
-        Ok(_) => Look::Ready { path: file.path.clone(), blob: file.blob },
-        Err(error) => Look::Left(left_reason(error)),
-    })
-}
-
 /// The held-back changes as [`reencrypt_each`] sees them: how many are
 /// ready, and why each other one is not (`skipped` holds those it already
 /// tried, by path and waiting blob).
@@ -224,25 +233,20 @@ fn looked(
     dirs: &StoreDirs,
     skipped: &std::collections::HashMap<(String, Oid), LeftReason>,
 ) -> Result<ReencryptCheck, SyncError> {
-    let held = held_back(dirs)?;
     let reading = dirs.shared()?;
-    let store = OpenStore::open(dirs)?;
-    let keyring = Keyring::open(dirs)?;
-    let (_, files) = waiting_files(&reading, &store)?;
     let mut check = ReencryptCheck { ready: 0, left: Vec::new() };
-    for item in &held {
-        let reason = match look(&reading, item, &files, &keyring) {
-            Some(Look::Ready { path, blob }) => match skipped.get(&(path, blob)) {
+    for Held { item, path, blob, look, .. } in survey(&reading, &OpenStore::open(dirs)?)?.held {
+        let reason = match look {
+            Look::Ready => match skipped.get(&(path, blob)) {
                 Some(reason) => reason.clone(),
                 None => {
                     check.ready += 1;
                     continue;
                 }
             },
-            Some(Look::Left(reason)) => reason,
-            None => continue,
+            Look::Left(reason) => reason,
         };
-        check.left.push(LeftHeldBack { id: item.id.clone(), entry: item.entry.clone(), reason });
+        check.left.push(LeftHeldBack { id: item.id, entry: item.entry, reason });
     }
     Ok(check)
 }
@@ -295,21 +299,12 @@ fn reencrypt_each_until<S>(
     let mut written: std::collections::HashSet<(String, Oid)> = std::collections::HashSet::new();
     let mut moved = 0;
     loop {
-        let next = {
-            let held = held_back(dirs)?;
+        let Survey { head, held } = {
             let reading = dirs.shared()?;
-            let store = OpenStore::open(dirs)?;
-            let keyring = Keyring::open(dirs)?;
-            let (head, files) = waiting_files(&reading, &store)?;
-            held.into_iter().find_map(|item| match look(&reading, &item, &files, &keyring) {
-                Some(Look::Ready { path, blob }) if !skipped.contains_key(&(path.clone(), blob)) => {
-                    let bytes = files.iter().find(|file| file.id == item.id).map(|file| file.ciphertext.clone())?;
-                    Some((item, path, blob, bytes, head))
-                }
-                _ => None,
-            })
+            survey(&reading, &OpenStore::open(dirs)?)?
         };
-        let Some((item, path, blob, bytes, head)) = next else { break };
+        let next = held.into_iter().find(|held| matches!(held.look, Look::Ready) && !skipped.contains_key(&(held.path.clone(), held.blob)));
+        let Some(Held { item, path, blob, ciphertext: bytes, .. }) = next else { break };
         if written.contains(&(path.clone(), blob)) {
             return Err(Fault::local("a change paw re-encrypted is still held back; nothing was sent").into());
         }
