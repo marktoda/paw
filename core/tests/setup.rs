@@ -304,7 +304,7 @@ fn a_wrong_pin_reports_the_tries_left_then_the_block() {
 
 #[test]
 fn a_key_nobody_touches_times_out() {
-    let sim = key_common::sim(SimTouch::EachUse, SimTouch::EachUse, Duration::from_millis(1500));
+    let sim = key_common::sim(SimTouch::EachUse, SimTouch::EachUse, Duration::from_millis(1_100));
     let server = GitServer::start(&[sim.ssh_public_key()]);
     push_fixture_store(&server);
     let rig = Rig::new(&sim, &server);

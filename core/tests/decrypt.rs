@@ -57,7 +57,7 @@ fn decrypts_an_entry_once_the_key_is_touched() {
 #[test]
 fn fails_when_nobody_touches_the_key() {
     // Long enough not to read as a refusal at once.
-    let key = SimulatedKey::new(PIN.into(), true, 1_500);
+    let key = SimulatedKey::new(PIN.into(), true, 1_100);
     let ciphertext = entry_for(&key);
     let driver = Driver::typist(PIN);
     let (task, _) = decipher(&port_with(&key), ciphertext, driver.clone());
