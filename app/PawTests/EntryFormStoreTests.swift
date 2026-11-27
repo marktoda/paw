@@ -20,7 +20,7 @@ final class EntryFormStoreTests: XCTestCase {
         await waitFor("who can open web") { form.recipients != nil }
         let before = writer.counts
 
-        let name = form.binding(\.name, field: "name")
+        let name = form.binding(\.name, field: .name)
         for typed in ["G", "Gi", "Git", "GitH", "GitHu", "GitHub", "GitHub.", "GitHub.c", "GitHub.co", "GitHub.com"] {
             name.wrappedValue = typed
         }
@@ -46,8 +46,8 @@ final class EntryFormStoreTests: XCTestCase {
         let fixture = try Fixture(writable: true)
         let edits = try XCTUnwrap(fixture.model.storeSession.edits)
         let form = edits.addForm(folder: "web")
-        form.binding(\.name, field: "name").wrappedValue = "new.example"
-        form.binding(\.password, field: "password").wrappedValue = "Typed-pass-42"
+        form.binding(\.name, field: .name).wrappedValue = "new.example"
+        form.binding(\.password, field: .password).wrappedValue = "Typed-pass-42"
         await waitFor("who can open web") { form.folderWritable != nil }
         XCTAssertTrue(form.canSave)
 

@@ -368,7 +368,7 @@ private struct AddressScreen: View {
     #if DEBUG && targetEnvironment(simulator)
     private var simulatorActions: [SimulatorAction] {
         [SimulatorAction(title: "use the simulated host", identifier: "simulated-address") {
-            model.addressText = SimulatedHostHolder.shared.host?.address() ?? ""
+            model.addressText = SimRemoteHandle.shared.setupHost?.address() ?? ""
         }]
     }
     #endif
@@ -484,7 +484,7 @@ private struct KeyNotAcceptedScreen: View {
     #if DEBUG && targetEnvironment(simulator)
     private var simulatorActions: [SimulatorAction] {
         [SimulatorAction(title: "add the key on the host", identifier: "simulated-accept-key") {
-            SimulatedHostHolder.shared.acceptKey()
+            SimRemoteHandle.shared.acceptKey()
         }]
     }
     #endif

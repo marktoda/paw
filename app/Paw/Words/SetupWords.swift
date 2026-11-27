@@ -81,7 +81,7 @@ enum SetupWords {
             advice = "If the server's admin confirms the change, tap I expected this change."
         }
         var words = SetupProblem(
-            problem: "\(host)'s identity changed",
+            problem: hostIdentityChanged(host),
             nextStep: "\(warning) \(advice)",
             details: expected.map { "Expected \($0)" } + ["It presented \(presented)"],
             action: .startOver, actionTitle: "Start setup again")

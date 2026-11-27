@@ -16,29 +16,54 @@ extension WriteError: WordedError {
     }
 }
 
+/// A folder in a sentence about who can open it: "work", or "your store"
+/// for the top, whose list of keys is the whole store's.
+func recipientsPlace(_ folder: String) -> String {
+    folder.isEmpty ? "your store" : folder
+}
+
+/// A folder in a sentence about saving in it: "work", or "the top of
+/// your store".
+func savingPlace(_ folder: String) -> String {
+    folder.isEmpty ? "the top of your store" : folder
+}
+
 /// "Who can open work changed": a folder's list of keys is not the one
 /// accepted on this iPhone.
 func whoCanOpenChanged(_ folder: String) -> String {
-    "Who can open \(folder.isEmpty ? "your store" : folder) changed"
+    "Who can open \(recipientsPlace(folder)) changed"
+}
+
+extension FolderProblem {
+    /// Why paw can't save in `folder`, with the step that fixes it.
+    func words(folder: String) -> EditProblem {
+        switch self {
+        case .missingKeys(let missing):
+            let count = missing == 1 ? "a key" : "\(missing) keys"
+            return EditProblem(
+                problem: "Can't save in \(savingPlace(folder))",
+                nextStep: "It's also encrypted for \(count) paw doesn't have. Pick another folder.")
+        case .changed:
+            return EditProblem(
+                problem: whoCanOpenChanged(folder),
+                nextStep: "Review the new list before saving here.", reviewFolder: folder)
+        case .notConfirmed:
+            return EditProblem(
+                problem: "paw hasn't confirmed who can open this store",
+                nextStep: "Finish setting up the store, then save.")
+        }
+    }
 }
 
 /// How a refused save, delete or rename reads, with the step that fixes it.
 func editProblem(_ error: WriteError, folder: String) -> EditProblem {
-    let place = folder.isEmpty ? "the top of your store" : folder
     switch error {
     case .MissingRecipients(_, let missing):
-        let count = missing.count == 1 ? "a key" : "\(missing.count) keys"
-        return EditProblem(
-            problem: "Can't save in \(place)",
-            nextStep: "It's also encrypted for \(count) paw doesn't have. Pick another folder.")
+        return FolderProblem.missingKeys(missing.count).words(folder: folder)
     case .RecipientsChanged:
-        return EditProblem(
-            problem: whoCanOpenChanged(folder),
-            nextStep: "Review the new list before saving here.", reviewFolder: folder)
+        return FolderProblem.changed.words(folder: folder)
     case .RecipientsNotConfirmed:
-        return EditProblem(
-            problem: "paw hasn't confirmed who can open this store",
-            nextStep: "Finish setting up the store, then save again.")
+        return FolderProblem.notConfirmed.words(folder: folder)
     case .NoSuchEntry(let entry):
         return EditProblem(
             problem: "\(EntryRef(path: entry).name) isn't in the store any more",

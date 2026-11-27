@@ -8,10 +8,7 @@ struct UnpushedSection: View {
     var body: some View {
         if let queue = model.storeSession.syncing?.queue, !queue.unpushed.isEmpty {
             Section {
-                UnpushedBanner(
-                    reason: .waiting, title: queue.bannerTitle,
-                    detail: "Saved on this iPhone."
-                ) {
+                UnpushedBanner(title: queue.bannerTitle, detail: "Saved on this iPhone.") {
                     model.show(.unpushed)
                 }
                 .listRowInsets(EdgeInsets())
@@ -26,11 +23,15 @@ struct UnpushedSection: View {
 struct UnpushedScreen: View {
     let model: AppModel
 
-    /// The change whose discard is waiting for its confirm; "all" for all.
-    @State private var confirming: String?
+    /// The discard waiting for its confirm.
+    private enum Confirming: Equatable {
+        case one(String)
+        case all
+    }
+
+    @State private var confirming: Confirming?
 
     var body: some View {
-        let edits = model.storeSession.edits
         let queue = model.storeSession.syncing?.queue
         let items = queue?.unpushed ?? []
         List {
@@ -51,7 +52,7 @@ struct UnpushedScreen: View {
                 Section {
                     Button("Undo last change") {
                         confirming = nil
-                        edits?.undoLastChange()
+                        queue?.undoLast()
                     }
                     .buttonStyle(.pawSecondary)
                     .accessibilityIdentifier("unpushed-undo-last")
@@ -60,7 +61,7 @@ struct UnpushedScreen: View {
                 }
                 Section {
                     ForEach(items, id: \.id) { item in
-                        if confirming == item.id {
+                        if confirming == .one(item.id) {
                             InlineConfirmRow(
                                 question: "Discard \u{201C}\(Self.title(item))\u{201D}?",
                                 detail: Self.discardDetail(item),
@@ -68,12 +69,12 @@ struct UnpushedScreen: View {
                                 identifier: "unpushed-discard-\(Self.name(item.entry))",
                                 onConfirm: {
                                     confirming = nil
-                                    edits?.discardChange(item.id)
+                                    queue?.discard(item.id)
                                 },
                                 onCancel: { confirming = nil })
                                 .pawListRow()
                         } else {
-                            QueueRow(item: item) { confirming = item.id }
+                            QueueRow(item: item) { confirming = .one(item.id) }
                         }
                     }
                 } header: {
@@ -81,20 +82,20 @@ struct UnpushedScreen: View {
                         .accessibilityIdentifier("unpushed-count")
                 }
                 Section {
-                    if confirming == "all" {
+                    if confirming == .all {
                         InlineConfirmRow(
                             question: "Discard \(changeCount(items.count))?",
                             detail: "The store goes back to how it was last downloaded.",
                             confirmTitle: "Discard all", cancelTitle: "Keep them", identifier: "unpushed-discard-all",
                             onConfirm: {
                                 confirming = nil
-                                edits?.discardAllChanges()
+                                queue?.discardAll()
                             },
                             onCancel: { confirming = nil })
                             .pawListRow()
                     } else {
                         Button(items.count == 1 ? "Discard this change" : "Discard all \(items.count) changes") {
-                            confirming = "all"
+                            confirming = .all
                         }
                         .buttonStyle(.pawDestructive)
                         .accessibilityIdentifier("unpushed-discard-all")
@@ -144,17 +145,11 @@ struct UnpushedScreen: View {
     /// "14:02" today, "yesterday", "Mon" this week, else "3 Nov".
     static func when(_ seconds: Int64, now: Date = Date()) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(seconds))
-        let calendar = Calendar.current
-        if calendar.isDateInToday(date) {
-            return date.formatted(date: .omitted, time: .shortened)
-        }
-        if calendar.isDateInYesterday(date) {
+        let day = pastDay(date, now: now)
+        if !day.today, Calendar.current.isDateInYesterday(date) {
             return "yesterday"
         }
-        if let days = calendar.dateComponents([.day], from: date, to: now).day, days < 7 {
-            return date.formatted(.dateTime.weekday(.abbreviated))
-        }
-        return date.formatted(.dateTime.day().month(.abbreviated))
+        return day.words
     }
 }
 

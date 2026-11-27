@@ -54,6 +54,10 @@ final class StoreEdits {
         self.live = live
         self.copies = copies
         self.requests = requests
+        // Made before this, the queue has read itself again by now.
+        live.changed.subscribe(self) { edits, _ in
+            edits.dropStaleUndoOffer()
+        }
     }
 
     // MARK: The form
@@ -73,17 +77,14 @@ final class StoreEdits {
         form = nil
     }
 
-    /// A blank form for "New password", following the store.
     func addForm(folder: String) -> EntryFormModel {
         EntryFormModel(adding: folder, writer: writer, folders: allFolders, live: live)
     }
 
-    /// The form for `session`, filled in. Throws if it was closed.
     func editForm(_ session: OpenSession, focusName: Bool) throws -> EntryFormModel {
         try EntryFormModel(editing: session, focusName: focusName, writer: writer, folders: allFolders, live: live)
     }
 
-    /// Every folder in the store, for the folder picker, sorted.
     var allFolders: [String] {
         live.store.allFolders().sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
@@ -105,7 +106,6 @@ final class StoreEdits {
         return true
     }
 
-    /// "Accept the new list" for `folder`.
     func acceptRecipients(folder: String) throws {
         try write("Accept list") { try writer.acceptRecipients(folder: folder) }
         live.announce(.recipientsAccepted(folder: folder))
@@ -167,30 +167,17 @@ final class StoreEdits {
         }
     }
 
-    /// The Undo toast's time is up.
     func undoOfferEnded(_ offer: UndoOffer) {
         if undoOffer?.id == offer.id {
             undoOffer = nil
         }
     }
 
-    // MARK: The unpushed list
-
-    func undoLastChange() {
-        changeQueue { $0.undoLast() }
-    }
-
-    func discardChange(_ id: String) {
-        changeQueue { $0.discard(id) }
-    }
-
-    func discardAllChanges() {
-        changeQueue { $0.discardAll() }
-    }
-
-    private func changeQueue(_ change: (ChangeQueue) -> Bool) {
-        guard let queue else { return }
-        undoOffer = nil
-        _ = change(queue)
+    /// Undo is offered while its change is the newest one waiting: a change
+    /// undone, discarded, sent or made after it ends the offer.
+    private func dropStaleUndoOffer() {
+        if let offer = undoOffer, queue?.unpushed.first?.id != offer.change {
+            undoOffer = nil
+        }
     }
 }

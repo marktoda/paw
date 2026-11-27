@@ -24,7 +24,7 @@ import Foundation
 /// can't save there.
 struct FixtureSession {
     /// The PIN of every simulated key the fixture makes.
-    static let pin = "123456"
+    static let pin = SimulatedKeyConnector.defaultPin
 
     let session: StoreSession
 
@@ -81,8 +81,6 @@ struct FixtureSession {
         try FileManager.default.createDirectory(atPath: stateDir, withIntermediateDirectories: true)
         let key = SimulatedKey(pin: pin, touchRequired: false, touchTimeoutMs: 1_000)
         let host = try SimRemote.start(key: key)
-        // Owned by the handle alone, which the sync screens' debug controls
-        // drive (`SimRemoteControls.swift`).
         SimRemoteHandle.shared.register(host, key: key)
         try host.setUpStore(key: key, pin: pin, stateDir: stateDir)
         let sync = Result { try StoreSync.open(stateDir: stateDir) }

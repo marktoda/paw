@@ -434,23 +434,11 @@ struct StatusPage: View {
             GalleryGroup("Sync pill") {
                 SyncPill(status: .synced, text: "Synced 2 minutes ago")
                 SyncPill(status: .syncing, text: "Syncing")
-                SyncPill(status: .notPushed, text: "1 change not pushed")
                 SyncPill(status: .offline, text: "Offline, last checked 9:12 AM")
                 SyncPill(status: .failed, text: "Your git remote refused 1 change")
             }
             GalleryGroup("Not yet pushed", onCard: false) {
-                UnpushedBanner(
-                    reason: .waitingForKey,
-                    title: "1 change is only on this iPhone",
-                    detail: "Plug in your key to send it.")
-                UnpushedBanner(
-                    reason: .offline,
-                    title: "2 changes are only on this iPhone",
-                    detail: "You are offline. paw sends them when you are back online.")
-                UnpushedBanner(
-                    reason: .refused,
-                    title: "Your git remote refused 1 change",
-                    detail: "It is still saved on this iPhone. Check that your key may write to the repository.")
+                UnpushedBanner(title: "3 changes not sent", detail: "Saved on this iPhone.")
             }
             GalleryGroup("Face ID window", onCard: false) {
                 FaceIDWindowBar(text: "Opens with Face ID until 6:40 PM")

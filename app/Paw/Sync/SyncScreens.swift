@@ -68,18 +68,11 @@ struct HeldBackScreen: View {
                     text: "Who can open the folder changed after you saved, so these are encrypted for the old "
                         + "list of keys. Review the new list, then re-encrypt them.")
             }
-            if !syncing.heldBack.isEmpty, syncing.reencryptReady > 0 {
+            if syncing.canReencrypt {
                 Section {
-                    Button {
-                        syncing.startReencrypt()
-                    } label: {
-                        KeyActionLabel(reencryptTitle(syncing.reencryptReady))
-                    }
-                    .buttonStyle(.pawPrimary)
-                    .disabled(syncing.running != nil)
-                    .accessibilityIdentifier("held-back-reencrypt")
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
+                    ReencryptButton(syncing: syncing, identifier: "held-back-reencrypt")
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
                 }
             }
             if syncing.heldBack.isEmpty {
@@ -113,11 +106,10 @@ struct HeldBackScreen: View {
     private func section(_ item: HeldBack) -> some View {
         let entry = EntryRef(path: item.entry)
         let folder = item.gpgId.map { gpgIdFolder(path: $0) } ?? ""
-        let place = folder.isEmpty ? "your store" : folder
         return Section {
             detailRow(
                 "Encrypted for",
-                item.encryptedFor.isEmpty ? "Keys paw can't name" : item.encryptedFor.map(recipientWords).joined(separator: "\n"),
+                item.encryptedFor.isEmpty ? "Keys paw can't name" : item.encryptedFor.map(\.written).joined(separator: "\n"),
                 prose: item.encryptedFor.isEmpty,
                 identifier: "held-back-encrypted-for-\(entry.name)")
             let listUnread = item.list == .unreadable || item.recipients.isEmpty
@@ -131,7 +123,7 @@ struct HeldBackScreen: View {
                 identifier: "held-back-should-be-for-\(entry.name)")
             // A list that can't be read has nothing to review.
             if item.list == .notAccepted, item.gpgId != nil {
-                actionButton("Review who can open \(place)", identifier: "held-back-review-\(entry.name)") {
+                actionButton("Review who can open \(recipientsPlace(folder))", identifier: "held-back-review-\(entry.name)") {
                     model.show(.sync(.review(folder: folder)))
                 }
             }
@@ -143,7 +135,7 @@ struct HeldBackScreen: View {
                     identifier: "held-back-discard-\(entry.name)",
                     onConfirm: {
                         confirming = nil
-                        model.storeSession.edits?.discardChange(item.id)
+                        syncing.queue.discard(item.id)
                     },
                     onCancel: { confirming = nil })
                     .pawListRow()
@@ -207,10 +199,6 @@ struct RefusedRemoteScreen: View {
     let model: AppModel
     let syncing: SyncModel
 
-    private var unpushed: Int {
-        syncing.queue.unpushed.count
-    }
-
     var body: some View {
         List {
             Section {
@@ -218,7 +206,7 @@ struct RefusedRemoteScreen: View {
                     headline: SyncFailure.refusedRemoteProblem,
                     text: sentences(
                         "Rename or remove them on a computer. Sync is paused until then.",
-                        SyncFailure.waiting(unpushed)))
+                        SyncFailure.waiting(syncing.unpushed)))
             }
             if syncing.refused.isEmpty {
                 Section {
@@ -235,7 +223,7 @@ struct RefusedRemoteScreen: View {
                                 .font(PawFont.body.monospaced())
                                 .foregroundStyle(PawColor.label)
                                 .textSelection(.enabled)
-                            Text(refusedWords(refused).capitalizedFirst)
+                            Text(capitalised(refusedWords(refused)))
                                 .font(PawFont.footnote)
                                 .foregroundStyle(PawColor.labelSecondary)
                         }
@@ -251,9 +239,13 @@ struct RefusedRemoteScreen: View {
             }
             Section {
                 Button {
-                    syncing.start(.refresh)
+                    syncing.check()
                 } label: {
-                    KeyActionLabel("Check again")
+                    if syncing.checkNeedsKey {
+                        KeyActionLabel("Check again")
+                    } else {
+                        Text("Check again")
+                    }
                 }
                 .buttonStyle(.pawSecondary)
                 .accessibilityIdentifier("refused-check-again")
@@ -277,38 +269,29 @@ struct ReplacedScreen: View {
     let syncing: SyncModel
     @State private var confirmingDiscard = false
 
-    private var unpushed: Int {
-        syncing.queue.unpushed.count
-    }
-
     private var changes: String {
-        changeCount(unpushed)
+        changeCount(syncing.unpushed)
     }
 
     var body: some View {
         List {
             Section {
                 SyncIntro(
-                    headline: "The store on \(syncing.host) was replaced",
+                    headline: SyncWords.replaced(host: syncing.host),
                     text: Device.words("Its history no longer matches this iPhone's. ")
                         + "Not expected? Ask whoever looks after the store first.",
                     identifier: "replaced-intro")
             }
-            if unpushed > 0 {
+            if syncing.unpushed > 0 {
                 Section {
-                    ForEach(syncing.queue.unpushed.prefix(5), id: \.id) { item in
+                    ForEach(syncing.queue.unpushed.prefix(namedAtMost), id: \.id) { item in
                         Text(UnpushedScreen.title(item))
                             .font(PawFont.body)
                             .foregroundStyle(PawColor.label)
                             .frame(minHeight: PawMetrics.rowOneLine, alignment: .leading)
                             .pawListRow()
                     }
-                    if unpushed > 5 {
-                        Text("and \(unpushed - 5) more")
-                            .font(PawFont.footnote)
-                            .foregroundStyle(PawColor.labelSecondary)
-                            .pawListRow()
-                    }
+                    AndMoreRow(count: syncing.unpushed)
                 } header: {
                     PawSectionHeader("Your \(changes) not sent yet")
                         .accessibilityIdentifier("replaced-unpushed")
@@ -330,7 +313,7 @@ struct ReplacedScreen: View {
                     confirmingDiscard = false
                     syncing.acceptReplaced(keepChanges: true)
                 } label: {
-                    Text(unpushed > 0 ? "Use the new store, keep my \(changes)" : "Use the new store")
+                    Text(syncing.unpushed > 0 ? "Use the new store, keep my \(changes)" : "Use the new store")
                 }
                 .buttonStyle(.pawPrimary)
                 .disabled(syncing.accepting)
@@ -338,13 +321,13 @@ struct ReplacedScreen: View {
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Color.clear)
             }
-            if unpushed > 0 {
+            if syncing.unpushed > 0 {
                 Section {
                     if confirmingDiscard {
                         InlineConfirmRow(
                             question: "Discard \(changes)?",
                             detail: "This can't be undone.",
-                            confirmTitle: "Discard", cancelTitle: unpushed == 1 ? "Keep it" : "Keep them",
+                            confirmTitle: "Discard", cancelTitle: syncing.unpushed == 1 ? "Keep it" : "Keep them",
                             identifier: "replaced-discard",
                             onConfirm: {
                                 confirmingDiscard = false

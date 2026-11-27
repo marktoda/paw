@@ -46,7 +46,7 @@ final class PolishThreeTests: PawUITestCase {
     /// now presents another key: paw says it differs from the one
     /// forgotten, and trusting it takes a second, deliberate step.
     func testAServerKeyThatChangedAfterForgetIsFlaggedAndTrustedOnlyOnConfirm() {
-        launchFixture(extra: ["-pawSimRemoteChange", "hostKey"])
+        launchFixture(extra: ["-pawSimRemoteChange", "changedHostKey"])
         openSettings()
         // The simulated host is not one whose keys ship with paw.
         expectText("settings-host-fingerprint", contains: "Trusted by you")

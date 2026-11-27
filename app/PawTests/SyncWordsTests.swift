@@ -76,7 +76,6 @@ final class SyncWordsTests: XCTestCase {
         XCTAssertEqual(remote.problem, "Your store has names paw can't download")
         XCTAssertEqual(remote.details, [])
         XCTAssertEqual(remote.pill, "Sync paused \u{00B7} Review")
-        XCTAssertEqual(remote.actionTitle, "Show names")
 
         let other = SyncFailure(.Fault(fault: .local(detail: "boom")), during: .refresh, unpushed: 0, host: "h")
         XCTAssertEqual(other.kind, .other)

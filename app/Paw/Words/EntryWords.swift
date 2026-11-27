@@ -31,6 +31,15 @@ extension Recipient {
         }
     }
 
+    /// "key ID 123456789ABCDEF", as the entry's file names it.
+    var written: String {
+        switch self {
+        case .keyId(let id): "key ID \(id)"
+        case .fingerprint(let fingerprint): "key \(fingerprint)"
+        case .hidden: "a hidden recipient"
+        }
+    }
+
     /// The hex alone, in groups of four so it can be read aloud.
     var grouped: String {
         let hex: String

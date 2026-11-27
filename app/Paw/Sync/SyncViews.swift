@@ -18,6 +18,54 @@ struct KeyActionLabel: View {
     }
 }
 
+/// "and 3 more", under a list that names the first `namedAtMost`.
+struct AndMoreRow: View {
+    let count: Int
+
+    var body: some View {
+        if let more = andMore(count) {
+            Text(more)
+                .font(PawFont.footnote)
+                .foregroundStyle(PawColor.labelSecondary)
+                .pawListRow()
+        }
+    }
+}
+
+/// "Re-encrypt 3 changes": shown while `SyncModel.canReencrypt`.
+struct ReencryptButton: View {
+    let syncing: SyncModel
+    let identifier: String
+
+    var body: some View {
+        Button {
+            syncing.startReencrypt()
+        } label: {
+            KeyActionLabel(reencryptTitle(syncing.reencryptReady))
+        }
+        .buttonStyle(.pawPrimary)
+        .disabled(syncing.running != nil)
+        .accessibilityIdentifier(identifier)
+    }
+}
+
+/// "Send 2 changes": shown while `SyncModel.canSend`.
+struct SendButton: View {
+    let syncing: SyncModel
+    let identifier: String
+
+    var body: some View {
+        Button {
+            syncing.start(.send)
+        } label: {
+            KeyActionLabel(syncing.queue.sendTitle)
+        }
+        .buttonStyle(.pawPrimary)
+        .disabled(syncing.running != nil)
+        .accessibilityIdentifier(identifier)
+    }
+}
+
 /// Under the Home title: the sync status as a pill. The time it shows moves
 /// on by itself; nothing is fetched.
 struct HomeSyncPill: View {
@@ -46,9 +94,6 @@ struct HomeSyncPill: View {
 /// 2.9's words: both versions were kept, and which is which.
 struct SyncSummarySection: View {
     let model: AppModel
-
-    /// Names past this many are counted, not listed.
-    private static let shown = 5
 
     var body: some View {
         if let syncing = model.storeSession.syncing, let summary = syncing.summary {
@@ -83,11 +128,11 @@ struct SyncSummarySection: View {
                 .pawListRow()
                 entries(summary.added, verb: "Added", key: "added")
                 entries(summary.changed, verb: "Changed", key: "changed")
-                ForEach(summary.removed.prefix(Self.shown), id: \.self) { path in
+                ForEach(summary.removed.prefix(namedAtMost), id: \.self) { path in
                     plainRow("Removed \(EntryRef(path: path).name)", detail: EntryRef(path: path).folder,
                              identifier: "sync-removed-\(EntryRef(path: path).name)")
                 }
-                more(summary.removed.count)
+                AndMoreRow(count: summary.removed.count)
                 ForEach(summary.keptBoth, id: \.copy) { pair in
                     keptBoth(pair)
                 }
@@ -118,27 +163,17 @@ struct SyncSummarySection: View {
 
     @ViewBuilder
     private func entries(_ paths: [String], verb: String, key: String) -> some View {
-        ForEach(paths.prefix(Self.shown), id: \.self) { path in
+        ForEach(paths.prefix(namedAtMost), id: \.self) { path in
             let entry = EntryRef(path: path)
             EntryRowFor(
                 model: model, entry: entry,
                 subtitle: entry.folder.isEmpty ? verb : "\(verb) \u{00B7} \(entry.folder)",
                 identifier: "sync-\(key)-\(entry.name)")
         }
-        more(paths.count)
+        AndMoreRow(count: paths.count)
     }
 
-    @ViewBuilder
-    private func more(_ count: Int) -> some View {
-        if count > Self.shown {
-            Text("and \(count - Self.shown) more")
-                .font(PawFont.footnote)
-                .foregroundStyle(PawColor.labelSecondary)
-                .pawListRow()
-        }
-    }
-
-    /// "Two versions of github.com were kept", then both, each to open.
+    /// Both sides changed one entry: that, then both versions, each to open.
     @ViewBuilder
     private func keptBoth(_ pair: KeptBoth) -> some View {
         let entry = EntryRef(path: pair.entry)
@@ -210,7 +245,7 @@ struct SyncSendSection: View {
                     ErrorRow(
                         kind: .warning,
                         problem: "\(changeCount(syncing.heldBack.count)) can't be sent yet",
-                        nextStep: "Who can open the folder changed after you saved.",
+                        nextStep: SyncWords.heldBackReason,
                         actionTitle: "Review"
                     ) {
                         model.show(.sync(.heldBack))
@@ -218,29 +253,15 @@ struct SyncSendSection: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("unpushed-held-back")
                     .pawListRow()
-                    if syncing.reencryptReady > 0 {
-                        Button {
-                            syncing.startReencrypt()
-                        } label: {
-                            KeyActionLabel(reencryptTitle(syncing.reencryptReady))
-                        }
-                        .buttonStyle(.pawPrimary)
-                        .disabled(syncing.running != nil)
-                        .accessibilityIdentifier("unpushed-reencrypt")
-                        .listRowInsets(EdgeInsets())
-                        .listRowBackground(Color.clear)
+                    if syncing.canReencrypt {
+                        ReencryptButton(syncing: syncing, identifier: "unpushed-reencrypt")
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
                     }
                 } else if syncing.canSend {
-                    Button {
-                        syncing.start(.send)
-                    } label: {
-                        KeyActionLabel(syncing.queue.sendTitle)
-                    }
-                    .buttonStyle(.pawPrimary)
-                    .disabled(syncing.running != nil)
-                    .accessibilityIdentifier("unpushed-send")
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
+                    SendButton(syncing: syncing, identifier: "unpushed-send")
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
                 } else {
                     Button {
                         syncing.showStatus()
@@ -313,7 +334,8 @@ private struct SyncSheetHost: View {
                 KeyTaskSheet(
                     driver: syncing.keyTask,
                     purpose: purpose(keyKind),
-                    note: [syncing.keyPathNote, touchNote].compactMap { $0 }.joined(separator: " ").nilIfEmpty,
+                    note: [syncing.keyPathNote, keyKind == .reencrypt ? nil : touchNote]
+                        .compactMap { $0 }.joined(separator: " ").nilIfEmpty,
                     onCancel: { syncing.cancelSheet() })
             } else {
                 SyncStatusSheet(model: model, syncing: syncing)
@@ -338,7 +360,7 @@ private struct SyncSheetHost: View {
 
     /// Said only when the core expects the login to wait for a touch: a
     /// key whose touch is cached and was touched in the last 15 seconds
-    /// signs without one.
+    /// signs without one. A re-encrypt logs in nowhere.
     private var touchNote: String? {
         guard let policy = model.storeSession.keyPort.session()?.info().authenticationTouch else { return nil }
         switch syncing.sync.touchExpectation(policy: policy) {
@@ -352,10 +374,6 @@ private struct SyncStatusSheet: View {
     let model: AppModel
     let syncing: SyncModel
 
-    private var unpushed: Int {
-        syncing.queue.unpushed.count
-    }
-
     /// The last background run: its result, with its time only when that
     /// differs from "Last checked" above, so "Just now" is said once.
     private func backgroundValue(now: Date) -> String {
@@ -365,7 +383,7 @@ private struct SyncStatusSheet: View {
         if let checked = syncing.lastChecked, syncAgo(checked, now: now) == when {
             return result
         }
-        return "\(when.capitalizedFirst) \u{00B7} \(result)"
+        return "\(capitalised(when)) \u{00B7} \(result)"
     }
 
     var body: some View {
@@ -375,7 +393,7 @@ private struct SyncStatusSheet: View {
                 Section {
                     LabeledContent {
                         TimelineView(.periodic(from: .now, by: 30)) { context in
-                            Text(syncing.lastChecked.map { syncAgo($0, now: context.date).capitalizedFirst }
+                            Text(syncing.lastChecked.map { capitalised(syncAgo($0, now: context.date)) }
                                  ?? "Never")
                                 .foregroundStyle(PawColor.labelSecondary)
                         }
@@ -410,12 +428,12 @@ private struct SyncStatusSheet: View {
                     .padding(.vertical, PawMetrics.Spacing.xs)
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("sync-address")
-                    if unpushed > 0 {
+                    if syncing.unpushed > 0 {
                         Button {
                             syncing.go(to: .unpushed)
                         } label: {
                             LabeledContent {
-                                Text(changeCount(unpushed))
+                                Text(changeCount(syncing.unpushed))
                                     .foregroundStyle(PawColor.labelSecondary)
                             } label: {
                                 Text("Not sent yet")
@@ -446,7 +464,6 @@ private struct SyncStatusSheet: View {
         .accessibilityIdentifier("sync-sheet")
     }
 
-    /// What went wrong, and what is waiting to be looked at.
     @ViewBuilder private var attention: some View {
         if let failure = syncing.failure, failure.kind != .refusedRemote {
             Section {
@@ -462,7 +479,7 @@ private struct SyncStatusSheet: View {
                         kind: failure.kind == .offline ? .warning : .error,
                         problem: failure.problem, nextStep: failure.nextStep,
                         actionTitle: failure.actionTitle,
-                        actionNeedsKey: failure.actionNeedsKey && !(failure.during == .refresh && syncing.checksWithSignIn)
+                        actionNeedsKey: syncing.actionNeedsKey(after: failure)
                     ) {
                         act(on: failure)
                     }
@@ -487,7 +504,7 @@ private struct SyncStatusSheet: View {
         if syncing.replaced != nil {
             Section {
                 ErrorRow(
-                    kind: .warning, problem: "The store on \(syncing.host) was replaced",
+                    kind: .warning, problem: SyncWords.replaced(host: syncing.host),
                     nextStep: "Sync is paused until you choose what to do.",
                     actionTitle: "Review"
                 ) {
@@ -501,7 +518,7 @@ private struct SyncStatusSheet: View {
             Section {
                 ErrorRow(
                     kind: .warning, problem: SyncFailure.refusedRemoteProblem,
-                    nextStep: SyncFailure.refusedRemoteNextStep(unpushed: unpushed),
+                    nextStep: SyncFailure.refusedRemoteNextStep(unpushed: syncing.unpushed),
                     actionTitle: "Show names"
                 ) {
                     syncing.go(to: .sync(.refusedRemote))
@@ -515,7 +532,7 @@ private struct SyncStatusSheet: View {
                 ErrorRow(
                     kind: .warning,
                     problem: "\(changeCount(syncing.heldBack.count)) \(syncing.heldBack.count == 1 ? "wasn't" : "weren't") sent",
-                    nextStep: "Who can open the folder changed after you saved.",
+                    nextStep: SyncWords.heldBackReason,
                     actionTitle: "Review"
                 ) {
                     syncing.go(to: .sync(.heldBack))
@@ -529,7 +546,6 @@ private struct SyncStatusSheet: View {
     private func act(on failure: SyncFailure) {
         switch failure.kind {
         case .hostKeyChanged: syncing.openSettings()
-        case .refusedRemote: syncing.go(to: .sync(.refusedRemote))
         default: syncing.retryFailed()
         }
     }
@@ -537,38 +553,23 @@ private struct SyncStatusSheet: View {
     /// Send (or Re-encrypt, while changes are held back) and Check, each
     /// with the gold disc: that says they need the key.
     private var actions: some View {
-        let canSend = syncing.canSend
-        let canReencrypt = !syncing.heldBack.isEmpty && syncing.reencryptReady > 0
-        return VStack(spacing: PawMetrics.Spacing.s) {
-            if canReencrypt {
-                Button {
-                    syncing.startReencrypt()
-                } label: {
-                    KeyActionLabel(reencryptTitle(syncing.reencryptReady))
-                }
-                .buttonStyle(.pawPrimary)
-                .disabled(syncing.running != nil)
-                .accessibilityIdentifier("sync-reencrypt")
+        VStack(spacing: PawMetrics.Spacing.s) {
+            if syncing.canReencrypt {
+                ReencryptButton(syncing: syncing, identifier: "sync-reencrypt")
             }
-            if canSend {
-                Button {
-                    syncing.start(.send)
-                } label: {
-                    KeyActionLabel(syncing.queue.sendTitle)
-                }
-                .buttonStyle(.pawPrimary)
-                .accessibilityIdentifier("sync-send")
+            if syncing.canSend {
+                SendButton(syncing: syncing, identifier: "sync-send")
             }
             Button {
                 syncing.check()
             } label: {
-                if syncing.checksWithSignIn {
-                    Text(syncing.running == .refresh ? "Checking for changes\u{2026}" : "Check for changes")
-                } else {
+                if syncing.checkNeedsKey {
                     KeyActionLabel("Check for changes")
+                } else {
+                    Text(syncing.running == .refresh ? "Checking for changes\u{2026}" : "Check for changes")
                 }
             }
-            .buttonStyle(PawButtonStyle(kind: canSend || canReencrypt ? .secondary : .primary))
+            .buttonStyle(PawButtonStyle(kind: syncing.canSend || syncing.canReencrypt ? .secondary : .primary))
             .disabled(syncing.running != nil)
             .accessibilityIdentifier("sync-check")
         }
@@ -582,9 +583,5 @@ private struct SyncStatusSheet: View {
 extension String {
     var nilIfEmpty: String? {
         isEmpty ? nil : self
-    }
-
-    var capitalizedFirst: String {
-        prefix(1).uppercased() + dropFirst()
     }
 }

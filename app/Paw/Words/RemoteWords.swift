@@ -87,10 +87,10 @@ func addressNoticeWords(_ notice: AddressNotice) -> String {
 /// "the remote contains something paw will not check out: up (it is a
 /// symbolic link)", naming the first five paths.
 func refusedMessage(_ paths: [RefusedPath]) -> String {
-    let named = paths.prefix(5).map { "\($0.path) (\(refusedWords($0)))" }
+    let named = paths.prefix(namedAtMost).map { "\($0.path) (\(refusedWords($0)))" }
     var message = "the remote contains something paw will not check out: " + named.joined(separator: "; ")
-    if paths.count > 5 {
-        message += "; and \(paths.count - 5) more"
+    if let more = andMore(paths.count) {
+        message += "; " + more
     }
     return message
 }
@@ -155,6 +155,11 @@ func signInEnded(_ failure: RemoteFailure) -> Bool {
     case .notSignedIn, .signedOut: true
     default: false
     }
+}
+
+/// A pinned host presented another key: "github.com's identity changed".
+func hostIdentityChanged(_ host: String) -> String {
+    "\(host)'s identity changed"
 }
 
 /// Why a host's key can't be forgotten or replaced: paw ships with it.

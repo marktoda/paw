@@ -70,13 +70,13 @@ final class EditModelTests: XCTestCase {
         XCTAssertEqual(queue.bannerTitle, "2 changes not sent")
         let change = try XCTUnwrap(queue.unpushed.first { $0.entry == "web/keep.example" })
 
-        edits.discardChange(change.id)
+        queue.discard(change.id)
         XCTAssertEqual(queue.unpushed.map(\.entry), ["web/drop.example"])
         let web = try model.storeSession.live.listing("web").get().entries.map(\.path)
         XCTAssertTrue(web.contains("web/drop.example"))
         XCTAssertFalse(web.contains("web/keep.example"), "A discarded add takes the entry away")
 
-        edits.discardAllChanges()
+        queue.discardAll()
         XCTAssertEqual(queue.unpushed.count, 0)
     }
 }

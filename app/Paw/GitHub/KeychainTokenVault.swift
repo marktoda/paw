@@ -20,8 +20,6 @@ final class KeychainTokenVault: TokenVault, @unchecked Sendable {
 
     private let lock = NSLock()
 
-    init() {}
-
     func store(name: String, secret: Data) throws {
         let group = try Self.group()
         try lock.withLock {

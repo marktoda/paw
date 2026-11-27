@@ -149,8 +149,8 @@ private struct EntryFormView: View {
     private var nameSection: some View {
         Section {
             FormTextRow(
-                label: "Name", prompt: "Required, e.g. github.com", text: form.binding(\.name, field: "name"),
-                identifier: "form-name", problem: shown(.name, "name"))
+                label: "Name", prompt: "Required, e.g. github.com", text: form.binding(\.name, field: .name),
+                identifier: "form-name", problem: form.shownProblem(.name))
                 .focused($focus, equals: .name)
                 .submitLabel(.next)
                 .onSubmit { focus = .username }
@@ -158,9 +158,9 @@ private struct EntryFormView: View {
             if form.newFolder != nil {
                 FormTextRow(
                     label: "New folder", prompt: "e.g. shopping or work/clients",
-                    text: newFolderBinding, identifier: "form-new-folder", problem: shown(.folder, "folder"))
+                    text: newFolderBinding, identifier: "form-new-folder", problem: form.shownProblem(.folder))
                     .focused($focus, equals: .newFolder)
-            } else if let problem = shown(.folder, "folder") {
+            } else if let problem = form.shownProblem(.folder) {
                 FieldProblem(message: problem, identifier: "problem-folder").pawListRow()
             }
         }
@@ -184,7 +184,6 @@ private struct EntryFormView: View {
                 FolderChoiceLabel(title: "Not in a folder", chosen: form.newFolder == nil && form.folder.isEmpty)
             }
             ForEach(form.folders, id: \.self) { folder in
-                // Not known yet: offered, and Save waits for its answer.
                 let writable = form.folderOpenable[folder] ?? true
                 Button {
                     form.chooseFolder(folder)
@@ -240,12 +239,12 @@ private struct EntryFormView: View {
     private var loginSection: some View {
         Section {
             FormTextRow(
-                label: "Username", prompt: "Optional", text: form.binding(\.username, field: "username"),
-                identifier: "form-username", problem: shown(.username, "username"))
+                label: "Username", prompt: "Optional", text: form.binding(\.username, field: .username),
+                identifier: "form-username", problem: form.shownProblem(.username))
                 .focused($focus, equals: .username)
                 .submitLabel(.next)
                 .onSubmit { focus = .password }
-            PasswordEditRow(form: form, focus: $focus, problem: shown(.password, "password"))
+            PasswordEditRow(form: form, focus: $focus, problem: form.shownProblem(.password))
             HStack(spacing: PawMetrics.Spacing.s) {
                 Button {
                     form.generate()
@@ -297,8 +296,8 @@ private struct EntryFormView: View {
         Section {
             FormTextRow(
                 label: "Website", prompt: "e.g. https://github.com/login",
-                text: form.binding(\.website, field: "website"),
-                identifier: "form-website", problem: shown(.url, "website"), keyboard: .URL)
+                text: form.binding(\.website, field: .website),
+                identifier: "form-website", problem: form.shownProblem(.website), keyboard: .URL)
                 .focused($focus, equals: .website)
         } footer: {
             Text("AutoFill uses it to match the page.")
@@ -312,7 +311,7 @@ private struct EntryFormView: View {
             ForEach(Array(form.extraFields.enumerated()), id: \.element.id) { index, field in
                 ExtraFieldRow(
                     form: form, field: field, index: index, focus: $focus,
-                    problem: form.fieldProblems[field.id] ?? shown(.field(key: field.key), "field-\(field.id)"))
+                    problem: form.fieldProblems[field.id] ?? form.shownProblem(.extra(field.id)))
             }
             Button {
                 form.addField()
@@ -344,7 +343,6 @@ private struct EntryFormView: View {
         return form.removingOneTimeCode ? "Removed when you save" : "Has a one-time code"
     }
 
-    /// The setup key, and Remove for a code the entry already has.
     private var oneTimeCodeSection: some View {
         Section {
             if form.hadOneTimeCode {
@@ -375,8 +373,8 @@ private struct EntryFormView: View {
             }
             FormTextRow(
                 label: "Setup key", prompt: "Key or otpauth:// address",
-                text: form.binding(\.setupKey, field: "setup-key"),
-                identifier: "form-setup-key", problem: shown(.oneTimeCode, "setup-key"))
+                text: form.binding(\.setupKey, field: .setupKey),
+                identifier: "form-setup-key", problem: form.shownProblem(.setupKey))
                 .focused($focus, equals: .setupKey)
         } header: {
             PawSectionHeader("One-time code")
@@ -385,7 +383,7 @@ private struct EntryFormView: View {
 
     private var notesSection: some View {
         Section {
-            TextField("Optional", text: form.binding(\.notes, field: "notes"), axis: .vertical)
+            TextField("Optional", text: form.binding(\.notes, field: .notes), axis: .vertical)
                 .font(PawFont.body)
                 .lineLimit(3...12)
                 .focused($focus, equals: .notes)
@@ -394,7 +392,7 @@ private struct EntryFormView: View {
                 .accessibilityLabel("Notes")
                 .accessibilityIdentifier("form-notes")
                 .pawListRow()
-            if let problem = shown(.notes, "notes") {
+            if let problem = form.shownProblem(.notes) {
                 FieldProblem(message: problem, identifier: "problem-notes").pawListRow()
             }
         } header: {
@@ -418,12 +416,6 @@ private struct EntryFormView: View {
                 .pawListRow()
             }
         }
-    }
-
-    /// The core's message for `field`, once the person has typed in it.
-    private func shown(_ field: DraftField, _ key: String) -> String? {
-        guard form.isTouched(key) || form.isTouched(EntryFormModel.touchKey(field)) else { return nil }
-        return form.problem(for: field)
     }
 
     // MARK: Actions
@@ -506,10 +498,10 @@ private struct PasswordEditRow: View {
                     .accessibilityHidden(true)
                 Group {
                     if form.showsPassword {
-                        TextField("Type one or generate it", text: form.binding(\.password, field: "password"), axis: .vertical)
+                        TextField("Type one or generate it", text: form.binding(\.password, field: .password), axis: .vertical)
                             .font(PawFont.password)
                     } else {
-                        SecureField("Type one or generate it", text: form.binding(\.password, field: "password"))
+                        SecureField("Type one or generate it", text: form.binding(\.password, field: .password))
                             .font(PawFont.body)
                     }
                 }
@@ -576,7 +568,6 @@ private struct GeneratorOptions: View {
     }
 }
 
-/// One `key: value` line: two fields and a remove button.
 private struct ExtraFieldRow: View {
     @Bindable var form: EntryFormModel
     let field: EntryFormModel.ExtraField
@@ -654,6 +645,6 @@ extension StoreWriter {
     /// stays choosable: the form then offers the review.
     func folderOpenable(_ folder: String) -> Bool? {
         guard let recipients = try? folderRecipients(folder: folder) else { return nil }
-        return recipients.lines.allSatisfy(\.isReady)
+        return recipients.missingKeys == 0
     }
 }

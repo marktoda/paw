@@ -82,7 +82,8 @@ final class SyncModel {
         storeAddressHost(address: address)
     }
 
-    private var unpushed: Int {
+    /// How many changes wait to be sent.
+    var unpushed: Int {
         queue.unpushed.count
     }
 
@@ -98,7 +99,7 @@ final class SyncModel {
             return .working(workingText(running, unpushed: unpushed))
         }
         if replaced != nil || !refused.isEmpty {
-            return .paused("Sync paused \u{00B7} Review")
+            return .paused(SyncWords.paused)
         }
         if !heldBack.isEmpty {
             return .paused("\(changeCount(heldBack.count)) held back \u{00B7} Review")
@@ -112,7 +113,7 @@ final class SyncModel {
         if let lastChecked {
             return .upToDate(checked: lastChecked)
         }
-        return checksWithSignIn ? .notChecked : .needsKey
+        return checkNeedsKey ? .needsKey : .notChecked
     }
 
     private func workingText(_ kind: SyncKind, unpushed: Int) -> String {
@@ -141,6 +142,12 @@ final class SyncModel {
     /// not while the remote needs looking at first.
     var canSend: Bool {
         unpushed > 0 && heldBack.isEmpty && replaced == nil && refused.isEmpty
+    }
+
+    /// Whether "Re-encrypt" is offered: some held-back change can be
+    /// re-encrypted now.
+    var canReencrypt: Bool {
+        !heldBack.isEmpty && reencryptReady > 0
     }
 
     private func recomputeLocal() {
@@ -177,7 +184,7 @@ final class SyncModel {
     /// opens each held-back change with the key (a touch each) and encrypts
     /// it for its folder's new list. Only ever started by a tap.
     func startReencrypt() {
-        guard reencryptReady > 0 else { return }
+        guard canReencrypt else { return }
         start(.reencrypt)
     }
 
@@ -323,11 +330,23 @@ final class SyncModel {
         gitHub?.covers(address: address) ?? false
     }
 
+    /// Whether `check()` asks for the key, so its button carries the disc.
+    var checkNeedsKey: Bool {
+        !checksWithSignIn
+    }
+
+    /// Whether the step offered after `failure` asks for the key.
+    func actionNeedsKey(after failure: SyncFailure) -> Bool {
+        failure.actionNeedsKey && (failure.during != .refresh || checkNeedsKey)
+    }
+
+    /// Checks for changes: with the sign-in when it covers this store,
+    /// otherwise with the key.
     func check() {
-        if checksWithSignIn {
-            checkWithSignIn()
-        } else {
+        if checkNeedsKey {
             start(.refresh)
+        } else {
+            checkWithSignIn()
         }
     }
 
@@ -447,7 +466,6 @@ final class SyncModel {
 }
 
 extension SyncModel {
-    /// Send, or check for changes, with the key.
     private func syncJob(_ kind: SyncKind,
                          _ begin: @escaping (KeyPort, KeyTaskListener) -> KeyTask) -> KeyJob<SyncError> {
         let port = keyPort
@@ -474,8 +492,6 @@ extension SyncModel {
         return job
     }
 
-    /// "Re-encrypt": no network. Each held-back change is opened with the
-    /// key (a touch each) and encrypted for its folder's new list.
     private func reencryptJob() -> KeyJob<SyncError> {
         let sync = sync
         let port = keyPort
