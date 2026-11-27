@@ -100,6 +100,19 @@ pub struct SimOptions {
     pub extended_length: bool,
 }
 
+impl SimOptions {
+    /// One touch policy for both slots, and short APDUs.
+    fn new(pin: String, touch_required: bool, touch_timeout_ms: u32) -> Self {
+        Self {
+            pin,
+            decrypt_touch: touch_required,
+            auth_touch: touch_required,
+            touch_timeout: Duration::from_millis(touch_timeout_ms.into()),
+            extended_length: false,
+        }
+    }
+}
+
 #[derive(uniffi::Object)]
 pub struct SimulatedKey {
     secret: StaticSecret,
@@ -152,17 +165,12 @@ fn tlv(tag: &[u8], value: &[u8]) -> Vec<u8> {
 
 #[uniffi::export]
 impl SimulatedKey {
-    /// `touch_timeout_ms` is how long a decrypt waits for [`Self::touch`]
-    /// before failing, as a real key does when nobody touches it.
+    /// `touch_timeout_ms` is how long a key operation waits for
+    /// [`Self::touch`] before failing, as a real key does when nobody
+    /// touches it.
     #[uniffi::constructor]
     pub fn new(pin: String, touch_required: bool, touch_timeout_ms: u32) -> Arc<Self> {
-        Self::with_options(SimOptions {
-            pin,
-            decrypt_touch: touch_required,
-            auth_touch: touch_required,
-            touch_timeout: Duration::from_millis(touch_timeout_ms.into()),
-            extended_length: false,
-        })
+        Self::with_options(SimOptions::new(pin, touch_required, touch_timeout_ms))
     }
 
     /// A second, different simulated key (other key material and serial),
@@ -170,13 +178,7 @@ impl SimulatedKey {
     /// nothing in the fixture store.
     #[uniffi::constructor]
     pub fn new_other(pin: String, touch_required: bool, touch_timeout_ms: u32) -> Arc<Self> {
-        Self::other_with_options(SimOptions {
-            pin,
-            decrypt_touch: touch_required,
-            auth_touch: touch_required,
-            touch_timeout: Duration::from_millis(touch_timeout_ms.into()),
-            extended_length: false,
-        })
+        Self::other_with_options(SimOptions::new(pin, touch_required, touch_timeout_ms))
     }
 
     /// Stands in for a finger on the gold disc. One touch allows one key
@@ -210,13 +212,7 @@ impl SimulatedKey {
 
     /// Hex OpenPGP v4 fingerprint of the decryption key.
     pub fn fingerprint_hex(&self) -> String {
-        self.fingerprint().iter().map(|b| format!("{b:02X}")).collect()
-    }
-
-    /// While the key is unplugged the answer is empty, which the core reads
-    /// as a reader failure.
-    pub fn exchange(&self, apdu: Vec<u8>) -> Vec<u8> {
-        self.transmit_checked(&apdu).unwrap_or_default()
+        crate::recipients::hex(&self.fingerprint())
     }
 
     /// The key is pulled out: every exchange fails, and a key operation
@@ -274,7 +270,6 @@ impl SimulatedKey {
     }
 }
 
-/// For the Rust tests; Swift never calls these.
 impl SimulatedKey {
     pub fn decipher_count(&self) -> u32 {
         self.lock().deciphers
@@ -468,7 +463,7 @@ impl SimulatedKey {
 
     /// Hex OpenPGP v4 fingerprint of the authentication key.
     pub fn authentication_fingerprint_hex(&self) -> String {
-        self.auth_fingerprint().iter().map(|b| format!("{b:02X}")).collect()
+        crate::recipients::hex(&self.auth_fingerprint())
     }
 
     fn public(&self) -> [u8; 32] {

@@ -146,17 +146,17 @@ private final class PlugWatch {
 }
 
 final class SimulatedCardConnection: CardConnection, @unchecked Sendable {
-    private let key: SimulatedKey
+    private let key: CardConnection
 
     init(key: SimulatedKey) {
-        self.key = key
+        self.key = key.asConnection()
     }
 
     func transmit(apdu: Data) throws -> Data {
         // A card exchange can take as long as the key's touch timeout: never
         // on the main thread. The UI tests run with this check on.
         assert(!Thread.isMainThread, "card traffic on the main thread")
-        return key.exchange(apdu: apdu)
+        return try key.transmit(apdu: apdu)
     }
 }
 

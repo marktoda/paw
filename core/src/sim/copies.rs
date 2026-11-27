@@ -83,18 +83,8 @@ impl SimKeystore {
         self
     }
 
-    /// Makes new keys: nothing sealed before can be opened.
-    pub fn reset(&self) -> Result<(), KeystoreError> {
-        let mut state = locked(&self.state);
-        state.seal_key = random_key();
-        state.index_key = random_key();
-        state.invalidated = false;
-        state.resets += 1;
-        Ok(())
-    }
 }
 
-/// For the Rust tests; Swift never calls these.
 impl SimKeystore {
     /// A face is added or removed in Settings: the seal key is invalidated
     /// until [`Self::reset`] makes a new one.
@@ -108,7 +98,10 @@ impl SimKeystore {
         locked(&self.state).prompts
     }
 
-    pub fn seal(&self, secret: Vec<u8>) -> Result<Vec<u8>, KeystoreError> {
+}
+
+impl DeviceKeystore for SimKeystore {
+    fn seal(&self, secret: Vec<u8>) -> Result<Vec<u8>, KeystoreError> {
         let secret = Zeroizing::new(secret);
         let state = locked(&self.state);
         if state.invalidated {
@@ -122,7 +115,7 @@ impl SimKeystore {
         Ok([nonce.as_slice(), &sealed].concat())
     }
 
-    pub fn unseal(&self, sealed: Vec<u8>, _reason: String) -> Result<Vec<u8>, KeystoreError> {
+    fn unseal(&self, sealed: Vec<u8>, _reason: String) -> Result<Vec<u8>, KeystoreError> {
         let mut state = locked(&self.state);
         if state.invalidated {
             return Err(KeystoreError::KeyGone);
@@ -148,26 +141,18 @@ impl SimKeystore {
             .map_err(|_| unopenable())
     }
 
-    pub fn index_key(&self) -> Result<Vec<u8>, KeystoreError> {
+    fn index_key(&self) -> Result<Vec<u8>, KeystoreError> {
         Ok(locked(&self.state).index_key.to_vec())
     }
-}
 
-impl DeviceKeystore for SimKeystore {
-    fn seal(&self, secret: Vec<u8>) -> Result<Vec<u8>, KeystoreError> {
-        SimKeystore::seal(self, secret)
-    }
-
-    fn unseal(&self, sealed: Vec<u8>, reason: String) -> Result<Vec<u8>, KeystoreError> {
-        SimKeystore::unseal(self, sealed, reason)
-    }
-
-    fn index_key(&self) -> Result<Vec<u8>, KeystoreError> {
-        SimKeystore::index_key(self)
-    }
-
+    /// Makes new keys: nothing sealed before can be opened.
     fn reset(&self) -> Result<(), KeystoreError> {
-        SimKeystore::reset(self)
+        let mut state = locked(&self.state);
+        state.seal_key = random_key();
+        state.index_key = random_key();
+        state.invalidated = false;
+        state.resets += 1;
+        Ok(())
     }
 }
 
@@ -199,18 +184,6 @@ impl SimClock {
         state.monotonic_ms = state.monotonic_ms.saturating_add(ms);
     }
 
-    pub fn wall_ms(&self) -> i64 {
-        locked(&self.state).wall_ms
-    }
-
-    pub fn monotonic_ms(&self) -> i64 {
-        locked(&self.state).monotonic_ms
-    }
-
-    pub fn boot_id(&self) -> String {
-        format!("sim-boot-{}", locked(&self.state).boot)
-    }
-
     /// These clocks as the clock seam, to hand straight to `CopyCache` and
     /// `KeyPort` with no Swift adapter.
     pub fn as_clock(self: Arc<Self>) -> Arc<dyn Clock> {
@@ -218,7 +191,6 @@ impl SimClock {
     }
 }
 
-/// For the Rust tests; Swift never calls these.
 impl SimClock {
     /// The person sets the clock: only the wall clock moves.
     pub fn set_wall_ms(&self, wall_ms: i64) {
@@ -235,14 +207,14 @@ impl SimClock {
 
 impl Clock for SimClock {
     fn wall_ms(&self) -> i64 {
-        SimClock::wall_ms(self)
+        locked(&self.state).wall_ms
     }
 
     fn monotonic_ms(&self) -> i64 {
-        SimClock::monotonic_ms(self)
+        locked(&self.state).monotonic_ms
     }
 
     fn boot_id(&self) -> String {
-        SimClock::boot_id(self)
+        format!("sim-boot-{}", locked(&self.state).boot)
     }
 }

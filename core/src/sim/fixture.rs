@@ -110,7 +110,7 @@ pub fn other_key() -> Result<PublicKey, PawError> {
 }
 
 fn hex_fingerprint(key: &PublicKey) -> String {
-    key.fingerprint().as_bytes().iter().map(|b| format!("{b:02X}")).collect()
+    crate::recipients::hex(key.fingerprint().as_bytes())
 }
 
 /// Hex fingerprint of the key the `archive` folder is encrypted for.

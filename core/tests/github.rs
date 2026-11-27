@@ -20,7 +20,7 @@ use paw_core::ffi::sync::Setup;
 use paw_core::task::{KeyOutcome, KeyTaskState};
 use paw_core::setup::SetupState;
 use paw_core::sim::SimulatedKey;
-use paw_core::sim::github::{SIM_USER_CODE, SimBystander, SimDeviceOutcome, SimGitHub, SimPollClock, SimTokenVault};
+use paw_core::sim::github::{SIM_CLIENT_ID, SIM_USER_CODE, SimBystander, SimDeviceOutcome, SimGitHub, SimPollClock, SimTokenVault};
 use paw_core::sim::remote::SimRemote;
 use paw_core::sync::operation::{self, SyncState};
 use paw_core::fault::Fault;
@@ -51,7 +51,7 @@ fn unix_now() -> u64 {
 fn world() -> World {
     let key = SimulatedKey::new(PIN.into(), false, 1000);
     let remote = SimRemote::start(key.clone()).unwrap();
-    let github = SimGitHub::start_for(&remote, REPOSITORY).unwrap();
+    let github = SimGitHub::start(remote.clone(), REPOSITORY.into()).unwrap();
     let vault = SimTokenVault::new();
     let clock = SimPollClock::new();
     let wall = Arc::new(AtomicU64::new(unix_now()));
@@ -330,7 +330,7 @@ fn signing_in_sends_the_client_id_and_device_code_only_and_says_paw() {
     let requests = w.github.requests();
     assert_eq!(requests.len(), 2);
     let start = String::from_utf8_lossy(&requests[0].body).into_owned();
-    assert_eq!(start, format!("client_id={}", w.github.client_id()));
+    assert_eq!(start, format!("client_id={}", SIM_CLIENT_ID));
     let poll = String::from_utf8_lossy(&requests[1].body).into_owned();
     let fields: Vec<&str> = poll.split('&').map(|f| f.split('=').next().unwrap()).collect();
     assert_eq!(fields, vec!["client_id", "device_code", "grant_type"]);

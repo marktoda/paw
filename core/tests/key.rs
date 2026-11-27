@@ -15,6 +15,7 @@ use paw_core::key::{CACHED_TOUCH_GRACE, KeyError, PIN_BACKGROUND_LIMIT};
 use paw_core::task::LoginPurpose;
 use paw_core::task::{KeyOutcome, KeyTaskState};
 use paw_core::key::CardConnection;
+use paw_core::clock::Clock;
 use paw_core::sim::SimTouch;
 use paw_core::key::{SignFailure, SshSigner};
 use ring::signature::{ED25519, UnparsedPublicKey};

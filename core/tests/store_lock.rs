@@ -27,7 +27,7 @@ use paw_core::github::{Endpoints, GitHubAccount, RepositoryList, SignInState, To
 use paw_core::lock::StoreLock;
 use paw_core::files::layout::STORE_LOCK;
 use paw_core::setup::SetupState;
-use paw_core::sim::github::{SimGitHub, SimPollClock};
+use paw_core::sim::github::{SIM_CLIENT_ID, SimGitHub, SimPollClock};
 use paw_core::sim::remote::SimRemote;
 use paw_core::sim::{SimTouch, SimulatedKey};
 use paw_core::store::PassStore;
@@ -126,7 +126,7 @@ fn account(endpoints: Endpoints, top: &Path) -> GitHubAccount {
 /// refreshed.
 fn world_with(key: Arc<SimulatedKey>) -> World {
     let remote = SimRemote::start(key.clone()).unwrap();
-    let github = SimGitHub::start_for(&remote, REPOSITORY).unwrap();
+    let github = SimGitHub::start(remote.clone(), REPOSITORY.into()).unwrap();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("vault")).unwrap();
     std::fs::create_dir_all(dir.path().join("state")).unwrap();
@@ -777,7 +777,7 @@ fn two_processes_refreshing_the_sign_in_at_once_spend_the_refresh_token_once() {
         w.dir.path(),
         &[
             ("PAW_LOCK_TEST_URL", w.github.url()),
-            ("PAW_LOCK_TEST_CLIENT", w.github.client_id()),
+            ("PAW_LOCK_TEST_CLIENT", SIM_CLIENT_ID.into()),
             ("PAW_LOCK_TEST_SSH", w.remote.address()),
             ("PAW_LOCK_TEST_ROUNDS", rounds.to_string()),
         ],
@@ -1086,7 +1086,7 @@ fn spend_elsewhere(w: &World, refresh: &str) -> serde_json::Value {
     use std::io::{Read, Write};
     let url = w.github.url();
     let address = url.trim_start_matches("http://");
-    let body = format!("client_id={}&grant_type=refresh_token&refresh_token={refresh}", w.github.client_id());
+    let body = format!("client_id={}&grant_type=refresh_token&refresh_token={refresh}", SIM_CLIENT_ID);
     let mut stream = std::net::TcpStream::connect(address).unwrap();
     write!(
         stream,
