@@ -58,7 +58,7 @@ jobs:
           path: |
             app/build/core
             app/Generated
-          key: core-ios-${{ hashFiles('core/**', 'app/project.yml', 'scripts/build-core.sh', 'scripts/check-no-sim.sh', 'scripts/make-xcframework.sh') }}
+          key: core-ios-${{ hashFiles('core/**', 'rust-toolchain.toml', 'app/project.yml', 'scripts/build-core.sh', 'scripts/check-no-sim.sh') }}
       - uses: Swatinem/rust-cache@v2
         if: steps.built.outputs.cache-hit != 'true'
         with:
@@ -76,12 +76,12 @@ jobs:
 
   # Splits the UI tests across machines (up to 5 for a full run, 4 for a
   # narrowed one) so a run takes as long as its slowest part. The unit
-  # tests (app/PawTests, seconds in all) run once: in the last part of a
-  # full run, which names no tests and so runs them, and in the first part
-  # of a narrowed one (`unit`). On a push to
-  # main it also looks for a full run that already passed on exactly these
-  # files (same git tree, e.g. the branch that was fast-forwarded) and, if
-  # there is one, the simulator jobs are skipped.
+  # tests (app/PawTests, seconds in all) run once, in the part marked
+  # `unit`: the last part of a full run, the first of a narrowed one. On a
+  # push to main it also looks for a run that already passed every part of
+  # this full split on exactly these files (same git tree, e.g. the branch
+  # that was fast-forwarded) and, if there is one, the simulator jobs are
+  # skipped.
   plan:
     runs-on: ubuntu-latest
     permissions:
@@ -92,26 +92,6 @@ jobs:
       tested: ${{ steps.tested.outputs.run }}
     steps:
       - uses: actions/checkout@v4
-      - name: Look for a full run on the same files
-        id: tested
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TREE: ${{ github.event.head_commit.tree_id }}
-        run: |
-          [ -n "$TREE" ] || exit 0
-          for id in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?status=success&per_page=50" \
-              -q ".workflow_runs[] | select(.head_commit.tree_id == \"$TREE\" and .id != $GITHUB_RUN_ID) | .id"); do
-            # Only a full run counts: one split as "full" with its iPad part,
-            # every part passed.
-            full=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" \
-              -q '[.jobs[] | select((.name | startswith("ui (full")) or .name == "ui (ipad)")] | any(.name == "ui (ipad)") and any(.name | startswith("ui (full")) and all(.conclusion == "success")')
-            if [ "$full" = "true" ]; then
-              echo "Run $id already passed every UI test on this tree; skipping them."
-              echo "run=$id" >> "$GITHUB_OUTPUT"
-              break
-            fi
-          done
       - name: Split the UI tests
         id: plan
         env:
@@ -140,18 +120,15 @@ jobs:
                       tests.setdefault(cls, []).append(m.group(1))
           w = lambda cls: weight.get(cls, 60)
           only = os.environ.get("ONLY", "").split()
-          # A narrowed run always runs every unit test, in its first part, so
-          # a unit test named needs no part of its own.
-          ids = subprocess.run(["scripts/test-id.sh", *only], capture_output=True, text=True, check=True).stdout.split()
-          named_only = only
-          only = [n for n, i in zip(only, ids) if i.split("/")[0] != "PawTests"]
-          if named_only and not only:
-              only = ["PawTests"]
           parts = []
           if only:
+              # Every unit test runs anyway, so a unit test named needs no
+              # part of its own.
+              ids = subprocess.run(["scripts/test-id.sh", *only], capture_output=True, text=True, check=True).stdout.split()
               groups = {}
-              for name in only:
-                  groups.setdefault(name.split("/")[0], []).append(name)
+              for name, i in zip(only, ids):
+                  if i.split("/")[0] != "PawTests":
+                      groups.setdefault(name.split("/")[0], []).append(name)
               # The iPad tests get their own part, on an iPad; the rest never do.
               pad = groups.pop("IPadTests", None)
               load = lambda names: sum(w(n.split("/")[0]) * (1 if "/" in n else len(tests.get(n, [1]))) for n in names)
@@ -159,10 +136,12 @@ jobs:
               for cls in sorted(groups, key=lambda c: -load(groups[c])):
                   min(bins, key=load).extend(groups[cls])
               n = len(bins)
-              parts = [{"name": f"only-{i + 1}-of-{n}", "only": " ".join(b), "skip": "", "unit": "1" if i == 0 else ""}
-                       for i, b in enumerate(bins)]
+              parts = [{"name": f"only-{i + 1}-of-{n}", "only": " ".join(b), "skip": ""} for i, b in enumerate(bins)]
               if pad:
                   parts.append({"name": "ipad", "only": " ".join(pad), "skip": "", "family": "iPad"})
+              if not parts:
+                  parts = [{"name": "only-1-of-1", "only": "PawTests", "skip": ""}]
+              parts[0]["unit"] = "1"
           else:
               # The last part runs whatever the others do not name, so a test
               # this misses still runs.
@@ -184,19 +163,44 @@ jobs:
                   names.append(whole + [f"{c}/{t}" for c, t in b if c not in whole])
               named = [n for b in names[:-1] for n in b]
               parts = [{"name": f"full-{i + 1}-of-{k}", "only": " ".join(b), "skip": ""} for i, b in enumerate(names[:-1]) if b]
-              parts.append({"name": f"full-{k}-of-{k}", "only": "", "skip": " ".join(named + (["IPadTests"] if pad else []))})
+              parts.append({"name": f"full-{k}-of-{k}", "only": "", "skip": " ".join(named + (["IPadTests"] if pad else [])), "unit": "1"})
               if pad:
                   parts.append({"name": "ipad", "only": "IPadTests", "skip": "", "family": "iPad"})
           for p in parts:
               p.setdefault("family", "iPad" if "IPadTests" in p["only"] else "iPhone")
-              print(p["name"], p["family"], "only:", p["only"] or "-", "skip:", p["skip"] or "-", file=sys.stderr)
+              p.setdefault("unit", "0")
+              print(p["name"], p["family"], "only:", p["only"] or "-", "skip:", p["skip"] or "-", "unit:", p["unit"], file=sys.stderr)
+          assert [p["unit"] for p in parts].count("1") == 1, "exactly one part runs the unit tests"
           print("parts=" + json.dumps({"include": parts}))
           PY
+      - name: Look for a run that passed this split on the same files
+        id: tested
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TREE: ${{ github.event.head_commit.tree_id }}
+          PARTS: ${{ steps.plan.outputs.parts }}
+        run: |
+          [ -n "$TREE" ] || exit 0
+          # The names the `ui` job gives its parts: keep in step with its `name`.
+          want=$(jq -c '[.include[].name | "ui (\(.))"]' <<<"$PARTS")
+          for id in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?status=success&per_page=50" \
+              -q ".workflow_runs[] | select(.head_commit.tree_id == \"$TREE\" and .id != $GITHUB_RUN_ID) | .id"); do
+            passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" \
+              | jq --argjson want "$want" '$want - [.jobs[] | select(.conclusion == "success") | .name] | length == 0')
+            if [ "$passed" = "true" ]; then
+              echo "Run $id already passed every UI test on this tree; skipping them."
+              echo "run=$id" >> "$GITHUB_OUTPUT"
+              break
+            fi
+          done
 
+  # The Rust tests run alongside this and `device`; a failure there still
+  # fails the run.
   ui:
-    # The Rust tests run alongside; a failure there still fails the run.
     needs: [core-ios, plan]
     if: needs.plan.outputs.tested == ''
+    # The plan's check for a run that already passed matches these names.
     name: ui (${{ matrix.name }})
     runs-on: macos-26
     strategy:
@@ -230,6 +234,7 @@ jobs:
           products=app/build/derived/Build/Products/Debug-iphonesimulator
           binaries=$(find "$products/Paw.app" -type f \( -name Paw -o -name PawAutoFill -o -name '*.debug.dylib' \))
           scripts/check-no-sim.sh --expect --app $binaries
+      # scripts/ci-report.sh finds the parts' reports by this name.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -243,9 +248,10 @@ jobs:
   # leaves it. The scan proves the simulated hardware, the fixture and the
   # debug harnesses are not in what gets installed.
   device:
-    # The Rust tests run alongside; a failure there still fails the run.
     needs: [core-ios]
     runs-on: macos-26
+    env:
+      PRODUCTS: app/build/derived/Build/Products/Release-iphoneos
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -268,7 +274,7 @@ jobs:
             || { grep -E "error:|ld: " build/device.log | awk '!seen[$0]++'; exit 1; }
       - name: Scan the device build
         run: |
-          app=app/build/derived/Build/Products/Release-iphoneos/Paw.app
+          app="$PRODUCTS/Paw.app"
           appex="$app/PlugIns/PawAutoFill.appex"
           configuration=$(/usr/libexec/PlistBuddy -c 'Print :PawConfiguration' "$app/Info.plist")
           commit=$(/usr/libexec/PlistBuddy -c 'Print :PawCommit' "$app/Info.plist")
@@ -277,12 +283,14 @@ jobs:
           if find "$app" -name '*.debug.dylib' | grep -q .; then
             echo "the device build has a debug dylib"; exit 1
           fi
+          # The library may come from the cache rather than this run's build,
+          # so it is scanned again here, before the app built on it ships.
           scripts/check-no-sim.sh app/build/core/ios/libpaw_core.a
           scripts/check-no-sim.sh --app "$app/Paw" "$appex/PawAutoFill"
           ls -l "$app/Paw" "$appex/PawAutoFill" app/build/core/ios/libpaw_core.a
       - name: Pack the app
         run: |
-          cd app/build/derived/Build/Products/Release-iphoneos
+          cd "$PRODUCTS"
           zip -qry "$GITHUB_WORKSPACE/Paw.app.zip" Paw.app
       - uses: actions/upload-artifact@v4
         with:
