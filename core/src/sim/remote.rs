@@ -1024,7 +1024,6 @@ pub mod steps {
     use crate::lock::StoreDirs;
     use crate::files::refs;
     use crate::key::SshSigner;
-    use crate::lock::FETCH_WAIT;
     use crate::sync::operation::{self, SyncReport};
     use crate::fault::Fault;
     use crate::sync::{self, Cloned, Connection, OpenStore, Remote, SyncError, git_err};
@@ -1073,12 +1072,10 @@ pub mod steps {
         store: &StoreDirs,
         record_wait: std::time::Duration,
     ) -> Result<(), sync::PushError> {
-        let pushing = store.lock().pushing(FETCH_WAIT)?;
+        let pushing = store.lock().pushing(crate::lock::SEND_WAIT)?;
         let store = OpenStore::open(store)?;
         let held = store.dirs.exclusive()?;
-        let (branch, _) = sync::current_branch(&store.repo)?;
-        let tip = store.repo.refname_to_id(&branch).map_err(git_err)?;
-        sync::push_tip(connection, &store, &branch, tip, held, &pushing, record_wait)
+        sync::push_tip(connection, &store, held, &pushing, record_wait)
     }
 
     /// A whole sync of `store` on one login, as `StoreSync`'s key tasks run

@@ -7,7 +7,7 @@
 
 use super::integrate::{self, IntegrateReport, Integration, Plan, Replaced};
 use super::transport::{ConnectError, Connection, Remote};
-use super::{OpenStore, PushError, SyncError, TransferCallback, current_branch, fetch_branches, git_err, push_tip};
+use super::{OpenStore, PushError, SyncError, TransferCallback, fetch_branches, push_tip};
 use crate::key::KeyError;
 use crate::remote::RemoteFailure;
 use crate::lock::{Exclusive, Shared, StoreDirs};
@@ -87,12 +87,6 @@ fn fetch_and_integrate(
     Ok((waiting, held))
 }
 
-fn branch_tip(store: &OpenStore) -> Result<(String, git2::Oid), SyncError> {
-    let (branch, _) = current_branch(&store.repo)?;
-    let tip = store.repo.refname_to_id(&branch).map_err(git_err)?;
-    Ok((branch, tip))
-}
-
 /// `progress` for one step, keeping it for the next.
 fn reborrow<'b>(progress: &'b mut Option<TransferCallback<'_>>) -> Option<TransferCallback<'b>> {
     match progress {
@@ -154,7 +148,7 @@ fn run_on(
     // transfer run without it; publishing the fetched refs, integrating,
     // counting and checking the waiting changes, and recording a push
     // run with it.
-    let pushing = if send { Some(store.dirs.lock().pushing(crate::lock::FETCH_WAIT)?) } else { None };
+    let pushing = if send { Some(store.dirs.lock().pushing(crate::lock::SEND_WAIT)?) } else { None };
     let (mut waiting, mut held) = fetch_and_integrate(connection, store, &mut report, reborrow(&mut progress))?;
     let Some(pushing) = pushing else {
         return Ok(Some(report));
@@ -170,8 +164,7 @@ fn run_on(
         if holds_back(&held, store)? {
             return Ok(Some(report));
         }
-        let (branch, tip) = branch_tip(store)?;
-        match push_tip(connection, store, &branch, tip, held, &pushing, crate::lock::RECORD_WAIT) {
+        match push_tip(connection, store, held, &pushing, crate::lock::RECORD_WAIT) {
             Ok(()) => {
                 report.pushed = count;
                 report.state = SyncState::UpToDate;

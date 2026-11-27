@@ -334,7 +334,7 @@ impl KeySession {
         if let PinKdf::Unsupported(why) = &self.identity.pin_kdf {
             return Err(kdf::unsupported(why));
         }
-        if self.holds_pin_now() {
+        if self.holds_pin() {
             return Ok(if self.lock().card_busy { FirstStage::Busy } else { FirstStage::Working });
         }
         let prompt = self.pin_prompt();
@@ -342,11 +342,6 @@ impl KeySession {
             return Err(KeyError::PinBlocked);
         }
         Ok(FirstStage::Pin(prompt))
-    }
-
-    pub(crate) fn holds_pin_now(&self) -> bool {
-        self.apply_background_limit();
-        self.lock().pin.is_some()
     }
 
     /// If paw has been in the background for the limit or longer, the PIN
@@ -818,7 +813,8 @@ impl KeySession {
     /// Answered from memory: if the background limit has passed, the PIN
     /// is dropped and the card de-verified on another thread.
     pub fn holds_pin(&self) -> bool {
-        self.holds_pin_now()
+        self.apply_background_limit();
+        self.lock().pin.is_some()
     }
 
     /// Lock now: drops the PIN from memory before it returns, and

@@ -172,6 +172,12 @@ pub enum KeyTaskState {
     Cancelled,
 }
 
+impl KeyTaskState {
+    pub(crate) fn pin(prompt: crate::key::PinPrompt, last_error: Option<KeyError>) -> Self {
+        Self::Pin { tries_left: prompt.tries_left, forgot_after_background: prompt.forgot_after_background, last_error }
+    }
+}
+
 #[uniffi::export]
 impl KeyTaskState {
     /// Done, failed or cancelled: nothing changes it any more.

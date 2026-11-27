@@ -55,11 +55,7 @@ fn entry_unreadable(error: PawError) -> KeyError {
 /// The stage a task shows first on its key.
 fn first_state(first: FirstStage) -> KeyTaskState {
     match first {
-        FirstStage::Pin(prompt) => KeyTaskState::Pin {
-            tries_left: prompt.tries_left,
-            forgot_after_background: prompt.forgot_after_background,
-            last_error: None,
-        },
+        FirstStage::Pin(prompt) => KeyTaskState::pin(prompt, None),
         FirstStage::Busy => KeyTaskState::Busy,
         FirstStage::Working => KeyTaskState::Working { progress: None },
     }
@@ -80,7 +76,7 @@ fn enter<T>(
     session.log().line(format!(
         "{} task {what}: PIN held {}, touch decryption {}, authentication {}{}",
         task.tag(),
-        if session.holds_pin_now() { "yes" } else { "no" },
+        if session.holds_pin() { "yes" } else { "no" },
         info.decryption_touch.words(),
         info.authentication_touch.words(),
         if plugged_later { ", key plugged in after it started" } else { "" },

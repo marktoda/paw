@@ -75,6 +75,8 @@ pub const SHARED_WAIT: Duration = Duration::from_secs(30);
 pub const RECORD_WAIT: Duration = Duration::from_secs(120);
 /// The longest a fetch waits for another fetch of the same store to finish.
 pub const FETCH_WAIT: Duration = Duration::from_secs(60);
+/// The longest a send waits for another send of the same store to finish.
+pub const SEND_WAIT: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
