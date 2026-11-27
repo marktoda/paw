@@ -165,6 +165,8 @@ func hostIdentityChanged(_ host: String) -> String {
 /// The details under `hostIdentityChanged`: the keys it was expected to
 /// present, and the one it did.
 enum HostKeyWords {
+    static let compare = "Compare with the fingerprint your server publishes."
+
     static func expected(_ keys: String) -> String {
         "Expected \(keys)"
     }

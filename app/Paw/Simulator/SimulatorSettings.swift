@@ -26,10 +26,6 @@ struct SimulatorSettingsSection: View {
             Button("Move the clock 1 hour on") { advanceClock(hours: 1) }
                 .foregroundStyle(PawColor.label)
                 .accessibilityIdentifier("sim-advance-1h")
-            // A touch that comes after the sheet was closed.
-            Button("Touch the simulated key") { keys?.key.touch() }
-                .foregroundStyle(PawColor.label)
-                .accessibilityIdentifier("sim-touch-key")
             // Read inside paw, so the system asks no paste permission.
             Button("Read the pasteboard") { pasteboard = UIPasteboard.general.string ?? "" }
                 .foregroundStyle(PawColor.label)
@@ -48,10 +44,6 @@ struct SimulatorSettingsSection: View {
                     .accessibilityValue(protection)
                     .accessibilityIdentifier("sim-file-protection")
             }
-    }
-
-    private var keys: SimulatedKeyConnector? {
-        model.storeSession.reader.simulated
     }
 
     private func advanceClock(hours: Int64) {

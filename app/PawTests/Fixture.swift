@@ -13,8 +13,8 @@ final class Fixture {
     static let githubPassword = "tidal-Quartz-88-ferns"
 
     let key: SimulatedKey
-    /// The key as the platform has it: "finish the next open after
-    /// Cancel", and "let the key answer" after reads that failed.
+    /// The key as the platform has it: "let the key answer" after reads
+    /// that failed.
     let keys: SimulatedKeyConnector
     let clock: SimClock
     let keystore: SimKeystore

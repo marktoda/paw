@@ -409,13 +409,8 @@ final class AutoFillModel {
                 return
             }
             page = .list
-            notice = Self.faceIdNotice(error, entry: entry)
+            notice = FaceIdWords.notice(error, entry: entry, table: .autoFill)
         }
-    }
-
-    private static func faceIdNotice(_ error: Error, entry: EntryRef) -> Notice {
-        let words = FaceIdWords.notice(error, entry: entry.name, table: .autoFill)
-        return Notice(problem: words.problem, nextStep: words.nextStep, keyEntry: words.offersKey ? entry : nil)
     }
 
     // MARK: The key

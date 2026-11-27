@@ -150,7 +150,7 @@ private struct AutoFillList: View {
     }
 
     private var emptyLine: String {
-        model.site == nil ? "paw can't tell which site this is." : model.kind.noneForSite
+        model.site == nil ? AutoFillWords.unknownSite : model.kind.noneForSite
     }
 
     /// Named like the site, never filled on it: apart, below the site's
@@ -268,7 +268,7 @@ private struct AutoFillConfirm: View {
     private var line: String {
         switch reason {
         case .otherSite:
-            model.site == nil ? "paw can't tell which site this is." : "This \(model.kind.thing) isn't saved for this site."
+            model.site == nil ? AutoFillWords.unknownSite : "This \(model.kind.thing) isn't saved for this site."
         case .firstTime:
             "First time on this site. Check the address is right."
         case .lookalike(_, let known):

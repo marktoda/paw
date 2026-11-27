@@ -15,8 +15,7 @@ final class ClosingTests: XCTestCase {
         let opened = await fixture.open("web/github.com")
         let id = try XCTUnwrap(opened)
 
-        // What the system says as the iPhone locks (and the simulator's
-        // "Lock the iPhone" control says the same).
+        // What the system says as the iPhone locks.
         NotificationCenter.default.post(
             name: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil)
         await waitFor("the entry to close") { model.closedEntry(id) != nil }
@@ -119,10 +118,15 @@ final class ClosingTests: XCTestCase {
         await fixture.open("web/github.com")
         fixture.goHome()
 
-        // The next open finishes past the point where Cancel can stop it,
-        // as if Cancel came just as the card answered.
-        fixture.keys.finishesNextAfterCancel = true
+        // Cancel comes once the card has answered and the copy is kept,
+        // past the point where the core can stop the open, and before the
+        // sheet has heard that it finished.
         model.open(EntryRef(path: "web/gitlab.com"))
+        let cache = try XCTUnwrap(model.copies.cache)
+        guard Self.blockUntilCopyKept(of: "web/gitlab.com", in: cache) else {
+            return XCTFail("The open should have kept a copy of gitlab.com")
+        }
+        model.cancelKeyTask()
         await waitFor("the open to end") { model.keyTask.pendingTasks == 0 }
         XCTAssertNil(model.keyRequest)
         model.keySheetDismissed()
@@ -130,5 +134,19 @@ final class ClosingTests: XCTestCase {
         XCTAssertNotNil(model.copies.copy(of: "web/github.com"))
         XCTAssertNil(model.copies.copy(of: "web/gitlab.com"), "The late open's copy was removed")
         XCTAssertFalse(model.recentPaths.contains("web/gitlab.com"))
+    }
+
+    /// Waits on the main thread, letting nothing else run on it, until the
+    /// core has kept a copy of `entry` (on its own thread). `false` after
+    /// 15 seconds without one.
+    private static func blockUntilCopyKept(of entry: String, in cache: CopyCache) -> Bool {
+        let deadline = Date().addingTimeInterval(15)
+        while Date() < deadline {
+            if ((try? cache.list()) ?? []).contains(where: { $0.entry == entry }) {
+                return true
+            }
+            usleep(2_000)
+        }
+        return false
     }
 }

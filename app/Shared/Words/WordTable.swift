@@ -9,9 +9,9 @@ struct WordTable: Sendable {
     let differentKey: @Sendable (KeyMismatch) -> KeyErrorWords
     /// The key is in, but reading it failed.
     let keyUnreadable: @Sendable (Swift.Error) -> KeyErrorWords
-    /// Face ID did not open the entry named, for a reason that is not a
-    /// busy store (`FaceIdWords.notice`).
-    let faceIdNotice: @Sendable (Swift.Error, _ entry: String) -> FaceIdNotice
+    /// Face ID did not open `entry`, for a reason that is not a busy store
+    /// (`FaceIdWords.notice`).
+    let faceIdNotice: @Sendable (Swift.Error, _ entry: EntryRef) -> Notice
 
     static let app: WordTable = WordTable(
         differentKey: { mismatch in
@@ -38,18 +38,18 @@ struct WordTable: Sendable {
                 }
             }
             return KeyErrorWords(
-                problem: "paw couldn't read your key",
+                problem: KeyErrorWords.unreadable,
                 nextStep: "\(why) Try again, or unplug the key and plug it back in.")
         },
         faceIdNotice: { error, entry in
             let paw = error as? PawError
             let nextStep = switch paw {
-            case .FaceIdCancelled?, .FaceIdNotRecognised?: "Tap \(entry) to try again."
-            case .FaceIdLockedOut?: "Lock and unlock your iPhone, then try again."
-            default: "Open \(entry) with your key."
+            case .FaceIdCancelled?, .FaceIdNotRecognised?: "Tap \(entry.name) to try again."
+            case .FaceIdLockedOut?: FaceIdWords.lockedOutNextStep
+            default: "Open \(entry.name) with your key."
             }
             let said = paw.flatMap(FaceIdWords.problem) ?? describe(error)
-            return FaceIdNotice(problem: said, nextStep: nextStep, offersKey: true)
+            return Notice(problem: said, nextStep: nextStep, keyEntry: entry)
         })
 
     static let autoFill = WordTable(
@@ -57,31 +57,26 @@ struct WordTable: Sendable {
             KeyErrorWords(problem: "This isn't your store's key", nextStep: "Plug in the key you set paw up with.")
         },
         keyUnreadable: { _ in
-            KeyErrorWords(problem: "paw couldn't read your key", nextStep: "Unplug it, plug it back in, then try again.")
+            KeyErrorWords(problem: KeyErrorWords.unreadable, nextStep: "Unplug it, plug it back in, then try again.")
         },
         faceIdNotice: { error, entry in
             let short: (problem: String, nextStep: String)? = switch error as? PawError {
-            case .FaceIdLockedOut?: ("Face ID is locked", "Lock and unlock your iPhone, then try again.")
+            case .FaceIdLockedOut?: ("Face ID is locked", FaceIdWords.lockedOutNextStep)
             case .FaceIdChanged?: ("Face ID changed on this iPhone", "")
             case .FaceIdCancelled?, .FaceIdNotRecognised?, .FaceIdNotSetUp?: nil
-            default: ("Face ID didn't open \(entry)", "")
+            default: ("Face ID didn't open \(entry.name)", "")
             }
             guard let short else { return WordTable.app.faceIdNotice(error, entry) }
-            return FaceIdNotice(problem: short.problem, nextStep: short.nextStep, offersKey: true)
+            return Notice(problem: short.problem, nextStep: short.nextStep, keyEntry: entry)
         })
-}
-
-/// What a Face ID open that failed says above the list it was tapped in.
-struct FaceIdNotice: Equatable {
-    let problem: String
-    let nextStep: String
-    /// Offers to open the entry with the key instead.
-    let offersKey: Bool
 }
 
 /// AutoFill's own problems: a store it cannot read, an entry with nothing
 /// of the kind asked for.
 enum AutoFillWords {
+    /// The request named no site paw could read.
+    static let unknownSite = "paw can't tell which site this is."
+
     /// The store is there but could not be read, or the shared folder
     /// cannot be reached.
     static let storeUnreadable = (problem: "paw couldn't read your store", nextStep: "Open paw to fix it.")

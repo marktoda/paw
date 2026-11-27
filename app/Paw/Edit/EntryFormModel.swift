@@ -248,7 +248,7 @@ final class EntryFormModel {
         } catch let error as WriteError {
             saveProblem = editProblem(error, folder: effectiveFolder)
         } catch {
-            saveProblem = EditProblem(problem: "That password can't be generated", nextStep: describe(error))
+            saveProblem = .notGenerated(describe(error))
         }
     }
 

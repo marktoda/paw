@@ -253,16 +253,11 @@ final class KeyTaskDriver {
     /// Puts the sheet up for `job`'s task. A task the sheet followed until
     /// now is let go of.
     func start<Step>(_ job: KeyJob<Step>) {
-        #if DEBUG && targetEnvironment(simulator)
-        let adapted = reader?.simulated?.adapted(job) ?? job
-        #else
-        let adapted = job
-        #endif
         letGoOfFollowed()
         shown = UUID()
-        self.job = adapted
+        self.job = job
         show(.busy)
-        launchOrWait(adapted)
+        launchOrWait(job)
         // A reader is there but its key was never read (or the read
         // failed): try again now rather than wait for a replug.
         reader?.readIfNeeded()

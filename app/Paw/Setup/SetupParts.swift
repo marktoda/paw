@@ -106,7 +106,7 @@ struct SetupProblemView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: PawMetrics.Spacing.s) {
             ErrorRow(
-                kind: problem.kind, problem: problem.problem, nextStep: problem.nextStep,
+                kind: .error, problem: problem.problem, nextStep: problem.nextStep,
                 actionTitle: problem.actionTitle, action: act, isBanner: true)
             if !problem.details.isEmpty {
                 DisclosureGroup("Details") {

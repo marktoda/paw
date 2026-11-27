@@ -384,7 +384,7 @@ private struct ConfirmHostScreen: View {
     var body: some View {
         SetupPage(
             model: model, title: "First time connecting to \(host)",
-            message: "Compare with the fingerprint your server publishes.",
+            message: HostKeyWords.compare,
             identifier: "setup-confirm-host"
         ) {
             SetupCard {

@@ -62,7 +62,7 @@ struct CheckButton: View {
             if syncing.checkNeedsKey {
                 KeyButtonLabel(title: title)
             } else {
-                Text(syncing.running == .refresh ? "Checking for changes\u{2026}" : title)
+                Text(syncing.running == .refresh ? SyncWords.checking : title)
             }
         }
         .disabled(syncing.running != nil)
@@ -484,7 +484,7 @@ private struct SyncStatusSheet: View {
                     ErrorRow(
                         kind: failure.kind == .offline ? .warning : .error,
                         problem: failure.problem, nextStep: failure.nextStep,
-                        actionTitle: failure.actionTitle,
+                        actionTitle: failure.step?.title,
                         actionNeedsKey: syncing.actionNeedsKey(after: failure)
                     ) {
                         act(on: failure)
@@ -550,9 +550,10 @@ private struct SyncStatusSheet: View {
     }
 
     private func act(on failure: SyncFailure) {
-        switch failure.kind {
-        case .hostKeyChanged: syncing.openSettings()
-        default: syncing.retryFailed()
+        switch failure.step {
+        case .tryAgain?: syncing.retryFailed()
+        case .openSettings?: syncing.openSettings()
+        case nil: break
         }
     }
 

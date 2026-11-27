@@ -2,6 +2,9 @@ import Foundation
 
 /// What Face ID says: a failed open, and how long a copy lasts.
 enum FaceIdWords {
+    /// What to do while Face ID is locked out.
+    static let lockedOutNextStep = "Lock and unlock your iPhone, then try again."
+
     /// What happened, in a few words; `nil` for an error that is not Face
     /// ID's.
     static func problem(_ error: PawError) -> String? {
@@ -17,9 +20,9 @@ enum FaceIdWords {
 
     /// The notice after tapping `entry` failed with `error`. A busy store asks for another tap, never the key:
     /// the key would wait for the same store.
-    static func notice(_ error: Swift.Error, entry: String, table: WordTable) -> FaceIdNotice {
+    static func notice(_ error: Swift.Error, entry: EntryRef, table: WordTable) -> Notice {
         if isStoreBusy(error) {
-            return FaceIdNotice(problem: StoreBusyWords.problem, nextStep: StoreBusyWords.nextStep, offersKey: false)
+            return Notice(problem: StoreBusyWords.problem, nextStep: StoreBusyWords.nextStep)
         }
         return table.faceIdNotice(error, entry)
     }

@@ -178,7 +178,7 @@ private struct ServerIdentityRows: View {
                     ForEach(Array(pinned.enumerated()), id: \.offset) { _, key in
                         KeyFingerprintLines(key: key, identifier: "settings-host-key")
                     }
-                    Text("Compare with the fingerprint your server publishes.")
+                    Text(HostKeyWords.compare)
                         .font(PawFont.footnote)
                         .foregroundStyle(PawColor.labelSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -231,7 +231,7 @@ private struct ServerIdentityRows: View {
                         .accessibilityIdentifier("settings-presented-key-same")
                 }
                 KeyFingerprintLines(key: presented, identifier: "settings-presented-key")
-                Text("Compare with the fingerprint your server publishes.")
+                Text(HostKeyWords.compare)
                     .font(PawFont.footnote)
                     .foregroundStyle(PawColor.labelSecondary)
                     .fixedSize(horizontal: false, vertical: true)

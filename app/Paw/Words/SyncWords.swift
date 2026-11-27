@@ -24,7 +24,7 @@ extension SyncFailure {
             nextStep: waiting(unpushed), details: [describe(error)], pill: "Check failed")
     }
 
-    static func cancelled(during kind: SyncKind, unpushed: Int) -> SyncFailure {
+    static func cancelled(during kind: SyncKind) -> SyncFailure {
         let problem = switch kind {
         case .send: "Sending was cancelled."
         case .refresh: "Checking was cancelled."
@@ -162,13 +162,13 @@ extension SyncFailure {
         case .reencrypt: "Couldn't re-encrypt your changes"
         }
     }
+}
 
-    /// The step the inline row offers.
-    var actionTitle: String? {
-        switch kind {
-        case .hostKeyChanged: "Open Settings"
-        case .cancelled: nil
-        default: "Try again"
+extension SyncFailure.Step {
+    var title: String {
+        switch self {
+        case .tryAgain: "Try again"
+        case .openSettings: "Open Settings"
         }
     }
 }
@@ -227,7 +227,7 @@ extension SyncKind {
     func working(unpushed: Int) -> String {
         switch self {
         case .send: "Sending \(changeCount(unpushed))\u{2026}"
-        case .refresh: "Checking for changes\u{2026}"
+        case .refresh: SyncWords.checking
         case .reencrypt: "Re-encrypting\u{2026}"
         }
     }
@@ -325,6 +325,8 @@ extension ChangeQueue {
 }
 
 enum SyncWords {
+    static let checking = "Checking for changes\u{2026}"
+
     /// The queue of unsent changes couldn't be opened: nothing sends or
     /// checks for changes until paw opens the store again.
     static let off = "Sync is off"

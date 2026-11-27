@@ -21,7 +21,7 @@ final class SyncWordsTests: XCTestCase {
         XCTAssertEqual(failure.nextStep, "Check your connection. Your change is saved on this iPhone.")
         XCTAssertEqual(failure.details, ["timed out"])
         XCTAssertEqual(failure.pill, "Offline")
-        XCTAssertEqual(failure.actionTitle, "Try again")
+        XCTAssertEqual(failure.step?.title, "Try again")
     }
 
     func testAChangedHostKeyStopsSyncAndPointsToSettings() {
@@ -33,7 +33,7 @@ final class SyncWordsTests: XCTestCase {
         XCTAssertEqual(failure.problem, "git.example's identity changed")
         XCTAssertEqual(failure.details, ["Expected SHA256:aaa or SHA256:bbb", "It presented SHA256:ccc"])
         XCTAssertEqual(failure.pill, "Sync stopped \u{00B7} Review")
-        XCTAssertEqual(failure.actionTitle, "Open Settings")
+        XCTAssertEqual(failure.step?.title, "Open Settings")
     }
 
     func testARejectedKeySaysWhatWasNotDone() {
@@ -89,12 +89,12 @@ final class SyncWordsTests: XCTestCase {
     }
 
     func testACancelIsQuietAndOffersNothing() {
-        let send = SyncFailure.cancelled(during: .send, unpushed: 1)
+        let send = SyncFailure.cancelled(during: .send)
         XCTAssertEqual(send.kind, .cancelled)
         XCTAssertEqual(send.problem, "Sending was cancelled.")
         XCTAssertEqual(send.pill, "")
-        XCTAssertNil(send.actionTitle)
-        XCTAssertEqual(SyncFailure.cancelled(during: .refresh, unpushed: 0).problem, "Checking was cancelled.")
+        XCTAssertNil(send.step)
+        XCTAssertEqual(SyncFailure.cancelled(during: .refresh).problem, "Checking was cancelled.")
     }
 
     // MARK: The pill

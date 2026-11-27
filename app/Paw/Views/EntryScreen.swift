@@ -84,25 +84,6 @@ struct EntryScreen: View {
                         .foregroundStyle(PawColor.labelSecondary)
                 }
             }
-            #if DEBUG && targetEnvironment(simulator)
-            // Stand-ins for the iPhone locking and time passing while
-            // this entry is on screen: one dashed strip under the rest.
-            Section {
-                SimulatorStrip(actions: [
-                    SimulatorAction(title: "lock the iPhone", identifier: "sim-entry-device-lock") {
-                        NotificationCenter.default.post(
-                            name: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil)
-                    },
-                    SimulatorAction(title: "9 hours on", identifier: "sim-entry-advance-9h") {
-                        SimulatedClockHolder.shared.advance(hours: 9)
-                        model.timePassed()
-                    },
-                ])
-                .frame(maxWidth: .infinity)
-                .listRowInsets(EdgeInsets())
-            }
-            .listRowBackground(Color.clear)
-            #endif
         }
         .listStyle(.insetGrouped)
         .contentMargins(.top, 0, for: .scrollContent)
