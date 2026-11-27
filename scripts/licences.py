@@ -5,8 +5,8 @@
     python3 scripts/licences.py --check   # fail if that file is stale or incomplete
 
 Components are the crates linked into the iOS library: the normal
-dependencies of paw-core for aarch64-apple-ios with the default features (a
-superset of the Release build, which drops `sim`). Proc macros and build
+dependencies of paw-core for aarch64-apple-ios without its default features,
+as the Release build is made (no `sim`). Proc macros and build
 dependencies are left out, as their code is not in the library. Added by hand:
 the Rust standard library, libgit2's C (vendored by libgit2-sys) and the
 Public Suffix List data compiled into the psl crate.
@@ -71,7 +71,7 @@ REQUIRES = {
 def run_metadata():
     out = subprocess.run(
         ["cargo", "metadata", "--format-version", "1", "--locked",
-         "--filter-platform", TARGET,
+         "--filter-platform", TARGET, "--no-default-features",
          "--manifest-path", str(ROOT / "core/Cargo.toml")],
         check=True, capture_output=True, text=True,
     ).stdout
