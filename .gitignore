@@ -5,6 +5,5 @@ app/*.xcodeproj
 app/**/Info.plist
 app/**/*.entitlements
 *.p8
-*.p12
 *.mobileprovision
 .env

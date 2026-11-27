@@ -18,7 +18,10 @@
           # The sync tests run git-upload-pack and git-receive-pack behind an
           # in-process SSH server.
           pkgs.git
-          # Signing and installing device builds from Linux.
+          # Signing and installing device builds from Linux
+          # (scripts/install.sh), and reading CI runs (scripts/ci-report.sh).
+          pkgs.gh
+          pkgs.python3
           pkgs.rcodesign
           pkgs.openssl
           pkgs.unzip
