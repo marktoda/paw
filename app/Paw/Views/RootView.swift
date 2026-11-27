@@ -86,7 +86,6 @@ struct RootView: View {
                 // test can wait for "0" instead of sleeping before it checks
                 // that a cancelled open left nothing.
                 KeyTasksSignal(keys: model.storeSession.reader.simulated) { model.storeSession.keyTasks.pendingTasks }
-                // And how many times the privacy cover has been drawn.
                 Text(verbatim: "\(PrivacyCoverLog.shared.shown)")
                     .font(.caption2)
                     .frame(width: 1, height: 1)

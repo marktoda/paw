@@ -14,6 +14,11 @@ enum LastChecked {
         UserDefaults.standard.set(date.timeIntervalSince1970, forKey: key(repoDir))
     }
 
+    /// The store is removed from this iPhone.
+    static func forget(repoDir: String) {
+        UserDefaults.standard.removeObject(forKey: key(repoDir))
+    }
+
     private static func key(_ repoDir: String) -> String {
         "pawSyncLastChecked:\(repoDir)"
     }

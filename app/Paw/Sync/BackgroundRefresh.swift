@@ -217,6 +217,15 @@ enum BackgroundRefresh {
             needsLook: defaults.bool(forKey: needsLookKey))
     }
 
+    /// The store is removed from this iPhone: the last run and what it
+    /// left for the next open go with it.
+    static func forgetLastRun() {
+        let defaults = UserDefaults.standard
+        for key in [atKey, resultKey, changedKey, needsLookKey, oldSuccessKey] {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
     /// What runs since the last open left for the screens: changes to show,
     /// and decisions to bring up. Cleared once taken.
     static func takePending() -> (changed: Bool, needsLook: Bool) {

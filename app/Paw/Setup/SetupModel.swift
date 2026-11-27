@@ -146,7 +146,6 @@ final class SetupModel {
         reader.onRead = { [weak self] read in
             self?.keyWasRead(read)
         }
-        // A key already in is read now; a failure shows on Plug in.
         reader.watch()
     }
 
@@ -258,8 +257,6 @@ final class SetupModel {
         readKey()
     }
 
-    /// Reads the plugged-in key: no PIN, no touch. A session already open
-    /// is kept, with the PIN it holds.
     func readKey() {
         guard keyPresent, working == nil else { return }
         problem = nil
@@ -319,7 +316,7 @@ final class SetupModel {
         }
     }
 
-    /// "Trust this server" on the host's fingerprint.
+    /// "Trust this key" on the host's fingerprint.
     func trustHost(fingerprint: String) {
         problem = nil
         run("Checking \(host)\u{2026}") { setup in

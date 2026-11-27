@@ -330,7 +330,6 @@ private struct OneTimeCodeRow: View {
         }
     }
 
-    /// "1 second", "12 seconds".
     static func secondsLeft(_ seconds: UInt32) -> String {
         counted(Int(seconds), "second", "seconds")
     }

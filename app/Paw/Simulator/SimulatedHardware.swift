@@ -36,8 +36,7 @@ enum LaunchedHardware {
     @MainActor static var app: Platform {
         .simulated(
             .app, keys: .launched, clock: SimulatedClockHolder.shared.clock.asClock(),
-            keystore: SimulatedKeystoreHolder.keystore.asKeystore(), lockedOut: SimLockedLaunch.refusal,
-            removesLegacyStore: !LegacyStore.plantsInstead)
+            keystore: SimulatedKeystoreHolder.keystore.asKeystore(), lockedOut: SimLockedLaunch.refusal)
     }
 
     /// `app` for `StoreRoot`, which reads the store only after this.

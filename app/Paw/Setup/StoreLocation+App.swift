@@ -38,6 +38,7 @@ extension StoreLocation {
         return failures
     }
 
+    #if DEBUG && targetEnvironment(simulator)
     /// "items 42 · refused 0 · complete 42 · other 0 · unset 0": every
     /// item under `root`, how many refused `.complete` when set again now,
     /// and the classes read back, for the simulator's Settings readback.
@@ -56,6 +57,7 @@ extension StoreLocation {
         }
         return "items \(complete + other + unset) · refused \(refused) · complete \(complete) · other \(other) · unset \(unset)"
     }
+    #endif
 
     private func allItems() -> [URL] {
         var items = [root]

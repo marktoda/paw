@@ -194,7 +194,6 @@ final class StoreSession {
     let requests: Signal<ScreenRequest>
     private var backgroundWatch: NSObjectProtocol?
 
-    /// Opens the store in `parts.repoDir` and builds everything on it.
     init(_ parts: Parts) throws {
         let store = try PassStore(dir: parts.repoDir)
         let live = LiveStore(store: store, repoDir: parts.repoDir)
@@ -233,7 +232,6 @@ final class StoreSession {
         }
         autoFill = parts.autoFill
         autoFill?.follow(live)
-        // A session already open (setup's) is kept, with the PIN it holds.
         reader.watch()
         // A background check that ends while paw is on screen; one that
         // ends in the background waits for the next `cameForward`.
@@ -279,7 +277,6 @@ final class KeyTaskDrivers {
         return driver
     }
 
-    /// One of their key sheets is up.
     var sheetShown: Bool {
         made.contains { $0.driver?.isShown == true }
     }

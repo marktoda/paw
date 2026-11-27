@@ -12,17 +12,13 @@ struct Platform {
     let keys: any KeyConnector
     /// The copies' clock, the key port's and the clipboard's.
     let clock: Clock
-    /// Whether the app's launch deletes what paw left where it kept the
-    /// store before (`LegacyStore`).
-    let removesLegacyStore: Bool
     private let makeCopies: (_ dir: String) -> CopyCache?
     private let wipeKeychain: () throws -> Void
     private let lockedOut: @MainActor () -> Error?
 
     private init(
         process: StoreProcess, keys: any KeyConnector, clock: Clock, copies: @escaping (_ dir: String) -> CopyCache?,
-        resetKeychain: @escaping () throws -> Void, lockedOut: @escaping @MainActor () -> Error?,
-        removesLegacyStore: Bool
+        resetKeychain: @escaping () throws -> Void, lockedOut: @escaping @MainActor () -> Error?
     ) {
         self.process = process
         self.keys = keys
@@ -30,7 +26,6 @@ struct Platform {
         makeCopies = copies
         wipeKeychain = resetKeychain
         self.lockedOut = lockedOut
-        self.removesLegacyStore = removesLegacyStore
     }
 
     /// The phone: the key on the USB-C port, the system's clocks, and the
@@ -41,7 +36,7 @@ struct Platform {
             process: process, keys: UsbKeyConnector(), clock: clock,
             copies: { dir in CopyCache(dir: dir, keystore: EnclaveKeystore(), clock: clock) },
             resetKeychain: { try EnclaveKeystore().deleteCopyKeys() },
-            lockedOut: { nil }, removesLegacyStore: true)
+            lockedOut: { nil })
     }
 
     #if DEBUG && targetEnvironment(simulator)
@@ -49,12 +44,12 @@ struct Platform {
     /// what reading the store's files throws.
     static func simulated(
         _ process: StoreProcess, keys: SimulatedKeyConnector, clock: Clock, keystore: DeviceKeystore?,
-        lockedOut: @escaping @MainActor () -> Error? = { nil }, removesLegacyStore: Bool = true
+        lockedOut: @escaping @MainActor () -> Error? = { nil }
     ) -> Platform {
         Platform(
             process: process, keys: keys, clock: clock,
             copies: { dir in keystore.map { CopyCache(dir: dir, keystore: $0, clock: clock) } },
-            resetKeychain: { try keystore?.reset() }, lockedOut: lockedOut, removesLegacyStore: removesLegacyStore)
+            resetKeychain: { try keystore?.reset() }, lockedOut: lockedOut)
     }
     #endif
 
