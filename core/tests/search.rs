@@ -2,7 +2,12 @@
 //! are pure functions of the entry list, tested as tables.
 
 use paw_core::store::search::{HighlightRange, search};
-use paw_core::store::service::{MatchKind, MatchedEntry, host_of, match_site, registrable_domain};
+use paw_core::store::service::{MatchKind, MatchedEntry, host_of, match_site, registrable};
+
+/// The registrable domain the service `service` is on, if any.
+fn registrable_domain(service: String) -> Option<String> {
+    registrable(&host_of(&service)?).map(str::to_owned)
+}
 use paw_core::store::tree::EntryRef;
 
 fn entries(paths: &[&str]) -> Vec<EntryRef> {

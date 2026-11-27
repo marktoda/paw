@@ -265,11 +265,7 @@ impl TaskSide for TaskCore {
         last_error: Option<KeyError>,
     ) -> Result<Zeroizing<Vec<u8>>, Halt> {
         let again = last_error.is_some();
-        let stage = KeyTaskState::Pin {
-            tries_left: prompt.tries_left,
-            forgot_after_background: prompt.forgot_after_background,
-            last_error,
-        };
+        let stage = KeyTaskState::pin(prompt, last_error);
         self.set_again(stage, again);
         let mut inner = self.lock();
         loop {

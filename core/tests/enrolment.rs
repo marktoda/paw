@@ -27,8 +27,8 @@ fn other_key() -> Arc<SimulatedKey> {
 fn identity(sim: &SimulatedKey, serial: &str) -> KeyIdentity {
     KeyIdentity {
         ident: format!("0006:{serial}"),
-        decryption_fingerprint: Some(sim.fingerprint_hex()),
-        authentication_fingerprint: Some(sim.authentication_fingerprint_hex()),
+        decryption_fingerprint: paw_core::fingerprint::Fingerprint::parse(&sim.fingerprint_hex()),
+        authentication_fingerprint: paw_core::fingerprint::Fingerprint::parse(&sim.authentication_fingerprint_hex()),
     }
 }
 
@@ -110,7 +110,8 @@ fn a_recorded_key_is_accepted_and_a_port_loading_the_record_refuses_another() {
     let other = other_key();
     let state_dir = tempfile::tempdir().unwrap();
     let dir = state_dir.path().to_string_lossy().into_owned();
-    enrolment::save_enrolment(state_dir.path(), &identity(&other, "87654321")).unwrap();
+    let store = paw_core::lock::StoreDirs::new(state_dir.path());
+    enrolment::save_enrolment(&store, &store.exclusive().unwrap(), &identity(&other, "87654321")).unwrap();
 
     let port = KeyPort::new(SimClock::new(1_790_000_000_000));
     assert_eq!(port.load_enrolled_key(dir.clone()).unwrap(), Some(identity(&other, "87654321")));

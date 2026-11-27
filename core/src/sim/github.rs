@@ -337,7 +337,8 @@ struct Shared {
     name: String,
     ssh_address: String,
     state: Mutex<State>,
-    web: Mutex<String>,
+    /// The server's own address, known once it has started.
+    web: std::sync::OnceLock<String>,
     stall: Arc<Stall>,
 }
 
@@ -362,7 +363,6 @@ impl SimGitHub {
         state.access.keys().cloned().chain(state.refresh.iter().cloned()).collect()
     }
 
-    /// Every token issued, live or not.
     pub fn all_tokens(&self) -> Vec<String> {
         locked(&self.shared.state).issued.clone()
     }
@@ -413,13 +413,13 @@ impl SimGitHub {
                 interval: 5,
                 expires_in: 900,
             }),
-            web: Mutex::new(String::new()),
+            web: std::sync::OnceLock::new(),
             stall: Arc::new(Stall::default()),
         });
         let record = Arc::new(Mutex::new(Vec::new()));
         let handling = shared.clone();
         let server = Server::start(record.clone(), Arc::new(move |request| handle(&handling, request)))?;
-        *locked(&shared.web) = server.url();
+        let _ = shared.web.set(server.url());
         Ok(Arc::new(Self { shared, record, server }))
     }
 
@@ -588,7 +588,7 @@ fn device_code(shared: &Shared, request: &SimHttpRequest) -> Reply {
     }
     let device_code = random_hex(20);
     state.pending = Some(Pending { device_code: device_code.clone(), polls: 0, authorised: false });
-    let web = locked(&shared.web).clone();
+    let web = shared.web.get().cloned().unwrap_or_default();
     Reply::json(
         200,
         json!({
@@ -714,7 +714,7 @@ fn repositories(shared: &Shared, request: &SimHttpRequest) -> Reply {
     if !state.installed {
         return Reply::status(404);
     }
-    let web = locked(&shared.web).clone();
+    let web = shared.web.get().cloned().unwrap_or_default();
     let mut all = vec![store_json(shared, &web)];
     all.extend((0..state.extra_repositories).map(|i| other_json(shared, i)));
     let per_page: usize = request.query_value("per_page").and_then(|v| v.parse().ok()).unwrap_or(30).clamp(1, 100);
@@ -933,10 +933,6 @@ impl SimPollClock {
     /// The times polls were waited for, in order.
     pub fn waits(&self) -> Vec<Duration> {
         locked(&self.waits).clone()
-    }
-
-    pub fn advance(&self, by: Duration) {
-        *locked(&self.now) += by;
     }
 }
 

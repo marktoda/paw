@@ -30,7 +30,6 @@ use crate::PawError;
 use crate::copies::CopyCache;
 use crate::fault::Fault;
 use crate::files::content_id;
-use crate::files::layout::StoreDirs;
 use crate::entry::EntryDoc;
 use crate::entry::opened::OpenedEntry;
 use crate::store::codes::OneTimeCodeEntries;
@@ -38,7 +37,7 @@ use crate::store::pairings::SitePairings;
 use crate::store::gpg_id::recipients_for;
 use crate::store::read::read_file;
 use crate::store::tree::StoreTree;
-use crate::lock::{Exclusive, Shared};
+use crate::lock::{Exclusive, Shared, StoreDirs};
 use crate::path::{entry_file as file, folder_of, split};
 use crate::sync::OpenStore;
 use super::{TreeEdit, commit_edits};
@@ -67,8 +66,6 @@ pub struct Saved {
     pub entry: String,
     /// Where it was, if the write moved it.
     pub previous: Option<String>,
-    /// The content id of its file now ([`crate::files::content_id`]).
-    pub content_id: Vec<u8>,
     /// The commits made, oldest first: none if nothing changed.
     pub commits: Vec<String>,
     /// The entry as saved, open. `None` for a rename or move.
@@ -85,8 +82,8 @@ pub struct Deleted {
 }
 
 /// The write side of a store: its checkout and its state directory (where
-/// the pinned keys, the git identity, the site pairings and the one-time
-/// code marks are), and the Face ID copies its writes keep in step.
+/// the pinned keys, the site pairings and the one-time code marks are), and
+/// the Face ID copies its writes keep in step.
 #[derive(Clone)]
 pub struct WriteStore {
     store: StoreDirs,
@@ -151,12 +148,7 @@ impl WriteStore {
     /// The entry moved from `from` to `to`, or with `None` went: its site
     /// pairings and its one-time-code mark follow it.
     fn entry_moved(&self, from: &str, to: Option<&str>, follow_ups: &mut FollowUps) {
-        let pairings = SitePairings::new(self.store.state_dir());
-        let moved = match to {
-            Some(to) => pairings.moved(from, to),
-            None => pairings.clear(Some(from)),
-        };
-        follow_ups.io(FollowUp::SitePairings, moved);
+        follow_ups.io(FollowUp::SitePairings, SitePairings::new(self.store.state_dir()).moved(from, to));
         follow_ups.io(FollowUp::OneTimeCodeMark, OneTimeCodeEntries::new(self.store.state_dir()).moved(from, to));
     }
 
@@ -218,8 +210,6 @@ impl WriteStore {
         super::scopes::recipient_scopes(&reading, &self.keyring()?)
     }
 
-    /// After "Who can open … changed": accepts the folder's current
-    /// `.gpg-id`.
     pub fn accept_recipients(&self, folder: &str) -> Result<(), WriteError> {
         // Each keyring change reads, changes and writes the whole file: one
         // critical section, or two changes at once would lose one.
@@ -247,10 +237,9 @@ impl WriteStore {
             })
         });
         Ok(Saved {
-            opened: Some(OpenedEntry::new(&entry, doc, content_id.clone())),
+            opened: Some(OpenedEntry::new(&entry, doc, content_id)),
             entry,
             previous,
-            content_id,
             commits,
             face_id_until_ms,
             follow_up_failures: follow_ups.0,

@@ -77,19 +77,7 @@ impl OneTimeCodeEntries {
     /// The entry moved from `from` to `to`, or with `None` went: its mark
     /// follows it.
     pub fn moved(&self, from: &str, to: Option<&str>) -> std::io::Result<()> {
-        if Some(from) == to {
-            return Ok(());
-        }
-        self.list
-            .update(|entries| {
-                let Some(at) = entries.iter().position(|e| e == from) else { return };
-                entries.remove(at);
-                if let Some(to) = to {
-                    entries.retain(|e| e != to);
-                    entries.insert(at.min(entries.len()), to.to_owned());
-                }
-            })
-            .map(|_| ())
+        self.list.moved(from, to)
     }
 }
 

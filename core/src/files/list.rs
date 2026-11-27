@@ -25,6 +25,9 @@ const VERSION: u32 = 1;
 pub(crate) trait ListItem: Serialize + DeserializeOwned + Clone + PartialEq {
     fn entry(&self) -> &str;
 
+    /// The item about the entry at `entry` instead.
+    fn moved_to(self, entry: &str) -> Self;
+
     /// The item made valid, as it is kept; `None` leaves it out.
     fn clean(self) -> Option<Self> {
         Some(self)
@@ -34,6 +37,10 @@ pub(crate) trait ListItem: Serialize + DeserializeOwned + Clone + PartialEq {
 impl ListItem for String {
     fn entry(&self) -> &str {
         self
+    }
+
+    fn moved_to(self, entry: &str) -> Self {
+        entry.to_owned()
     }
 }
 
@@ -161,6 +168,23 @@ impl<T: ListItem> ListFile<T> {
             return Ok(false);
         }
         Ok(true)
+    }
+
+    /// The entry moved from `from` to `to`, or with `None` went: its item
+    /// follows it, in the same place, replacing any `to` had.
+    pub fn moved(&self, from: &str, to: Option<&str>) -> std::io::Result<()> {
+        if Some(from) == to {
+            return Ok(());
+        }
+        self.update(|items| {
+            let Some(at) = items.iter().position(|item| item.entry() == from) else { return };
+            let item = items.remove(at);
+            if let Some(to) = to {
+                items.retain(|item| item.entry() != to);
+                items.insert(at.min(items.len()), item.moved_to(to));
+            }
+        })
+        .map(|_| ())
     }
 
     pub fn clear(&self) -> std::io::Result<()> {

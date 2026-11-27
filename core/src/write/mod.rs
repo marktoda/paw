@@ -1,7 +1,8 @@
 //! Adding, editing, deleting, renaming and moving entries.
 //!
 //! Every change is one local commit of one entry, worded the way `pass`
-//! words it, made through [`crate::sync`]'s safe commit path. None of it
+//! words it, made by one commit path (`commit::commit_edits`) that moves the
+//! branch through [`crate::sync`]'s history. None of it
 //! needs the key, the PIN or the network: encrypting needs only public
 //! keys, pinned on this device ([`keyring`]). The commits are exactly what
 //! the "not yet pushed" queue lists and what integrate replays.
@@ -43,10 +44,10 @@ pub enum WriteError {
     #[error("paw doesn't have the key for {} (listed in {gpg_id})", .missing.join(", "))]
     MissingRecipients { gpg_id: String, missing: Vec<String> },
     /// Who can open entries here differs from what was accepted: the
-    /// governing `.gpg-id` is another file (`before_gpg_id`, `None` if none
-    /// governed it) or has other lines. The person has to accept it first.
+    /// governing `.gpg-id` is another file or has other lines. The person
+    /// has to accept it first.
     #[error("who can open these passwords changed ({gpg_id}); review it before saving here")]
-    RecipientsChanged { gpg_id: String, before_gpg_id: Option<String>, before: Vec<String>, after: Vec<String> },
+    RecipientsChanged { gpg_id: String, before: Vec<String>, after: Vec<String> },
     /// Setup has not recorded who can open this store yet.
     #[error("paw hasn't confirmed who can open this store yet")]
     RecipientsNotConfirmed,

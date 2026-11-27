@@ -28,9 +28,6 @@ pub struct GitHubRepository {
     /// What setup is given when this is picked, e.g.
     /// `git@github.com:you/password-store.git`.
     pub ssh_address: String,
-    /// When something was last pushed, as GitHub writes it
-    /// (`2026-11-20T09:12:00Z`), if ever.
-    pub pushed_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -120,7 +117,7 @@ pub(crate) fn list(http: &Http, token: &Secret) -> Result<RepositoryList, GitHub
         }
     }
 
-    let mut repositories: Vec<GitHubRepository> = Vec::new();
+    let mut repositories: Vec<(Option<String>, GitHubRepository)> = Vec::new();
     for installation in &installations {
         let mut seen = 0usize;
         for number in 1..=MAX_REPOSITORY_PAGES {
@@ -129,7 +126,7 @@ pub(crate) fn list(http: &Http, token: &Secret) -> Result<RepositoryList, GitHub
             let count = found.repositories.len();
             seen += count;
             for repository in found.repositories {
-                if repositories.iter().any(|r| r.id == repository.id) {
+                if repositories.iter().any(|(_, r)| r.id == repository.id) {
                     continue;
                 }
                 let owner = repository.owner.login;
@@ -137,15 +134,20 @@ pub(crate) fn list(http: &Http, token: &Secret) -> Result<RepositoryList, GitHub
                 let Some(ssh_address) = endpoints.ssh_address(&full_name) else {
                     continue;
                 };
-                repositories.push(GitHubRepository {
-                    id: repository.id,
-                    full_name,
-                    owner,
-                    name: repository.name,
-                    private: repository.private,
-                    ssh_address,
-                    pushed_at: plausible_date(repository.pushed_at),
-                });
+                // When something was last pushed, as GitHub writes it
+                // (`2026-11-20T09:12:00Z`): the list is in that order.
+                let pushed_at = plausible_date(repository.pushed_at);
+                repositories.push((
+                    pushed_at,
+                    GitHubRepository {
+                        id: repository.id,
+                        full_name,
+                        owner,
+                        name: repository.name,
+                        private: repository.private,
+                        ssh_address,
+                    },
+                ));
             }
             let total = found.total_count.unwrap_or(0) as usize;
             if count < PER_PAGE as usize || seen >= total {
@@ -157,6 +159,7 @@ pub(crate) fn list(http: &Http, token: &Secret) -> Result<RepositoryList, GitHub
         return Ok(RepositoryList::NotInstalled { install_url });
     }
 
-    repositories.sort_by(|a, b| b.pushed_at.cmp(&a.pushed_at).then_with(|| a.full_name.cmp(&b.full_name)));
+    repositories.sort_by(|(a_pushed, a), (b_pushed, b)| b_pushed.cmp(a_pushed).then_with(|| a.full_name.cmp(&b.full_name)));
+    let repositories = repositories.into_iter().map(|(_, repository)| repository).collect();
     Ok(RepositoryList::Repositories { repositories, install_url })
 }

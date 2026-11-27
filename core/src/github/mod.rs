@@ -109,13 +109,10 @@ impl Endpoints {
         }
     }
 
-    #[cfg(feature = "sim")]
     pub(crate) fn is_simulated(&self) -> bool {
-        self.simulation.is_some()
-    }
-
-    #[cfg(not(feature = "sim"))]
-    pub(crate) fn is_simulated(&self) -> bool {
+        #[cfg(feature = "sim")]
+        return self.simulation.is_some();
+        #[cfg(not(feature = "sim"))]
         false
     }
 

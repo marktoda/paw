@@ -106,7 +106,7 @@ fn writing_the_fixture_twice_gives_the_same_bytes() {
 #[test]
 fn the_card_can_open_everything_but_the_archive() {
     let (_state, _, store) = fixture();
-    let card = plugged().port.session().unwrap().info().decryption_fingerprint.unwrap();
+    let card = plugged().port.session().unwrap().info().decryption_fingerprint.unwrap().to_string();
     let other = other_key_fingerprint_hex().unwrap();
     let other_id = Recipient::KeyId { id: other[other.len() - 16..].to_owned() };
 

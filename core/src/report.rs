@@ -75,15 +75,15 @@ fn plain(text: &str) -> String {
 }
 
 fn store_lines(state_dir: Option<&Path>, out: &mut Vec<String>) {
-    let set_up = state_dir.is_some_and(crate::setup::is_set_up);
+    let store = state_dir.map(crate::lock::StoreDirs::new);
+    let set_up = store.as_ref().is_some_and(crate::setup::is_set_up);
     out.push(format!("Store: {}", if set_up { "set up" } else { "not set up" }));
-    let Some(state_dir) = state_dir else { return };
-    let repo = crate::files::layout::repo_dir(state_dir);
-    match StoreTree::scan(&repo) {
+    let Some(store) = store else { return };
+    match StoreTree::scan(store.repo_dir()) {
         Ok(tree) => out.push(format!("Passwords: {} in {} folders", tree.entries().len(), tree.folders().len())),
         Err(_) => out.push("Passwords: unreadable".into()),
     }
-    match crate::sync::queue::unpushed(&crate::files::layout::StoreDirs::new(state_dir)) {
+    match crate::sync::queue::unpushed(&store) {
         Ok(items) => out.push(format!("Changes not sent: {}", items.len())),
         Err(_) => out.push("Changes not sent: unknown".into()),
     }

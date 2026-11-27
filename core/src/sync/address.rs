@@ -7,11 +7,9 @@
 //! the address (never repeated back), and git's other transports
 //! (`file://`, `ext::`, `git://`).
 
-use std::path::Path;
-
 use super::hosts::{GITHUB_SSH, is_github};
 use crate::PawError;
-use crate::lock::Exclusive;
+use crate::lock::{Exclusive, StoreDirs};
 use crate::remote::PortFallback;
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -318,16 +316,16 @@ fn from_web(text: &str) -> Result<ParsedAddress, AddressProblem> {
     github(owner, repo, |address| AddressNotice::GitHubWebAddress { address })
 }
 
-/// Saves `address` as the store's in `state_dir`, once its download
-/// succeeded: one line, as [`StoreAddress::display`] writes it.
-pub(crate) fn save_address(state_dir: &Path, _held: &Exclusive, address: &StoreAddress) -> std::io::Result<()> {
-    let path = state_dir.join(crate::files::layout::REMOTE);
+/// Saves `address` as `store`'s, once its download succeeded: one line, as
+/// [`StoreAddress::display`] writes it.
+pub(crate) fn save_address(store: &StoreDirs, _held: &Exclusive, address: &StoreAddress) -> std::io::Result<()> {
+    let path = store.state_dir().join(crate::files::layout::REMOTE);
     crate::files::write_atomic(&path, format!("{}\n", address.display()).as_bytes())
 }
 
-/// The store address a finished download saved in `state_dir`.
-pub fn saved_address(state_dir: &Path) -> Result<StoreAddress, PawError> {
-    let path = state_dir.join(crate::files::layout::REMOTE);
+/// The store address a finished download of `store` saved.
+pub fn saved_address(store: &StoreDirs) -> Result<StoreAddress, PawError> {
+    let path = store.state_dir().join(crate::files::layout::REMOTE);
     let text = crate::files::read_bounded(&path, crate::files::MAX_FILE_BYTES)
         .and_then(|found| found.ok_or_else(|| std::io::ErrorKind::NotFound.into()))
         .and_then(|bytes| String::from_utf8(bytes).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e)))

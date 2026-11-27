@@ -86,7 +86,7 @@ enum AutoFillKind: Equatable, Sendable, CaseIterable {
         switch self {
         case .password:
             let password = opened.password() ?? ""
-            let user = fillUsername(entry: opened, path: entry.path) ?? ""
+            let user = fillUsername(entry: opened) ?? ""
             return AutoFillTaken(
                 credential: password.isEmpty ? nil : .password(user: user, password: password),
                 hasCode: opened.makesOneTimeCodes())

@@ -15,7 +15,7 @@ use std::sync::{Arc, OnceLock, Weak};
 
 use key_common::{Driver, PIN, decrypt, finish, signer};
 use paw_core::sim::remote::steps;
-use paw_core::sync::StoreSync;
+use paw_core::task::StoreSync;
 use paw_core::key::{KeyError, KeyPort};
 use paw_core::task::{KeyOutcome, KeyTask, KeyTaskListener, KeyTaskState, TaskProgress};
 use paw_core::sim::copies::SimClock;
@@ -24,7 +24,7 @@ use paw_core::sync::operation::SyncState;
 use paw_core::sync::queue;
 use paw_core::write::held_back::{self, LeftHeldBack, LeftReason, ReencryptReport};
 use paw_core::sync::{ChangeKind, Connection};
-use paw_core::files::layout::StoreDirs;
+use paw_core::lock::StoreDirs;
 use paw_core::write::{Draft, Keyring, WriteStore};
 use support::{GitServer, git, move_entry};
 

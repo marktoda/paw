@@ -60,7 +60,7 @@ impl Default for PasswordPolicy {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
 pub enum PolicyError {
     #[error("a password must be {MIN_LENGTH} to {MAX_LENGTH} characters long")]
     Length,
@@ -159,6 +159,6 @@ pub fn default_password_policy() -> PasswordPolicy {
 }
 
 #[uniffi::export]
-pub fn password_entropy_bits(policy: PasswordPolicy) -> Result<f64, crate::write::WriteError> {
-    Ok(entropy_bits(&policy)?)
+pub fn password_entropy_bits(policy: PasswordPolicy) -> Result<f64, PolicyError> {
+    entropy_bits(&policy)
 }

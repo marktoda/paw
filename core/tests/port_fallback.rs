@@ -72,7 +72,7 @@ fn port_443_refuses_a_host_that_presents_another_key() {
     let setup = at_check_host(dir.path(), &port, "you/store");
     let SetupState::CheckHost { address, .. } = setup.use_port_fallback().unwrap() else { panic!() };
     let address = StoreAddress::parse(&address).unwrap().address;
-    let remote = KnownHosts::of(dir.path()).remote(&address).unwrap().expect("held to GitHub's keys with no confirmation");
+    let remote = KnownHosts::of(&paw_core::lock::StoreDirs::new(dir.path())).remote(&address).unwrap().expect("held to GitHub's keys with no confirmation");
     let key = key_common::sim(SimTouch::Off, SimTouch::Off, WAIT);
     let impostor = SimRemote::start(key.clone()).unwrap();
     let dialled = Remote { host: "127.0.0.1".into(), port: impostor.port(), ..remote };

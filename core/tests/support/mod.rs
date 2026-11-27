@@ -17,13 +17,13 @@ use paw_core::sync::Remote;
 /// the clone goes in its `repo/`.
 pub struct Phone {
     _state: tempfile::TempDir,
-    pub store: paw_core::files::layout::StoreDirs,
+    pub store: paw_core::lock::StoreDirs,
 }
 
 impl Phone {
     pub fn new() -> Self {
         let state = tempfile::tempdir().unwrap();
-        let store = paw_core::files::layout::StoreDirs::new(state.path());
+        let store = paw_core::lock::StoreDirs::new(state.path());
         Self { _state: state, store }
     }
 

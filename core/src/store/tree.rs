@@ -161,7 +161,6 @@ impl StoreTree {
         &self.entries
     }
 
-    /// The path of every entry in the store.
     pub(crate) fn entry_paths(&self) -> HashSet<&str> {
         self.entries.iter().map(|entry| entry.path.as_str()).collect()
     }

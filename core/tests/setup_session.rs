@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use key_common::{Driver, PIN, WAIT, finish, is_pin, is_touch, port_with};
 use paw_core::setup::Setup;
-use paw_core::sync::StoreSync;
+use paw_core::task::StoreSync;
 use paw_core::key::{KeyError, KeyIdentity, KeyPort, enrolment};
 use paw_core::task::{KeyOutcome, KeyTaskListener, KeyTaskState};
 use paw_core::remote::RemoteFailure;
@@ -190,7 +190,7 @@ fn a_send_over_a_change_paw_did_not_make_still_finds_the_remote_replaced() {
     std::fs::write(repo.join("two.gpg"), "2").unwrap();
     support::git(&repo, &["add", "one.gpg", "two.gpg"]);
     support::git(&repo, &["commit", "--quiet", "-m", "Two at once, by another tool."]);
-    assert!(paw_core::sync::queue::unpushed(&paw_core::files::layout::StoreDirs::new(w.dir.path())).is_err());
+    assert!(paw_core::sync::queue::unpushed(&paw_core::lock::StoreDirs::new(w.dir.path())).is_err());
     // The desktop starts the remote over.
     let desktop = w.server.desktop();
     support::git(desktop.path(), &["checkout", "--quiet", "--orphan", "fresh"]);
@@ -234,9 +234,9 @@ fn recipients_paw_has_no_key_for_leave_setup_done_but_say_saving_is_not_possible
 fn setup_records_the_key_and_gives_it_to_the_port() {
     let w = world();
     full_setup(&w);
-    let recorded = enrolment::load_enrolment(w.dir.path()).unwrap().unwrap();
-    assert_eq!(recorded.decryption_fingerprint.as_deref(), Some(w.sim.fingerprint_hex().as_str()));
-    assert_eq!(recorded.authentication_fingerprint.as_deref(), Some(w.sim.authentication_fingerprint_hex().as_str()));
+    let recorded = enrolment::load_enrolment(&paw_core::lock::StoreDirs::new(w.dir.path())).unwrap().unwrap();
+    assert_eq!(recorded.decryption_fingerprint.as_ref().map(|f| f.as_str()), Some(w.sim.fingerprint_hex().as_str()));
+    assert_eq!(recorded.authentication_fingerprint.as_ref().map(|f| f.as_str()), Some(w.sim.authentication_fingerprint_hex().as_str()));
     assert_eq!(recorded.serial(), "12345678");
     assert!(w.port.key_matches_enrolment());
     // The port now holds out for that key: another one is not it.
@@ -361,8 +361,8 @@ fn another_key_plugged_in_mid_setup_is_refused_before_the_pin() {
     let KeyTaskState::Failed { error: KeyError::DifferentKey { mismatch } } = state else { panic!("{state:?}") };
     assert_eq!(mismatch.presented, KeyIdentity {
         ident: "0006:87654321".into(),
-        decryption_fingerprint: Some(other.fingerprint_hex()),
-        authentication_fingerprint: Some(other.authentication_fingerprint_hex()),
+        decryption_fingerprint: paw_core::fingerprint::Fingerprint::parse(&other.fingerprint_hex()),
+        authentication_fingerprint: paw_core::fingerprint::Fingerprint::parse(&other.authentication_fingerprint_hex()),
     });
     assert_eq!(other.verify_attempts() + other.pin_queries(), 0);
 }
@@ -385,7 +385,7 @@ fn another_key_plugged_in_before_the_test_decrypt_is_refused_before_the_pin() {
     assert_eq!(other.verify_attempts() + other.pin_queries(), 0);
     assert_eq!(other.decipher_count(), 0);
     assert!(matches!(w.setup.state(), SetupState::TestDecrypt { .. }));
-    assert!(enrolment::load_enrolment(w.dir.path()).unwrap().is_none());
+    assert!(enrolment::load_enrolment(&paw_core::lock::StoreDirs::new(w.dir.path())).unwrap().is_none());
 }
 
 #[test]
@@ -472,12 +472,13 @@ fn a_bundled_hosts_key_cannot_be_forgotten() {
         let session = w.port.session().unwrap();
         w.setup.read_key_from_session(session).unwrap();
         w.setup.set_address(address.into()).unwrap();
-        let known = paw_core::sync::hosts::KnownHosts::of(w.dir.path());
+        let store = paw_core::lock::StoreDirs::new(w.dir.path());
+        let known = paw_core::sync::hosts::KnownHosts::of(&store);
         let host = if address.contains("ssh.github") { "ssh.github.com" } else { address.split(['@', ':']).nth(1).unwrap() };
         let port = if address.contains(":443") { 443 } else { 22 };
         // Even a key someone managed to save for it beside the bundled ones
         // (paw itself refuses to).
-        assert!(known.add(host, port, &support::some_other_host_key()).is_err());
+        assert!(known.add(&store.exclusive().unwrap(), host, port, &support::some_other_host_key()).is_err());
         let line = format!("{host} {port} {}\n", support::some_other_host_key());
         std::fs::write(w.dir.path().join(paw_core::files::layout::KNOWN_HOSTS), line).unwrap();
 

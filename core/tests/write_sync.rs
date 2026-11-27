@@ -20,7 +20,7 @@ use paw_core::sim::SimulatedKey;
 use paw_core::sync::operation::SyncState;
 use paw_core::task::TaskFailure;
 use paw_core::sync::{ChangeKind, Connection, Integration, queue};
-use paw_core::files::layout::StoreDirs;
+use paw_core::lock::StoreDirs;
 use paw_core::write::{Draft, Keyring, WriteStore, held_back};
 use pgp::types::KeyDetails;
 use key_common::{PIN, decrypt, decrypt_text, signer};

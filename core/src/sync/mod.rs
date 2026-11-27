@@ -10,7 +10,6 @@ pub mod hosts;
 pub mod integrate;
 pub mod operation;
 pub mod queue;
-mod store_sync;
 mod transport;
 
 use std::time::{Duration, Instant};
@@ -18,15 +17,13 @@ use std::time::{Duration, Instant};
 use git2::{AutotagOption, Direction, FetchOptions, PushOptions, RemoteCallbacks, Repository};
 
 pub use history::{ChangeKind, KeptBoth};
-pub use store_sync::StoreSync;
 pub use integrate::{IntegrateReport, Integration, RecipientsChange, Replaced, accept_replaced_remote};
 pub use transport::{ConnectError, Connection, HostKeyPin, PresentedHostKey, Remote, ServerKey, scan_host_key};
 
 use crate::PawError;
 use crate::fault::Fault;
-use crate::files::layout::StoreDirs;
 use crate::files::refs;
-use crate::lock::{DEFAULT_WAIT, Exclusive, FETCH_WAIT, Fetching};
+use crate::lock::{DEFAULT_WAIT, Exclusive, FETCH_WAIT, Fetching, StoreDirs};
 use crate::remote::{RefusedPath, RemoteFailure};
 
 /// Why a sync, an integrate or a change to the queue did not happen. In
@@ -184,14 +181,10 @@ pub(crate) fn fetch_into<T, E: From<PawError>>(
     let fetching = store.dirs.lock().fetching(fetch_wait)?;
     crate::lock::remove_stale_fetch_locks(store.dirs.repo_dir());
     let repo = &store.repo;
-    for name in fetched_refs(repo)?.into_iter().map(|(name, _)| name) {
-        if let Ok(mut reference) = repo.find_reference(&name) {
-            let _ = reference.delete();
-        }
-    }
+    delete_fetched_refs(repo, &fetched_refs(repo)?);
     let transferred = transfer(repo)?;
     let held = store.dirs.lock().exclusive_within(store_wait())?;
-    publish_fetched(&held, store, fetching)?;
+    publish_fetched(&held, store, &fetching)?;
     Ok((transferred, held))
 }
 
@@ -208,9 +201,17 @@ fn fetched_refs(repo: &Repository) -> Result<Vec<(String, git2::Oid)>, PawError>
     Ok(found)
 }
 
-/// The ref updates are the critical section, so the store lock is held;
-/// the fetch lock is released at the end.
-fn publish_fetched(held: &Exclusive, store: &OpenStore, fetching: Fetching) -> Result<(), PawError> {
+fn delete_fetched_refs(repo: &Repository, fetched: &[(String, git2::Oid)]) {
+    for (name, _) in fetched {
+        if let Ok(mut reference) = repo.find_reference(name) {
+            let _ = reference.delete();
+        }
+    }
+}
+
+/// The ref updates are the critical section, so the store lock is held,
+/// as is the fetch lock that wrote them.
+fn publish_fetched(held: &Exclusive, store: &OpenStore, _fetching: &Fetching) -> Result<(), PawError> {
     debug_assert!(held.covers(store.dirs.lock()));
     let repo = &store.repo;
     let fetched = fetched_refs(repo)?;
@@ -219,12 +220,7 @@ fn publish_fetched(held: &Exclusive, store: &OpenStore, fetching: Fetching) -> R
         repo.reference(&refs::remote_tracking(branch), *target, true, "fetch")
             .map_err(git_err)?;
     }
-    for (name, _) in &fetched {
-        if let Ok(mut reference) = repo.find_reference(name) {
-            let _ = reference.delete();
-        }
-    }
-    drop(fetching);
+    delete_fetched_refs(repo, &fetched);
     Ok(())
 }
 
@@ -365,25 +361,23 @@ impl From<PawError> for PushError {
     }
 }
 
-/// Pushes the commit `tip` to `branch` (`refs/heads/...`) on the remote, as
-/// a fast-forward only. `held` is the store lock, released for the
-/// transfer; `pushing` records `tip` as on the network meanwhile. After
-/// it, with the lock again, `origin/<branch>` and the last-seen ref move
-/// forward to `tip` if it went, waiting up to `record_wait` for the lock
-/// ([`crate::lock::RECORD_WAIT`]). The caller holds the push lock
-/// throughout.
-#[expect(clippy::too_many_arguments, reason = "the locks held are passed as evidence, one argument each")]
+/// Pushes the current branch's tip, as `held` finds it, to the same
+/// branch on the remote, as a fast-forward only. `held` is the store lock,
+/// released for the transfer; `pushing` records the tip as on the network
+/// meanwhile. After it, with the lock again, `origin/<branch>` and the
+/// last-seen ref move forward to the tip if it went, waiting up to
+/// `record_wait` for the lock ([`crate::lock::RECORD_WAIT`]). The caller
+/// holds the push lock throughout.
 pub(crate) fn push_tip(
     connection: &Connection,
     store: &OpenStore,
-    branch: &str,
-    tip: git2::Oid,
     held: Exclusive,
     pushing: &crate::lock::Pushing,
     record_wait: Duration,
 ) -> Result<(), PushError> {
     let repo = &store.repo;
-    let short = refs::short(branch).ok_or_else(|| PawError::Git("HEAD is not on a branch".into()))?;
+    let (branch, short) = current_branch(repo)?;
+    let tip = repo.refname_to_id(&branch).map_err(git_err)?;
     let sending = pushing.sending(tip);
     drop(held);
 
@@ -434,7 +428,7 @@ pub(crate) fn push_tip(
     if outcome.is_ok()
         && let Ok(held) = store.dirs.lock().exclusive_within(record_wait)
     {
-        let _ = record_push(&held, repo, short, tip);
+        let _ = record_push(&held, repo, &short, tip);
     }
     drop(sending);
     outcome

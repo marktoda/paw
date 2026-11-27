@@ -2,9 +2,10 @@
 //! names, the entry's own `url:` lines, and the user name it fills.
 
 use paw_core::entry::opened::OpenedEntry;
+use paw_core::open::{check_entry_url, fill_username};
 use paw_core::store::service::{
-    MatchKind, NamePairing, UrlCheck, check_entry_url, display_host, fill_username, host_of, match_services,
-    match_site, path_user, service_host, suggestion_domain, url_site,
+    MatchKind, NamePairing, UrlCheck, display_host, host_of, match_services, match_site, path_user, service_host,
+    suggestion_domain, url_site,
 };
 use paw_core::store::tree::EntryRef;
 
@@ -256,7 +257,8 @@ fn the_entrys_own_user_name_wins_over_the_path() {
         ("pw\nlogin:\n", "web/github.com", None),
     ];
     for (text, path, want) in cases {
-        assert_eq!(fill_username(opened(text), (*path).into()).as_deref(), *want, "{text:?} at {path}");
+        let entry = OpenedEntry::decrypted(path, text.as_bytes().to_vec(), vec![0; 32]).unwrap();
+        assert_eq!(fill_username(entry).as_deref(), *want, "{text:?} at {path}");
     }
 }
 

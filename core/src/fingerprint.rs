@@ -3,11 +3,11 @@
 //!
 //! It is made where a fingerprint comes in (the card, a `.gpg-id` line, a
 //! file in the state directory, a key) and compared as it is from then on.
-//! The records Swift sees carry it as text.
+//! Swift sees it as text: a `String` it hands back is read again, and one
+//! that is no fingerprint is refused.
 
 use std::fmt;
 
-/// See the module documentation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Fingerprint(String);
 
@@ -25,7 +25,12 @@ impl Fingerprint {
     /// The fingerprint of `key`. Every key paw handles is v4 or v6, the
     /// only versions a card or a `.gpg-id` fingerprint line can name.
     pub(crate) fn of(key: &impl pgp::types::KeyDetails) -> Self {
-        Self(hex(key.fingerprint().as_bytes()))
+        Self::from_bytes(key.fingerprint().as_bytes())
+    }
+
+    /// A fingerprint as raw bytes, as a key or a card gives it.
+    pub(crate) fn from_bytes(bytes: &[u8]) -> Self {
+        Self(hex(bytes))
     }
 
     pub fn as_str(&self) -> &str {
@@ -44,6 +49,11 @@ impl fmt::Display for Fingerprint {
         f.write_str(&self.0)
     }
 }
+
+uniffi::custom_type!(Fingerprint, String, {
+    lower: |fingerprint| fingerprint.0,
+    try_lift: |text| Fingerprint::parse(&text).ok_or_else(|| uniffi::deps::anyhow::anyhow!("not a fingerprint")),
+});
 
 /// `bytes` as upper-case hex, the way fingerprints and key IDs are written.
 pub(crate) fn hex(bytes: &[u8]) -> String {

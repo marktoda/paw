@@ -129,7 +129,7 @@ impl KeyPort {
     /// Returns it, or `None` if setup has not recorded one (then every card
     /// is accepted, as during setup).
     pub fn load_enrolled_key(&self, state_dir: String) -> Result<Option<KeyIdentity>, PawError> {
-        let key = enrolment::load_enrolment(Path::new(&state_dir))?;
+        let key = enrolment::load_enrolment(&crate::lock::StoreDirs::new(Path::new(&state_dir)))?;
         self.set_enrolled_key(key.clone());
         Ok(key)
     }

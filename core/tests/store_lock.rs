@@ -20,11 +20,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use key_common::{Driver, finish, port_with, signer_with};
 use paw_core::sim::remote::steps;
-use paw_core::sync::StoreSync;
+use paw_core::task::StoreSync;
 use paw_core::setup::Setup;
 use paw_core::task::{KeyOutcome, KeyTaskState};
 use paw_core::github::{Endpoints, GitHubAccount, RepositoryList, SignInState, TokenVault, VaultError};
-use paw_core::files::layout::StoreDirs;
+use paw_core::lock::StoreDirs;
 use paw_core::lock::StoreLock;
 use paw_core::files::layout::STORE_LOCK;
 use paw_core::setup::SetupState;
@@ -846,8 +846,8 @@ fn every_mutating_entry_point_returns_even_when_its_thread_holds_the_lock() {
             note("discard_all", queue::discard_all(&repo).map_err(|e| text(&e)));
             note("integrate", steps::integrate(&repo).map(drop).map_err(|e| text(&e)));
             note("accept_replaced_remote", sync::accept_replaced_remote(&repo, true).map(drop).map_err(|e| text(&e)));
-            let hosts = paw_core::sync::hosts::KnownHosts::of(w.state());
-            note("known_hosts.forget", hosts.forget(&paw_core::sync::address::StoreAddress::parse("git@elsewhere.example:store.git").unwrap().address).map_err(|e| text(&e)));
+            let hosts = paw_core::sync::hosts::KnownHosts::of(&repo);
+            note("known_hosts.forget", hosts.forget(&repo.exclusive().unwrap(), &paw_core::sync::address::StoreAddress::parse("git@elsewhere.example:store.git").unwrap().address).map_err(|e| text(&e)));
 
             let ffi_writer = paw_core::write::StoreWriter::open(w.state().to_string_lossy().into_owned());
             note("accept_recipients", ffi_writer.accept_recipients(String::new()).map_err(|e| text(&e)));
@@ -873,7 +873,7 @@ fn every_mutating_entry_point_returns_even_when_its_thread_holds_the_lock() {
                 sync::Connection::open(&remote, &signer).map_err(|e| text(&e)).and_then(|c| steps::push(&c, &repo).map_err(|e| text(&e)))
             });
             note("refresh_with_token", w.account.refresh_store().map(drop).map_err(|e| text(&e)));
-            let background = w.account.background_refresh(Duration::from_secs(25));
+            let background = w.account.background_refresh_with(Duration::from_secs(25), &|_| false);
             note("background_refresh", match background.outcome {
                 paw_core::github::BackgroundOutcome::Failed { fault } => Err(fault.to_string()),
                 _ => Ok(()),

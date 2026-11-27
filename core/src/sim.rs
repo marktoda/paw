@@ -205,7 +205,7 @@ impl SimulatedKey {
     /// Returns its fingerprint.
     pub fn pin_as_card(self: Arc<Self>, state_dir: String) -> Result<String, crate::write::WriteError> {
         let key = self.decryption_key()?;
-        let store = crate::files::layout::StoreDirs::new(std::path::Path::new(&state_dir));
+        let store = crate::lock::StoreDirs::new(std::path::Path::new(&state_dir));
         let held = store.exclusive()?;
         Ok(crate::write::Keyring::open(&store)?.pin_card_key(&held, &key)?.to_string())
     }
@@ -423,7 +423,7 @@ impl SimulatedKey {
     fn lock(&self) -> MutexGuard<'_, State> {
         // Tests share the key between threads; one that panicked while
         // holding the lock has already failed its test.
-        self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        crate::locked(&self.state)
     }
 
     fn uif(&self, slot: Slot) -> Vec<u8> {

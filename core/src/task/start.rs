@@ -55,11 +55,7 @@ fn entry_unreadable(error: PawError) -> KeyError {
 /// The stage a task shows first on its key.
 fn first_state(first: FirstStage) -> KeyTaskState {
     match first {
-        FirstStage::Pin(prompt) => KeyTaskState::Pin {
-            tries_left: prompt.tries_left,
-            forgot_after_background: prompt.forgot_after_background,
-            last_error: None,
-        },
+        FirstStage::Pin(prompt) => KeyTaskState::pin(prompt, None),
         FirstStage::Busy => KeyTaskState::Busy,
         FirstStage::Working => KeyTaskState::Working { progress: None },
     }
@@ -80,7 +76,7 @@ fn enter<T>(
     session.log().line(format!(
         "{} task {what}: PIN held {}, touch decryption {}, authentication {}{}",
         task.tag(),
-        if session.holds_pin_now() { "yes" } else { "no" },
+        if session.holds_pin() { "yes" } else { "no" },
         info.decryption_touch.words(),
         info.authentication_touch.words(),
         if plugged_later { ", key plugged in after it started" } else { "" },
@@ -223,8 +219,6 @@ impl KeyPort {
             purpose,
             listener,
             expected,
-            // The file can be read, the key has a decryption key, and the
-            // entry is for it.
             move |session| {
                 let ciphertext = store.read_entry(&read).map_err(entry_unreadable)?;
                 let key = session.decryption_key()?;
@@ -250,7 +244,7 @@ impl KeyPort {
                 // The entry opens even if keeping the copy fails: the
                 // person has already touched the key.
                 let (face_id_until_ms, copy_failed) =
-                    match copies.map(|(copies, ttl)| crate::open::keep_copy(&copies, &entry, &opened, ttl)) {
+                    match copies.map(|(copies, ttl)| crate::open::keep_copy(&copies, &opened, ttl)) {
                         None => (None, None),
                         Some(Ok(until)) => (until, None),
                         Some(Err(error)) => (None, Some(error)),

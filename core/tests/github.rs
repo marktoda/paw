@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use paw_core::files::layout::StoreDirs;
+use paw_core::lock::StoreDirs;
 use paw_core::sim::remote::steps;
 use paw_core::github::{
     BackgroundOutcome, GitHubAccount, GitHubError, RefreshDecision, RefreshStep, RepositoryList, SignInState,
@@ -363,7 +363,6 @@ fn the_picker_lists_every_granted_repository_across_pages_with_the_store_first()
     assert_eq!(store.full_name, REPOSITORY);
     assert_eq!((store.owner.as_str(), store.name.as_str()), ("you", "password-store"));
     assert!(store.private);
-    assert_eq!(store.pushed_at.as_deref(), Some("2026-11-20T09:12:00Z"));
     assert_eq!(store.ssh_address, w.remote.address());
     // Three pages of repositories, and nothing read from inside any of them.
     let pages = w.github.requests().iter().filter(|r| r.path.ends_with("/repositories")).count();
@@ -396,7 +395,7 @@ fn with_the_vault_empty_nothing_is_sent_anywhere() {
     let w = world();
     assert!(!w.account.is_signed_in().unwrap());
     assert_eq!(w.account.repositories().unwrap_err(), GitHubError::Fault { fault: Fault::Remote { failure: RemoteFailure::NotSignedIn } });
-    assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::Failed { fault: Fault::Remote { failure: RemoteFailure::NotSignedIn } });
+    assert_eq!(w.account.background_refresh_with(secs(25), &|_| false).outcome, BackgroundOutcome::Failed { fault: Fault::Remote { failure: RemoteFailure::NotSignedIn } });
     assert!(w.account.refresh_store().is_err());
     assert!(!w.account.sign_out(true).unwrap().revoked);
     assert_eq!(w.github.request_count(), 0);
@@ -437,7 +436,7 @@ fn the_token_is_nowhere_on_disk_in_git_config_or_in_any_message() {
     let report = w.account.refresh_store().unwrap();
     w.github.set_redirect_git(Some("http://127.0.0.1:9".into()));
     let error = w.account.refresh_store().unwrap_err();
-    let background = w.account.background_refresh(secs(25));
+    let background = w.account.background_refresh_with(secs(25), &|_| false);
     w.github.set_redirect_git(None);
 
     let tokens = w.tokens();
@@ -500,7 +499,7 @@ fn killed_after_github_rotated_but_before_the_keychain_write_ends_the_sign_in_cl
     // The old pair is still kept; GitHub no longer takes it.
     assert!(w.account.is_signed_in().unwrap());
 
-    let report = w.account.background_refresh(secs(25));
+    let report = w.account.background_refresh_with(secs(25), &|_| false);
     assert_eq!(report.outcome, BackgroundOutcome::Failed { fault: Fault::Remote { failure: RemoteFailure::SignedOut } });
     assert!(!w.account.is_signed_in().unwrap());
     assert_eq!(w.head(), head);
@@ -518,7 +517,7 @@ fn killed_after_the_keychain_write_the_new_pair_is_used_next_time() {
     let issued = w.tokens().len();
 
     w.remote.commit_file(NEW_ENTRY.into(), b"x".to_vec(), "Add.".into()).unwrap();
-    assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::Updated);
+    assert_eq!(w.account.background_refresh_with(secs(25), &|_| false).outcome, BackgroundOutcome::Updated);
     assert_eq!(w.tokens().len(), issued, "no second refresh");
 }
 
@@ -530,7 +529,7 @@ fn killed_before_the_refresh_request_the_old_pair_still_works() {
     let stopped = w.account.background_refresh_with(secs(25), &|step| step == RefreshStep::Token);
     assert_eq!(stopped.outcome, BackgroundOutcome::OutOfTime);
     w.remote.commit_file(NEW_ENTRY.into(), b"x".to_vec(), "Add.".into()).unwrap();
-    assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::Updated);
+    assert_eq!(w.account.background_refresh_with(secs(25), &|_| false).outcome, BackgroundOutcome::Updated);
 }
 
 #[test]
@@ -546,7 +545,7 @@ fn a_revoked_sign_in_ends_cleanly_and_leaves_the_store_alone() {
     assert!(!w.account.is_signed_in().unwrap());
     assert_eq!(w.head(), head);
     w.assert_consistent();
-    assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::Failed { fault: Fault::Remote { failure: RemoteFailure::NotSignedIn } });
+    assert_eq!(w.account.background_refresh_with(secs(25), &|_| false).outcome, BackgroundOutcome::Failed { fault: Fault::Remote { failure: RemoteFailure::NotSignedIn } });
 }
 
 #[test]
@@ -665,7 +664,7 @@ fn a_hostile_tree_fetched_over_https_is_refused_exactly_as_over_ssh() {
     assert!(!w.repo().join("escape").exists());
     w.assert_consistent();
 
-    let background = w.account.background_refresh(secs(25));
+    let background = w.account.background_refresh_with(secs(25), &|_| false);
     assert_eq!(background.outcome, BackgroundOutcome::NeedsDecision);
     assert!(matches!(&background.decisions[..], [RefreshDecision::RefusedRemote { paths }] if paths[0].path == "escape"));
     assert_eq!(w.head(), head);
@@ -679,7 +678,7 @@ fn changed_recipients_are_reported_as_over_ssh_and_left_for_the_person_in_the_ba
     let head = w.head();
     w.remote.commit_file(".gpg-id".into(), b"0123456789ABCDEF\nFEDCBA9876543210\n".to_vec(), "Share.".into()).unwrap();
 
-    let background = w.account.background_refresh(secs(25));
+    let background = w.account.background_refresh_with(secs(25), &|_| false);
     assert_eq!(background.outcome, BackgroundOutcome::NeedsDecision);
     let [RefreshDecision::RecipientsChanged { changes }] = &background.decisions[..] else {
         panic!("{background:?}");
@@ -701,7 +700,7 @@ fn a_replaced_history_is_parked_in_the_background_and_reported_as_over_ssh() {
     let head = w.head();
     replace_history(&w.remote);
 
-    let background = w.account.background_refresh(secs(25));
+    let background = w.account.background_refresh_with(secs(25), &|_| false);
     assert_eq!(background.outcome, BackgroundOutcome::NeedsDecision);
     assert!(matches!(&background.decisions[..], [RefreshDecision::RemoteReplaced { .. }]), "{background:?}");
     assert_eq!(w.head(), head);
@@ -724,7 +723,7 @@ fn local_changes_are_replayed_onto_a_background_fetch() {
     steps::commit(&w.store(), "local/mine.gpg", b"mine", "Add given password for local/mine to store.", &author).unwrap();
     let remote_tip = w.remote.commit_file(NEW_ENTRY.into(), b"x".to_vec(), "Add.".into()).unwrap();
 
-    let report = w.account.background_refresh(secs(25));
+    let report = w.account.background_refresh_with(secs(25), &|_| false);
     assert_eq!(report.outcome, BackgroundOutcome::Updated);
     assert!(report.decisions.is_empty());
     let integration = report.integration.unwrap();
@@ -746,7 +745,7 @@ fn a_background_refresh_still_brings_in_the_remote_when_the_recipients_file_is_u
     std::fs::write(w.state_dir().join(paw_core::files::layout::RECIPIENTS), [0xff, 0xfe, 0xfd]).unwrap();
     w.remote.commit_file(NEW_ENTRY.into(), b"x".to_vec(), "Add.".into()).unwrap();
 
-    let report = w.account.background_refresh(secs(25));
+    let report = w.account.background_refresh_with(secs(25), &|_| false);
 
     assert_eq!(report.outcome, BackgroundOutcome::Updated, "{report:?}");
     assert_eq!(report.integration.unwrap().fast_forwarded, 1);
@@ -770,7 +769,7 @@ fn a_token_for_another_repository_is_not_used_for_this_store() {
         matches!(&error, SyncError::Fault { fault: Fault::Remote { failure: RemoteFailure::WrongRepository { granted, .. } } } if wrong(granted)),
         "{error:?}"
     );
-    let report = w.account.background_refresh(secs(25));
+    let report = w.account.background_refresh_with(secs(25), &|_| false);
     assert!(matches!(report.outcome, BackgroundOutcome::Failed { .. }), "{report:?}");
     assert_eq!(w.git_requests(), before);
 }
@@ -826,7 +825,7 @@ fn stopping_the_background_refresh_at_any_step_leaves_the_store_consistent() {
         assert_eq!(w.head(), head, "{step:?}");
         w.assert_consistent();
 
-        let again = w.account.background_refresh(secs(25));
+        let again = w.account.background_refresh_with(secs(25), &|_| false);
         assert_eq!(again.outcome, BackgroundOutcome::Updated, "{step:?}");
         assert_eq!(w.head(), changed, "{step:?}");
         w.assert_consistent();
@@ -841,13 +840,13 @@ fn a_connection_dropped_mid_pack_changes_nothing_and_the_next_refresh_works() {
     let changed = w.remote.commit_file(NEW_ENTRY.into(), b"x".to_vec(), "Add.".into()).unwrap();
     w.github.set_drop_mid_pack(true);
 
-    let report = w.account.background_refresh(secs(25));
+    let report = w.account.background_refresh_with(secs(25), &|_| false);
     assert!(matches!(report.outcome, BackgroundOutcome::Failed { .. }), "{report:?}");
     assert_eq!(w.head(), head);
     w.assert_consistent();
 
     w.github.set_drop_mid_pack(false);
-    assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::Updated);
+    assert_eq!(w.account.background_refresh_with(secs(25), &|_| false).outcome, BackgroundOutcome::Updated);
     assert_eq!(w.head(), changed);
 }
 
@@ -856,7 +855,7 @@ fn a_background_refresh_with_no_time_left_sends_nothing() {
     let w = world();
     w.set_up();
     let before = w.github.request_count();
-    assert_eq!(w.account.background_refresh(Duration::ZERO).outcome, BackgroundOutcome::OutOfTime);
+    assert_eq!(w.account.background_refresh_with(Duration::ZERO, &|_| false).outcome, BackgroundOutcome::OutOfTime);
     assert_eq!(w.github.request_count(), before);
 }
 
@@ -864,7 +863,7 @@ fn a_background_refresh_with_no_time_left_sends_nothing() {
 fn a_background_refresh_with_nothing_new_is_up_to_date() {
     let w = world();
     w.set_up();
-    let report = w.account.background_refresh(secs(25));
+    let report = w.account.background_refresh_with(secs(25), &|_| false);
     assert_eq!(report.outcome, BackgroundOutcome::UpToDate);
     assert!(report.decisions.is_empty());
 }
@@ -874,7 +873,7 @@ fn a_store_with_no_chosen_repository_is_not_refreshed() {
     let w = world();
     w.sign_in();
     let before = w.github.request_count();
-    assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::Failed { fault: Fault::Remote { failure: RemoteFailure::NotLinked } });
+    assert_eq!(w.account.background_refresh_with(secs(25), &|_| false).outcome, BackgroundOutcome::Failed { fault: Fault::Remote { failure: RemoteFailure::NotLinked } });
     assert_eq!(w.github.request_count(), before);
 }
 
@@ -923,7 +922,7 @@ fn a_stop_from_another_thread_mid_transfer_ends_the_run_with_nothing_changed() {
     assert_eq!(w.head(), head);
     w.assert_consistent();
     assert_no_lock_left(&w);
-    assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::Updated);
+    assert_eq!(w.account.background_refresh_with(secs(25), &|_| false).outcome, BackgroundOutcome::Updated);
     assert_eq!(w.head(), changed);
 }
 
@@ -936,7 +935,7 @@ fn a_stalled_transfer_ends_by_the_deadline() {
     w.github.stall_packs();
 
     let started = std::time::Instant::now();
-    let report = w.account.background_refresh(secs(2));
+    let report = w.account.background_refresh_with(secs(2), &|_| false);
     let took = started.elapsed();
     w.github.release_packs();
 
@@ -968,7 +967,7 @@ fn a_store_in_use_ends_the_background_run_busy_and_changes_nothing() {
     taken.1.recv().unwrap();
 
     let started = std::time::Instant::now();
-    let report = w.account.background_refresh(secs(25));
+    let report = w.account.background_refresh_with(secs(25), &|_| false);
     let took = started.elapsed();
     release.0.send(()).unwrap();
     holder.join().unwrap();
@@ -977,6 +976,6 @@ fn a_store_in_use_ends_the_background_run_busy_and_changes_nothing() {
     assert!(took < secs(10), "waited {took:?} for the store");
     assert_eq!(w.head(), head);
     w.assert_consistent();
-    assert_eq!(w.account.background_refresh(secs(25)).outcome, BackgroundOutcome::Updated);
+    assert_eq!(w.account.background_refresh_with(secs(25), &|_| false).outcome, BackgroundOutcome::Updated);
     assert_eq!(w.head(), changed);
 }

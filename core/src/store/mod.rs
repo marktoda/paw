@@ -17,7 +17,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::PawError;
-use crate::files::layout::StoreDirs;
+use crate::fingerprint::Fingerprint;
+use crate::lock::StoreDirs;
 use crate::recipients::Access;
 use search::SearchHit;
 use pairings::SitePairings;
@@ -119,7 +120,14 @@ impl PassStore {
         read::read_entry(self.store.repo_dir(), entry)
     }
 
-    /// Every entry, sorted by path.
+    /// [`Self::access`] for a fingerprint already read.
+    pub(crate) fn key_access(&self, entry: &str, card: &Fingerprint) -> Access {
+        match self.read_entry(entry) {
+            Ok(bytes) => crate::recipients::key_access(&bytes, Some(card)),
+            Err(e) => Access::Unreadable { reason: e.to_string() },
+        }
+    }
+
     pub fn entries(&self) -> &[EntryRef] {
         self.tree.entries()
     }

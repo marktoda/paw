@@ -665,7 +665,6 @@ async fn send(out: &mut (impl AsyncWrite + Unpin), bytes: &[u8]) -> Result<(), S
     out.flush().await.map_err(|e| e.to_string())
 }
 
-/// The branches as (commit, name), and the branch `HEAD` names.
 pub(crate) type Branches = (Vec<(Oid, String)>, Option<String>);
 
 /// The branches, as (commit, name), sorted by name; and where `HEAD` points
@@ -1021,10 +1020,9 @@ async fn receive_pack(shared: &Shared, input: &mut Input, out: &mut (impl AsyncW
 /// test support, not how the app syncs (it runs whole syncs as key tasks,
 /// `StoreSync.send_with_key`). Not in device builds.
 pub mod steps {
-    use crate::files::layout::StoreDirs;
+    use crate::lock::StoreDirs;
     use crate::files::refs;
     use crate::key::SshSigner;
-    use crate::lock::FETCH_WAIT;
     use crate::sync::operation::{self, SyncReport};
     use crate::fault::Fault;
     use crate::sync::{self, Cloned, Connection, OpenStore, Remote, SyncError, git_err};
@@ -1073,12 +1071,10 @@ pub mod steps {
         store: &StoreDirs,
         record_wait: std::time::Duration,
     ) -> Result<(), sync::PushError> {
-        let pushing = store.lock().pushing(FETCH_WAIT)?;
+        let pushing = store.lock().pushing(crate::lock::SEND_WAIT)?;
         let store = OpenStore::open(store)?;
         let held = store.dirs.exclusive()?;
-        let (branch, _) = sync::current_branch(&store.repo)?;
-        let tip = store.repo.refname_to_id(&branch).map_err(git_err)?;
-        sync::push_tip(connection, &store, &branch, tip, held, &pushing, record_wait)
+        sync::push_tip(connection, &store, held, &pushing, record_wait)
     }
 
     /// A whole sync of `store` on one login, as `StoreSync`'s key tasks run
@@ -1089,6 +1085,6 @@ pub mod steps {
         store: &StoreDirs,
         send: bool,
     ) -> Result<SyncReport, crate::task::TaskFailure> {
-        operation::run_until(remote, signer, store, &|| crate::write::held_back::holds_back(store), send, &|| false, None)
+        operation::run_until(remote, signer, store, crate::write::held_back::holds_back, send, &|| false, None)
     }
 }

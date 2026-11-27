@@ -10,6 +10,7 @@
 
 mod run;
 mod start;
+mod store_sync;
 pub(crate) mod workflows;
 
 use std::sync::Arc;
@@ -25,6 +26,7 @@ use crate::sync::operation::SyncReport;
 use crate::write::held_back::ReencryptReport;
 
 pub use run::KeyTask;
+pub use store_sync::StoreSync;
 
 /// What a task is for: the key log names it, and setup's key check says
 /// which entry it opens.
@@ -168,6 +170,12 @@ pub enum KeyTaskState {
     /// The key did its part and the setup step after it failed.
     SetupFailed { error: SetupError },
     Cancelled,
+}
+
+impl KeyTaskState {
+    pub(crate) fn pin(prompt: crate::key::PinPrompt, last_error: Option<KeyError>) -> Self {
+        Self::Pin { tries_left: prompt.tries_left, forgot_after_background: prompt.forgot_after_background, last_error }
+    }
 }
 
 #[uniffi::export]

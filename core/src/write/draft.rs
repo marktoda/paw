@@ -77,7 +77,6 @@ pub struct Draft {
     original: Option<Original>,
     name: String,
     folder: String,
-    raw: Option<Zeroizing<String>>,
     password: Option<Zeroizing<String>>,
     generated: bool,
     username: Option<Zeroizing<String>>,
@@ -200,7 +199,6 @@ impl Draft {
             original: None,
             name: String::new(),
             folder: folder.to_owned(),
-            raw: None,
             password: None,
             generated: false,
             username: None,
@@ -305,18 +303,6 @@ impl Draft {
         crate::otp::setup_line(setup, &self.name).map_err(|why| problem(DraftField::OneTimeCode, why.reason()))
     }
 
-    /// Replaces the whole text (the "Text" toggle). Changes made with the
-    /// other setters before this are dropped; later ones apply on top.
-    pub fn set_text(&mut self, text: &str) {
-        self.raw = Some(Zeroizing::new(text.to_owned()));
-        self.password = None;
-        self.username = None;
-        self.url = None;
-        self.fields.clear();
-        self.notes = None;
-        self.otp = None;
-    }
-
     /// Problems with the form's values, without looking at the store.
     pub fn value_problems(&self) -> Vec<DraftProblem> {
         let mut problems = Vec::new();
@@ -371,14 +357,9 @@ impl Draft {
         if !problems.is_empty() {
             return Err(problems);
         }
-        let mut doc = match (&self.raw, &self.original) {
-            (Some(raw), _) => {
-                let mut bytes = Zeroizing::new(raw.as_bytes().to_vec());
-                EntryDoc::parse(std::mem::take(&mut *bytes))
-                    .map_err(|_| vec![problem(DraftField::Notes, "The text isn't valid.")])?
-            }
-            (None, Some(original)) => original.doc.duplicate(),
-            (None, None) => EntryDoc::empty(),
+        let mut doc = match &self.original {
+            Some(original) => original.doc.duplicate(),
+            None => EntryDoc::empty(),
         };
         let fail = |field: DraftField| move |e: crate::PawError| vec![problem(field.clone(), e.to_string())];
         if let Some(password) = &self.password
@@ -493,11 +474,6 @@ impl EntryDraft {
 
     pub fn remove_one_time_code(&self) {
         self.draft().remove_one_time_code();
-    }
-
-    /// The "Text" toggle: replaces the whole entry with `text`.
-    pub fn set_text(&self, text: String) {
-        self.draft().set_text(&text);
     }
 
     /// What would stop the draft from saving: the values typed and, with

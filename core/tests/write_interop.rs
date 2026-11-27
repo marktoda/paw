@@ -13,7 +13,7 @@ use std::process::{Command, Stdio};
 use paw_core::files::content_id;
 use paw_core::entry::EntryDoc;
 use paw_core::recipients::{Recipient, entry_recipients};
-use paw_core::files::layout::StoreDirs;
+use paw_core::lock::StoreDirs;
 use paw_core::write::{Draft, Keyring, WriteError, WriteStore};
 use pgp::composed::{Deserializable, SignedPublicKey};
 use pgp::packet::{PubKeyInner, PublicKey};

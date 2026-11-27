@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use paw_core::copies::{CopyCache, CopyStatus};
 use paw_core::github::GitHubAccount;
-use paw_core::sync::StoreSync;
+use paw_core::task::StoreSync;
 use paw_core::write::StoreWriter;
 use paw_core::github::{TokenVault, VaultError};
 use paw_core::key::KeyPort;
@@ -79,11 +79,16 @@ fn store_with(files: &[(&str, &[u8])]) -> Store {
     let state = root.path().join("state");
     let repo = state.join(paw_core::files::layout::REPO);
     git(root.path(), &["clone", "--quiet", bare.to_str().unwrap(), repo.to_str().unwrap()]);
-    let store = paw_core::files::layout::StoreDirs::new(&state);
+    let store = paw_core::lock::StoreDirs::new(&state);
     let mut keyring = Keyring::open(&store).unwrap();
     keyring.pin_card_key(&store.exclusive().unwrap(), &card().decryption_key().unwrap()).unwrap();
     keyring.accept_all_recipients_at_setup(&store.exclusive().unwrap()).unwrap();
-    std::fs::write(state.join(paw_core::files::layout::SETUP), "step=done\n").unwrap();
+    let setup = format!(
+        "step=done\nident=0006:1\nssh_public_key={}\ndecryption_fingerprint={}\naddress=git@example.com:store.git\nopened=x\n",
+        card().ssh_public_key(),
+        card().fingerprint_hex()
+    );
+    std::fs::write(state.join(paw_core::files::layout::SETUP), setup).unwrap();
     Store { _root: root, state }
 }
 
@@ -419,7 +424,7 @@ fn diagnostics_say_what_they_should_and_name_nothing() {
     never.push(fingerprint[32..].to_owned());
     never.push(info.ident.clone());
     never.extend(info.ident.split(':').filter(|part| part.len() >= 6).map(str::to_owned));
-    if let Some(ssh) = &info.authentication_fingerprint {
+    if let Some(ssh) = info.authentication_fingerprint.as_ref().map(|f| f.to_string()) {
         never.push(ssh.clone());
         never.push(ssh[ssh.len() - 8..].to_owned());
     }

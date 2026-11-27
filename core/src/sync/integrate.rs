@@ -17,15 +17,14 @@ use std::path::Path;
 use git2::{Oid, Repository};
 
 use super::guard::{self, check_commit};
-use super::history::{KeptBoth, PawCommit, Replay, ReplayNotes, commits_between, ensure_clean, move_branch};
+use super::history::{KeptBoth, PawCommit, Replay, ReplayNotes, commits_between, ensure_clean, move_branch, paw_commits};
 use super::queue::waiting;
 use super::{OpenStore, SyncError, current_branch, git_err};
 use crate::fault::Fault;
-use crate::files::layout::StoreDirs;
 use crate::files::refs;
 use crate::remote::RefusedPath;
 use crate::store::gpg_id::shown_gpg_id_lines;
-use crate::lock::{Exclusive, Shared};
+use crate::lock::{Exclusive, Shared, StoreDirs};
 
 /// A `.gpg-id` that differs between the remote tip paw saw last and the
 /// one it just fetched. paw always says when recipients change.
@@ -219,7 +218,7 @@ pub(crate) fn plan(_reading: &Shared, store: &OpenStore) -> Result<Plan, SyncErr
 pub(crate) fn apply(held: &Exclusive, store: &OpenStore, plan: Plan) -> Result<Integration, SyncError> {
     let repo = &store.repo;
     let Plan { tips, fetched, refused, recipients_changes, replaced } = plan;
-    let Some(Fetched { remote, .. }) = fetched else {
+    let Some(Fetched { remote, seen, .. }) = fetched else {
         return Ok(Integration::Integrated(IntegrateReport::default()));
     };
     if !refused.is_empty() {
@@ -229,7 +228,7 @@ pub(crate) fn apply(held: &Exclusive, store: &OpenStore, plan: Plan) -> Result<I
         return Ok(Integration::RemoteReplaced(replaced));
     }
 
-    let local = waiting(held, store)?.commits;
+    let local = paw_commits(repo, tips.head, &[remote, seen])?;
     let mut report = IntegrateReport { recipients_changed: recipients_changes, ..Default::default() };
     let remote_is_in_head =
         tips.head == remote || repo.graph_descendant_of(tips.head, remote).map_err(git_err)?;
