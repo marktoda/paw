@@ -114,7 +114,7 @@ fn desktop_rm(w: &World, path: &str) -> String {
 fn pull(w: &World) -> Result<Integration, SyncError> {
     let connection = Connection::open(&w.server.remote(), &signer(&w.card)).unwrap();
     steps::fetch(&connection, &w.store).unwrap();
-    sync::integrate(&w.store)
+    steps::integrate(&w.store)
 }
 
 fn integrated(w: &World) -> IntegrateReport {
@@ -420,7 +420,7 @@ fn a_local_commit_paw_did_not_make_is_refused_and_nothing_changes() {
     steps::fetch(&connection, &w.store).unwrap();
     let before = snapshot(phone(&w));
 
-    let error = sync::integrate(&w.store).unwrap_err();
+    let error = steps::integrate(&w.store).unwrap_err();
 
     assert!(matches!(&error, SyncError::NotPawHistory { reason, .. } if reason.contains("more than one")), "{error:?}");
     assert_eq!(snapshot(phone(&w)), before);
@@ -451,7 +451,7 @@ fn a_failure_in_the_middle_of_a_replay_leaves_everything_as_it_was() {
     steps::fetch(&connection, &w.store).unwrap();
     let before = snapshot(phone(&w));
 
-    let error = sync::integrate(&w.store).unwrap_err();
+    let error = steps::integrate(&w.store).unwrap_err();
 
     assert!(error.to_string().contains("one of its folders is a link or a file"), "{error}");
     assert_eq!(snapshot(phone(&w)), before);
@@ -471,7 +471,7 @@ fn a_failure_while_updating_the_working_copy_is_rolled_back_byte_for_byte() {
     std::fs::set_permissions(phone(&w).join("locked"), std::fs::Permissions::from_mode(0o500)).unwrap();
     let before = snapshot(phone(&w));
 
-    let result = sync::integrate(&w.store);
+    let result = steps::integrate(&w.store);
 
     let _ = std::fs::set_permissions(phone(&w).join("locked"), std::fs::Permissions::from_mode(0o700));
     let error = result.unwrap_err();
@@ -496,7 +496,7 @@ fn replaced_remote_history_is_not_integrated_until_the_person_decides() {
     steps::fetch(&connection, &w.store).unwrap();
     let before = snapshot(phone(&w));
 
-    let outcome = sync::integrate(&w.store).unwrap();
+    let outcome = steps::integrate(&w.store).unwrap();
 
     match outcome {
         Integration::RemoteReplaced(replaced) => {

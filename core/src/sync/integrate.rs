@@ -176,20 +176,12 @@ fn fetched(repo: &Repository, tips: &Tips) -> Result<Option<Fetched>, SyncError>
     Ok(Some(Fetched { remote, seen, replaced }))
 }
 
-/// Integrates `origin/<branch>` into the current branch of the store at
-/// `dir`, taking the store's lock: tests' way to run the integrate step on
-/// its own.
+/// Integrates `origin/<branch>` into the current branch.
 ///
 /// If the remote's tip, or a commit rebuilt on it, holds something paw
 /// will not check out ([`super::refused_remote`]), this fails with
 /// [`crate::remote::RemoteFailure::RefusedContent`] naming the paths, and
 /// the branch, the working copy and the unpushed changes stay as they were.
-#[cfg(feature = "sim")]
-pub fn integrate(dirs: &StoreDirs) -> Result<Integration, SyncError> {
-    let held = dirs.exclusive()?;
-    integrate_locked(&held, &OpenStore::open(dirs)?)
-}
-
 pub(crate) fn integrate_locked(held: &Exclusive, store: &OpenStore) -> Result<Integration, SyncError> {
     let repo = &store.repo;
     let tips = tips(repo)?;

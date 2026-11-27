@@ -1048,6 +1048,13 @@ pub mod steps {
         Ok(store.repo.refname_to_id(&refs::remote_tracking(&short)).map(|id| id.to_string()).map_err(git_err)?)
     }
 
+    /// Integrates `origin/<branch>` into the current branch, as every
+    /// sync does after its fetch.
+    pub fn integrate(store: &StoreDirs) -> Result<sync::Integration, SyncError> {
+        let held = store.exclusive()?;
+        sync::integrate::integrate_locked(&held, &OpenStore::open(store)?)
+    }
+
     /// Pushes the current branch to the branch of the same name, as a
     /// fast-forward only, as a send does.
     pub fn push(connection: &Connection, store: &StoreDirs) -> Result<(), sync::PushError> {

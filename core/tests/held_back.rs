@@ -23,7 +23,7 @@ use paw_core::sim::{SimTouch, SimulatedKey};
 use paw_core::sync::operation::SyncState;
 use paw_core::sync::queue;
 use paw_core::write::held_back::{self, LeftHeldBack, LeftReason, ReencryptReport};
-use paw_core::sync::{self, ChangeKind, Connection};
+use paw_core::sync::{ChangeKind, Connection};
 use paw_core::files::layout::StoreDirs;
 use paw_core::write::{EntryDraft, Keyring, WriteStore};
 use support::{GitServer, git, move_entry};
@@ -69,7 +69,7 @@ impl World {
     fn pull(&self) {
         let connection = Connection::open(&self.server.remote(), &self.signer()).unwrap();
         steps::fetch(&connection, &self.store()).unwrap();
-        sync::integrate(&self.store()).unwrap();
+        steps::integrate(&self.store()).unwrap();
     }
 
     fn save(&self, folder: &str, name: &str, password: &str) {

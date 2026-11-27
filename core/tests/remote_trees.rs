@@ -242,7 +242,7 @@ fn integrate_after(
 
     host_commit(&server, &store(extra));
     steps::fetch(&connection, &dirs).unwrap();
-    let result = sync::integrate(&dirs);
+    let result = steps::integrate(&dirs);
 
     let paths = refused_content(result);
     assert_eq!(git(&dir, &["rev-parse", "HEAD"]), head, "{what}");
@@ -308,7 +308,7 @@ fn a_local_name_that_collides_with_a_remote_one_is_not_replayed() {
     host_commit(&server, &store(vec![("web", Folder(vec![("bank.gpg", File(b"theirs"))]))]));
     steps::fetch(&connection, &dir.store).unwrap();
 
-    let result = sync::integrate(&dir.store);
+    let result = steps::integrate(&dir.store);
 
     assert_refusal_names(&refused_content(result), "web/bank.gpg", "replay");
     assert_eq!(git(dir.path(), &["rev-parse", "HEAD"]), head);
@@ -359,7 +359,7 @@ fn a_folder_turned_into_a_link_under_a_waiting_change_is_refused() {
         .unwrap();
     steps::fetch(&connection, &dirs).unwrap();
 
-    let result = sync::integrate(&dirs);
+    let result = steps::integrate(&dirs);
 
     let link = vec![RefusedPath { path: "web".into(), reasons: vec![RefusedReason::SymbolicLink] }];
     assert_eq!(refused_content(result), link);
@@ -466,7 +466,7 @@ fn a_pull_cannot_write_beside_the_store_on_a_casefold_file_system() {
     );
     repo.reference("refs/remotes/origin/main", second, true, "fetch").unwrap();
 
-    let result = sync::integrate(&dirs);
+    let result = steps::integrate(&dirs);
 
     assert!(!state.join(paw_core::files::layout::RECIPIENTS).exists(), "a pull wrote outside the store: {result:?}");
     // The NFC link and the NFD folder are one name here.
@@ -489,7 +489,7 @@ fn a_pull_cannot_write_beside_the_store_on_a_casefold_file_system() {
         ],
     );
     repo.reference("refs/remotes/origin/main", third, true, "fetch").unwrap();
-    let result = sync::integrate(&dirs);
+    let result = steps::integrate(&dirs);
     let paths = refused_content(result);
     let same_name = |reason: &RefusedReason| matches!(reason, RefusedReason::SameNameAs { .. });
     assert!(paths.iter().any(|refused| refused.reasons.iter().any(same_name)), "{paths:?}");

@@ -19,15 +19,13 @@ use git2::{AutotagOption, Direction, FetchOptions, FileMode, PushOptions, Remote
 
 pub use history::{ChangeKind, KeptBoth};
 pub use integrate::{IntegrateReport, Integration, RecipientsChange, Replaced, accept_replaced_remote};
-#[cfg(feature = "sim")]
-pub use integrate::integrate;
 pub use transport::{ConnectError, Connection, DOWNLOAD_LIMIT, HostKeyPin, PresentedHostKey, Remote, key_type_words, scan_host_key};
 
 use crate::PawError;
 use crate::fault::Fault;
 use crate::files::layout::StoreDirs;
 use crate::files::refs;
-use crate::lock::{Exclusive, FETCH_WAIT, Fetching, Shared};
+use crate::lock::{DEFAULT_WAIT, Exclusive, FETCH_WAIT, Fetching, Shared};
 use crate::remote::{RefusedPath, RemoteFailure};
 use crate::path::{unsafe_path, unsafe_path_err};
 
@@ -181,13 +179,20 @@ impl OpenStore {
     }
 }
 
-/// Starts a fetch into `store`: takes the store's fetch lock (one fetch at
-/// a time writes objects and the private refs, so two never write one pack
-/// index) and clears what an earlier fetch left in the private namespace.
-/// The store lock is not taken: saves and reads go on while the transfer
-/// runs.
-pub(crate) fn begin_fetch(store: &OpenStore, wait: Duration) -> Result<Fetching, PawError> {
-    let fetching = store.dirs.lock().fetching(wait)?;
+/// Every fetch of a store, whatever its transport. Under the store's fetch
+/// lock (waiting up to `fetch_wait`: one fetch at a time writes objects and
+/// the private refs, so two never write one pack index), what an earlier
+/// fetch left in the private namespace is cleared and `transfer` fills it,
+/// without the store lock: saves and reads go on meanwhile. Then, with the
+/// store lock (waiting up to `store_wait()`), what it received becomes
+/// `origin/*`. Returns what `transfer` returned and the store lock, held.
+pub(crate) fn fetch_into<T, E: From<PawError>>(
+    store: &OpenStore,
+    fetch_wait: Duration,
+    store_wait: impl FnOnce() -> Duration,
+    transfer: impl FnOnce(&Repository) -> Result<T, E>,
+) -> Result<(T, Exclusive), E> {
+    let fetching = store.dirs.lock().fetching(fetch_wait)?;
     crate::lock::remove_stale_fetch_locks(store.dirs.repo_dir());
     let repo = &store.repo;
     for name in fetched_refs(repo)?.into_iter().map(|(name, _)| name) {
@@ -195,7 +200,10 @@ pub(crate) fn begin_fetch(store: &OpenStore, wait: Duration) -> Result<Fetching,
             let _ = reference.delete();
         }
     }
-    Ok(fetching)
+    let transferred = transfer(repo)?;
+    let held = store.dirs.lock().exclusive_within(store_wait())?;
+    publish_fetched(&held, store, fetching)?;
+    Ok((transferred, held))
 }
 
 fn fetched_refs(repo: &Repository) -> Result<Vec<(String, git2::Oid)>, PawError> {
@@ -211,10 +219,9 @@ fn fetched_refs(repo: &Repository) -> Result<Vec<(String, git2::Oid)>, PawError>
     Ok(found)
 }
 
-/// Publishes what a fetch received. The ref updates are the critical
-/// section, so the store lock is held; the fetch lock is released at the
-/// end.
-pub(crate) fn publish_fetched(held: &Exclusive, store: &OpenStore, fetching: Fetching) -> Result<(), PawError> {
+/// The ref updates are the critical section, so the store lock is held;
+/// the fetch lock is released at the end.
+fn publish_fetched(held: &Exclusive, store: &OpenStore, fetching: Fetching) -> Result<(), PawError> {
     debug_assert!(held.covers(store.dirs.lock()));
     let repo = &store.repo;
     let fetched = fetched_refs(repo)?;
@@ -232,16 +239,14 @@ pub(crate) fn publish_fetched(held: &Exclusive, store: &OpenStore, fetching: Fet
     Ok(())
 }
 
+/// [`fetch_into`] over SSH: returns the remote's default branch, if it has
+/// one, and the store lock, held.
 pub(crate) fn fetch_branches(
     connection: &Connection,
     store: &OpenStore,
     progress: Option<TransferCallback<'_>>,
 ) -> Result<(Option<String>, Exclusive), Fault> {
-    let fetching = begin_fetch(store, FETCH_WAIT)?;
-    let default = connection.with_remote(&store.repo, |remote| fetch_connected(remote, progress))?;
-    let held = store.dirs.exclusive()?;
-    publish_fetched(&held, store, fetching)?;
-    Ok((default, held))
+    fetch_into(store, FETCH_WAIT, || DEFAULT_WAIT, |repo| connection.with_remote(repo, |remote| fetch_connected(remote, progress)))
 }
 
 /// Fetches all branches through `remote`, whose transport the caller has

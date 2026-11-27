@@ -19,7 +19,7 @@ use paw_core::key::KeyError;
 use paw_core::sim::SimulatedKey;
 use paw_core::sync::operation::SyncState;
 use paw_core::task::TaskFailure;
-use paw_core::sync::{self, ChangeKind, Connection, Integration, queue};
+use paw_core::sync::{ChangeKind, Connection, Integration, queue};
 use paw_core::files::layout::StoreDirs;
 use paw_core::write::{EntryDraft, Keyring, WriteStore, held_back};
 use pgp::types::KeyDetails;
@@ -78,7 +78,7 @@ impl World {
     fn pull(&self) -> Integration {
         let connection = Connection::open(&self.server.remote(), &signer(&self.card)).unwrap();
         steps::fetch(&connection, &self.store()).unwrap();
-        sync::integrate(&self.store()).unwrap()
+        steps::integrate(&self.store()).unwrap()
     }
 
     fn open(&self, entry: &str) -> EntryDraft {
