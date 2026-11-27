@@ -37,12 +37,13 @@ use crate::lock::Shared;
 pub struct ScopeKey {
     /// The line as written in `.gpg-id`.
     pub line: String,
-    /// The last 16 hex digits of the line, if it is a fingerprint or key ID;
-    /// else of the pinned key it resolves to; else `None` (an e-mail
-    /// address or a name paw has no key for).
+    /// The 64-bit key ID the line names, if it is a fingerprint or long key
+    /// ID; else that of the pinned key it resolves to; else `None` (an
+    /// e-mail address or a name paw has no key for).
     pub short_id: Option<String>,
-    /// The line resolves to the key on the plugged-in card that this store
-    /// was set up with.
+    /// The line resolves to a key pinned on this device. The only key paw
+    /// pins is the card's, at setup, so this is the key the store was set
+    /// up with, plugged in or not.
     pub this_key: bool,
     pub status: LineStatus,
 }
@@ -121,11 +122,9 @@ pub fn recipient_scopes(_reading: &Shared, keyring: &Keyring) -> Result<Vec<Reci
         let mut complete = true;
         let mut keys = Vec::new();
         for line in lines {
-            let status = keyring.line_status(&line);
-            let pinned = match &status {
-                LineStatus::Ready { fingerprint, .. } => keyring.keys().iter().find(|k| k.fingerprint.as_str() == fingerprint),
-                _ => None,
-            };
+            let found = keyring.line_key(&line);
+            let status = LineStatus::of(found);
+            let pinned = found.map(|(key, _)| key);
             match pinned {
                 Some(key) => named.fingerprints.push(key.fingerprint.clone()),
                 None => {

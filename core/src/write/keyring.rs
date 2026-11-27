@@ -129,6 +129,16 @@ pub enum LineStatus {
     Missing,
 }
 
+impl LineStatus {
+    /// The status of a line [`Keyring::line_key`] found `found` for.
+    pub(crate) fn of(found: Option<(&PinnedKey, bool)>) -> Self {
+        match found {
+            Some((key, bound)) => Self::Ready { fingerprint: key.fingerprint.to_string(), bound },
+            None => Self::Missing,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct RecipientLine {
     pub line: String,
@@ -338,7 +348,7 @@ impl Keyring {
 
     /// The pinned key that satisfies `line`, and whether by a binding.
     /// Several keys named by one long key ID satisfy it no more than none.
-    fn line_key(&self, line: &str) -> Option<(&PinnedKey, bool)> {
+    pub(crate) fn line_key(&self, line: &str) -> Option<(&PinnedKey, bool)> {
         let trimmed = line.trim();
         let bound = self
             .bindings
@@ -357,10 +367,7 @@ impl Keyring {
     }
 
     pub fn line_status(&self, line: &str) -> LineStatus {
-        match self.line_key(line) {
-            Some((key, bound)) => LineStatus::Ready { fingerprint: key.fingerprint.to_string(), bound },
-            None => LineStatus::Missing,
-        }
+        LineStatus::of(self.line_key(line))
     }
 
     /// How the recipients for entries in `folder` are satisfied, and
