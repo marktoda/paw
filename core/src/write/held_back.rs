@@ -87,8 +87,6 @@ struct Survey {
 
 fn survey(reading: &Shared, store: &OpenStore) -> Result<Survey, SyncError> {
     let keyring = Keyring::open(&store.dirs)?;
-    // Setup has not recorded who can open the store, so there is nothing to
-    // compare against, and the write path refuses every save until it has.
     // With nothing held back, no rewrite reads the tip.
     if !keyring.confirmed() {
         return Ok(Survey { head: Oid::ZERO_SHA1, held: Vec::new() });

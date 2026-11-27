@@ -306,7 +306,6 @@ pub fn clone_with_transfer(
     };
     let short = refs::short(&branch).ok_or_else(|| PawError::Git(format!("unexpected default branch {branch}")))?;
     let tip = repo.refname_to_id(&refs::remote_tracking(short)).map_err(git_err)?;
-    // Before anything is checked out, or the branch made.
     let tree = repo.find_commit(tip).map_err(git_err)?.tree_id();
     let refused = guard::check_tree(repo, tree).map_err(git_err)?;
     if !refused.is_empty() {

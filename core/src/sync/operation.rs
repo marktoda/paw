@@ -201,8 +201,6 @@ fn run_on(
         if stop() {
             return Ok(None);
         }
-        // A waiting change encrypted for recipients its entry no longer
-        // has is not sent: nothing is, until the person has dealt with it.
         if holds_back()? {
             return Ok(Some(report));
         }

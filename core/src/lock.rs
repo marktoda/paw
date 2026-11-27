@@ -13,9 +13,9 @@
 //!   store's canonical directory, so threads queue (a waiting writer goes
 //!   before new readers).
 //! - **Between processes**, an advisory `flock` on a lock file
-//!   ([`crate::files::layout::STORE_LOCK`] in the state directory), taken with the standard
-//!   library's `File::try_lock`/`try_lock_shared` (Rust 1.89): no new crate
-//!   and no C. The kernel drops it when its holder dies, so a killed
+//!   ([`crate::files::layout::STORE_LOCK`] in the state directory), taken
+//!   with the standard library's `File::try_lock`/`try_lock_shared` (Rust
+//!   1.89): no new crate and no C. The kernel drops it when its holder dies, so a killed
 //!   extension never leaves the store locked.
 //!
 //! Every wait is bounded ([`DEFAULT_WAIT`] to change, [`SHARED_WAIT`] to
@@ -27,7 +27,9 @@
 //! callback into the app. A process suspended while holding a file lock in
 //! the App Group container is killed by iOS (`0xdead10cc`), so nothing
 //! slow may be under it. The fetch and push locks are in-process only:
-//! only the app fetches and sends (the extension must never do either).
+//! only the app fetches and sends (the extension must never do either), so
+//! the push lock also keeps what a push has on the network
+//! ([`StoreLock::being_sent`]).
 //!
 //! **Which lock.** A store's repository is always `<state>/repo`
 //! ([`crate::files::layout::StoreDirs`]), and its lock is the state
@@ -37,11 +39,10 @@
 //! [`Exclusive`] as a parameter, and code that reads it under the lock a
 //! [`Shared`] (an [`Exclusive`] is one too), so neither can be called
 //! without the lock held; public entry points take the lock and pass it
-//! down. As a safety
-//! net a thread that already holds a store's lock and asks for it again
-//! gets a nested guard instead of waiting on itself (asking to change a
-//! store it is only reading is refused with an error), so no public
-//! function can deadlock on its own thread.
+//! down. As a safety net a thread that already holds a store's lock and
+//! asks for it again gets a nested guard instead of waiting on itself
+//! (asking to change a store it is only reading is refused with an error),
+//! so no public function can deadlock on its own thread.
 //!
 //! **Stale git locks.** paw writes git's own files only with the exclusive
 //! lock held, so a `*.lock` file that git left in `.git` (`index.lock`,

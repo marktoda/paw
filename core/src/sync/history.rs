@@ -17,7 +17,7 @@ use git2::{
 use super::guard;
 use super::{SyncError, git_err};
 use crate::PawError;
-use crate::path::{unsafe_path, unsafe_path_err};
+use crate::path::{ENTRY_EXTENSION, is_entry_file, unsafe_path, unsafe_path_err};
 
 /// What one paw commit did, as the queue screen names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -77,7 +77,7 @@ impl PawCommit<'_> {
 
 /// An entry's name as people see it: its path without `.gpg`.
 pub(crate) fn entry_name(path: &str) -> String {
-    path.strip_suffix(".gpg").unwrap_or(path).to_owned()
+    path.strip_suffix(ENTRY_EXTENSION).unwrap_or(path).to_owned()
 }
 
 fn is_regular(mode: u32) -> bool {
@@ -135,7 +135,7 @@ pub(crate) fn classify<'r>(repo: &'r Repository, commit: Commit<'r>) -> Result<P
         // recipients re-encrypts it (as `pass mv` does), so the blob
         // differs; it is still one entry, moved.
         ([(to, blob)], [(from, old)], [])
-            if blob.0 == old.0 || (from.ends_with(".gpg") && to.ends_with(".gpg")) =>
+            if blob.0 == old.0 || (is_entry_file(from) && is_entry_file(to)) =>
         (
             Change::Rename { from: from.clone(), to: to.clone(), blob: *blob },
             ChangeKind::Renamed,
@@ -374,8 +374,8 @@ pub(crate) fn index_entry(path: &str, id: Oid, mode: u32) -> git2::IndexEntry {
 /// `<name> (from this iPhone <date>).gpg`, or with ` 2`, ` 3`... after the
 /// bracket if that is taken in `tree` or by a pending edit.
 fn free_copy_name(tree: &Tree<'_>, pending: &[Edit], path: &str, date: &str) -> String {
-    let (stem, extension) = match path.strip_suffix(".gpg") {
-        Some(stem) => (stem, ".gpg"),
+    let (stem, extension) = match path.strip_suffix(ENTRY_EXTENSION) {
+        Some(stem) => (stem, ENTRY_EXTENSION),
         None => (path, ""),
     };
     let taken = |name: &str| {
@@ -450,7 +450,6 @@ pub(crate) fn move_branch(
     debug_assert!(held.covers(store.dirs.lock()), "move_branch without its store's lock");
     let repo = &store.repo;
     if from != to {
-        // Nothing reaches the working copy that has not been checked.
         guard::check_commit(repo, to)?;
         let old_tree = repo.find_commit(from).and_then(|c| c.tree()).map_err(git_err)?;
         let new_tree = repo.find_commit(to).and_then(|c| c.tree()).map_err(git_err)?;

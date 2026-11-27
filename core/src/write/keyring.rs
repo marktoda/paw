@@ -170,7 +170,7 @@ fn all_gpg_ids(root: &Path) -> Result<Vec<(String, Vec<u8>)>, Fault> {
             // Hidden folders (`.git`-like, `.extensions`) are not the store's.
             return if name.starts_with('.') { git2::TreeWalkResult::Skip } else { git2::TreeWalkResult::Ok };
         }
-        if name == ".gpg-id"
+        if name == crate::path::GPG_ID
             && entry.filemode() == i32::from(git2::FileMode::Blob)
             && let Ok(blob) = repo.find_blob(entry.id())
         {
@@ -348,7 +348,6 @@ impl Keyring {
         }
     }
 
-    /// How `line` is satisfied.
     pub fn line_status(&self, line: &str) -> LineStatus {
         match self.line_key(line) {
             Some((key, bound)) => LineStatus::Ready { fingerprint: key.fingerprint.clone(), bound },

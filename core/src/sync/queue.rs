@@ -14,7 +14,6 @@ use crate::files::layout::StoreDirs;
 use crate::files::refs;
 use crate::lock::{Exclusive, Shared};
 
-/// One unpushed change.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct QueueItem {
     /// Pass this to [`discard`].

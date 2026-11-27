@@ -23,7 +23,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::draft::{EntryDraft, folder_problems, name_problems};
+use super::draft::{EntryDraft, Original, folder_problems, name_problems};
 use super::keyring::{FolderRecipients, Keyring};
 use super::{WriteError, author, encrypt};
 use crate::PawError;
@@ -102,7 +102,6 @@ struct Committed {
     doc: EntryDoc,
 }
 
-/// Collects the follow-ups that failed.
 #[derive(Default)]
 struct FollowUps(Vec<FollowUpFailure>);
 
@@ -237,9 +236,9 @@ impl WriteStore {
         follow_ups.io(FollowUp::OneTimeCodeMark, CodeFile::new(self.store.state_dir()).mark(&entry, doc.makes_codes()));
         let face_id_until_ms = self.copies.as_ref().and_then(|copies| {
             let text = doc.to_bytes();
-            follow_ups.copy(match draft.original_path() {
+            follow_ups.copy(match draft.original() {
                 None => copies.put(&entry, &text, &content_id, self.new_copy_ttl),
-                Some(original) => copies.reseal(original, &entry, &text, &content_id),
+                Some(original) => copies.reseal(&original.path, &entry, &text, &content_id),
             })
         });
         Ok(Saved {
@@ -268,7 +267,7 @@ impl WriteStore {
         let author = author();
         let keyring = self.keyring()?;
 
-        let Some(original) = draft.original_path() else {
+        let Some(Original { path: original, doc: opened, content_id: opened_id }) = draft.original() else {
             if read_file(self.repo(), &file(&target))?.is_some() {
                 return Err(WriteError::AlreadyExists { entry: target });
             }
@@ -283,11 +282,11 @@ impl WriteStore {
             return Ok(Committed { entry: target, previous: None, content_id: content_id(&ciphertext), commits: vec![commit], doc });
         };
 
+        let original = original.as_str();
         let current = self.current(held, original)?;
-        if draft.original_content_id().is_some_and(|id| id != content_id(&current)) {
+        if *opened_id != content_id(&current) {
             return Err(WriteError::ChangedSinceOpened { entry: original.to_owned() });
         }
-        let opened = draft.original_doc().ok_or_else(|| WriteError::NoSuchEntry { entry: original.to_owned() })?;
         let changed = *doc.to_bytes() != *opened.to_bytes();
         let moved = target != original;
         let reencrypt = moved && !self.same_recipients(held, folder_of(original), folder)?;

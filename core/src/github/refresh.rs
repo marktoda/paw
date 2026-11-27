@@ -16,8 +16,8 @@
 //! It is bounded by a deadline and stops between whole steps once past it
 //! or once its `stop` says so (the transfer is also cut at the next chunk);
 //! every request is cut at the deadline too ([`Http`]). It waits at most
-//! [`BACKGROUND_LOCK_WAIT`] for the store or another fetch, and ends `Busy`
-//! instead. The store lock is held for the local steps only (publish,
+//! [`BACKGROUND_LOCK_WAIT`] for the store or another fetch, and ends
+//! `Failed` with [`Fault::StoreBusy`] instead. The store lock is held for the local steps only (publish,
 //! check, integrate), never across the network.
 //! Being killed at any point leaves the store consistent: the token
 //! rotation is one vault write; libgit2 writes the pack and then the
@@ -46,8 +46,9 @@ use crate::remote::RefusedPath;
 use crate::sync::{OpenStore, SyncError, TransferProgress};
 
 /// The longest a background refresh waits for the store lock or for
-/// another fetch of the store: past it the run ends `Busy`, having changed
-/// nothing. Short, because the app in front (a save, a sync) comes first.
+/// another fetch of the store: past it the run fails with
+/// [`Fault::StoreBusy`], having changed nothing. Short, because the app in
+/// front (a save, a sync) comes first.
 pub const BACKGROUND_LOCK_WAIT: Duration = Duration::from_secs(3);
 
 /// The GitHub repository chosen for a store. Not secret.
@@ -99,7 +100,7 @@ pub fn is_github_repository(address: String, full_name: String, ssh_address: Str
     StoreAddress::parse(&address).is_ok_and(|store| is_repository(&store.address, &full_name, &ssh_address))
 }
 
-/// The steps of a token refresh, for stopping between them.
+/// The steps of a background refresh, for stopping between them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum RefreshStep {
     /// Getting a usable access token (may refresh it: network).
@@ -237,7 +238,6 @@ impl GitHubAccount {
             return out_of_time();
         }
         let http = Http::new(&self.endpoints, Some(deadline));
-        // Refreshed here if need be, so the fetch below starts with a good one.
         if let Err(e) = self.keeper.access_token(&http, None) {
             return failed(e.into());
         }

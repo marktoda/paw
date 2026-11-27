@@ -307,7 +307,7 @@ fn recipients_changes(repo: &Repository, before: Oid, after: Oid) -> Result<Vec<
             .or_else(|| delta.old_file().path())
             .and_then(Path::to_str)
             .unwrap_or_default();
-        if path.rsplit('/').next() != Some(".gpg-id") {
+        if path.rsplit('/').next() != Some(crate::path::GPG_ID) {
             continue;
         }
         changes.push(RecipientsChange {

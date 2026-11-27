@@ -96,8 +96,6 @@ pub fn store_repo_dir(state_dir: String) -> String {
     repo_dir(Path::new(&state_dir)).to_string_lossy().into_owned()
 }
 
-/// Whether setup finished for the store kept in `state_dir` and the store
-/// is there. Reads two files; creates nothing.
 #[uniffi::export]
 pub fn store_is_set_up(state_dir: String) -> bool {
     is_set_up(Path::new(&state_dir))
@@ -112,8 +110,6 @@ pub fn files_refused(state_dir: &Path) -> bool {
         .any(|path| std::fs::File::open(path).is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied))
 }
 
-/// Whether the system refuses to open the store's files in `state_dir`:
-/// then a failure to open the store may only mean the iPhone is locked.
 #[uniffi::export]
 pub fn store_files_refused(state_dir: String) -> bool {
     files_refused(Path::new(&state_dir))

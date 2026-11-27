@@ -16,7 +16,8 @@ use crate::PawError;
 
 /// The file that lists a folder's recipients.
 pub(crate) const GPG_ID: &str = ".gpg-id";
-const ENTRY_EXTENSION: &str = ".gpg";
+/// What an entry's file name ends with.
+pub(crate) const ENTRY_EXTENSION: &str = ".gpg";
 
 /// `(folder, name)` of a path; the folder is empty at the top.
 pub(crate) fn split(path: &str) -> (&str, &str) {
