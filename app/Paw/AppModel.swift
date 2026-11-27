@@ -67,7 +67,6 @@ final class AppModel {
     /// The key sheet's task: opening an entry with the key.
     let keyTask: KeyTaskDriver
     let faceId: FaceIdOpener
-    let copies: LiveCopies
 
     /// The navigation stack. Changed only through `setPath`, `show` and
     /// `leave`, which close what leaves it.
@@ -107,7 +106,6 @@ final class AppModel {
         storeSession = session
         keyTask = session.keyTasks.make()
         faceId = FaceIdOpener()
-        copies = LiveCopies(session.copies)
         notice = session.syncProblem.map { Notice(problem: SyncWords.off, nextStep: describe($0)) }
         session.reader.onRead = { [weak self] read in
             if case .success(let keySession) = read {
@@ -120,16 +118,19 @@ final class AppModel {
         session.requests.subscribe(self) { model, request in
             model.asked(request)
         }
-        copies.listed.subscribe(self) { model, _ in
+        session.copies.listed.subscribe(self) { model, _ in
             model.closeEntriesWhoseCopyEnded()
         }
-        copies.change { try $0.sweep() }
         watchDeviceLock()
     }
 
     /// The store as it is now: read again after each change.
     var store: PassStore {
         storeSession.live.store
+    }
+
+    var copies: LiveCopies {
+        storeSession.copies
     }
 
     private var keyPort: KeyPort {
@@ -333,20 +334,6 @@ final class AppModel {
             .map { $0 == renamed?.from ? (renamed?.to ?? $0) : $0 }
             .filter { exists.contains($0) }
         learnAccess()
-        // A copy of an entry that is gone (a discarded add, a rename, a
-        // delete) would otherwise sit on Home until its time ran out.
-        let gone = copies.list.map(\.entry).filter { !exists.contains($0) }
-        copies.change { cache in
-            var failure: Error?
-            for entry in gone {
-                do {
-                    try cache.forgetEntry(entry: entry)
-                } catch {
-                    failure = error
-                }
-            }
-            if let failure { throw failure }
-        }
     }
 
     // MARK: Navigation
@@ -524,7 +511,6 @@ extension AppModel {
     /// was asked for and not kept is said on Home.
     private func opened(_ opened: KeyOpen.Opened, entry: EntryRef) {
         noteOpened(opened.entry, path: entry.path)
-        copies.reread()
         let session = OpenSession(
             ref: entry, entry: opened.entry, view: opened.entry.view(), hadCopy: opened.faceIdUntilMs != nil)
         sessions[session.id] = session

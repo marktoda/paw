@@ -44,10 +44,10 @@ final class StoreEdits {
     private(set) var undoOffer: UndoOffer?
 
     @ObservationIgnored private let live: LiveStore
-    @ObservationIgnored private let copies: CopyCache?
+    @ObservationIgnored private let copies: LiveCopies
     @ObservationIgnored private let requests: Signal<ScreenRequest>
 
-    init(writer: StoreWriter, queue: ChangeQueue?, live: LiveStore, copies: CopyCache?,
+    init(writer: StoreWriter, queue: ChangeQueue?, live: LiveStore, copies: LiveCopies,
          requests: Signal<ScreenRequest>) {
         self.writer = writer
         self.queue = queue
@@ -93,7 +93,7 @@ final class StoreEdits {
     /// other; an edited one stays on screen with the text just saved.
     /// `false` if the form refused or said why not.
     func save(_ form: EntryFormModel) -> Bool {
-        guard let saved = write("Save", { form.save(copies: copies) }) else { return false }
+        guard let saved = write("Save", { form.save(copies: copies.cache) }) else { return false }
         let renamed = saved.previous.map { StoreChange.Renamed(from: $0, to: saved.entry) }
         live.announce(.wrote(entries: [saved.previous, saved.entry].compactMap { $0 }, renamed: renamed))
         if case .edit(let id, _) = form.purpose {
@@ -132,7 +132,7 @@ final class StoreEdits {
         confirmingDelete = nil
         let deleted: Deleted
         do {
-            deleted = try write("Delete") { try writer.delete(entry: session.ref.path, copies: copies) }
+            deleted = try write("Delete") { try writer.delete(entry: session.ref.path, copies: copies.cache) }
         } catch let error as WriteError {
             let words = editProblem(error, folder: session.ref.folder)
             requests.send(.notice(Notice(problem: words.problem, nextStep: words.nextStep)))

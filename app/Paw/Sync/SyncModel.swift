@@ -44,7 +44,7 @@ final class SyncModel {
     @ObservationIgnored private let live: LiveStore
     @ObservationIgnored private let requests: Signal<ScreenRequest>
     @ObservationIgnored private let keyPort: KeyPort
-    @ObservationIgnored private let copies: CopyCache?
+    @ObservationIgnored private let copies: LiveCopies
     /// The key task has had its touch: "Connecting" is over.
     @ObservationIgnored private var signedIn = false
     /// Where to go once the sheet has gone.
@@ -59,7 +59,7 @@ final class SyncModel {
     private let workQueue = DispatchQueue(label: "paw-sync", qos: .userInitiated)
 
     init(sync: StoreSync, live: LiveStore, requests: Signal<ScreenRequest>, keyTasks: KeyTaskDrivers,
-         copies: CopyCache?, gitHub: GitHubAccess?) {
+         copies: LiveCopies, gitHub: GitHubAccess?) {
         self.sync = sync
         queue = ChangeQueue(sync: sync, live: live)
         serverKeys = ServerKeysModel(sync: sync)
@@ -398,16 +398,16 @@ final class SyncModel {
     /// it ended because their entry's text changed (the core finds them,
     /// off the main thread).
     private func summarise(_ report: IntegrateReport, origin: SyncSummary.Origin, store: PassStore) {
-        let copies = copies
+        let cache = copies.cache
         workQueue.async { [weak self] in
             var summary = SyncSummary(origin: origin, report: report)
             // A list that can't be read is said on Home from the same store
             // change (`LiveCopies.problem`); an entry that can't be read
             // is gone, and its copy with it, or the store is, which Home
             // says too.
-            if let copies {
-                for copy in (try? copies.list()) ?? [] {
-                    if case .stale? = try? store.faceIdStatus(copies: copies, entry: copy.entry) {
+            if let cache {
+                for copy in (try? cache.list()) ?? [] {
+                    if case .stale? = try? store.faceIdStatus(copies: cache, entry: copy.entry) {
                         summary.endedCopies.append(copy.entry)
                     }
                 }

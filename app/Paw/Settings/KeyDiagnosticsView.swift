@@ -136,7 +136,7 @@ struct KeyDiagnosticsView: View {
         let stateDir = model.storeSession.stateDir
         let port = model.storeSession.keyPort
         let github = model.storeSession.gitHub?.core
-        let copies = model.storeSession.copies
+        let copies = model.copies.cache
         assembling = true
         Task {
             // Reads the store, the queue and the keychain: off the main thread.

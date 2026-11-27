@@ -174,7 +174,7 @@ final class StoreSession {
     }
 
     let live: LiveStore
-    let copies: CopyCache?
+    let copies: LiveCopies
     let clock: Clock
     let keyPort: KeyPort
     /// What paw put on the pasteboard, ended on `clock`.
@@ -201,7 +201,8 @@ final class StoreSession {
         let store = try PassStore(stateDir: parts.stateDir)
         let live = LiveStore(store: store, stateDir: parts.stateDir)
         self.live = live
-        copies = parts.copies
+        let copies = LiveCopies(parts.copies, live: live)
+        self.copies = copies
         clock = parts.clock
         keyPort = parts.keyPort
         clipboard = Clipboard(clock: parts.clock)
@@ -218,7 +219,7 @@ final class StoreSession {
         switch parts.writing?.sync {
         case .success(let sync)?:
             syncing = SyncModel(
-                sync: sync, live: live, requests: requests, keyTasks: keyTasks, copies: parts.copies,
+                sync: sync, live: live, requests: requests, keyTasks: keyTasks, copies: copies,
                 gitHub: parts.gitHub)
             syncProblem = nil
         case .failure(let error)?:
@@ -231,7 +232,7 @@ final class StoreSession {
         self.syncing = syncing
         edits = parts.writing.map { writing in
             StoreEdits(
-                writer: writing.writer, queue: syncing?.queue, live: live, copies: parts.copies, requests: requests)
+                writer: writing.writer, queue: syncing?.queue, live: live, copies: copies, requests: requests)
         }
         autoFill = parts.autoFill
         autoFill?.follow(live)
