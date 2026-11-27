@@ -227,7 +227,7 @@ extension SyncKind {
     func working(unpushed: Int) -> String {
         switch self {
         case .send: "Sending \(changeCount(unpushed))\u{2026}"
-        case .refresh: "Checking for changes\u{2026}"
+        case .refresh: SyncWords.checking
         case .reencrypt: "Re-encrypting\u{2026}"
         }
     }
@@ -325,6 +325,8 @@ extension ChangeQueue {
 }
 
 enum SyncWords {
+    static let checking = "Checking for changes\u{2026}"
+
     /// The queue of unsent changes couldn't be opened: nothing sends or
     /// checks for changes until paw opens the store again.
     static let off = "Sync is off"

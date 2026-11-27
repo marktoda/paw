@@ -6,6 +6,11 @@ struct EditProblem: Equatable {
     let nextStep: String
     /// "Review who can open this folder" applies.
     var offersReview = false
+
+    /// A password the options asked for couldn't be made, for `why`.
+    static func notGenerated(_ why: String) -> EditProblem {
+        EditProblem(problem: "That password can't be generated", nextStep: why)
+    }
 }
 
 /// A refused write in one sentence: `editProblem`'s first line.
@@ -112,7 +117,7 @@ func editProblem(_ error: WriteError, folder: String) -> EditProblem {
             problem: problems.first?.message ?? "Something here can't be saved",
             nextStep: "Fix it, then save.")
     case .Policy(let message):
-        return EditProblem(problem: "That password can't be generated", nextStep: message)
+        return .notGenerated(message)
     case .Fault(.storeBusy):
         return EditProblem(problem: StoreBusyWords.problem, nextStep: StoreBusyWords.nextStep)
     case .Fault(let fault):

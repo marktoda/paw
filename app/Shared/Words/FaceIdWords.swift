@@ -2,6 +2,9 @@ import Foundation
 
 /// What Face ID says: a failed open, and how long a copy lasts.
 enum FaceIdWords {
+    /// What to do while Face ID is locked out.
+    static let lockedOutNextStep = "Lock and unlock your iPhone, then try again."
+
     /// What happened, in a few words; `nil` for an error that is not Face
     /// ID's.
     static func problem(_ error: PawError) -> String? {

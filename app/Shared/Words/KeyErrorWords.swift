@@ -27,6 +27,12 @@ struct KeyErrorWords: Equatable {
     let problem: String
     let nextStep: String
 
+    /// The key is in, but reading it failed.
+    static let unreadable = "paw couldn't read your key"
+
+    /// A PIN stage asked again for a reason that used no try.
+    static let enterAgain = "Enter it again; no try was used."
+
     /// The key is locked after too many wrong PINs: the sheet's own stage,
     /// and the key's answer wherever else it comes.
     static let locked = KeyErrorWords(
@@ -45,7 +51,7 @@ struct KeyErrorWords: Equatable {
     /// dropped the PIN without trying it again, so no try was used.
     init(pinAskedAgain error: KeyError, entry: String, waiting: String = "", table: WordTable) {
         if case .PinForgotten = error {
-            self.init(problem: "Your key asked for its PIN again", nextStep: "Enter it again; no try was used.")
+            self.init(problem: "Your key asked for its PIN again", nextStep: Self.enterAgain)
         } else {
             self.init(error, entry: entry, waiting: waiting, table: table)
         }
@@ -65,7 +71,7 @@ struct KeyErrorWords: Equatable {
         case .PinFormat:
             let rules = pinRules()
             problem = "A PIN has \(rules.minLength) to \(rules.maxLength) characters"
-            nextStep = "Enter it again; no try was used."
+            nextStep = Self.enterAgain
         case .PinForgotten:
             problem = "paw no longer has your PIN"
             nextStep = "Try again and enter it."

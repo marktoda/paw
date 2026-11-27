@@ -62,7 +62,7 @@ struct CheckButton: View {
             if syncing.checkNeedsKey {
                 KeyButtonLabel(title: title)
             } else {
-                Text(syncing.running == .refresh ? "Checking for changes\u{2026}" : title)
+                Text(syncing.running == .refresh ? SyncWords.checking : title)
             }
         }
         .disabled(syncing.running != nil)
