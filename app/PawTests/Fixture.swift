@@ -7,9 +7,6 @@ import XCTest
 /// simulated key of the test's own (no touch unless `touch`), whose first
 /// `failingReads` reads fail. `writable` sets the store up through the
 /// simulated git host, so it can be written and synced.
-///
-/// One class per file in this target, named as the file: scripts/ci-test.sh
-/// finds a unit test class named in `PAW_ONLY` by its file.
 @MainActor
 final class Fixture {
     static let pin = FixtureSession.pin

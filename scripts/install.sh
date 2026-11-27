@@ -27,7 +27,7 @@ appex="PlugIns/PawAutoFill.appex"
 # What Settings › About will say, e.g. "build 1a2b3c4 Release".
 python3 -I -c 'import plistlib, sys
 info = plistlib.load(open(sys.argv[1], "rb"))
-print("build", info.get("PawCommit", "?"), info.get("PawConfiguration", "a build from before the stamp"))' "$app/Info.plist"
+print("build", info["PawCommit"], info["PawConfiguration"])' "$app/Info.plist"
 
 # The team ID and full entitlements come from the provisioning profiles.
 entitlements() {
@@ -51,10 +51,15 @@ cp "$PAW_SIGNING_DIR/PawAutoFill.mobileprovision" "$app/$appex/embedded.mobilepr
 openssl x509 -inform DER -in "$PAW_SIGNING_DIR/dev.cer" -out "$work/dev.pem" 2>/dev/null \
   || cp "$PAW_SIGNING_DIR/dev.cer" "$work/dev.pem"
 
-rcodesign sign \
-  --pem-file "$PAW_SIGNING_DIR/dev.key" --pem-file "$work/dev.pem" \
-  -e "$work/Paw.ent" -e "$appex:$work/PawAutoFill.ent" \
-  "$app" 2>&1 | grep -E "error|warning|signing bundle" || true
+if ! rcodesign sign \
+    --pem-file "$PAW_SIGNING_DIR/dev.key" --pem-file "$work/dev.pem" \
+    -e "$work/Paw.ent" -e "$appex:$work/PawAutoFill.ent" \
+    "$app" > "$work/sign.log" 2>&1; then
+  cat "$work/sign.log" >&2
+  echo "install: signing failed, so nothing was installed" >&2
+  exit 1
+fi
+grep -E "error|warning|signing bundle" "$work/sign.log" || true
 
 target=(--udid "$udid")
 [ -n "$host" ] && target=(--mobdev2-host "$host")

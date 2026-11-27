@@ -19,6 +19,8 @@ dest="${TMPDIR:-/tmp}/paw-ci/$run"
 rm -rf "$dest"; mkdir -p "$dest"
 gh run download "$run" --dir "$dest" > /dev/null 2>&1 || true
 
+# The parts' reports (scripts/ci-test.sh lists their files), uploaded by
+# .github/workflows/build.yml as `report-<family>-<part>`.
 for report in "$dest"/report-*; do
   [ -d "$report" ] || continue
   echo "== $(basename "$report") ($(cat "$report/device.txt" 2>/dev/null | xargs))"
@@ -26,8 +28,8 @@ for report in "$dest"/report-*; do
     awk '$1 ~ /^[0-9]+$/ { if (p) printf "  %s took %ds\n", $2, $1 - p; p = $1 }' "$report/timing.txt"
   fi
   if [ -s "$report/errors.txt" ]; then sed 's/^/  /' "$report/errors.txt" | head -40; fi
-  if [ -s "$report/cases.txt" ]; then
-    sed -E "s/.*Test Case '-\[[A-Za-z]+\.([A-Za-z]+) ([A-Za-z0-9_]+)\]' (passed|failed) \(([0-9.]+) seconds\).*/  \3  \2 (\4s)/" "$report/cases.txt"
+  if [ -s "$report/cases.tsv" ]; then
+    awk -F'\t' '{ printf "  %s  %s (%ss)\n", $4, $3, $5 }' "$report/cases.tsv"
   fi
   if [ -s "$report/summary.json" ]; then
     python3 -I -c '
@@ -41,32 +43,25 @@ for f in s.get("testFailures", []):
   echo "  $shots screenshots in $report/screenshots"
 done
 
-# Across all parts: each class's total and the slowest tests, to balance the
-# split in .github/workflows/build.yml and to see what to speed up next. The
-# unit tests (app/PawTests) are counted apart from the UI tests.
-cat "$dest"/report-*/cases.txt 2>/dev/null | python3 -I -c '
-import re, sys
-times = []
-unit = []
+# Across all parts, per test module: the total, each class's total and the
+# slowest tests, to balance the split in .github/workflows/build.yml and to
+# see what to speed up next.
+cat "$dest"/report-*/cases.tsv 2>/dev/null | python3 -I -c '
+import sys
+modules = {}
 for line in sys.stdin:
-    m = re.search(r"-\[(\w+)\.(\w+) (\w+)\]. (\w+) \(([\d.]+) seconds\)", line)
-    if not m: continue
-    if m.group(1) == "PawTests":
-        unit.append((float(m.group(5)), m.group(4)))
-    else:
-        times.append((float(m.group(5)), m.group(2), m.group(3)))
-if unit:
-    failed = len([1 for _, outcome in unit if outcome != "passed"])
-    print("== %d unit tests, %.0fs in all, %d failed" % (len(unit), sum(t for t, _ in unit), failed))
-if not times: sys.exit()
-print("== %d UI tests, %.0fs in all" % (len(times), sum(t for t, _, _ in times)))
-classes = {}
-for t, c, _ in times: classes.setdefault(c, []).append(t)
-for c, ts in sorted(classes.items(), key=lambda kv: -sum(kv[1])):
-    print("  %-16s %3d tests %6.0fs  %4.0fs each" % (c, len(ts), sum(ts), sum(ts) / len(ts)))
-print("  slowest:")
-for t, c, n in sorted(times, reverse=True)[:10]:
-    print("  %6.1fs %s/%s" % (t, c, n))
+    module, cls, test, outcome, seconds = line.rstrip("\n").split("\t")
+    modules.setdefault(module, []).append((float(seconds), cls, test, outcome))
+for module, cases in sorted(modules.items()):
+    failed = len([1 for *_, outcome in cases if outcome != "passed"])
+    print("== %s: %d tests, %.0fs in all, %d failed" % (module, len(cases), sum(t for t, *_ in cases), failed))
+    classes = {}
+    for t, c, *_ in cases: classes.setdefault(c, []).append(t)
+    for c, ts in sorted(classes.items(), key=lambda kv: -sum(kv[1])):
+        print("  %-16s %3d tests %6.0fs  %4.0fs each" % (c, len(ts), sum(ts), sum(ts) / len(ts)))
+    print("  slowest:")
+    for t, c, n, _ in sorted(cases, reverse=True)[:10]:
+        print("  %6.1fs %s/%s" % (t, c, n))
 '
 
 # Failures outside the UI tests (Rust build, project generation) only show in the log.
