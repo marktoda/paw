@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
 
 use super::SimulatedKey;
-use crate::key::{KeyError, KeyPort, SessionSigner};
+use crate::key::{KeyPort, SessionSigner, SignFailure};
 use crate::key::SshSigner;
 use crate::ssh::SshPublicKey;
 use crate::task::{
@@ -137,16 +137,17 @@ pub fn wait_final(task: &KeyTask, within: Duration) -> Option<KeyTaskState> {
     }
 }
 
-/// How `ended`, a final stage, ended: its outcome, or its failure
-/// (`Cancelled` is the key's).
+/// How `ended`, a final stage, ended: its outcome, or its failure.
 pub fn ending(ended: KeyTaskState) -> Result<KeyOutcome, TaskFailure> {
     match ended {
         KeyTaskState::Done { outcome } => Ok(outcome),
         KeyTaskState::Failed { error } => Err(error.into()),
         KeyTaskState::SyncFailed { error } => Err(error.into()),
         KeyTaskState::SetupFailed { error } => Err(error.into()),
-        KeyTaskState::Cancelled => Err(KeyError::Cancelled.into()),
-        other => panic!("the task has not ended: {other:?}"),
+        KeyTaskState::Cancelled => Err(TaskFailure::Cancelled),
+        KeyTaskState::PlugIn | KeyTaskState::Pin { .. } | KeyTaskState::Busy | KeyTaskState::Touch | KeyTaskState::Working { .. } => {
+            panic!("the task has not ended: {ended:?}")
+        }
     }
 }
 
@@ -156,14 +157,14 @@ pub fn ending(ended: KeyTaskState) -> Result<KeyOutcome, TaskFailure> {
 pub struct SimLogin {
     task: Arc<KeyTask>,
     signer: Mutex<Receiver<SessionSigner>>,
-    failed: Sender<KeyError>,
+    failed: Sender<SignFailure>,
     done: Mutex<Option<Sender<()>>>,
 }
 
 /// The signer a [`SimLogin`] hands over.
 pub struct SimSigner {
     signer: SessionSigner,
-    failed: Sender<KeyError>,
+    failed: Sender<SignFailure>,
 }
 
 impl SshSigner for SimSigner {
@@ -171,19 +172,10 @@ impl SshSigner for SimSigner {
         self.signer.public_key()
     }
 
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, KeyError> {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, SignFailure> {
         self.signer.sign(data).inspect_err(|error| {
             let _ = self.failed.send(error.clone());
         })
-    }
-}
-
-fn ended(state: &KeyTaskState) -> Option<KeyError> {
-    match state {
-        KeyTaskState::Failed { error } => Some(error.clone()),
-        KeyTaskState::Cancelled => Some(KeyError::Cancelled),
-        KeyTaskState::Done { .. } => Some(KeyError::Internal { detail: "the sign-in has already finished".into() }),
-        _ => None,
     }
 }
 
@@ -192,16 +184,18 @@ impl SimLogin {
     pub fn start(port: &Arc<KeyPort>, login: LoginPurpose, listener: Arc<dyn KeyTaskListener>) -> Self {
         let (signer_tx, signer_rx) = mpsc::channel();
         let (done_tx, done_rx) = mpsc::channel::<()>();
-        let (failed_tx, failed_rx) = mpsc::channel::<KeyError>();
+        let (failed_tx, failed_rx) = mpsc::channel::<SignFailure>();
         let work: Work = Box::new(move |task, signer| {
             let _ = signer_tx.send(signer);
             // Like a clone or fetch, it stops when the task is cancelled.
             loop {
                 if task.cancelled() {
-                    return Err(KeyError::Cancelled.into());
+                    return Err(TaskFailure::Cancelled);
                 }
-                if let Ok(error) = failed_rx.try_recv() {
-                    return Err(error.into());
+                match failed_rx.try_recv() {
+                    Ok(SignFailure::Key(error)) => return Err(error.into()),
+                    Ok(SignFailure::Cancelled) => return Err(TaskFailure::Cancelled),
+                    Err(_) => {}
                 }
                 match done_rx.recv_timeout(Duration::from_millis(5)) {
                     Err(RecvTimeoutError::Timeout) => {}
@@ -218,12 +212,13 @@ impl SimLogin {
     }
 
     /// Waits until the PIN is verified, then hands over the signer (once);
-    /// the task's error if it ended first.
-    pub fn signer(&self) -> Result<SimSigner, KeyError> {
+    /// the task's final stage if it ended first.
+    pub fn signer(&self) -> Result<SimSigner, KeyTaskState> {
         let signer = self.signer.lock().unwrap_or_else(|p| p.into_inner());
         loop {
-            if let Some(error) = ended(&self.task.state()) {
-                return Err(error);
+            let state = self.task.state();
+            if state.is_final() {
+                return Err(state);
             }
             match signer.recv_timeout(Duration::from_millis(5)) {
                 Ok(signer) => return Ok(SimSigner { signer, failed: self.failed.clone() }),

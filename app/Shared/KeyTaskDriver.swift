@@ -62,7 +62,7 @@ enum KeyTaskEnd<Step: KeyStepError> {
         switch state {
         case .done(let outcome):
             self = .done(outcome)
-        case .failed(.Cancelled), .cancelled:
+        case .cancelled:
             self = .cancelled
         case .failed(let error):
             self = .failed(error)

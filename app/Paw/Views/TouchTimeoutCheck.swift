@@ -19,7 +19,7 @@ final class TouchTimeoutCheck {
     let driver: KeyTaskDriver
     private(set) var outcome: Outcome?
 
-    private static let words = KeyErrorWords.Context(entry: "the check", purpose: .check)
+    private static let words = KeyErrorWords.Context(entry: "the check")
 
     init(session: StoreSession) {
         driver = session.keyTasks.make()

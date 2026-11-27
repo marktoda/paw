@@ -16,7 +16,7 @@ use paw_core::task::LoginPurpose;
 use paw_core::task::KeyTaskState;
 use paw_core::setup::SetupState;
 use paw_core::sim::{SimOptions, SimulatedKey};
-use paw_core::key::SshSigner;
+use paw_core::key::{SignFailure, SshSigner};
 use paw_core::ssh::SshPublicKey;
 use ring::signature::{ED25519, UnparsedPublicKey};
 
@@ -97,7 +97,7 @@ fn fails_when_nobody_touches_the_key() {
     let login = login(&port_with(&key), LoginPurpose::Fetch, &driver);
     let signer = login.signer().unwrap();
 
-    assert!(matches!(signer.sign(&login_sized()), Err(KeyError::TouchTimeout)));
+    assert!(matches!(signer.sign(&login_sized()), Err(SignFailure::Key(KeyError::TouchTimeout))));
     assert!(matches!(finish(login.task()), KeyTaskState::Failed { error: KeyError::TouchTimeout }));
     assert_eq!(key.authentication_count(), 0);
 }

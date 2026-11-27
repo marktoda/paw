@@ -245,7 +245,7 @@ impl TaskSide for TaskCore {
         let mut inner = self.lock();
         loop {
             if self.cancelled() {
-                return Err(Halt::Fail(KeyError::Cancelled));
+                return Err(Halt::Cancelled);
             }
             if done() {
                 return Ok(());
@@ -270,7 +270,7 @@ impl TaskSide for TaskCore {
         let mut inner = self.lock();
         loop {
             if self.cancelled() {
-                return Err(Halt::Fail(KeyError::Cancelled));
+                return Err(Halt::Cancelled);
             }
             if session.ended() {
                 return Err(Halt::Fail(KeyError::KeyRemoved));
@@ -316,7 +316,7 @@ impl Job<'_> {
         let core = self.0;
         let mut inner = core.lock();
         if core.cancelled() || inner.state.is_final() {
-            return Err(KeyError::Cancelled.into());
+            return Err(TaskFailure::Cancelled);
         }
         inner.committing = true;
         Ok(())

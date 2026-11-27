@@ -35,6 +35,7 @@ pub(crate) fn download(
                 locked(&flow).abandon_download();
                 return Err(match error {
                     ConnectError::Key(error) => error.into(),
+                    ConnectError::Cancelled => TaskFailure::Cancelled,
                     ConnectError::Fault(fault) => SetupError::from(fault).into(),
                 });
             }

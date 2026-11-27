@@ -54,7 +54,6 @@ final class KeyErrorWordsTests: XCTestCase {
         XCTAssertEqual(
             syncKeyWords(during: .refresh, unpushed: 2).words(.TouchTimeout).nextStep,
             "Try again and touch the gold part while it blinks.")
-        XCTAssertEqual(syncKeyWords(during: .send, unpushed: 2).words(.Cancelled).nextStep, "Nothing was sent.")
     }
 }
 

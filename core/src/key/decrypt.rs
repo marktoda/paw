@@ -110,7 +110,7 @@ impl<'a> Plan<'a> {
         let mut failure = KeyError::DecryptFailed { detail: "the key did not answer".into() };
         for pkesk in &self.candidates {
             if task.cancelled() {
-                return Err(Halt::Fail(KeyError::Cancelled));
+                return Err(Halt::Cancelled);
             }
             let version = match pkesk {
                 PublicKeyEncryptedSessionKey::V6 { .. } => EskType::V6,

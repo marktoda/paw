@@ -21,7 +21,21 @@ pub trait SshSigner: Send + Sync {
 
     /// Signs `data` and returns the bare signature (64 bytes for ed25519).
     /// May block for as long as the key waits for a touch.
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, KeyError>;
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, SignFailure>;
+}
+
+/// Why a signer gave no signature.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignFailure {
+    Key(KeyError),
+    /// The task the signer belongs to was cancelled.
+    Cancelled,
+}
+
+impl From<KeyError> for SignFailure {
+    fn from(error: KeyError) -> Self {
+        Self::Key(error)
+    }
 }
 
 pub struct SessionSigner {
@@ -72,22 +86,23 @@ impl SshSigner for SessionSigner {
         &self.public_key
     }
 
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, KeyError> {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, SignFailure> {
         if self.task.cancelled() {
-            return Err(KeyError::Cancelled);
+            return Err(SignFailure::Cancelled);
         }
         let result = self.session.run(self.task.as_ref(), |job| {
             job.unlock(None)?;
             authenticate(job, &self.task, data)
         });
         match result {
-            Ok(_) if self.task.cancelled() => Err(KeyError::Cancelled),
+            Ok(_) if self.task.cancelled() => Err(SignFailure::Cancelled),
             Ok(signature) => {
                 self.task.show_working();
                 Ok(signature)
             }
-            Err(Halt::AskPin(Some(error)) | Halt::Fail(error)) => Err(error),
-            Err(Halt::AskPin(None)) => Err(KeyError::PinForgotten),
+            Err(Halt::AskPin(Some(error)) | Halt::Fail(error)) => Err(error.into()),
+            Err(Halt::AskPin(None)) => Err(KeyError::PinForgotten.into()),
+            Err(Halt::Cancelled) => Err(SignFailure::Cancelled),
         }
     }
 }

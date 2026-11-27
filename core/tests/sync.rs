@@ -16,7 +16,7 @@ use paw_core::sim::remote::steps;
 use paw_core::key::KeyError;
 use paw_core::task::LoginPurpose;
 use paw_core::sim::SimulatedKey;
-use paw_core::key::SshSigner;
+use paw_core::key::{SignFailure, SshSigner};
 use paw_core::ssh::SshPublicKey;
 use paw_core::fault::Fault;
 use paw_core::remote::RemoteFailure;
@@ -58,6 +58,7 @@ fn refusal(result: Result<Connection, sync::ConnectError>) -> RemoteFailure {
         sync::ConnectError::Fault(Fault::Remote { failure }) => failure,
         sync::ConnectError::Fault(error) => panic!("expected the host's refusal, got {error:?}"),
         sync::ConnectError::Key(error) => panic!("expected the host's refusal, got the key's: {error:?}"),
+        sync::ConnectError::Cancelled => panic!("expected the host's refusal, got a cancel"),
     }
 }
 
@@ -65,6 +66,7 @@ fn key_refusal(result: Result<Connection, sync::ConnectError>) -> KeyError {
     match result.err().expect("the connection should have been refused") {
         sync::ConnectError::Key(error) => error,
         sync::ConnectError::Fault(error) => panic!("expected the key's refusal, got {error:?}"),
+        sync::ConnectError::Cancelled => panic!("expected the key's refusal, got a cancel"),
     }
 }
 
@@ -257,7 +259,7 @@ impl SshSigner for Measured<'_> {
         self.0.public_key()
     }
 
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, KeyError> {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, SignFailure> {
         self.1.store(data.len(), Ordering::SeqCst);
         self.0.sign(data)
     }
