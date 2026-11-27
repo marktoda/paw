@@ -21,7 +21,7 @@ use zeroize::Zeroizing;
 
 use crate::entry::{EntryDoc, has_line_break, key_refusal, note_lines, value_refusal};
 use crate::generate::{PasswordPolicy, PolicyError, generate};
-use crate::path::{NameRefusal, case_folded, folder_and_parents, folder_refusal, join, name_refusal, split};
+use crate::path::{NameRefusal, folder_and_parents, folder_refusal, join, name_refusal, same_file, split};
 use crate::store::PassStore;
 use crate::store::tree::StoreTree;
 use super::WriteError;
@@ -138,18 +138,16 @@ pub(crate) fn folder_problems(folder: &str) -> Vec<DraftProblem> {
 /// system would see it. Returns the problem to show.
 fn collision(tree: &StoreTree, path: &str, except: Option<&str>) -> Option<DraftProblem> {
     let (folder, name) = split(path);
-    let wanted = case_folded(path);
-    let except = except.map(case_folded);
-    if except.as_deref() == Some(wanted.as_str()) {
+    if except.is_some_and(|except| same_file(except, path)) {
         return None;
     }
-    if let Some(existing) = tree.entries().iter().find(|e| case_folded(&e.path) == wanted) {
+    if let Some(existing) = tree.entries().iter().find(|e| same_file(&e.path, path)) {
         return Some(problem(
             DraftField::Name,
             format!("There's already an entry called '{}' {}.", existing.name, place(folder)),
         ));
     }
-    if tree_has_folder(tree, &wanted) {
+    if tree_has_folder(tree, path) {
         return Some(problem(DraftField::Name, format!("There's already a folder called '{name}' {}.", place(folder))));
     }
     // A folder on the way spelled differently from one that exists would
@@ -160,7 +158,7 @@ fn collision(tree: &StoreTree, path: &str, except: Option<&str>) -> Option<Draft
         at = join(&at, component);
         let listing = tree.folder(&parent);
         let other = listing.and_then(|l| {
-            l.folders.iter().find(|f| case_folded(&f.name) == case_folded(component) && f.name != component)
+            l.folders.iter().find(|f| same_file(&f.name, component) && f.name != component)
         });
         if let Some(other) = other {
             return Some(problem(
@@ -172,9 +170,9 @@ fn collision(tree: &StoreTree, path: &str, except: Option<&str>) -> Option<Draft
     None
 }
 
-fn tree_has_folder(tree: &StoreTree, folded: &str) -> bool {
+fn tree_has_folder(tree: &StoreTree, path: &str) -> bool {
     tree.entries().iter().any(|entry| {
-        folder_and_parents(&entry.folder).take_while(|folder| !folder.is_empty()).any(|folder| case_folded(folder) == folded)
+        folder_and_parents(&entry.folder).take_while(|folder| !folder.is_empty()).any(|folder| same_file(folder, path))
     })
 }
 

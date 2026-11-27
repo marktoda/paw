@@ -187,10 +187,6 @@ impl PresentedHostKey {
             .to_openssh()
             .map_err(|e| PawError::Git(format!("cannot write the host key: {e}")))
     }
-
-    pub fn pin(&self) -> HostKeyPin {
-        HostKeyPin(vec![self.0.clone()])
-    }
 }
 
 /// Where the password store lives.

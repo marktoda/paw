@@ -97,6 +97,7 @@ fn a_name_that_is_taken_by_an_entry_or_a_folder_is_refused() {
     // iPhones ignore letter case in file names, so these are the same file.
     assert_eq!(problems("Work", "GitHub.com"), ["There's already an entry called 'github.com' in Work."]);
     assert_eq!(problems("", "home wi-fi"), ["There's already an entry called 'Home Wi-Fi' at the top level."]);
+    assert_eq!(problems("Work", "GITHUB\u{200C}.com"), ["There's already an entry called 'github.com' in Work."]);
     assert_eq!(problems("Work", "servers"), ["There's already a folder called 'servers' in Work."]);
     assert_eq!(problems("work", "new"), ["There's already a folder called 'Work' at the top level; use that name."]);
     assert!(problems("Work", "gitlab.com").is_empty());

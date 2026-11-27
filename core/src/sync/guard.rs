@@ -14,10 +14,9 @@ use std::path::Path;
 
 use git2::build::CheckoutBuilder;
 use git2::{ConfigLevel, Oid, Repository};
-use unicode_normalization::UnicodeNormalization;
 
 use crate::PawError;
-use crate::path::{GPG_ID, is_gpg_id_alias, is_hfs_ignored, unsafe_part};
+use crate::path::{GPG_ID, SCHEMES, folded, is_gpg_id_alias, unsafe_part};
 use crate::remote::{RefusedPath, RefusedReason};
 
 /// The repository contains something paw will not check out.
@@ -31,31 +30,6 @@ impl From<Refused> for super::SyncError {
     fn from(refused: Refused) -> Self {
         crate::remote::RemoteFailure::RefusedContent { paths: refused.0 }.into()
     }
-}
-
-const SCHEMES: usize = 3;
-
-/// The names a case- and normalisation-insensitive file system (APFS,
-/// HFS+, a Linux casefold directory) might file `component` under: without
-/// the code points HFS+ ignores, decomposed (NFD) before and after, and
-/// then (0) fully case-folded (Unicode CaseFolding.txt C+F: `ß` is `ss`,
-/// `ﬁ` is `fi`, `ς` is `σ`, the Kelvin sign is `k`), (1) lower-cased and
-/// (2) upper-cased. The exact tables APFS uses on a given iOS cannot be
-/// checked from here, so two names equal under any one of these are
-/// treated as one name.
-fn folded(component: &str) -> [String; SCHEMES] {
-    // Most names are ASCII: there all three come down to plain ASCII case.
-    if component.is_ascii() {
-        let lower = component.to_ascii_lowercase();
-        return [lower.clone(), lower, component.to_ascii_uppercase()];
-    }
-    let visible: String = component.chars().filter(|c| !is_hfs_ignored(*c)).nfd().collect();
-    let full = unicase::UniCase::unicode(visible.as_str()).to_folded_case();
-    [
-        full.nfd().collect(),
-        visible.chars().flat_map(char::to_lowercase).nfd().collect(),
-        visible.chars().flat_map(char::to_uppercase).nfd().collect(),
-    ]
 }
 
 const TREE: i32 = 0o040000;

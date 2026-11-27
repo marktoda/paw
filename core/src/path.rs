@@ -194,13 +194,6 @@ pub(crate) fn folder_refusal(folder: &str) -> Option<NameRefusal> {
         .or_else(|| unsafe_path(folder).map(NameRefusal::Unsafe))
 }
 
-/// How a file system that ignores letter case and Unicode normalisation
-/// (APFS on iPhone, by default) sees a name. Two names that are the same
-/// here are one file on the phone.
-pub(crate) fn case_folded(name: &str) -> String {
-    name.nfc().collect::<String>().to_lowercase()
-}
-
 /// Code points HFS+ ignores in names, so `.g\u{200C}it` is `.git` there.
 /// The same list as git's `is_hfs_dotgit`.
 const HFS_IGNORED: [std::ops::RangeInclusive<char>; 4] = [
@@ -212,6 +205,37 @@ const HFS_IGNORED: [std::ops::RangeInclusive<char>; 4] = [
 
 pub(crate) fn is_hfs_ignored(c: char) -> bool {
     HFS_IGNORED.iter().any(|range| range.contains(&c))
+}
+
+pub(crate) const SCHEMES: usize = 3;
+
+/// The names a case- and normalisation-insensitive file system (APFS,
+/// HFS+, a Linux casefold directory) might file `component` under: without
+/// the code points HFS+ ignores, decomposed (NFD) before and after, and
+/// then (0) fully case-folded (Unicode CaseFolding.txt C+F: `ß` is `ss`,
+/// `ﬁ` is `fi`, `ς` is `σ`, the Kelvin sign is `k`), (1) lower-cased and
+/// (2) upper-cased. The exact tables APFS uses on a given iOS cannot be
+/// checked from here, so two names equal under any one of these are
+/// treated as one name.
+pub(crate) fn folded(component: &str) -> [String; SCHEMES] {
+    // Most names are ASCII: there all three come down to plain ASCII case.
+    if component.is_ascii() {
+        let lower = component.to_ascii_lowercase();
+        return [lower.clone(), lower, component.to_ascii_uppercase()];
+    }
+    let visible: String = component.chars().filter(|c| !is_hfs_ignored(*c)).nfd().collect();
+    let full = unicase::UniCase::unicode(visible.as_str()).to_folded_case();
+    [
+        full.nfd().collect(),
+        visible.chars().flat_map(char::to_lowercase).nfd().collect(),
+        visible.chars().flat_map(char::to_uppercase).nfd().collect(),
+    ]
+}
+
+/// Whether two names or paths are one file on the phone.
+pub(crate) fn same_file(a: &str, b: &str) -> bool {
+    let (a, b) = (folded(a), folded(b));
+    (0..SCHEMES).any(|scheme| a[scheme] == b[scheme])
 }
 
 /// The name some file system would actually use for `component`: without
