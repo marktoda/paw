@@ -9,7 +9,6 @@ import SwiftUI
 /// - `add`: a new entry, `web/forum.example`;
 /// - `edit`: `web/news.ycombinator.com` changes;
 /// - `conflict`: `web/example.com` changes (edit it here too for "kept both");
-/// - `delete`: not possible yet: the simulated host cannot remove a file;
 /// - `gpgid`: `work/` gets its own `.gpg-id` (the same key);
 /// - `secondKey`: `work/` gets its own `.gpg-id` naming the key and a
 ///   second simulated key whose public half paw is given first, so a
@@ -19,11 +18,11 @@ import SwiftUI
 /// - `rewrite`: the history is replaced (force-pushed). At launch this only
 ///   prepares: the store is set up one commit past the fixture, so a fresh
 ///   fixture history no longer contains what paw saw. Apply it by hand;
-/// - `hostKey`: the host presents another host key from now on.
+/// - `changedHostKey`: the host presents another host key from now on.
 /// `-pawSimRemoteRefusePushes 1` refuses every branch update, and
 /// `-pawSimRemoteDrop 1` cuts the next connection off half way.
 enum SimRemoteChange: String, CaseIterable, Identifiable {
-    case add, edit, conflict, delete, gpgid, link, rewrite, secondKey, hostKey
+    case add, edit, conflict, gpgid, link, rewrite, secondKey, changedHostKey
 
     var id: String { rawValue }
 
@@ -36,12 +35,11 @@ enum SimRemoteChange: String, CaseIterable, Identifiable {
         case .add: "Add web/forum.example"
         case .edit: "Change web/news.ycombinator.com"
         case .conflict: "Change web/example.com"
-        case .delete: "Delete an entry (not possible yet)"
         case .gpgid: "Give work/ its own .gpg-id"
         case .link: "Add a name paw won't check out"
         case .rewrite: "Replace the history"
         case .secondKey: "Give work/ a second key"
-        case .hostKey: "Present another host key"
+        case .changedHostKey: "Present another host key"
         }
     }
 }
@@ -60,10 +58,44 @@ final class SimRemoteHandle: @unchecked Sendable {
     private var rewrites = 0
     private var launchChangeApplied = false
     private var refusesPushes = LaunchArgument.simRemoteRefusePushes.bool
-    private var dropsNext = LaunchArgument.simRemoteDrop.bool
+    /// The host cuts connections off half way now, until a task fails.
+    private var dropping = false
 
     var host: SimRemote? {
         lock.withLock { current }
+    }
+
+    /// Setup's host: started the first time setup or the simulated GitHub
+    /// asks for it, misbehaving as `-pawSimRemote` says.
+    var setupHost: SimRemote? {
+        _ = Self.setupStarted
+        return host
+    }
+
+    private static let setupStarted: Bool = {
+        let key = SimulatedKeyConnector.launched.key
+        guard let host = try? SimRemote.start(key: key) else { return false }
+        shared.register(host, key: key)
+        switch SimRemoteMode.atLaunch {
+        case .refuseKey?: host.setRefuseKey(refuse: true)
+        case .dropMidClone?: shared.setDropping(true)
+        case .repositoryNotFound?: host.setRepositoryNotFound(notFound: true)
+        case .changedHostKey?, nil: break
+        }
+        return true
+    }()
+
+    /// "Add the key on the host": the host accepts the key from now on.
+    func acceptKey() {
+        host?.setRefuseKey(refuse: false)
+    }
+
+    /// The person trusted the host's key: with `changedHostKey`, the host
+    /// presents another one from now on.
+    func hostConfirmed() {
+        if SimRemoteMode.atLaunch == .changedHostKey {
+            host?.setChangedHostKey(changed: true)
+        }
     }
 
     /// Takes over `host`. With `-pawSimRemoteChange rewrite`, adds one
@@ -80,13 +112,17 @@ final class SimRemoteHandle: @unchecked Sendable {
         }
     }
 
-    /// The store is set up at `repoDir`: applies `-pawSimRemoteChange`
-    /// (once per launch) and the push and connection flags.
+    /// The store is set up at `repoDir`: applies `-pawSimRemoteChange` and
+    /// `-pawSimRemoteDrop` (once per launch) and the push and connection
+    /// flags.
     func storeReady(repoDir: String) {
         let change: SimRemoteChange? = lock.withLock {
             self.repoDir = repoDir
             guard !launchChangeApplied else { return nil }
             launchChangeApplied = true
+            if LaunchArgument.simRemoteDrop.bool {
+                dropping = true
+            }
             return SimRemoteChange.atLaunch
         }
         // Only now: setup's own download must not be refused or cut off.
@@ -114,8 +150,6 @@ final class SimRemoteHandle: @unchecked Sendable {
             try commitCopy(of: "travel/airline", as: "web/example.com",
                            message: "Edit password for web/example.com using editor.")
             return "Changed web/example.com."
-        case .delete:
-            return "The simulated host can't delete a file yet."
         case .gpgid:
             guard let host, let key = lock.withLock({ self.key }) else { return "No simulated host." }
             _ = try host.commitFile(
@@ -139,7 +173,7 @@ final class SimRemoteHandle: @unchecked Sendable {
             _ = try host.commitFile(
                 path: "work/.gpg-id", contents: Data(lines.utf8), message: "Give work a second key.")
             return "work/ has a second key."
-        case .hostKey:
+        case .changedHostKey:
             guard let host else { return "No simulated host." }
             host.setChangedHostKey(changed: true)
             return "Presenting another host key."
@@ -156,20 +190,19 @@ final class SimRemoteHandle: @unchecked Sendable {
     }
 
     func dropNextConnection() {
-        lock.withLock { dropsNext = true }
-        host?.setDropMidClone(drop: true)
+        setDropping(true)
     }
 
-    /// A sync failed: a dropped connection drops only once.
-    func syncFailed() {
-        let wasDropping: Bool = lock.withLock {
-            let was = dropsNext
-            dropsNext = false
-            return was
+    /// A download or a sync failed: a dropped connection drops only once.
+    func connectionFailed() {
+        if lock.withLock({ dropping }) {
+            setDropping(false)
         }
-        if wasDropping {
-            host?.setDropMidClone(drop: false)
-        }
+    }
+
+    private func setDropping(_ drop: Bool) {
+        lock.withLock { dropping = drop }
+        host?.setDropMidClone(drop: drop)
     }
 
     /// "tip 1a2b3c4 · 3 logins", for the debug element UI tests read.
@@ -180,7 +213,7 @@ final class SimRemoteHandle: @unchecked Sendable {
     }
 
     private func applyFlags(_ host: SimRemote) {
-        let (refuse, drop) = lock.withLock { (refusesPushes, dropsNext) }
+        let (refuse, drop) = lock.withLock { (refusesPushes, dropping) }
         host.setRefusePushes(refuse: refuse)
         host.setDropMidClone(drop: drop)
     }
@@ -246,7 +279,7 @@ final class SimRemotePanel {
     }
 
     func syncFailed() {
-        SimRemoteHandle.shared.syncFailed()
+        SimRemoteHandle.shared.connectionFailed()
         refresh()
     }
 
@@ -295,7 +328,7 @@ struct SimRemoteWatch: ViewModifier {
         if let syncing = model.storeSession.syncing {
             content
                 .background(alignment: .topLeading) {
-                    SimRemoteSummary()
+                    SimReadout(identifier: "sim-remote-summary", text: SimRemotePanel.shared.summary)
                 }
                 .onAppear {
                     SimRemotePanel.shared.storeReady(repoDir: model.storeSession.live.repoDir)
@@ -319,17 +352,6 @@ struct SimRemoteWatch: ViewModifier {
             return SimTaskFailed.shown(ownFailure: ownFailure, sheet: nil)
         }
         return SimTaskFailed.shown(ownFailure: ownFailure, sheet: syncing.keyTask)
-    }
-}
-
-/// The simulated host's tip, as an element UI tests read.
-struct SimRemoteSummary: View {
-    var body: some View {
-        Text(SimRemotePanel.shared.summary)
-            .font(.caption2)
-            .frame(width: 1, height: 1)
-            .opacity(0.02)
-            .accessibilityIdentifier("sim-remote-summary")
     }
 }
 

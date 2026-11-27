@@ -32,7 +32,7 @@ final class SimGitHubLaunch: @unchecked Sendable {
     private init() {
         let mode = LaunchArgument.simGitHub.string.flatMap(SimGitHubMode.init(rawValue:))
         self.mode = mode
-        guard let mode, let host = SimulatedHostHolder.shared.host,
+        guard let mode, let host = SimRemoteHandle.shared.setupHost,
               let github = try? SimGitHub.start(remote: host, repository: Self.repository) else {
             github = nil
             return

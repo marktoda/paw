@@ -69,31 +69,19 @@ struct RootView: View {
                 // here: copies under one name, what features said under
                 // another.
                 if let text = lastToasts[.copied] {
-                    Text(text)
-                        .font(.caption2)
-                        .frame(width: 1, height: 1)
-                        .opacity(0.02)
-                        .accessibilityIdentifier("sim-last-toast")
+                    SimReadout(identifier: "sim-last-toast", text: text)
                 }
                 if let text = lastToasts[.said] {
-                    Text(text)
-                        .font(.caption2)
-                        .frame(width: 1, height: 1)
-                        .opacity(0.02)
-                        .accessibilityIdentifier("sim-last-app-toast")
+                    SimReadout(identifier: "sim-last-app-toast", text: text)
                 }
                 // For the UI tests: how many key tasks have not ended, so a
                 // test can wait for "0" instead of sleeping before it checks
                 // that a cancelled open left nothing.
                 KeyTasksSignal(keys: model.storeSession.reader.simulated) { model.storeSession.keyTasks.pendingTasks }
                 // And how many times the privacy cover has been drawn.
-                Text(verbatim: "\(PrivacyCoverLog.shared.shown)")
-                    .font(.caption2)
-                    .frame(width: 1, height: 1)
-                    .opacity(0.02)
-                    .accessibilityLabel("Privacy cover drawn")
-                    .accessibilityValue("\(PrivacyCoverLog.shared.shown)")
-                    .accessibilityIdentifier("sim-privacy-cover-shown")
+                SimReadout(
+                    identifier: "sim-privacy-cover-shown", text: "\(PrivacyCoverLog.shared.shown)",
+                    label: "Privacy cover drawn")
             }
             #endif
     }

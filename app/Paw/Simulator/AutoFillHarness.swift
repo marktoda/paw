@@ -289,26 +289,13 @@ private struct AutoFillHarnessView: View {
         }
         .overlay(alignment: .bottomLeading) {
             TimelineView(.periodic(from: .now, by: 0.25)) { _ in
-                let pin = run.holdsPin ? "held" : "none"
-                Text(verbatim: pin)
-                    .font(.caption2)
-                    .frame(width: 1, height: 1)
-                    .opacity(0.02)
-                    .accessibilityLabel("PIN")
-                    .accessibilityValue(pin)
-                    .accessibilityIdentifier("harness-pin")
+                SimReadout(identifier: "harness-pin", text: run.holdsPin ? "held" : "none", label: "PIN")
             }
         }
         .overlay(alignment: .bottomTrailing) {
             // What `provideCredentialWithoutUserInteraction` answered.
             if let quickType = run.quickType {
-                Text(verbatim: quickType)
-                    .font(.caption2)
-                    .frame(width: 1, height: 1)
-                    .opacity(0.02)
-                    .accessibilityLabel("Answer without a screen")
-                    .accessibilityValue(quickType)
-                    .accessibilityIdentifier("autofill-quicktype")
+                SimReadout(identifier: "autofill-quicktype", text: quickType, label: "Answer without a screen")
             }
         }
         .onAppear {

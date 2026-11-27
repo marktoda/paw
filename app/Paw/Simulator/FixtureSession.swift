@@ -24,7 +24,7 @@ import Foundation
 /// can't save there.
 struct FixtureSession {
     /// The PIN of every simulated key the fixture makes.
-    static let pin = "123456"
+    static let pin = SimulatedKeyConnector.defaultPin
 
     let session: StoreSession
 

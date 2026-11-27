@@ -4,25 +4,25 @@ import SwiftUI
 /// The simulated git host follows setup as the screens show it: it starts
 /// with the setup flow, presents another key once one was trusted
 /// (`changedHostKey`), and lets the next download through once one failed
-/// (`dropMidClone`, `SimTaskFailed`). Applied once, to the setup flow.
+/// (`SimTaskFailed`). Applied once, to the setup flow.
 struct SimSetupHostWatch: ViewModifier {
     let model: SetupModel
 
     func body(content: Content) -> some View {
         content
             .onAppear {
-                _ = SimulatedHostHolder.shared
+                _ = SimRemoteHandle.shared.setupHost
             }
             .onChange(of: model.screen) { old, new in
                 guard case .confirmHost = old else { return }
                 switch new {
-                case .download, .keyNotAccepted: SimulatedHostHolder.shared.hostConfirmed()
+                case .download, .keyNotAccepted: SimRemoteHandle.shared.hostConfirmed()
                 default: break
                 }
             }
             .onChange(of: failed) { _, failed in
                 if failed, case .download = model.screen {
-                    SimulatedHostHolder.shared.downloadFailed()
+                    SimRemoteHandle.shared.connectionFailed()
                 }
             }
     }

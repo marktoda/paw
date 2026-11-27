@@ -32,14 +32,7 @@ struct SimStoreState: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.25)) { _ in
-            let state = Self.state(phase)
-            Text(verbatim: state)
-                .font(.caption2)
-                .frame(width: 1, height: 1)
-                .opacity(0.02)
-                .accessibilityLabel("Store state")
-                .accessibilityValue(state)
-                .accessibilityIdentifier("sim-store-state")
+            SimReadout(identifier: "sim-store-state", text: Self.state(phase), label: "Store state")
         }
     }
 
