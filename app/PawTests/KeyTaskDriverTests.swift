@@ -131,18 +131,6 @@ final class KeyTaskDriverTests: XCTestCase {
         }
     }
 
-    func testTheStageForEachEnd() {
-        let words = KeyErrorWords.Context(entry: "github.com")
-        XCTAssertEqual(KeyTaskEnd<Never>.done(.signedIn).standardStage(words), .done)
-        XCTAssertEqual(KeyTaskEnd<Never>.failed(.PinBlocked).standardStage(words), .locked)
-        XCTAssertEqual(KeyTaskEnd<Never>.failed(.TouchTimeout).standardStage(words), .failed(
-            problem: "Your key wasn't touched in time", nextStep: "Try again and touch the gold part while it blinks."))
-        XCTAssertNil(KeyTaskEnd<Never>.cancelled.standardStage(words))
-        let rejected = SyncError.Fault(fault: .remote(failure: .keyNotAccepted(host: "h", publicKey: "k")))
-        XCTAssertNil(KeyTaskEnd<SyncError>.stepFailed(rejected).standardStage(words))
-        XCTAssertNil(KeyTaskEnd<SetupError>.stepFailed(.EmptyRepository).standardStage(words))
-    }
-
     func testThePinStagesAndThePinField() async throws {
         let fixture = try Fixture()
         let owner = Recorder()

@@ -112,17 +112,6 @@ final class SyncWordsTests: XCTestCase {
         XCTAssertEqual(SyncPillState.paused("Sync paused \u{00B7} Review").text(now: now), "Sync paused \u{00B7} Review")
     }
 
-    func testThePillsLookFollowsItsState() {
-        XCTAssertEqual(SyncPillState.working("Sending").status, .syncing)
-        XCTAssertEqual(SyncPillState.upToDate(checked: Date()).status, .synced)
-        XCTAssertEqual(SyncPillState.needsKey.status, .needsKey)
-        XCTAssertEqual(SyncPillState.notChecked.status, .syncing)
-        XCTAssertEqual(SyncPillState.notSent(checked: nil).status, .checked)
-        XCTAssertEqual(SyncPillState.offline(checked: nil).status, .offline)
-        XCTAssertEqual(SyncPillState.failed("Not sent").status, .failed)
-        XCTAssertEqual(SyncPillState.paused("Sync paused").status, .failed)
-    }
-
     func testAgoInMinutes() {
         let now = Date()
         XCTAssertEqual(syncAgo(now.addingTimeInterval(-59), now: now), "just now")

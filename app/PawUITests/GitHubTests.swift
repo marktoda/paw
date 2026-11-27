@@ -166,11 +166,11 @@ final class GitHubTests: PawUITestCase {
         openPicker()
         authorise()
         let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'github-repo-'"))
-        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: Self.patience), "The list should show")
+        XCTAssertTrue(waitToExist(rows.firstMatch, timeout: Self.patience), "The list should show")
         XCTAssertEqual(rows.element(boundBy: 0).identifier, Self.store, "The store should be listed first")
         snapshot("many")
         let search = app.searchFields.firstMatch
-        XCTAssertTrue(search.waitForExistence(timeout: Self.patience), "A long list should be searchable")
+        XCTAssertTrue(waitToExist(search, timeout: Self.patience), "A long list should be searchable")
         search.tap()
         search.typeText("other-0007")
         expect("github-repo-mira/other-0007")

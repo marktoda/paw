@@ -43,7 +43,7 @@ final class KeyTests: PawUITestCase {
 
         tap("touch-timeout-check")
         enterPin(Self.pin)
-        expectLabel("touch-timeout-result", contains: "gave up waiting for a touch", timeout: 20)
+        expectLabel("touch-timeout-result", contains: "gave up waiting for a touch")
         snapshot("touch-timeout")
         XCTAssertTrue(keyLogLine(containing: "PIN check 9000: a touch timeout").exists,
                       "The key log should have what the key answered after the timeout")

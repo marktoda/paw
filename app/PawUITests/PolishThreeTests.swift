@@ -72,6 +72,4 @@ final class PolishThreeTests: PawUITestCase {
         tap("settings-trust-different-confirm")
         expectText("settings-host-fingerprint", contains: "Trusted by you")
     }
-
-    // MARK: AutoFill
 }
