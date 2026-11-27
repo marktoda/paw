@@ -470,10 +470,7 @@ pub(crate) fn commit_edits(
     }
     let tree_id = index.write_tree_to(repo).map_err(git_err)?;
     // A new name can collide with one already there (`Web/x` beside `web/`).
-    let refused = guard::check_tree(repo, tree_id).map_err(git_err)?;
-    if !refused.is_empty() {
-        return Err(Fault::Refused { paths: refused });
-    }
+    guard::refuse(repo, tree_id)?;
     let tree = repo.find_tree(tree_id).map_err(git_err)?;
 
     let signature = git2::Signature::now(&author.name, &author.email).map_err(git_err)?;

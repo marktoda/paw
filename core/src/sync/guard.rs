@@ -166,10 +166,15 @@ pub(crate) fn check_tree(repo: &Repository, tree: Oid) -> Result<Vec<RefusedPath
     Ok(refused)
 }
 
-pub(crate) fn check_commit(repo: &Repository, commit: Oid) -> Result<(), CheckError> {
-    let tree = repo.find_commit(commit)?.tree_id();
+/// [`check_tree`], failing if it refuses anything.
+pub(crate) fn refuse(repo: &Repository, tree: Oid) -> Result<(), CheckError> {
     let refused = check_tree(repo, tree)?;
     if refused.is_empty() { Ok(()) } else { Err(CheckError::Refused(Refused(refused))) }
+}
+
+/// [`refuse`] for `commit`'s tree.
+pub(crate) fn check_commit(repo: &Repository, commit: Oid) -> Result<(), CheckError> {
+    refuse(repo, repo.find_commit(commit)?.tree_id())
 }
 
 pub(crate) enum CheckError {
@@ -180,6 +185,16 @@ pub(crate) enum CheckError {
 impl From<git2::Error> for CheckError {
     fn from(error: git2::Error) -> Self {
         Self::Git(error)
+    }
+}
+
+/// A change paw is making refused, rather than something the remote holds.
+impl From<CheckError> for crate::fault::Fault {
+    fn from(error: CheckError) -> Self {
+        match error {
+            CheckError::Refused(Refused(paths)) => Self::Refused { paths },
+            CheckError::Git(error) => super::git_err(error).into(),
+        }
     }
 }
 

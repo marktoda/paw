@@ -14,7 +14,7 @@ use git2::{
     StatusOptions, Tree,
 };
 
-use super::guard::{self, Refused};
+use super::guard;
 use super::{SyncError, git_err};
 use crate::PawError;
 use crate::path::{unsafe_path, unsafe_path_err};
@@ -335,10 +335,7 @@ impl<'r> Replay<'r> {
         }
         // Every rebuilt commit is pushed, and checked out by other copies:
         // a name of this change may collide with one the remote added.
-        let refused = guard::check_tree(self.repo, tree_id).map_err(git_err)?;
-        if !refused.is_empty() {
-            return Err(Refused(refused).into());
-        }
+        guard::refuse(self.repo, tree_id)?;
         let tree = self.repo.find_tree(tree_id).map_err(git_err)?;
         let author = local.commit.author();
         let committer = local.commit.committer();
