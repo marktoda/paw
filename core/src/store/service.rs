@@ -79,6 +79,13 @@ pub fn ascii_host(text: &str) -> Option<String> {
     is_host(&host).then_some(host)
 }
 
+/// The host a part of an entry's path names, in ASCII ([`ascii_host`]):
+/// a host name with a dot, or an IP address. `github.com` for `GitHub.com`;
+/// `None` for a word such as `GitHub` or `alice`.
+fn part_host(part: &str) -> Option<String> {
+    ascii_host(part).filter(|host| host.contains('.'))
+}
+
 fn is_scheme(text: &str) -> bool {
     let mut chars = text.chars();
     chars.next().is_some_and(|c| c.is_ascii_alphabetic())
@@ -112,6 +119,12 @@ pub(crate) fn registrable(host: &str) -> Option<&str> {
         return None;
     }
     psl::domain_str(host)
+}
+
+/// The site `host` is on: its registrable domain, or the host itself where
+/// there is none (an IP address).
+fn site_of(host: &str) -> String {
+    registrable(host).unwrap_or(host).to_owned()
 }
 
 pub const MIN_NAME_LEN: usize = 3;
@@ -165,6 +178,8 @@ pub fn service_host(service: String) -> Option<String> {
     host_of(&service)
 }
 
+/// Whether `part` is a name iOS can be given as a suggestion's domain: an
+/// ASCII DNS name with a dot, not an IP address.
 fn is_plain_host(part: &str) -> bool {
     if part.len() > 253 || part.starts_with('.') || part.ends_with('.') {
         return false;
@@ -219,7 +234,7 @@ pub const CATEGORY_FOLDERS: &[&str] = &[
 pub fn names_site(path: &str, name: &str) -> bool {
     let parts: Vec<&str> = path.split('/').collect();
     let Some((last, folders)) = parts.split_last() else { return false };
-    if folders.iter().any(|part| part.contains('.') && is_host(&part.to_lowercase())) {
+    if folders.iter().any(|part| part_host(part).is_some()) {
         return false;
     }
     if name_key(last).as_deref() == Some(name) {
@@ -234,14 +249,10 @@ pub fn names_site(path: &str, name: &str) -> bool {
 /// How well one part of an entry's path fits the host: 0 exact, 1 same
 /// registrable domain.
 fn fit(part: &str, host: &str, host_domain: Option<&str>) -> Option<u8> {
-    let part = ascii_host(part)?;
-    if part == host {
+    if ascii_host(part).as_deref() == Some(host) {
         return Some(0);
     }
-    // A part without a dot is a word, not a host.
-    if !part.contains('.') {
-        return None;
-    }
+    let part = part_host(part)?;
     let domain = registrable(&part)?;
     (Some(domain) == host_domain).then_some(1)
 }
@@ -306,7 +317,7 @@ pub fn match_site(entries: &[EntryRef], service: &str, pairings: &[Pairing]) -> 
         return Vec::new();
     };
     let host_domain = registrable(&host);
-    let site = host_domain.unwrap_or(&host).to_owned();
+    let site = site_of(&host);
     let name = site_name(&host);
 
     let mut matches: Vec<MatchedEntry> = entries
@@ -382,18 +393,14 @@ fn pairing_of(pairings: &[Pairing], path: &str, site: &str, name: &str) -> NameP
 
 /// How to show a host or domain to the person: lower case, no trailing
 /// dot, and always the `xn--` form for a name with non-ASCII letters, so
-/// `pаypal.com` with a Cyrillic `а` is shown as `xn--pypal-4ve.com`. Text
-/// that is not a host comes back as it was.
+/// `pаypal.com` with a Cyrillic `а` is shown as `xn--pypal-4ve.com`: many
+/// accented Latin letters pass for plain ones at a glance (`ı`, `ł`, `ġ`…),
+/// and telling which do is a job for a full confusables table. Text that is
+/// not a host comes back as it was.
 #[uniffi::export]
 pub fn display_host(host: String) -> String {
     let trimmed = host.trim();
-    let Some(ascii) = ascii_host(trimmed.strip_suffix('.').unwrap_or(trimmed)) else {
-        return host;
-    };
-    // Always the `xn--` form for a name with non-ASCII letters: many
-    // accented Latin letters pass for plain ones at a glance (`ı`, `ł`,
-    // `ġ`…), and telling which do is a job for a full confusables table.
-    ascii
+    ascii_host(trimmed.strip_suffix('.').unwrap_or(trimmed)).unwrap_or(host)
 }
 
 /// What an entry's own web address says about the site being filled
@@ -433,7 +440,7 @@ pub fn url_site(value: &str) -> Option<String> {
     if !host.contains('.') {
         return None;
     }
-    Some(registrable(&host).map_or_else(|| host.clone(), str::to_owned))
+    Some(site_of(&host))
 }
 
 /// Compares address field values (`url: …` lines) with the sites being
@@ -444,7 +451,7 @@ pub fn check_urls(values: &[&str], services: &[String]) -> UrlCheck {
     let sites: Vec<String> = services
         .iter()
         .filter_map(|service| host_of(service))
-        .map(|host| registrable(&host).map_or_else(|| host.clone(), str::to_owned))
+        .map(|host| site_of(&host))
         .collect();
     let (Some(url), Some(site)) = (urls.first(), sites.first()) else {
         return UrlCheck::NoUrl;
@@ -477,15 +484,12 @@ pub fn fill_username(entry: Arc<OpenedEntry>, path: String) -> Option<String> {
 /// The user name a path gives in a `site/user` layout: the entry's name
 /// when a folder above it is a host name with a dot (`github.com/alice`,
 /// `servers/example.net/root`). `None` when the entry's own name is the
-/// host (`web/github.com`) or no part is one (`bank/chase`).
+/// host (`web/github.com`) or no part is one (`bank/chase`), and an IP
+/// address names no user (`home/192.168.1.1/admin`).
 pub fn path_user(path: &str) -> Option<String> {
     let parts: Vec<&str> = path.split('/').collect();
     let (last, folders) = parts.split_last()?;
-    let is_site = |part: &str| {
-        ascii_host(part).is_some_and(|host| {
-            host.contains('.') && host.rsplit('.').next().is_some_and(|tld| tld.chars().any(|c| c.is_ascii_alphabetic()))
-        })
-    };
+    let is_site = |part: &str| part_host(part).is_some_and(|host| !ends_in_number(&host));
     if is_site(last) || !folders.iter().any(|part| is_site(part)) || last.is_empty() {
         return None;
     }
