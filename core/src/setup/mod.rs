@@ -661,7 +661,7 @@ impl SetupFlow {
         let mut maybe = None;
         let mut sure = None;
         for entry in store.entries() {
-            match store.key_access(&entry.path, fingerprint) {
+            match store.key_access(&entry.path, Some(fingerprint)) {
                 Access::CanOpen => {
                     sure = Some(entry.path.clone());
                     break;

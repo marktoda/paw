@@ -101,12 +101,11 @@ impl PassStore {
 
     /// Whether the key whose decryption fingerprint is `card_fingerprint`
     /// (`CardInfo.decryption_fingerprint`) can open `entry`. Ask before
-    /// asking for a PIN or a touch.
+    /// asking for a PIN or a touch. Text that is no fingerprint names no
+    /// key. It comes as text, not as a [`Fingerprint`], because a failed
+    /// lift traps in a method that cannot throw.
     pub fn access(&self, entry: String, card_fingerprint: String) -> Access {
-        match self.read_entry(&entry) {
-            Ok(bytes) => crate::recipients::access(&bytes, &card_fingerprint),
-            Err(e) => Access::Unreadable { reason: e.to_string() },
-        }
+        self.key_access(&entry, Fingerprint::parse(&card_fingerprint).as_ref())
     }
 }
 
@@ -121,9 +120,9 @@ impl PassStore {
     }
 
     /// [`Self::access`] for a fingerprint already read.
-    pub(crate) fn key_access(&self, entry: &str, card: &Fingerprint) -> Access {
+    pub(crate) fn key_access(&self, entry: &str, card: Option<&Fingerprint>) -> Access {
         match self.read_entry(entry) {
-            Ok(bytes) => crate::recipients::key_access(&bytes, Some(card)),
+            Ok(bytes) => crate::recipients::key_access(&bytes, card),
             Err(e) => Access::Unreadable { reason: e.to_string() },
         }
     }
