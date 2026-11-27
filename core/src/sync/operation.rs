@@ -12,7 +12,6 @@ use super::transport::{ConnectError, Connection, Remote};
 use super::{OpenStore, PushError, SyncError, TransferCallback, current_branch, fetch_branches, git_err, push_tip};
 use crate::files::layout::StoreDirs;
 use crate::key::KeyError;
-use crate::fault::Fault;
 use crate::remote::RemoteFailure;
 use crate::lock::{Exclusive, Shared};
 use crate::key::{Halt, SignFailure, SshSigner};
@@ -165,6 +164,10 @@ pub(crate) fn run_until<E: From<KeyError> + From<Halt> + From<SyncError>>(
     Ok(report)
 }
 
+/// How often a send pushes: once, and once more after fetching again if
+/// the remote moved before the first push.
+const SEND_ROUNDS: u32 = 2;
+
 /// [`run_until`] on a connection already logged in. A stop ends it with
 /// `None`, only between whole steps (after the login, after a fetch and
 /// its integrate, before a push): nothing is left half done.
@@ -186,52 +189,41 @@ fn run_on(
     // counting and checking the waiting changes, and recording a push
     // run with it.
     let pushing = if send { Some(store.dirs.lock().pushing(crate::lock::FETCH_WAIT)?) } else { None };
-    let (waiting, held) = fetch_and_integrate(connection, store, &mut report, reborrow(&mut progress))?;
-    let Some(mut waiting) = waiting else {
+    let (mut waiting, mut held) = fetch_and_integrate(connection, store, &mut report, reborrow(&mut progress))?;
+    let Some(pushing) = pushing else {
         return Ok(Some(report));
     };
-    if send && waiting > 0 && stop() {
-        return Ok(None);
-    }
-    // A waiting change encrypted for recipients its entry no longer has
-    // is not sent: nothing is, until the person has dealt with it.
-    if !send || waiting == 0 || holds_back()? {
-        return Ok(Some(report));
-    }
-    let Some(pushing) = &pushing else {
-        return Err(Fault::local("internal: a send without its push lock").into());
-    };
-    let (branch, tip) = branch_tip(store)?;
-
-    match push_tip(connection, store, &branch, tip, held, pushing, crate::lock::RECORD_WAIT) {
-        Ok(()) => {}
-        Err(PushError::NotFastForward) => {
-            if stop() {
-                return Ok(None);
-            }
-            report.retried = true;
-            let (again, held) = fetch_and_integrate(connection, store, &mut report, reborrow(&mut progress))?;
-            let Some(again) = again else {
-                return Ok(Some(report));
-            };
-            waiting = again;
-            if waiting > 0 && holds_back()? {
-                return Ok(Some(report));
-            }
-            let (branch, tip) = branch_tip(store)?;
-            if waiting > 0 {
-                match push_tip(connection, store, &branch, tip, held, pushing, crate::lock::RECORD_WAIT) {
-                    Ok(()) => {}
-                    Err(PushError::NotFastForward) => return Err(RemoteFailure::KeptMoving.into()),
-                    Err(PushError::Failed(error)) => return Err(error.into()),
-                }
-            }
+    let mut round = 1;
+    loop {
+        let Some(count) = waiting.filter(|&count| count > 0) else {
+            return Ok(Some(report));
+        };
+        if stop() {
+            return Ok(None);
         }
-        Err(PushError::Failed(error)) => return Err(error.into()),
+        // A waiting change encrypted for recipients its entry no longer
+        // has is not sent: nothing is, until the person has dealt with it.
+        if holds_back()? {
+            return Ok(Some(report));
+        }
+        let (branch, tip) = branch_tip(store)?;
+        match push_tip(connection, store, &branch, tip, held, &pushing, crate::lock::RECORD_WAIT) {
+            Ok(()) => {
+                report.pushed = count;
+                report.state = SyncState::UpToDate;
+                return Ok(Some(report));
+            }
+            Err(PushError::NotFastForward) if round == SEND_ROUNDS => return Err(RemoteFailure::KeptMoving.into()),
+            Err(PushError::NotFastForward) => {}
+            Err(PushError::Failed(error)) => return Err(error.into()),
+        }
+        if stop() {
+            return Ok(None);
+        }
+        report.retried = true;
+        (waiting, held) = fetch_and_integrate(connection, store, &mut report, reborrow(&mut progress))?;
+        round += 1;
     }
-    report.pushed = waiting;
-    report.state = SyncState::UpToDate;
-    Ok(Some(report))
 }
 
 /// After a fetch by some other transport (GitHub's HTTPS, in
