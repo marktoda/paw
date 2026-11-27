@@ -25,7 +25,7 @@ use crate::PawError;
 use crate::fault::Fault;
 use crate::files::layout::StoreDirs;
 use crate::files::refs;
-use crate::lock::{DEFAULT_WAIT, Exclusive, FETCH_WAIT, Fetching, Shared};
+use crate::lock::{DEFAULT_WAIT, Exclusive, FETCH_WAIT, Fetching};
 use crate::remote::{RefusedPath, RemoteFailure};
 use crate::path::{unsafe_path, unsafe_path_err};
 
@@ -336,11 +336,8 @@ pub fn clone_with_transfer(
 /// because of these: the store and the unpushed changes were left as they
 /// were.
 pub fn refused_remote(dirs: &StoreDirs) -> Result<Vec<RefusedPath>, Fault> {
-    let reading = dirs.shared()?;
-    refused_fetched(&reading, &OpenStore::open(dirs)?)
-}
-
-pub(crate) fn refused_fetched(_reading: &Shared, store: &OpenStore) -> Result<Vec<RefusedPath>, Fault> {
+    let _reading = dirs.shared()?;
+    let store = OpenStore::open(dirs)?;
     let repo = &store.repo;
     let (_, short) = current_branch(repo)?;
     let Ok(tip) = repo.refname_to_id(&refs::remote_tracking(&short)) else {

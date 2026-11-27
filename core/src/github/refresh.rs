@@ -40,7 +40,7 @@ use crate::files::{layout, values};
 use crate::remote::{AboutRemote, RemoteFailure};
 use crate::lock::{Exclusive, Shared};
 use crate::sync::address::{StoreAddress, github_repository, saved_address};
-use crate::sync::integrate::{IntegrateReport, RecipientsChange, Replaced};
+use crate::sync::integrate::{self, IntegrateReport, RecipientsChange, Replaced};
 use crate::sync::operation::{SyncReport, SyncState};
 use crate::remote::RefusedPath;
 use crate::sync::{OpenStore, SyncError, TransferProgress};
@@ -260,16 +260,16 @@ impl GitHubAccount {
         if stopping(RefreshStep::Check) {
             return out_of_time();
         }
-        let mut decisions = Vec::new();
-        match crate::sync::refused_fetched(&held, &store) {
-            Ok(paths) if !paths.is_empty() => decisions.push(RefreshDecision::RefusedRemote { paths }),
-            Ok(_) => {}
-            Err(e) => return failed(e.into()),
-        }
-        match crate::sync::integrate::pending_recipients_changes(&held, &store) {
-            Ok(changes) if !changes.is_empty() => decisions.push(RefreshDecision::RecipientsChanged { changes }),
-            Ok(_) => {}
+        let plan = match integrate::plan(&held, &store) {
+            Ok(plan) => plan,
             Err(e) => return failed(e),
+        };
+        let mut decisions = Vec::new();
+        if !plan.refused.is_empty() {
+            decisions.push(RefreshDecision::RefusedRemote { paths: plan.refused.clone() });
+        }
+        if !plan.recipients_changes.is_empty() {
+            decisions.push(RefreshDecision::RecipientsChanged { changes: plan.recipients_changes.clone() });
         }
         let Waiting { held_back, unpushed } = Waiting::count(&held, &store);
         if held_back > 0 {
@@ -283,7 +283,7 @@ impl GitHubAccount {
         if stopping(RefreshStep::Integrate) {
             return out_of_time();
         }
-        let report = match crate::sync::operation::integrate_fetched(&held, &store) {
+        let report = match crate::sync::operation::integrate_fetched(&held, &store, plan) {
             Ok(report) => report,
             Err(e) => return failed(e),
         };
@@ -364,7 +364,7 @@ impl GitHubAccount {
         let store = OpenStore::open(&self.store())?;
         let held =
             self.fetch_with_token(&store, &http, &link, crate::lock::FETCH_WAIT, &|| crate::lock::DEFAULT_WAIT, None)?;
-        crate::sync::operation::integrate_fetched(&held, &store)
+        crate::sync::operation::integrate_fetched(&held, &store, integrate::plan(&held, &store)?)
     }
 
     /// The background refresh: at most `seconds` long, never asks anyone

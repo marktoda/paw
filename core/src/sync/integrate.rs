@@ -16,12 +16,13 @@ use std::path::Path;
 
 use git2::{Oid, Repository};
 
-use super::guard::check_commit;
+use super::guard::{self, check_commit};
 use super::history::{KeptBoth, Replay, ReplayNotes, commits_between, ensure_clean, move_branch, paw_commits};
 use super::queue::waiting;
 use super::{OpenStore, SyncError, current_branch, git_err};
 use crate::files::layout::StoreDirs;
 use crate::files::refs;
+use crate::remote::RefusedPath;
 use crate::store::gpg_id::shown_gpg_id_lines;
 use crate::lock::{Exclusive, Shared};
 
@@ -176,37 +177,61 @@ fn fetched(repo: &Repository, tips: &Tips) -> Result<Option<Fetched>, SyncError>
     Ok(Some(Fetched { remote, seen, replaced }))
 }
 
-/// Integrates `origin/<branch>` into the current branch.
+/// What integrating `origin/<branch>` into the current branch would do,
+/// worked out without changing anything ([`plan`]); [`apply`] does it.
+pub(crate) struct Plan {
+    tips: Tips,
+    fetched: Option<Fetched>,
+    /// What the fetched tip holds that paw will not check out.
+    pub(crate) refused: Vec<RefusedPath>,
+    /// The `.gpg-id` changes integrating would report; none if the
+    /// remote's history was replaced (that is its own decision).
+    pub(crate) recipients_changes: Vec<RecipientsChange>,
+    /// The remote's history was replaced: integrating changes nothing.
+    pub(crate) replaced: Option<Replaced>,
+}
+
+pub(crate) fn plan(_reading: &Shared, store: &OpenStore) -> Result<Plan, SyncError> {
+    let repo = &store.repo;
+    let tips = tips(repo)?;
+    let mut plan = Plan { fetched: fetched(repo, &tips)?, tips, refused: Vec::new(), recipients_changes: Vec::new(), replaced: None };
+    let Some(Fetched { remote, seen, replaced }) = plan.fetched else {
+        return Ok(plan);
+    };
+    plan.refused = guard::check_tree(repo, repo.find_commit(remote).map_err(git_err)?.tree_id()).map_err(git_err)?;
+    if replaced {
+        // Every local commit is counted, paw's or not: this decision is
+        // also the way out of a history paw would refuse to replay.
+        let unpushed = commits_between(repo, plan.tips.head, &[seen])?.len() as u32;
+        plan.replaced = Some(Replaced { last_seen: seen.to_string(), remote: remote.to_string(), unpushed });
+    } else {
+        plan.recipients_changes = recipients_changes(repo, seen, remote)?;
+    }
+    Ok(plan)
+}
+
+/// Integrates as `plan` says.
 ///
 /// If the remote's tip, or a commit rebuilt on it, holds something paw
 /// will not check out ([`super::refused_remote`]), this fails with
 /// [`crate::remote::RemoteFailure::RefusedContent`] naming the paths, and
 /// the branch, the working copy and the unpushed changes stay as they were.
-pub(crate) fn integrate_locked(held: &Exclusive, store: &OpenStore) -> Result<Integration, SyncError> {
+pub(crate) fn apply(held: &Exclusive, store: &OpenStore, plan: Plan) -> Result<Integration, SyncError> {
     let repo = &store.repo;
-    let tips = tips(repo)?;
-    let Some(Fetched { remote, seen, replaced }) = fetched(repo, &tips)? else {
+    let Plan { tips, fetched, refused, recipients_changes, replaced } = plan;
+    let Some(Fetched { remote, .. }) = fetched else {
         return Ok(Integration::Integrated(IntegrateReport::default()));
     };
-    // What was fetched is checked before anything else is done with it.
-    check_commit(repo, remote)?;
-    if replaced {
-        // Every local commit is counted, paw's or not: this decision is
-        // also the way out of a history paw would refuse to replay.
-        let unpushed = commits_between(repo, tips.head, &[seen])?.len() as u32;
-        return Ok(Integration::RemoteReplaced(Replaced {
-            last_seen: seen.to_string(),
-            remote: remote.to_string(),
-            unpushed,
-        }));
+    if !refused.is_empty() {
+        return Err(guard::Refused(refused).into());
+    }
+    if let Some(replaced) = replaced {
+        return Ok(Integration::RemoteReplaced(replaced));
     }
 
     let local = paw_commits(repo, tips.head, &[remote])?;
     ensure_clean(repo)?;
-    let mut report = IntegrateReport {
-        recipients_changed: recipients_changes(repo, seen, remote)?,
-        ..Default::default()
-    };
+    let mut report = IntegrateReport { recipients_changed: recipients_changes, ..Default::default() };
     let remote_is_in_head =
         tips.head == remote || repo.graph_descendant_of(tips.head, remote).map_err(git_err)?;
     let new_head = if remote_is_in_head {
@@ -254,19 +279,6 @@ pub fn accept_replaced_remote(dirs: &StoreDirs, keep_changes: bool) -> Result<In
     report.note_entries(repo, tips.head, tip)?;
     move_branch(&held, &store, &tips.branch, tips.head, tip, Some((&tips.seen_ref, remote)), "paw: take replaced remote")?;
     Ok(report)
-}
-
-/// The `.gpg-id` changes an integrate would report now: between the
-/// remote tip paw saw last and the fetched one. Empty when nothing was
-/// fetched, or the remote's history was replaced (that is its own
-/// decision). Changes nothing; for the background refresh, which leaves
-/// such a change for the person instead of integrating it.
-pub(crate) fn pending_recipients_changes(_reading: &Shared, store: &OpenStore) -> Result<Vec<RecipientsChange>, SyncError> {
-    let repo = &store.repo;
-    match fetched(repo, &tips(repo)?)? {
-        Some(Fetched { remote, seen, replaced: false }) => recipients_changes(repo, seen, remote),
-        _ => Ok(Vec::new()),
-    }
 }
 
 fn recipients_changes(repo: &Repository, before: Oid, after: Oid) -> Result<Vec<RecipientsChange>, SyncError> {

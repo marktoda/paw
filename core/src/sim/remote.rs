@@ -1052,7 +1052,8 @@ pub mod steps {
     /// sync does after its fetch.
     pub fn integrate(store: &StoreDirs) -> Result<sync::Integration, SyncError> {
         let held = store.exclusive()?;
-        sync::integrate::integrate_locked(&held, &OpenStore::open(store)?)
+        let store = OpenStore::open(store)?;
+        sync::integrate::apply(&held, &store, sync::integrate::plan(&held, &store)?)
     }
 
     /// Pushes the current branch to the branch of the same name, as a

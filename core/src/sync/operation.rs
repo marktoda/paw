@@ -7,7 +7,7 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use super::integrate::{IntegrateReport, Integration, Replaced, integrate_locked};
+use super::integrate::{self, IntegrateReport, Integration, Plan, Replaced};
 use super::transport::{ConnectError, Connection, Remote};
 use super::{OpenStore, PushError, SyncError, TransferCallback, current_branch, fetch_branches, git_err, push_tip};
 use crate::files::layout::StoreDirs;
@@ -61,11 +61,11 @@ impl SyncReport {
         }
     }
 
-    /// Integrates what was fetched into `store`, adding to this report.
-    /// Returns how many changes are waiting then, or `None` if the remote's
-    /// history was replaced (the state says so).
-    fn integrate(&mut self, held: &Exclusive, store: &OpenStore) -> Result<Option<u32>, SyncError> {
-        match integrate_locked(held, store)? {
+    /// Integrates what was fetched into `store` as `plan` says, adding to
+    /// this report. Returns how many changes are waiting then, or `None` if
+    /// the remote's history was replaced (the state says so).
+    fn integrate(&mut self, held: &Exclusive, store: &OpenStore, plan: Plan) -> Result<Option<u32>, SyncError> {
+        match integrate::apply(held, store, plan)? {
             Integration::Integrated(this_round) => {
                 self.integration.absorb(this_round);
                 let waiting = waiting(held, store)?;
@@ -109,7 +109,7 @@ fn fetch_and_integrate(
     progress: Option<TransferCallback<'_>>,
 ) -> Result<(Option<u32>, Exclusive), SyncError> {
     let (_, held) = fetch_branches(connection, store, progress)?;
-    let waiting = report.integrate(&held, store)?;
+    let waiting = report.integrate(&held, store, integrate::plan(&held, store)?)?;
     Ok((waiting, held))
 }
 
@@ -238,8 +238,8 @@ fn run_on(
 /// `crate::github`): integrates and reports exactly as a refresh does
 /// after its own fetch, so both paths give the same results for the same
 /// remote (recipients changed, replaced history, refused trees).
-pub(crate) fn integrate_fetched(held: &Exclusive, store: &OpenStore) -> Result<SyncReport, SyncError> {
+pub(crate) fn integrate_fetched(held: &Exclusive, store: &OpenStore, plan: Plan) -> Result<SyncReport, SyncError> {
     let mut report = SyncReport::new();
-    report.integrate(held, store)?;
+    report.integrate(held, store, plan)?;
     Ok(report)
 }
