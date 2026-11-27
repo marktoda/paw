@@ -405,16 +405,15 @@ final class SyncModel {
     /// off the main thread).
     private func summarise(_ report: IntegrateReport, origin: SyncSummary.Origin, store: PassStore) {
         let cache = copies.cache
+        let listed = copies.list.map(\.entry)
         workQueue.async { [weak self] in
             var summary = SyncSummary(origin: origin, report: report)
-            // A list that can't be read is said on Home from the same store
-            // change (`LiveCopies.problem`); an entry that can't be read
-            // is gone, and its copy with it, or the store is, which Home
-            // says too.
+            // An entry that can't be read is gone, and its copy with it, or
+            // the store is, which Home says.
             if let cache {
-                for copy in (try? cache.list()) ?? [] {
-                    if case .stale? = try? store.faceIdStatus(copies: cache, entry: copy.entry) {
-                        summary.endedCopies.append(copy.entry)
+                for entry in listed {
+                    if case .stale? = try? store.faceIdStatus(copies: cache, entry: entry) {
+                        summary.endedCopies.append(entry)
                     }
                 }
             }
