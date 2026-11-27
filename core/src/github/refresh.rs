@@ -191,13 +191,9 @@ impl GitHubAccount {
     }
 
     /// The background refresh: see the module comment. Ends by `budget`
-    /// from now. Never asks anyone anything, never pushes.
-    pub fn background_refresh(&self, budget: Duration) -> BackgroundRefreshReport {
-        self.background_refresh_with(budget, &|_| false)
-    }
-
-    /// [`Self::background_refresh`] that also stops before `stop(step)`
-    /// says so, as if the deadline had come (or the app were killed) there.
+    /// from now. Never asks anyone anything, never pushes. Stops before
+    /// `stop(step)` says so, as if the deadline had come (or the app were
+    /// killed) there.
     /// During the transfer `stop(RefreshStep::Fetch)` is asked at each
     /// chunk, so a stop from another thread (the background task's
     /// expiration) cuts it short; the store is left as it was.

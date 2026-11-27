@@ -873,7 +873,7 @@ fn every_mutating_entry_point_returns_even_when_its_thread_holds_the_lock() {
                 sync::Connection::open(&remote, &signer).map_err(|e| text(&e)).and_then(|c| steps::push(&c, &repo).map_err(|e| text(&e)))
             });
             note("refresh_with_token", w.account.refresh_store().map(drop).map_err(|e| text(&e)));
-            let background = w.account.background_refresh(Duration::from_secs(25));
+            let background = w.account.background_refresh_with(Duration::from_secs(25), &|_| false);
             note("background_refresh", match background.outcome {
                 paw_core::github::BackgroundOutcome::Failed { fault } => Err(fault.to_string()),
                 _ => Ok(()),
