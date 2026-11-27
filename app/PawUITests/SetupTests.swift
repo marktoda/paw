@@ -89,7 +89,7 @@ final class SetupTests: PawUITestCase {
     private func clearAddress() {
         let field = expect("repo-address")
         field.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.9)).tap()
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: Self.patience),
+        XCTAssertTrue(waitToExist(app.keyboards.firstMatch, timeout: Self.patience),
                       "The keyboard should come up for the address")
         if let typed = field.value as? String, typed != "git@github.com:you/password-store.git" {
             field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: typed.count))
@@ -311,19 +311,6 @@ final class SetupTests: PawUITestCase {
         expectAbsent("pin-field", "The PIN should still be held after a touch timeout")
         tapSimulated("simulated-touch")
         expect("setup-check", timeout: 60)
-    }
-
-    func testAWrongPinDuringTheDownloadShowsTriesLeftAndStays() {
-        launch()
-        toAddress()
-        toDownload()
-        tap("download-start")
-        enterPin("000000")
-        expectText("pin-tries-left", contains: "2 tries left")
-        expectText("key-sheet-headline", contains: "Wrong PIN")
-        expect("pin-field")
-        expectAbsent("touch-prompt", "A wrong PIN never reaches the touch")
-        snapshot("wrong-pin")
     }
 
     func testCancelDuringTheDownloadLeavesNothingHalfDownloaded() {

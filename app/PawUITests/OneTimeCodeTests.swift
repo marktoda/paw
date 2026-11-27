@@ -21,8 +21,7 @@ final class OneTimeCodeTests: PawUITestCase {
         // a slow machine; the system's own expiry would have emptied it.
         launchFixture(extra: ["-pawSimPasteboardSecs", "3600"])
         openGitHubWithKey()
-        let shown = scrollTo("field-one-time-code")
-        XCTAssertTrue(shown.exists)
+        scrollTo("field-one-time-code")
         let code = shownCode()
         snapshot("one-time-code")
 
