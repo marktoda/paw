@@ -39,7 +39,7 @@ final class SyncModel {
     let gitHub: GitHubAccess?
     /// Said in the key sheet when a check fell back to the key.
     private(set) var keyPathNote: String?
-    private(set) var backgroundRun: BackgroundRun?
+    private(set) var backgroundRun: BackgroundRun.Record?
 
     @ObservationIgnored private let live: LiveStore
     @ObservationIgnored private let requests: Signal<ScreenRequest>

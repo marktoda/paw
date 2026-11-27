@@ -2,11 +2,11 @@ import BackgroundTasks
 import Foundation
 import UIKit
 
-/// The last background check: when, and how it went (never an entry name
-/// or an error's text). Kept in the app's own defaults, which can be read
-/// and written while the iPhone is locked; the store can't (it is
-/// `complete`-protected).
-struct BackgroundRun: Equatable {
+/// What a background check found: when it ran and how it went (never an
+/// entry name or an error's text), and what it leaves for the next open.
+/// Kept in the app's own defaults, which can be read and written while the
+/// iPhone is locked; the store can't (it is `complete`-protected).
+struct BackgroundRun {
     enum Outcome: String {
         case locked, noStore, notSignedIn, notLinked, upToDate, broughtIn, paused, signedOut, offline, outOfTime,
              busy, failed
@@ -20,12 +20,22 @@ struct BackgroundRun: Equatable {
         }
     }
 
-    let at: Date
-    let outcome: Outcome
+    /// When it ran and how it went, kept until the next run: what the
+    /// status page says.
+    struct Record: Equatable {
+        let at: Date
+        let outcome: Outcome
+    }
+
+    let record: Record
     /// Changes came in that the list has not shown yet.
     let changed: Bool
     /// Something only the person can decide was found and left alone.
     let needsLook: Bool
+
+    var outcome: Outcome {
+        record.outcome
+    }
 
     var success: Bool {
         outcome.success
@@ -151,7 +161,7 @@ enum BackgroundRefresh {
         let run = summary(of: report, at: Date())
         if run.success, report.integration != nil {
             // The store matches the server as of now, as after a check.
-            LastChecked.record(run.at, repoDir: location.repoDir.path)
+            LastChecked.record(run.record.at, repoDir: location.repoDir.path)
         }
         return run
     }
@@ -163,7 +173,7 @@ enum BackgroundRefresh {
     }
 
     private static func skipped(_ outcome: BackgroundRun.Outcome) -> BackgroundRun {
-        BackgroundRun(at: Date(), outcome: outcome, changed: false, needsLook: false)
+        BackgroundRun(record: .init(at: Date(), outcome: outcome), changed: false, needsLook: false)
     }
 
     static func summary(of report: BackgroundRefreshReport, at: Date) -> BackgroundRun {
@@ -186,26 +196,26 @@ enum BackgroundRefresh {
         case .failed(.storeBusy): outcome = .busy
         case .failed: outcome = .failed
         }
-        return BackgroundRun(at: at, outcome: outcome, changed: changed, needsLook: needsLook)
+        return BackgroundRun(record: .init(at: at, outcome: outcome), changed: changed, needsLook: needsLook)
     }
 
     private static func record(_ run: BackgroundRun) {
         let defaults = UserDefaults.standard
-        defaults.set(run.at.timeIntervalSince1970, forKey: atKey)
+        defaults.set(run.record.at.timeIntervalSince1970, forKey: atKey)
         defaults.set(run.outcome.rawValue, forKey: resultKey)
         // What the next open must still do is kept until it has done it.
         if run.changed { defaults.set(true, forKey: changedKey) }
         if run.needsLook { defaults.set(true, forKey: needsLookKey) }
     }
 
-    static func lastRun() -> BackgroundRun? {
+    /// The last run's record. What it left for the next open is
+    /// `takePending`'s.
+    static func lastRun() -> BackgroundRun.Record? {
         let defaults = UserDefaults.standard
         let at = defaults.double(forKey: atKey)
         guard at > 0, let result = defaults.string(forKey: resultKey),
               let outcome = BackgroundRun.Outcome(rawValue: result) else { return nil }
-        return BackgroundRun(
-            at: Date(timeIntervalSince1970: at), outcome: outcome, changed: defaults.bool(forKey: changedKey),
-            needsLook: defaults.bool(forKey: needsLookKey))
+        return BackgroundRun.Record(at: Date(timeIntervalSince1970: at), outcome: outcome)
     }
 
     /// The store is removed from this iPhone: the last run and what it
