@@ -278,7 +278,7 @@ final class KeyTaskDriver {
     }
 
     /// Continue on a PIN stage. The PIN goes straight to the core, which
-    /// refuses one that is not 6 to 127 characters without using a try.
+    /// refuses one of a length no card takes without using a try.
     func continueWithPin() {
         guard let id = followed, let running = tasks[id], !pin.isEmpty, mapped.asksForPin else { return }
         running.task.supplyPin(pin: Data(pin.utf8))

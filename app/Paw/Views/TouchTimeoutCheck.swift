@@ -110,7 +110,7 @@ struct TouchTimeoutSection: View {
             KeyPinField(stage: stage, pin: Bindable(check.driver).pin) { check.driver.continueWithPin() }
             Button(stage.continueTitle) { check.driver.continueWithPin() }
                 .foregroundStyle(PawColor.label)
-                .disabled(check.driver.pin.count < 6)
+                .disabled(check.driver.pin.utf8.count < Int(pinRules().minLength))
                 .accessibilityIdentifier("pin-continue")
         case .touch:
             line("Don't touch your key. It should give up after 15 seconds.")

@@ -63,7 +63,8 @@ struct KeyErrorWords: Equatable {
         case .PinBlocked:
             self = .locked
         case .PinFormat:
-            problem = "A PIN has 6 to 127 characters"
+            let rules = pinRules()
+            problem = "A PIN has \(rules.minLength) to \(rules.maxLength) characters"
             nextStep = "Enter it again; no try was used."
         case .PinForgotten:
             problem = "paw no longer has your PIN"

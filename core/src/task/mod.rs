@@ -149,10 +149,10 @@ pub enum KeyTaskState {
     /// No key is connected. The task goes on by itself once one is.
     PlugIn,
     /// Ask for the PIN. `tries_left` is what the key says remain.
-    /// `forgot_after_background` adds "paw forgot your PIN after 15
-    /// minutes away." `last_error` is why the PIN is asked again (a wrong
-    /// PIN, a PIN that was not 6 to 127 characters, or a held PIN the key
-    /// no longer accepts).
+    /// `forgot_after_background`: paw forgot the PIN after
+    /// [`crate::key::PIN_BACKGROUND_LIMIT`] away. `last_error` is why the
+    /// PIN is asked again (a wrong PIN, one of a length no card takes, or a
+    /// held PIN the key no longer accepts).
     Pin { tries_left: u8, forgot_after_background: bool, last_error: Option<KeyError> },
     /// The key is finishing something else (an earlier command, perhaps a
     /// cancelled one still waiting for its touch). This task is queued.

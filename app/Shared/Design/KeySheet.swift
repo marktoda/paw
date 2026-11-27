@@ -243,7 +243,7 @@ struct KeySheetContent: View {
     }
 
     private var canContinue: Bool {
-        pin.count >= 6
+        pin.utf8.count >= Int(pinRules().minLength)
     }
 
     private var currentStep: Int {
