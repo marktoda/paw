@@ -414,14 +414,15 @@ fn a_re_encrypt_cancelled_at_the_touch_and_started_at_once_waits_for_the_card_th
     let cancelled_at = std::time::Instant::now();
     task.cancel();
     assert!(matches!(finish(&task), KeyTaskState::Cancelled));
+    // The card's own wait still runs; it gives up after about a second.
+    w.card.time_out_touch();
 
     let driver = Driver::helpful(PIN, &w.card);
     let again = w.reencrypt(&driver);
 
     assert!(matches!(again.state(), KeyTaskState::Busy), "{:?}", again.state());
     driver.wait_for(key_common::is_touch);
-    // The simulated card gives up waiting for a touch after 5 s (`world`).
-    assert!(cancelled_at.elapsed() >= std::time::Duration::from_secs(4), "{:?}", cancelled_at.elapsed());
+    assert!(cancelled_at.elapsed() >= std::time::Duration::from_secs(1), "{:?}", cancelled_at.elapsed());
     assert_eq!(reencrypted(&again), ReencryptReport { reencrypted: 3, left: vec![] });
     assert_eq!(driver.count(key_common::is_touch), 3, "{:?}", driver.states());
     assert_eq!(driver.count(key_common::is_pin), 0, "the PIN is still held");
