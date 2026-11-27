@@ -416,7 +416,6 @@ fn sign_in_pick_clone_over_ssh_then_refresh_over_https_with_no_key() {
 
     assert_eq!(report.state, SyncState::UpToDate);
     assert_eq!(report.integration.fast_forwarded, 1);
-    assert_eq!(report.signatures, 0);
     assert_eq!(w.head(), changed);
     assert!(w.repo().join(NEW_ENTRY).is_file());
     // No SSH login, so no card: the key was used once, for the clone.

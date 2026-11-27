@@ -119,9 +119,6 @@ pub struct SetupWriteReadiness {
     /// which pinned key they mean). Add those keys, or bind the lines, to
     /// save. Empty when `can_save`.
     pub missing_recipients: Vec<String>,
-    /// Other `.gpg-id` files (e.g. `archive/.gpg-id`) whose folders cannot
-    /// be saved in yet, for the same reason.
-    pub folders_needing_keys: Vec<String>,
 }
 
 fn write_failed(fault: Fault) -> SetupError {
@@ -743,18 +740,7 @@ impl SetupFlow {
                 .map(|line| line.line.clone())
                 .collect()
         };
-        let mut folders_needing_keys = Vec::new();
-        for gpg_id in crate::write::keyring::gpg_id_paths(store.repo_dir()).map_err(write_failed)? {
-            let folder = crate::path::folder_of_gpg_id(&gpg_id);
-            if folder.is_empty() {
-                continue;
-            }
-            let recipients = keyring.folder_recipients(&reading, folder).map_err(write_failed)?;
-            if !recipients.writable {
-                folders_needing_keys.push(gpg_id);
-            }
-        }
-        Ok(SetupWriteReadiness { can_save: top.writable, missing_recipients, folders_needing_keys })
+        Ok(SetupWriteReadiness { can_save: top.writable, missing_recipients })
     }
 
     /// The key setup read at the start, as an identity to hold a session to.

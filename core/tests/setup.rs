@@ -700,7 +700,6 @@ fn a_team_line_at_the_top_is_not_bound_to_the_card_that_opened_a_personal_entry(
     let readiness = open_setup(state.path()).write_readiness().unwrap();
     assert!(!readiness.can_save);
     assert_eq!(readiness.missing_recipients, ["team@example.com"]);
-    assert!(readiness.folders_needing_keys.is_empty(), "{readiness:?}");
 }
 
 #[test]

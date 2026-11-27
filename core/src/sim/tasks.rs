@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
 
 use super::SimulatedKey;
+use crate::locked;
 use crate::key::{KeyPort, SessionSigner, SignFailure};
 use crate::key::SshSigner;
 use crate::ssh::SshPublicKey;
@@ -79,7 +80,7 @@ impl SimDriver {
     }
 
     pub fn states(&self) -> Vec<KeyTaskState> {
-        self.states.lock().unwrap_or_else(|p| p.into_inner()).clone()
+        locked(&self.states).clone()
     }
 
     pub fn saw(&self, wanted: impl Fn(&KeyTaskState) -> bool) -> bool {
@@ -93,7 +94,7 @@ impl SimDriver {
     /// Waits until a stage `wanted` has been reported. Panics after [`WAIT`].
     pub fn wait_for(&self, wanted: impl Fn(&KeyTaskState) -> bool) {
         let deadline = Instant::now() + WAIT;
-        let mut states = self.states.lock().unwrap_or_else(|p| p.into_inner());
+        let mut states = locked(&self.states);
         while !states.iter().any(&wanted) {
             let left = deadline.checked_duration_since(Instant::now()).expect("the stage never came");
             states = self.changed.wait_timeout(states, left).unwrap_or_else(|p| p.into_inner()).0;
@@ -116,7 +117,7 @@ impl KeyTaskListener for SimDriver {
             }
             _ => {}
         }
-        self.states.lock().unwrap_or_else(|p| p.into_inner()).push(state);
+        locked(&self.states).push(state);
         self.changed.notify_all();
     }
 }
@@ -214,7 +215,7 @@ impl SimLogin {
     /// Waits until the PIN is verified, then hands over the signer (once);
     /// the task's final stage if it ended first.
     pub fn signer(&self) -> Result<SimSigner, Box<KeyTaskState>> {
-        let signer = self.signer.lock().unwrap_or_else(|p| p.into_inner());
+        let signer = locked(&self.signer);
         loop {
             let state = self.task.state();
             if state.is_final() {
@@ -231,7 +232,7 @@ impl SimLogin {
 
     /// The test has finished with the key: the task ends `Done`.
     pub fn finish(&self) {
-        self.done.lock().unwrap_or_else(|p| p.into_inner()).take();
+        locked(&self.done).take();
     }
 }
 

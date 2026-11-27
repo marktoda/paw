@@ -164,8 +164,6 @@ fn after_setup_a_new_entry_saves_with_no_further_step() {
     let ready = w.setup.write_readiness().unwrap();
     assert!(ready.can_save, "{ready:?}");
     assert!(ready.missing_recipients.is_empty());
-    // The fixture's `archive` folder is for a key paw does not have.
-    assert_eq!(ready.folders_needing_keys, ["archive/.gpg-id"]);
 
     writer(&w).save(&new_entry("new-site")).unwrap();
     assert!(w.dir.path().join("repo/new-site.gpg").is_file());

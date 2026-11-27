@@ -126,7 +126,6 @@ fn take(list: &mut Vec<String>, entry: &str) -> bool {
 /// The remote's history no longer contains the tip paw saw last.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct Replaced {
-    pub last_seen: String,
     pub remote: String,
     /// Local changes that would be replayed onto the new history.
     pub unpushed: u32,
@@ -203,7 +202,7 @@ pub(crate) fn plan(_reading: &Shared, store: &OpenStore) -> Result<Plan, SyncErr
         // Every local commit is counted, paw's or not: this decision is
         // also the way out of a history paw would refuse to replay.
         let unpushed = commits_between(repo, plan.tips.head, &[seen])?.len() as u32;
-        plan.replaced = Some(Replaced { last_seen: seen.to_string(), remote: remote.to_string(), unpushed });
+        plan.replaced = Some(Replaced { remote: remote.to_string(), unpushed });
     } else {
         plan.recipients_changes = recipients_changes(repo, seen, remote)?;
     }
