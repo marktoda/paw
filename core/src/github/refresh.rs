@@ -36,7 +36,7 @@ use super::transport::HttpsRemote;
 use super::{GitHubError, Secret};
 use crate::fault::Fault;
 use crate::files::{layout, values};
-use crate::remote::{AboutRemote, RemoteFailure};
+use crate::remote::RemoteFailure;
 use crate::lock::{Exclusive, Fetching, StoreLock};
 use crate::sync::address::{StoreAddress, github_repository, saved_address};
 use crate::sync::integrate::{IntegrateReport, RecipientsChange, Replaced};
@@ -174,23 +174,6 @@ impl GitHubAccount {
         Ok(link)
     }
 
-    fn fetch_once(
-        &self,
-        http: &Http,
-        link: &GitHubLink,
-        token: Secret,
-        fetch_wait: Duration,
-        progress: Option<crate::sync::TransferCallback<'_>>,
-    ) -> Result<Fetching, SyncError> {
-        let repo = crate::sync::guard::open(&self.repo_dir())?;
-        // The transfer runs without the store lock, under the fetch lock,
-        // into private refs; [`Self::publish`] moves them.
-        let fetching = crate::sync::begin_fetch_within(&self.store_lock(), &repo, fetch_wait)?;
-        let remote = HttpsRemote::new(http.clone(), &link.full_name, token, self.download_limit());
-        remote.with_remote(&repo, |r| crate::sync::fetch_connected(r, progress))?;
-        Ok(fetching)
-    }
-
     fn store_lock(&self) -> StoreLock {
         StoreLock::for_state_dir(&self.state_dir)
     }
@@ -214,11 +197,16 @@ impl GitHubAccount {
         fetch_wait: Duration,
         mut progress: Option<crate::sync::TransferCallback<'_>>,
     ) -> Result<Fetching, SyncError> {
-        let fetch = |token| {
+        let repo = crate::sync::guard::open(&self.repo_dir())?;
+        // The transfer runs without the store lock, under the fetch lock,
+        // into private refs; [`Self::publish`] moves them.
+        let fetching = crate::sync::begin_fetch_within(&self.store_lock(), &repo, fetch_wait)?;
+        self.with_token(http, |token: Secret| {
             let progress = progress.as_mut().map(|p| &mut **p as crate::sync::TransferCallback<'_>);
-            self.fetch_once(http, link, token, fetch_wait, progress)
-        };
-        self.with_token(http, fetch)
+            let remote = HttpsRemote::new(http.clone(), &link.full_name, token, self.download_limit());
+            remote.with_remote(&repo, |r| crate::sync::fetch_connected(r, progress))
+        })?;
+        Ok(fetching)
     }
 
     /// The background refresh: see the module comment. Ends by `budget`
@@ -238,10 +226,6 @@ impl GitHubAccount {
         let lock_wait = || BACKGROUND_LOCK_WAIT.min(deadline.saturating_duration_since(Instant::now()));
         let out_of_time = || BackgroundRefreshReport::ended(BackgroundOutcome::OutOfTime);
         let failed = |e: SyncError| {
-            let unreachable = matches!(e.remote_failure(), Some(RemoteFailure::Unreachable { .. }));
-            if unreachable && Instant::now() >= deadline {
-                return out_of_time();
-            }
             let fault = match e {
                 SyncError::Fault { fault } => fault,
                 own => Fault::local(own),
@@ -263,8 +247,10 @@ impl GitHubAccount {
         }
         let http = Http::new(&self.endpoints, Some(deadline));
         // Refreshed here if need be, so the fetch below starts with a good one.
-        if let Err(e) = self.keeper.access_token(&http, None) {
-            return failed(e.into());
+        match self.keeper.access_token(&http, None) {
+            Ok(_) => {}
+            Err(GitHubError::OutOfTime) => return out_of_time(),
+            Err(e) => return failed(e.into()),
         }
         if stopping(RefreshStep::Fetch) {
             return out_of_time();

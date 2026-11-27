@@ -170,6 +170,10 @@ pub enum GitHubError {
     NotListed { full_name: String },
     #[error("the sign-in could not be kept: {message}")]
     Vault { message: String },
+    /// The operation's deadline came before GitHub answered. Only a
+    /// background refresh has one.
+    #[error("out of time")]
+    OutOfTime,
     /// Underneath: GitHub, the network, the sign-in, the chosen
     /// repository, or the store on this device.
     #[error(transparent)]
@@ -191,13 +195,34 @@ impl GitHubError {
     pub(crate) fn refused(message: impl Into<String>) -> Self {
         RemoteFailure::GitHubRefused { message: message.into() }.into()
     }
+
+    /// GitHub answered with `status`, which paw does not take: as if
+    /// unreachable when GitHub is down or busy (5xx, 429), so it is tried
+    /// again later; refused otherwise.
+    pub(crate) fn answered(status: u16) -> Self {
+        let message = format!("GitHub answered {status}");
+        if is_down(status) { Self::network(message) } else { Self::refused(message) }
+    }
+
+    /// [`Self::answered`] if `status` says GitHub is down or busy; any other
+    /// answer is the caller's to read.
+    pub(crate) fn unless_down(status: u16) -> Result<(), Self> {
+        if is_down(status) { Err(Self::answered(status)) } else { Ok(()) }
+    }
+}
+
+fn is_down(status: u16) -> bool {
+    status >= 500 || status == 429
 }
 
 impl From<GitHubError> for crate::sync::SyncError {
     fn from(error: GitHubError) -> Self {
         match error {
             GitHubError::Fault { fault } => fault.into(),
-            other @ (GitHubError::Vault { .. } | GitHubError::DeviceFlowDisabled | GitHubError::NotListed { .. }) => {
+            other @ (GitHubError::Vault { .. }
+            | GitHubError::DeviceFlowDisabled
+            | GitHubError::NotListed { .. }
+            | GitHubError::OutOfTime) => {
                 Fault::local(other).into()
             }
         }

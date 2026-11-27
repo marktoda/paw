@@ -47,15 +47,6 @@ impl From<RemoteFailure> for Fault {
     }
 }
 
-impl crate::remote::AboutRemote for Fault {
-    fn remote_failure(&self) -> Option<&RemoteFailure> {
-        match self {
-            Self::Remote { failure } => Some(failure),
-            _ => None,
-        }
-    }
-}
-
 /// Makes `$error` a workflow error: it has a `Fault { fault }` case, and a
 /// [`Fault`], a [`PawError`] or a [`RemoteFailure`] turns into it through
 /// that case.
@@ -76,15 +67,6 @@ macro_rules! workflow_error {
         impl From<$crate::remote::RemoteFailure> for $error {
             fn from(failure: $crate::remote::RemoteFailure) -> Self {
                 $crate::fault::Fault::from(failure).into()
-            }
-        }
-
-        impl $crate::remote::AboutRemote for $error {
-            fn remote_failure(&self) -> Option<&$crate::remote::RemoteFailure> {
-                match self {
-                    Self::Fault { fault } => $crate::remote::AboutRemote::remote_failure(fault),
-                    _ => None,
-                }
             }
         }
     };

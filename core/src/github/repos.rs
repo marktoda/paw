@@ -88,8 +88,7 @@ pub(crate) fn api_status(status: u16) -> Result<(), GitHubError> {
     match status {
         200 => Ok(()),
         401 => Err(RemoteFailure::Unauthorised.into()),
-        500.. => Err(GitHubError::network(format!("GitHub answered {status}"))),
-        other => Err(GitHubError::refused(format!("GitHub answered {other}"))),
+        other => Err(GitHubError::answered(other)),
     }
 }
 

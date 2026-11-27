@@ -31,6 +31,7 @@ pub mod lock;
 pub mod otp;
 pub mod open;
 pub mod github;
+mod git_transport;
 pub mod write;
 
 uniffi::setup_scaffolding!();

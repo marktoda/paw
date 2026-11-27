@@ -15,7 +15,8 @@ use super::refresh::GitHubLink;
 use super::repos::{self, GitHubRepository, RepositoryList};
 use super::session::{TokenKeeper, TokenVault, WallClock, system_wall_clock};
 use super::{Endpoints, GitHubError, Secret};
-use crate::remote::{AboutRemote, RemoteFailure};
+use crate::fault::Fault;
+use crate::remote::RemoteFailure;
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SignOutReport {
@@ -91,14 +92,14 @@ impl GitHubAccount {
 
     /// Runs `call` with an access token; if GitHub refuses it
     /// ([`RemoteFailure::Unauthorised`]), once more with a refreshed one.
-    pub(crate) fn with_token<T, E: From<GitHubError> + AboutRemote>(
+    pub(crate) fn with_token<T>(
         &self,
         http: &Http,
-        mut call: impl FnMut(Secret) -> Result<T, E>,
-    ) -> Result<T, E> {
+        mut call: impl FnMut(Secret) -> Result<T, GitHubError>,
+    ) -> Result<T, GitHubError> {
         let token = self.keeper.access_token(http, None)?;
         match call(token.clone()) {
-            Err(e) if e.is_unauthorised() => {
+            Err(GitHubError::Fault { fault: Fault::Remote { failure: RemoteFailure::Unauthorised } }) => {
                 let token = self.keeper.access_token(http, Some(&token))?;
                 call(token)
             }

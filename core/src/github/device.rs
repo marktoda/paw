@@ -171,9 +171,7 @@ impl DeviceSignIn {
         let client_id = endpoints.client_id().to_owned();
         let answer = http.post_form("/login/device/code", &[("client_id", &client_id)])?;
         let started = clock.now();
-        if answer.status >= 500 {
-            return Err(GitHubError::network(format!("GitHub answered {}", answer.status)));
-        }
+        GitHubError::unless_down(answer.status)?;
         let mut parsed: CodeAnswer =
             serde_json::from_slice(&answer.body).map_err(|_| refused("GitHub's sign-in answer was not readable"))?;
         match parsed.error.as_deref() {
@@ -269,9 +267,7 @@ impl DeviceSignIn {
                 ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ],
         )?;
-        if answer.status >= 500 {
-            return Err(GitHubError::network(format!("GitHub answered {}", answer.status)));
-        }
+        GitHubError::unless_down(answer.status)?;
         let parsed = parse_token_answer(&answer.body)?;
         let state = match parsed.error.as_deref() {
             Some("authorization_pending") => SignInState::Waiting,

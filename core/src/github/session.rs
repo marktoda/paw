@@ -133,8 +133,13 @@ impl Tokens {
                 _ => {}
             }
         }
-        let refresh_ok = tokens.refresh.as_ref().is_none_or(Secret::well_formed);
-        (tokens.access.well_formed() && refresh_ok).then_some(tokens)
+        tokens.usable()
+    }
+
+    /// `self` if both tokens are well formed: nothing else is kept or sent.
+    fn usable(self) -> Option<Self> {
+        let refresh_ok = self.refresh.as_ref().is_none_or(Secret::well_formed);
+        (self.access.well_formed() && refresh_ok).then_some(self)
     }
 
     pub(crate) fn from_answer(mut answer: TokenAnswer, now: u64) -> Option<Self> {
@@ -146,8 +151,7 @@ impl Tokens {
             refresh,
             refresh_expires_at: answer.refresh_token_expires_in.map(|s| now.saturating_add(s)),
         };
-        let refresh_ok = tokens.refresh.as_ref().is_none_or(Secret::well_formed);
-        (tokens.access.well_formed() && refresh_ok).then_some(tokens)
+        tokens.usable()
     }
 }
 
@@ -302,9 +306,7 @@ impl TokenKeeper {
                 ("refresh_token", refresh.expose()),
             ],
         )?;
-        if answer.status >= 500 || answer.status == 429 {
-            return Err(GitHubError::network(format!("GitHub answered {}", answer.status)));
-        }
+        GitHubError::unless_down(answer.status)?;
         let parsed = parse_token_answer(&answer.body)?;
         match parsed.error.as_deref() {
             None if answer.status < 400 => {}

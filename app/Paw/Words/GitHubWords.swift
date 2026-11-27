@@ -12,6 +12,8 @@ enum GitHubWords {
             return "GitHub sign-in is turned off for paw. Type the address instead."
         case .Vault:
             return Device.words("paw couldn't keep the sign-in on this iPhone. Try again.")
+        case .OutOfTime:
+            return "GitHub took too long. Try again."
         case .NotListed(let fullName):
             return "GitHub didn't allow it: \(fullName) is not in the list; list the repositories again. Try again."
         case .Fault(.storeBusy):
