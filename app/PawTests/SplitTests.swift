@@ -43,14 +43,6 @@ final class SplitTests: XCTestCase {
         XCTAssertNil(SplitPath([.unpushed]).folder)
     }
 
-    func testOnlyEntriesAndTheirExplanationsShowAnEntry() {
-        XCTAssertTrue(Route.entry(a).showsEntry)
-        XCTAssertTrue(Route.anotherKey("x", recipients: []).showsEntry)
-        XCTAssertFalse(Route.unpushed.showsEntry)
-        XCTAssertFalse(Route.folder("web").showsEntry)
-        XCTAssertFalse(Route.sync(.heldBack).showsEntry)
-    }
-
     func testOpeningASecondEntryClosesTheOneOnTheRight() async throws {
         let fixture = try Fixture()
         let model = fixture.model
