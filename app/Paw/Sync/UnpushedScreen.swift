@@ -143,17 +143,11 @@ struct UnpushedScreen: View {
     /// "14:02" today, "yesterday", "Mon" this week, else "3 Nov".
     static func when(_ seconds: Int64, now: Date = Date()) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(seconds))
-        let calendar = Calendar.current
-        if calendar.isDateInToday(date) {
-            return date.formatted(date: .omitted, time: .shortened)
-        }
-        if calendar.isDateInYesterday(date) {
+        let day = pastDay(date, now: now)
+        if !day.today, Calendar.current.isDateInYesterday(date) {
             return "yesterday"
         }
-        if let days = calendar.dateComponents([.day], from: date, to: now).day, days < 7 {
-            return date.formatted(.dateTime.weekday(.abbreviated))
-        }
-        return date.formatted(.dateTime.day().month(.abbreviated))
+        return day.words
     }
 }
 

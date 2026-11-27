@@ -5,6 +5,15 @@ func counted(_ count: Int, _ one: String, _ many: String) -> String {
     count == 1 ? "1 \(one)" : "\(count) \(many)"
 }
 
+/// Lists of names say this many, then count the rest.
+let namedAtMost = 5
+
+/// "and 3 more", for those past the first `namedAtMost` of `count`; `nil`
+/// when every one is named.
+func andMore(_ count: Int) -> String? {
+    count > namedAtMost ? "and \(count - namedAtMost) more" : nil
+}
+
 /// "1 change", "3 changes".
 func changeCount(_ count: Int) -> String {
     counted(count, "change", "changes")

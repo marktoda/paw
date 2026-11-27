@@ -145,7 +145,7 @@ struct RecipientsReviewScreen: View {
     var body: some View {
         List {
             Section {
-                Text("The keys that can open \(place) changed. Passwords you save here will be encrypted for the new list.")
+                Text("The keys that can open \(recipientsPlace(folder)) changed. Passwords you save here will be encrypted for the new list.")
                     .font(PawFont.subheadline)
                     .foregroundStyle(PawColor.label)
                     .fixedSize(horizontal: false, vertical: true)
@@ -200,15 +200,11 @@ struct RecipientsReviewScreen: View {
             }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle("Who can open \(folder.isEmpty ? "your store" : folder)")
+        .navigationTitle("Who can open \(recipientsPlace(folder))")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             recipients = Result { try edits.writer.folderRecipients(folder: folder) }
         }
-    }
-
-    private var place: String {
-        folder.isEmpty ? "your store" : folder
     }
 
     private func lineRow(_ title: String, detail: String) -> some View {

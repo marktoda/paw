@@ -16,10 +16,22 @@ extension WriteError: WordedError {
     }
 }
 
+/// A folder in a sentence about who can open it: "work", or "your store"
+/// for the top, whose list of keys is the whole store's.
+func recipientsPlace(_ folder: String) -> String {
+    folder.isEmpty ? "your store" : folder
+}
+
+/// A folder in a sentence about saving in it: "work", or "the top of
+/// your store".
+func savingPlace(_ folder: String) -> String {
+    folder.isEmpty ? "the top of your store" : folder
+}
+
 /// "Who can open work changed": a folder's list of keys is not the one
 /// accepted on this iPhone.
 func whoCanOpenChanged(_ folder: String) -> String {
-    "Who can open \(folder.isEmpty ? "your store" : folder) changed"
+    "Who can open \(recipientsPlace(folder)) changed"
 }
 
 extension FolderProblem {
@@ -29,7 +41,7 @@ extension FolderProblem {
         case .missingKeys(let missing):
             let count = missing == 1 ? "a key" : "\(missing) keys"
             return EditProblem(
-                problem: "Can't save in \(folder.isEmpty ? "the top of your store" : folder)",
+                problem: "Can't save in \(savingPlace(folder))",
                 nextStep: "It's also encrypted for \(count) paw doesn't have. Pick another folder.")
         case .changed:
             return EditProblem(

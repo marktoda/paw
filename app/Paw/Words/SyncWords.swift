@@ -106,7 +106,7 @@ extension SyncFailure {
             pill = "Offline"
         case .hostKeyChanged(let host, let expected, let presented, _):
             self.kind = .hostKeyChanged
-            problem = "\(host)'s identity changed"
+            problem = hostIdentityChanged(host)
             nextStep = "Sync is stopped and nothing was sent. If the server's admin confirms the change, "
                 + "remove the store in Settings and set it up again."
             details = ["Expected \(expected.joined(separator: " or "))", "It presented \(presented)"]
@@ -247,14 +247,21 @@ func syncAgo(_ date: Date, now: Date = Date()) -> String {
     let seconds = now.timeIntervalSince(date)
     if seconds < 60 { return "just now" }
     if seconds < 3_600 { return "\(Int(seconds / 60)) min ago" }
+    let day = pastDay(date, now: now)
+    return day.today ? "at \(day.words)" : "on \(day.words)"
+}
+
+/// "14:02" today, "Mon" within a week, else "3 Nov": the scale the sync
+/// status and the unsent list share.
+func pastDay(_ date: Date, now: Date) -> (today: Bool, words: String) {
     let calendar = Calendar.current
     if calendar.isDate(date, inSameDayAs: now) {
-        return "at \(date.formatted(date: .omitted, time: .shortened))"
+        return (true, date.formatted(date: .omitted, time: .shortened))
     }
     if let days = calendar.dateComponents([.day], from: date, to: now).day, days < 7 {
-        return "on \(date.formatted(.dateTime.weekday(.abbreviated)))"
+        return (false, date.formatted(.dateTime.weekday(.abbreviated)))
     }
-    return "on \(date.formatted(.dateTime.day().month(.abbreviated)))"
+    return (false, date.formatted(.dateTime.day().month(.abbreviated)))
 }
 
 /// A queue or host-key change that failed, in one sentence. The core
@@ -333,13 +340,12 @@ enum SyncWords {
 
     /// The pill while the remote needs looking at first.
     static let paused = "Sync paused \u{00B7} Review"
-}
 
-/// A key an entry is encrypted for, as its file names it.
-func recipientWords(_ recipient: Recipient) -> String {
-    switch recipient {
-    case .keyId(let id): "key ID \(id)"
-    case .fingerprint(let fingerprint): "key \(fingerprint)"
-    case .hidden: "a hidden recipient"
+    /// Why changes are held back, under how many there are.
+    static let heldBackReason = "Who can open the folder changed after you saved."
+
+    /// The git remote's history was replaced.
+    static func replaced(host: String) -> String {
+        "The store on \(host) was replaced"
     }
 }

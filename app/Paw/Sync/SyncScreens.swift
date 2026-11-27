@@ -106,11 +106,10 @@ struct HeldBackScreen: View {
     private func section(_ item: HeldBack) -> some View {
         let entry = EntryRef(path: item.entry)
         let folder = item.gpgId.map { gpgIdFolder(path: $0) } ?? ""
-        let place = folder.isEmpty ? "your store" : folder
         return Section {
             detailRow(
                 "Encrypted for",
-                item.encryptedFor.isEmpty ? "Keys paw can't name" : item.encryptedFor.map(recipientWords).joined(separator: "\n"),
+                item.encryptedFor.isEmpty ? "Keys paw can't name" : item.encryptedFor.map(\.written).joined(separator: "\n"),
                 prose: item.encryptedFor.isEmpty,
                 identifier: "held-back-encrypted-for-\(entry.name)")
             let listUnread = item.list == .unreadable || item.recipients.isEmpty
@@ -124,7 +123,7 @@ struct HeldBackScreen: View {
                 identifier: "held-back-should-be-for-\(entry.name)")
             // A list that can't be read has nothing to review.
             if item.list == .notAccepted, item.gpgId != nil {
-                actionButton("Review who can open \(place)", identifier: "held-back-review-\(entry.name)") {
+                actionButton("Review who can open \(recipientsPlace(folder))", identifier: "held-back-review-\(entry.name)") {
                     model.show(.sync(.review(folder: folder)))
                 }
             }
@@ -224,7 +223,7 @@ struct RefusedRemoteScreen: View {
                                 .font(PawFont.body.monospaced())
                                 .foregroundStyle(PawColor.label)
                                 .textSelection(.enabled)
-                            Text(refusedWords(refused).capitalizedFirst)
+                            Text(capitalised(refusedWords(refused)))
                                 .font(PawFont.footnote)
                                 .foregroundStyle(PawColor.labelSecondary)
                         }
@@ -278,26 +277,21 @@ struct ReplacedScreen: View {
         List {
             Section {
                 SyncIntro(
-                    headline: "The store on \(syncing.host) was replaced",
+                    headline: SyncWords.replaced(host: syncing.host),
                     text: Device.words("Its history no longer matches this iPhone's. ")
                         + "Not expected? Ask whoever looks after the store first.",
                     identifier: "replaced-intro")
             }
             if syncing.unpushed > 0 {
                 Section {
-                    ForEach(syncing.queue.unpushed.prefix(5), id: \.id) { item in
+                    ForEach(syncing.queue.unpushed.prefix(namedAtMost), id: \.id) { item in
                         Text(UnpushedScreen.title(item))
                             .font(PawFont.body)
                             .foregroundStyle(PawColor.label)
                             .frame(minHeight: PawMetrics.rowOneLine, alignment: .leading)
                             .pawListRow()
                     }
-                    if syncing.unpushed > 5 {
-                        Text("and \(syncing.unpushed - 5) more")
-                            .font(PawFont.footnote)
-                            .foregroundStyle(PawColor.labelSecondary)
-                            .pawListRow()
-                    }
+                    AndMoreRow(count: syncing.unpushed)
                 } header: {
                     PawSectionHeader("Your \(changes) not sent yet")
                         .accessibilityIdentifier("replaced-unpushed")
