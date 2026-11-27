@@ -26,11 +26,8 @@ enum EnclaveProbe {
             return "fail: \(EnclaveFailure.from(error, while: "making a Secure Enclave key").detail)"
         }
         guard let publicKey = SecKeyCopyPublicKey(key) else { return "fail: no public key" }
-        var bytes = [UInt8](repeating: 0, count: 32)
+        var bytes = randomBytes()
         defer { wipe(&bytes) }
-        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
-            return "fail: no random bytes"
-        }
         do {
             let sealed = try EnclaveKeystore.encrypt(Data(bytes), to: publicKey)
             guard let opened = SecKeyCreateDecryptedData(key, EnclaveKeystore.algorithm, sealed as CFData, &error) as Data? else {
@@ -42,6 +39,16 @@ enum EnclaveProbe {
         } catch {
             return "fail"
         }
+    }
+
+    /// 32 bytes to seal.
+    static func randomBytes() -> [UInt8] {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        if SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) != errSecSuccess {
+            // Still a check of the plumbing; the value is thrown away.
+            bytes = (0..<32).map { _ in UInt8.random(in: 0...255) }
+        }
+        return bytes
     }
 }
 #endif

@@ -140,7 +140,7 @@ struct EnclaveCheckView: View {
         add("probe", "Secure Enclave round trip (no Face ID): \(EnclaveProbe.roundTrip())")
         add("create", "Seal key: " + outcome { "pass (\(try keystore.prepare()))" })
 
-        var secret = randomBytes()
+        var secret = EnclaveProbe.randomBytes()
         add("seal", "Seal 32 bytes: " + outcome {
             let sealed = try keystore.sealDetailed(Data(secret))
             return "pass (\(sealed.count) bytes)"
@@ -212,7 +212,7 @@ struct EnclaveCheckView: View {
             var digest = digestBefore
 
             if !again {
-                var secret = randomBytes()
+                var secret = EnclaveProbe.randomBytes()
                 digest = Data(SHA256.hash(data: secret))
                 add("seal", "1. Seal a random value: " + outcome {
                     sealed = try keystore.sealDetailed(Data(secret))
@@ -266,14 +266,5 @@ private func coreName(_ error: KeystoreError) -> String {
     case .KeyGone: return "KeyGone"
     case .Failed: return "Failed"
     }
-}
-
-private func randomBytes() -> [UInt8] {
-    var bytes = [UInt8](repeating: 0, count: 32)
-    if SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) != errSecSuccess {
-        // Still a check of the plumbing; the value is thrown away.
-        bytes = (0..<32).map { _ in UInt8.random(in: 0...255) }
-    }
-    return bytes
 }
 #endif

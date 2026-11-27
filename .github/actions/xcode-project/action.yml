@@ -7,6 +7,8 @@ runs:
       env:
         HOMEBREW_NO_AUTO_UPDATE: "1"
         HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      # Homebrew's download fails on a runner now and then: once more after
+      # a pause rather than fail the build.
       run: |
         brew install xcodegen || { sleep 30; brew install xcodegen; }
         scripts/make-xcframework.sh

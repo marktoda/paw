@@ -59,8 +59,6 @@ enum LaunchArgument: String, CaseIterable, DebugLaunchArgument {
     case simRemote = "pawSimRemote"
     /// Word: what another computer does to the simulated git host (`SimRemoteChange`).
     case simRemoteChange = "pawSimRemoteChange"
-    /// Flag: the simulated git host refuses pushes.
-    case simRemoteRefusePushes = "pawSimRemoteRefusePushes"
     /// Flag: the simulated git host cuts the next connection off half way.
     case simRemoteDrop = "pawSimRemoteDrop"
     /// Word: the simulated GitHub, and how it behaves (`SimGitHubMode`).

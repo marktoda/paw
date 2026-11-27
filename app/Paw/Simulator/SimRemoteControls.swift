@@ -9,7 +9,6 @@ import SwiftUI
 /// - `add`: a new entry, `web/forum.example`;
 /// - `edit`: `web/news.ycombinator.com` changes;
 /// - `conflict`: `web/example.com` changes (edit it here too for "kept both");
-/// - `gpgid`: `work/` gets its own `.gpg-id` (the same key);
 /// - `secondKey`: `work/` gets its own `.gpg-id` naming the key and a
 ///   second simulated key whose public half paw is given first, so a
 ///   change saved in `work` before it is held back and can be re-encrypted;
@@ -19,10 +18,9 @@ import SwiftUI
 ///   prepares: the store is set up one commit past the fixture, so a fresh
 ///   fixture history no longer contains what paw saw. Apply it by hand;
 /// - `changedHostKey`: the host presents another host key from now on.
-/// `-pawSimRemoteRefusePushes 1` refuses every branch update, and
 /// `-pawSimRemoteDrop 1` cuts the next connection off half way.
 enum SimRemoteChange: String, CaseIterable, Identifiable {
-    case add, edit, conflict, gpgid, link, rewrite, secondKey, changedHostKey
+    case add, edit, conflict, link, rewrite, secondKey, changedHostKey
 
     var id: String { rawValue }
 
@@ -35,7 +33,6 @@ enum SimRemoteChange: String, CaseIterable, Identifiable {
         case .add: "Add web/forum.example"
         case .edit: "Change web/news.ycombinator.com"
         case .conflict: "Change web/example.com"
-        case .gpgid: "Give work/ its own .gpg-id"
         case .link: "Add a name paw won't check out"
         case .rewrite: "Replace the history"
         case .secondKey: "Give work/ a second key"
@@ -57,7 +54,7 @@ final class SimRemoteHandle: @unchecked Sendable {
     private var repoDir: String?
     private var rewrites = 0
     private var launchChangeApplied = false
-    private var refusesPushes = LaunchArgument.simRemoteRefusePushes.bool
+    private var refusesPushes = false
     /// The host cuts connections off half way now, until a task fails.
     private var dropping = false
 
@@ -150,12 +147,6 @@ final class SimRemoteHandle: @unchecked Sendable {
             try commitCopy(of: "travel/airline", as: "web/example.com",
                            message: "Edit password for web/example.com using editor.")
             return "Changed web/example.com."
-        case .gpgid:
-            guard let host, let key = lock.withLock({ self.key }) else { return "No simulated host." }
-            _ = try host.commitFile(
-                path: "work/.gpg-id", contents: Data((key.fingerprintHex() + "\n").utf8),
-                message: "Give work its own list of keys.")
-            return "work/ has its own .gpg-id."
         case .link:
             try commitCopy(of: "travel/airline", as: "Web/github.com", message: "Add given password for Web/github.com to store.")
             return "Added Web/github.com beside web/."
@@ -180,17 +171,11 @@ final class SimRemoteHandle: @unchecked Sendable {
         }
     }
 
+    /// The host refuses every branch update until told otherwise, a
+    /// replaced history's host too.
     func setRefusesPushes(_ refuse: Bool) {
         lock.withLock { refusesPushes = refuse }
         host?.setRefusePushes(refuse: refuse)
-    }
-
-    var refusingPushes: Bool {
-        lock.withLock { refusesPushes }
-    }
-
-    func dropNextConnection() {
-        setDropping(true)
     }
 
     /// A download or a sync failed: a dropped connection drops only once.
@@ -305,16 +290,6 @@ final class SimRemotePanel {
             }
         }
     }
-
-    func setRefusesPushes(_ refuse: Bool) {
-        SimRemoteHandle.shared.setRefusesPushes(refuse)
-        status = refuse ? "Refusing pushes." : "Accepting pushes."
-    }
-
-    func dropNextConnection() {
-        SimRemoteHandle.shared.dropNextConnection()
-        status = "The next connection drops half way."
-    }
 }
 
 /// The simulated host follows sync as its screens show it: the launch's
@@ -381,14 +356,6 @@ struct SimRemoteSection: View {
                     .foregroundStyle(PawColor.label)
                     .accessibilityIdentifier("sim-remote-\(change.rawValue)")
             }
-            Button(SimRemoteHandle.shared.refusingPushes ? "Accept pushes again" : "Refuse pushes") {
-                panel.setRefusesPushes(!SimRemoteHandle.shared.refusingPushes)
-            }
-            .foregroundStyle(PawColor.label)
-            .accessibilityIdentifier("sim-remote-refuse-pushes")
-            Button("Drop the next connection") { panel.dropNextConnection() }
-                .foregroundStyle(PawColor.label)
-                .accessibilityIdentifier("sim-remote-drop")
     }
 }
 #endif
