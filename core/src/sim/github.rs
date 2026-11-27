@@ -363,7 +363,6 @@ impl SimGitHub {
         state.access.keys().cloned().chain(state.refresh.iter().cloned()).collect()
     }
 
-    /// Every token issued, live or not.
     pub fn all_tokens(&self) -> Vec<String> {
         locked(&self.shared.state).issued.clone()
     }

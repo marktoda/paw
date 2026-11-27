@@ -115,13 +115,13 @@ fn utf16_ranges(text: &str, ranges: Vec<(usize, usize)>) -> Vec<HighlightRange> 
         .collect()
 }
 
-/// Finds the entries whose path contains every word of `query`, best first.
-/// At most `limit` are returned. An empty query finds nothing.
 /// Where the name starts in `entry`'s path, in characters.
 fn name_origin(entry: &EntryRef) -> usize {
     if entry.folder.is_empty() { 0 } else { entry.folder.chars().count() + 1 }
 }
 
+/// Finds the entries whose path contains every word of `query`, best first.
+/// At most `limit` are returned. An empty query finds nothing.
 pub fn search(entries: &[EntryRef], query: &str, limit: u32) -> Vec<SearchHit> {
     let terms: Vec<Vec<char>> = query
         .split_whitespace()

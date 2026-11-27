@@ -82,8 +82,8 @@ pub struct Deleted {
 }
 
 /// The write side of a store: its checkout and its state directory (where
-/// the pinned keys, the git identity, the site pairings and the one-time
-/// code marks are), and the Face ID copies its writes keep in step.
+/// the pinned keys, the site pairings and the one-time code marks are), and
+/// the Face ID copies its writes keep in step.
 #[derive(Clone)]
 pub struct WriteStore {
     store: StoreDirs,
@@ -210,8 +210,6 @@ impl WriteStore {
         super::scopes::recipient_scopes(&reading, &self.keyring()?)
     }
 
-    /// After "Who can open … changed": accepts the folder's current
-    /// `.gpg-id`.
     pub fn accept_recipients(&self, folder: &str) -> Result<(), WriteError> {
         // Each keyring change reads, changes and writes the whole file: one
         // critical section, or two changes at once would lose one.

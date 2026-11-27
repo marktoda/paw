@@ -219,8 +219,6 @@ impl KeyPort {
             purpose,
             listener,
             expected,
-            // The file can be read, the key has a decryption key, and the
-            // entry is for it.
             move |session| {
                 let ciphertext = store.read_entry(&read).map_err(entry_unreadable)?;
                 let key = session.decryption_key()?;

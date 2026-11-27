@@ -665,7 +665,6 @@ async fn send(out: &mut (impl AsyncWrite + Unpin), bytes: &[u8]) -> Result<(), S
     out.flush().await.map_err(|e| e.to_string())
 }
 
-/// The branches as (commit, name), and the branch `HEAD` names.
 pub(crate) type Branches = (Vec<(Oid, String)>, Option<String>);
 
 /// The branches, as (commit, name), sorted by name; and where `HEAD` points

@@ -104,7 +104,6 @@ pub(crate) fn note_lines(notes: &str) -> Option<Vec<&str>> {
     (!lines.iter().any(|line| line.contains('\r'))).then_some(lines)
 }
 
-/// `lines` without blank lines at either end.
 fn trim_blank<'a, 'b>(lines: &'b [&'a str]) -> &'b [&'a str] {
     let blank = |line: &&str| line.trim().is_empty();
     let start = lines.iter().position(|line| !blank(line)).unwrap_or(lines.len());
@@ -367,7 +366,6 @@ impl EntryDoc {
         }
     }
 
-    /// Adds `text` as a new last line.
     fn push_line(&mut self, text: String) {
         let ending = self.usual_ending();
         self.end_last_line(ending);

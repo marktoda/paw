@@ -1,7 +1,8 @@
 //! Adding, editing, deleting, renaming and moving entries.
 //!
 //! Every change is one local commit of one entry, worded the way `pass`
-//! words it, made through [`crate::sync`]'s safe commit path. None of it
+//! words it, made by one commit path (`commit::commit_edits`) that moves the
+//! branch through [`crate::sync`]'s history. None of it
 //! needs the key, the PIN or the network: encrypting needs only public
 //! keys, pinned on this device ([`keyring`]). The commits are exactly what
 //! the "not yet pushed" queue lists and what integrate replays.

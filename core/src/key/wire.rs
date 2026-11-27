@@ -133,7 +133,6 @@ impl CardConnection for Wire {
                 }
             }
         };
-        // After the answer and outside the record's lock.
         if let Some(header) = header {
             self.log.command(header, has_data, sw, round_trip, sent);
         }

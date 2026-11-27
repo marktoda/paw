@@ -8,7 +8,6 @@
 
 use std::fmt;
 
-/// See the module documentation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Fingerprint(String);
 

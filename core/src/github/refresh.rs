@@ -62,7 +62,6 @@ impl GitHubLink {
     pub(crate) fn save(&self, store: &StoreDirs, _held: &Exclusive) -> Result<(), Fault> {
         let failed = |e: std::io::Error| Fault::local(format!("could not save the chosen repository: {e}"));
         let (full_name, ssh) = (self.full_name.replace(['\n', '\r'], ""), self.ssh_address.replace(['\n', '\r'], ""));
-        // Files written before kept an `id` line too; it is not read.
         let pairs = [("repository", full_name.as_str()), ("ssh", ssh.as_str())];
         values::write(&store.state_dir().join(layout::GITHUB_LINK), pairs).map_err(failed)
     }

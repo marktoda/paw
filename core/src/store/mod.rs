@@ -128,7 +128,6 @@ impl PassStore {
         }
     }
 
-    /// Every entry, sorted by path.
     pub fn entries(&self) -> &[EntryRef] {
         self.tree.entries()
     }

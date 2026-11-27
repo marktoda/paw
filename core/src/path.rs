@@ -7,7 +7,7 @@
 //!
 //! Names come from the user or from the repository, and the repository is
 //! not trusted: it was cloned from a host that may be hostile. Reading
-//! ([`crate::store`]) and writing ([`crate::sync`]) share [`unsafe_path`],
+//! ([`crate::store`]) and writing ([`crate::write`]) share [`unsafe_path`],
 //! so a name refused by one is refused by the other.
 
 use unicode_normalization::UnicodeNormalization;
@@ -16,7 +16,6 @@ use crate::PawError;
 
 /// The file that lists a folder's recipients.
 pub(crate) const GPG_ID: &str = ".gpg-id";
-/// What an entry's file name ends with.
 pub(crate) const ENTRY_EXTENSION: &str = ".gpg";
 
 /// `(folder, name)` of a path; the folder is empty at the top.

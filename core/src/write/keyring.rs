@@ -58,7 +58,6 @@ const HEADER: &str = "# paw pinned recipients, version 1";
 /// A public key paw may encrypt to: the card's decryption key.
 #[derive(Clone)]
 pub struct PinnedKey {
-    /// The fingerprint of the key itself.
     pub fingerprint: Fingerprint,
     pub key: PublicKey,
 }

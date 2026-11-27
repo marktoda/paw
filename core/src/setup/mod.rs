@@ -333,8 +333,7 @@ fn notice_line(notice: &AddressNotice) -> String {
     }
 }
 
-/// [`notice_line`] read back. A notice an earlier version saved in words
-/// reads as none.
+/// [`notice_line`] read back.
 fn notice_from(line: &str) -> Option<AddressNotice> {
     let fields: Vec<&str> = line.split(' ').collect();
     let text = |value: &str| value.to_owned();
@@ -707,8 +706,6 @@ impl SetupFlow {
         let held = self.exclusive()?;
         let mut keyring = Keyring::open(store).map_err(write_failed)?;
         let fingerprint = keyring.pin_card_key(&held, card_key).map_err(write_failed)?;
-        // Only the `.gpg-id` that governs the entry just opened, and only if
-        // that entry names the card's key, says which line is the card's.
         let ciphertext = crate::store::read::read_entry(store.repo_dir(), &entry).map_err(SetupError::from)?;
         keyring.bind_card_for_opened_entry(&held, &fingerprint, &entry, &ciphertext).map_err(write_failed)?;
         keyring.accept_all_recipients_at_setup(&held).map_err(write_failed)?;
@@ -798,16 +795,16 @@ impl Setup {
 
     /// "Your key", from the plugged-in key's session: what the session read
     /// when the key was plugged in. No PIN, no touch, no card exchange. A
-    /// key whose PIN KDF paw does not support is refused here with
-    /// `UnusableKey` (`PinKdfUnsupported`), before any PIN is asked.
+    /// key paw cannot use (an unsupported PIN KDF, no decryption key, no
+    /// Ed25519 authentication key) is refused here with `UnusableKey`,
+    /// before any PIN is asked.
     pub fn read_key_from_session(&self, session: Arc<KeySession>) -> Result<SetupState, SetupError> {
         self.flow().read_key_from(session.card_info(), session.ssh_key(), session.pin_kdf())
     }
 
-    /// "I expected this change", on the changed-host-key screen after it
-    /// has shown both fingerprints: forgets the host's pinned key without
-    /// leaving setup; `check_host` then shows the key it presents now for
-    /// confirmation, as on first use. Refused with
+    /// "I expected this change", on the changed-host-key screen: forgets
+    /// the host's pinned key without leaving setup; `check_host` then shows
+    /// the key it presents now for confirmation. Refused with
     /// `RemoteFailure::HostKeyBundled` for a host whose keys ship with
     /// paw, such as github.com.
     pub fn forget_host_key(&self) -> Result<SetupState, SetupError> {

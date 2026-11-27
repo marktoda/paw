@@ -47,8 +47,7 @@ openpgp-card-rpgp = "0.9.1"
 pgp = "0.21.1"
 psl = "2"
 rand = "0.8"
-# GitHub sign-in (src/github): JSON from GitHub's API. Already in the tree
-# through pgp.
+# GitHub sign-in (src/github): JSON from GitHub's API.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # No RSA, no compression, and ring rather than aws-lc: ring builds with the
