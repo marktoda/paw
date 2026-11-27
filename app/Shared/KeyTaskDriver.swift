@@ -161,6 +161,39 @@ struct KeyJob<Step: KeyStepError> {
     var waitsForLetGoTasks = false
 }
 
+/// A `KeyJob` whatever its `Step`, as the driver keeps it. Only its ends
+/// depend on `Step`, so they are read here, for the job's workflow.
+private protocol AnyKeyJob {
+    var begin: (KeyTaskListener) -> KeyTask { get }
+    var words: () -> KeyErrorWords.Context { get }
+    var working: (TaskProgress?) -> (message: String, progress: String?) { get }
+    var afterEnd: () -> Void { get }
+    var hold: () -> KeyTaskHold? { get }
+    var starting: () -> Void { get }
+    var stageShown: (KeySheetStage) -> Void { get }
+    var closed: () -> Void { get }
+    var waitsForLetGoTasks: Bool { get }
+    /// The followed task ended in `state`: the stage to show, or `nil` to
+    /// close.
+    func stage(after state: KeyTaskState) -> KeySheetStage?
+    /// A task the sheet let go of ended in `state`.
+    func letGoEnded(_ state: KeyTaskState)
+}
+
+extension KeyJob: AnyKeyJob {
+    fileprivate func stage(after state: KeyTaskState) -> KeySheetStage? {
+        guard let end = KeyTaskEnd<Step>(state) else { return nil }
+        switch ended(end) {
+        case .standard: return end.standardStage(words())
+        case .close: return nil
+        }
+    }
+
+    fileprivate func letGoEnded(_ state: KeyTaskState) {
+        if let end = KeyTaskEnd<Step>(state) { letGo(end) }
+    }
+}
+
 /// Drives the core's key tasks for one key sheet. Whether a key sheet
 /// is up, and what it shows, is said here alone. The PIN typed goes from
 /// `pin` straight to the core and is never kept.
@@ -184,52 +217,13 @@ final class KeyTaskDriver {
 
     private var mapped: KeySheetStage = .busy
     private var followed: UUID?
-    @ObservationIgnored private var job: Workflow?
-    @ObservationIgnored private var purpose: KeyPurpose?
+    @ObservationIgnored private var job: (any AnyKeyJob)?
     @ObservationIgnored private var startWaits = false
     @ObservationIgnored private var tasks: [UUID: Running] = [:]
 
-    /// A `KeyJob` with its end read for its workflow.
-    private struct Workflow {
-        let begin: (KeyTaskListener) -> KeyTask
-        let words: () -> KeyErrorWords.Context
-        let working: (TaskProgress?) -> (message: String, progress: String?)
-        /// The stage to show, or `nil` to close.
-        let ended: (KeyTaskState) -> KeySheetStage?
-        let letGo: (KeyTaskState) -> Void
-        let afterEnd: () -> Void
-        let hold: () -> KeyTaskHold?
-        let starting: () -> Void
-        let stageShown: (KeySheetStage) -> Void
-        let closed: () -> Void
-        let waitsForLetGoTasks: Bool
-
-        init<Step>(_ job: KeyJob<Step>) {
-            begin = job.begin
-            words = job.words
-            working = job.working
-            ended = { state in
-                guard let end = KeyTaskEnd<Step>(state) else { return nil }
-                switch job.ended(end) {
-                case .standard: return end.standardStage(job.words())
-                case .close: return nil
-                }
-            }
-            letGo = { state in
-                if let end = KeyTaskEnd<Step>(state) { job.letGo(end) }
-            }
-            afterEnd = job.afterEnd
-            hold = job.hold
-            starting = job.starting
-            stageShown = job.stageShown
-            closed = job.closed
-            waitsForLetGoTasks = job.waitsForLetGoTasks
-        }
-    }
-
     private struct Running {
         let task: KeyTask
-        let job: Workflow
+        let job: any AnyKeyJob
         let hold: KeyTaskHold?
     }
 
@@ -241,12 +235,23 @@ final class KeyTaskDriver {
         shown != nil
     }
 
+    /// What the sheet shows. A key that could not be read shows as the
+    /// failed stage, with Try again, while its task still waits at Plug in.
     var stage: KeySheetStage {
-        if case .plugIn = mapped, let problem = reader?.problem, let job {
-            let words = KeyErrorWords(problem, table: job.words().table)
-            return .failed(problem: words.problem, nextStep: words.nextStep)
-        }
-        return mapped
+        guard let problem = readProblem, let job else { return mapped }
+        let words = KeyErrorWords(problem, table: job.words().table)
+        return .failed(problem: words.problem, nextStep: words.nextStep)
+    }
+
+    /// The followed task waits at Plug in and the key there could not be
+    /// read: Try again reads it again rather than starting a new task.
+    var readFailed: Bool {
+        followed != nil && readProblem != nil
+    }
+
+    private var readProblem: KeyReadProblem? {
+        guard case .plugIn = mapped else { return nil }
+        return reader?.problem
     }
 
     var isFollowing: Bool {
@@ -254,9 +259,7 @@ final class KeyTaskDriver {
     }
 
     /// What the followed task is for, or the last one's once it ended.
-    var taskPurpose: KeyPurpose? {
-        purpose
-    }
+    @ObservationIgnored private(set) var taskPurpose: KeyPurpose?
 
     /// Puts the sheet up for `job`'s task. A task the sheet followed until
     /// now is let go of.
@@ -268,10 +271,9 @@ final class KeyTaskDriver {
         #endif
         letGoOfFollowed()
         shown = UUID()
-        let workflow = Workflow(adapted)
-        self.job = workflow
+        self.job = adapted
         show(.busy)
-        launchOrWait(workflow)
+        launchOrWait(adapted)
         // A reader is there but its key was never read (or the read
         // failed): try again now rather than wait for a replug.
         reader?.readIfNeeded()
@@ -290,7 +292,7 @@ final class KeyTaskDriver {
     /// new task, which opens at the first stage still needed (Touch if
     /// the PIN is still held).
     func retry() {
-        if let id = followed, case .plugIn? = tasks[id]?.task.state() {
+        if readFailed {
             reader?.retry()
             show(.plugIn)
             return
@@ -320,7 +322,7 @@ final class KeyTaskDriver {
         }
     }
 
-    private func launchOrWait(_ job: Workflow) {
+    private func launchOrWait(_ job: any AnyKeyJob) {
         if job.waitsForLetGoTasks, !tasks.isEmpty {
             startWaits = true
         } else {
@@ -342,7 +344,7 @@ final class KeyTaskDriver {
         let hold = job.hold()
         let task = job.begin(listener)
         tasks[id] = Running(task: task, job: job, hold: hold)
-        purpose = task.purpose()
+        taskPurpose = task.purpose()
         followed = id
         // A task can start past Plug in; listeners hear only changes.
         changed(id)
@@ -387,7 +389,7 @@ final class KeyTaskDriver {
         followed = nil
         running.hold?.end()
         let run = shown
-        let next = running.job.ended(state)
+        let next = running.job.stage(after: state)
         running.job.afterEnd()
         // The workflow may have closed the sheet, or started again, as it heard the end.
         guard shown == run, run != nil else { return }
@@ -405,7 +407,7 @@ final class KeyTaskDriver {
     private func settle(_ id: UUID, _ running: Running, _ state: KeyTaskState) {
         tasks[id] = nil
         running.hold?.end()
-        running.job.letGo(state)
+        running.job.letGoEnded(state)
         running.job.afterEnd()
         if startWaits, tasks.isEmpty {
             launch()
@@ -429,7 +431,7 @@ final class KeyTaskDriver {
         }
     }
 
-    private func stage(for state: KeyTaskState, _ job: Workflow) -> KeySheetStage {
+    private func stage(for state: KeyTaskState, _ job: any AnyKeyJob) -> KeySheetStage {
         switch state {
         case .plugIn:
             return .plugIn

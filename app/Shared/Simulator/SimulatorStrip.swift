@@ -47,8 +47,7 @@ struct SimulatedKeyControls: ViewModifier {
             return [SimulatorAction(title: "plug in the key", identifier: "simulated-plug-in") {
                 keys.plugIn()
             }]
-        case .failed where driver.isFollowing && driver.reader?.problem != nil:
-            // Failed while still following its task: the read at Plug in.
+        case .failed where driver.readFailed:
             return [SimulatorAction(title: "let the key answer again", identifier: "simulated-key-answers") {
                 keys.stopAttachFailures()
             }]
