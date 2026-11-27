@@ -62,6 +62,18 @@ pub enum KeyTouch {
     Unknown,
 }
 
+impl KeyTouch {
+    /// How the diagnostics and the key log say it.
+    pub(crate) fn words(self) -> &'static str {
+        match self {
+            KeyTouch::Off => "never",
+            KeyTouch::EachUse => "every time",
+            KeyTouch::Cached => "once per 15 seconds",
+            KeyTouch::Unknown => "unknown",
+        }
+    }
+}
+
 /// One of the two key slots paw uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum KeySlot {

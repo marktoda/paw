@@ -17,6 +17,7 @@ use git2::{
 use super::guard;
 use super::{SyncError, git_err};
 use crate::PawError;
+use crate::fault::Fault;
 use crate::path::{ENTRY_EXTENSION, unsafe_path, unsafe_path_err};
 
 /// What one paw commit did, as the queue screen names it.
@@ -395,22 +396,8 @@ fn free_copy_name(tree: &Tree<'_>, pending: &[Edit], path: &str, date: &str) -> 
 /// `YYYY-MM-DD` of a commit time, in the time zone it was made in.
 fn date_of(time: &git2::Time) -> String {
     let seconds = time.seconds() + i64::from(time.offset_minutes()) * 60;
-    let (year, month, day) = civil_from_days(seconds.div_euclid(86_400));
+    let (year, month, day) = crate::clock::civil_from_days(seconds.div_euclid(86_400));
     format!("{year:04}-{month:02}-{day:02}")
-}
-
-/// Days since 1970-01-01 to a calendar date (Howard Hinnant's algorithm).
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    (year, month, day)
 }
 
 /// Refuses to go on if the working copy differs from `HEAD` in any way
@@ -437,7 +424,8 @@ pub(crate) fn ensure_clean(repo: &Repository) -> Result<(), SyncError> {
 /// match, and records `seen` as the remote tip last accepted. `to` is
 /// checked first ([`guard::check_tree`]); if refused, nothing changes. Either all of
 /// that happens, or the branch, the index file and the working copy are put
-/// back exactly as they were. The working copy must be clean.
+/// back exactly as they were; if putting them back fails too, the error
+/// says so. The working copy must be clean.
 pub(crate) fn move_branch(
     held: &crate::lock::Exclusive,
     store: &super::OpenStore,
@@ -455,29 +443,43 @@ pub(crate) fn move_branch(
         let new_tree = repo.find_commit(to).and_then(|c| c.tree()).map_err(git_err)?;
         let index_file = repo.path().join("index");
         let saved_index = std::fs::read(&index_file).ok();
-        let restore = || {
-            put_back_index(&index_file, saved_index.as_deref());
+        // What could not be put back, if anything.
+        let restore = |mut failed: Vec<String>| -> Result<(), String> {
+            let mut index = || {
+                if let Err(e) = put_back_index(&index_file, saved_index.as_deref()) {
+                    failed.push(format!("the index: {e}"));
+                }
+            };
+            index();
             let mut back = guard::checkout();
             back.remove_untracked(true);
-            let _ = repo.checkout_tree(old_tree.as_object(), Some(&mut back));
-            put_back_index(&index_file, saved_index.as_deref());
+            let files = repo.checkout_tree(old_tree.as_object(), Some(&mut back));
+            index();
+            if let Err(e) = files {
+                failed.push(format!("the files: {}", e.message()));
+            }
+            if failed.is_empty() { Ok(()) } else { Err(failed.join(", ")) }
+        };
+        let report = |e: git2::Error, restored: Result<(), String>| -> SyncError {
+            match restored {
+                Ok(()) => git_err(e).into(),
+                Err(left) => Fault::local(format!("{}; putting the store back failed too ({left})", git_err(e))).into(),
+            }
         };
 
         let mut forward = guard::checkout();
         if let Err(e) = repo.checkout_tree(new_tree.as_object(), Some(&mut forward)) {
-            restore();
-            return Err(git_err(e).into());
+            return Err(report(e, restore(Vec::new())));
         }
         if let Err(e) = repo.reference_matching(branch, to, true, from, why) {
-            restore();
-            return Err(git_err(e).into());
+            return Err(report(e, restore(Vec::new())));
         }
         if let Some((name, tip)) = seen
             && let Err(e) = repo.reference(name, tip, true, why)
         {
-            let _ = repo.reference_matching(branch, from, true, to, "undo");
-            restore();
-            return Err(git_err(e).into());
+            let undone = repo.reference_matching(branch, from, true, to, "undo");
+            let branch_left = undone.err().map(|undo| format!("the branch: {}", undo.message()));
+            return Err(report(e, restore(branch_left.into_iter().collect())));
         }
         return Ok(());
     }
@@ -487,9 +489,12 @@ pub(crate) fn move_branch(
     Ok(())
 }
 
-fn put_back_index(path: &Path, saved: Option<&[u8]>) {
-    let _ = match saved {
+fn put_back_index(path: &Path, saved: Option<&[u8]>) -> std::io::Result<()> {
+    match saved {
         Some(bytes) => std::fs::write(path, bytes),
-        None => std::fs::remove_file(path),
-    };
+        None => match std::fs::remove_file(path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            done => done,
+        },
+    }
 }

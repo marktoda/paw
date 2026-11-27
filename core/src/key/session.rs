@@ -195,8 +195,8 @@ impl KeySession {
                 log.line(format!(
                     "session ready: PIN tries left {}, touch decryption {}, authentication {}",
                     info.pin_tries_left,
-                    keylog::touch_words(info.decryption_touch),
-                    keylog::touch_words(info.authentication_touch),
+                    info.decryption_touch.words(),
+                    info.authentication_touch.words(),
                 ));
             }
             Err(error) => log.line(format!("session failed to start: {}", keylog::error_name(error))),

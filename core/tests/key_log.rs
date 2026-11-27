@@ -90,10 +90,10 @@ fn a_pin_and_decipher_run_is_logged_with_no_pin_no_data_and_no_names() {
     println!("{merged}");
     for wanted in [
         "session start",
-        "task open: PIN held no, touch decryption each use, authentication off",
+        "task open: PIN held no, touch decryption every time, authentication never",
         "stage Pin",
         "→ VERIFY 00 82 (with PIN): 9000 ok",
-        "touch watch at once (decryption slot: each use)",
+        "touch watch at once (decryption slot: every time)",
         "→ PSO:DECIPHER: 9000 ok",
         "stage Touch",
         "stage Done",

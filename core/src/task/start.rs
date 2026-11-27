@@ -12,7 +12,6 @@ use super::{KeyOutcome, KeyPurpose, KeyTask, KeyTaskListener, KeyTaskState, Logi
 use crate::PawError;
 use crate::copies::CopyCache;
 use crate::files::content_id;
-use crate::key::keylog::touch_words;
 use crate::key::{FirstStage, Halt, KeyError, KeyIdentity, KeyPort, KeySession, Plan, SessionSigner, TaskSide, authenticate};
 use crate::store::PassStore;
 
@@ -82,8 +81,8 @@ fn enter<T>(
         "{} task {what}: PIN held {}, touch decryption {}, authentication {}{}",
         task.tag(),
         if session.holds_pin_now() { "yes" } else { "no" },
-        touch_words(info.decryption_touch),
-        touch_words(info.authentication_touch),
+        info.decryption_touch.words(),
+        info.authentication_touch.words(),
         if plugged_later { ", key plugged in after it started" } else { "" },
     ));
     task.bind(session);

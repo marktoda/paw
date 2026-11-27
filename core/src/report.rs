@@ -9,7 +9,6 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::key::KeyTouch;
 use crate::copies::CopyCache;
 use crate::github::GitHubAccount;
 use crate::key::KeyPort;
@@ -58,28 +57,9 @@ fn sync_words(summary: LastSyncState) -> &'static str {
     }
 }
 
-fn touch_words(touch: KeyTouch) -> &'static str {
-    match touch {
-        KeyTouch::Off => "never",
-        KeyTouch::EachUse => "every time",
-        KeyTouch::Cached => "once per 15 seconds",
-        KeyTouch::Unknown => "unknown",
-    }
-}
-
 fn utc(secs: i64) -> String {
-    let days = secs.div_euclid(86_400);
+    let (year, month, day) = crate::clock::civil_from_days(secs.div_euclid(86_400));
     let in_day = secs.rem_euclid(86_400);
-    // Howard Hinnant's days-to-civil.
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
     format!("{year:04}-{month:02}-{day:02} {:02}:{:02} UTC", in_day / 3600, in_day / 60 % 60)
 }
 
@@ -167,8 +147,8 @@ pub fn diagnostics_text(
             let ours = if port.key_matches_enrolment() { "yes" } else { "no" };
             out.push(format!("  The store's key: {ours}"));
             out.push(format!("  PIN tries left: {}", info.pin_tries_left));
-            out.push(format!("  Touch to open: {}", touch_words(info.decryption_touch)));
-            out.push(format!("  Touch to sign in: {}", touch_words(info.authentication_touch)));
+            out.push(format!("  Touch to open: {}", info.decryption_touch.words()));
+            out.push(format!("  Touch to sign in: {}", info.authentication_touch.words()));
             let kdf = match (kdf.enabled, kdf.supported) {
                 (false, _) => "off",
                 (true, true) => "on",
