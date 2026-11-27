@@ -148,12 +148,7 @@ impl WriteStore {
     /// The entry moved from `from` to `to`, or with `None` went: its site
     /// pairings and its one-time-code mark follow it.
     fn entry_moved(&self, from: &str, to: Option<&str>, follow_ups: &mut FollowUps) {
-        let pairings = SitePairings::new(self.store.state_dir());
-        let moved = match to {
-            Some(to) => pairings.moved(from, to),
-            None => pairings.clear(Some(from)),
-        };
-        follow_ups.io(FollowUp::SitePairings, moved);
+        follow_ups.io(FollowUp::SitePairings, SitePairings::new(self.store.state_dir()).moved(from, to));
         follow_ups.io(FollowUp::OneTimeCodeMark, OneTimeCodeEntries::new(self.store.state_dir()).moved(from, to));
     }
 

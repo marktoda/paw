@@ -494,13 +494,13 @@ fn moving_an_entry_keeps_its_pairings_and_forgetting_drops_them() {
     let file = SitePairings::new(dir.path());
     file.record("bank/bankofamerica", "bankofamerica.com", None).unwrap();
     file.record("alaskaair", "alaskaair.com", None).unwrap();
-    file.moved("bank/bankofamerica", "finance/bankofamerica").unwrap();
+    file.moved("bank/bankofamerica", Some("finance/bankofamerica")).unwrap();
     assert_eq!(
         file.pairings(),
         vec![pairing("finance/bankofamerica", &["bankofamerica.com"]), pairing("alaskaair", &["alaskaair.com"])]
     );
     // Moving something with no pairings changes nothing.
-    file.moved("nothing", "else").unwrap();
+    file.moved("nothing", Some("else")).unwrap();
     file.clear(Some("alaskaair")).unwrap();
     assert_eq!(file.pairings(), vec![pairing("finance/bankofamerica", &["bankofamerica.com"])]);
 }
@@ -510,7 +510,7 @@ fn a_pairing_moved_to_no_path_is_not_kept() {
     let dir = tempfile::tempdir().unwrap();
     let file = SitePairings::new(dir.path());
     file.record("bank/bankofamerica", "bankofamerica.com", None).unwrap();
-    file.moved("bank/bankofamerica", "").unwrap();
+    file.moved("bank/bankofamerica", Some("")).unwrap();
     assert!(file.pairings().is_empty());
     assert!(!std::fs::read_to_string(file.path()).unwrap().contains("\"entry\":\"\""));
 }

@@ -47,6 +47,10 @@ impl ListItem for Pairing {
         &self.entry
     }
 
+    fn moved_to(self, entry: &str) -> Self {
+        Self { entry: entry.to_owned(), ..self }
+    }
+
     /// Valid sites only, each once, the most recent [`MAX_SITES`]; none
     /// leaves the pairing out.
     fn clean(mut self) -> Option<Self> {
@@ -112,19 +116,10 @@ impl SitePairings {
             .map(|_| ())
     }
 
-    pub fn moved(&self, from: &str, to: &str) -> std::io::Result<()> {
-        if from == to {
-            return Ok(());
-        }
-        self.list
-            .update(|pairings| {
-                let Some(at) = pairings.iter().position(|p| p.entry == from) else { return };
-                let mut moving = pairings.remove(at);
-                pairings.retain(|p| p.entry != to);
-                moving.entry = to.to_owned();
-                pairings.insert(at.min(pairings.len()), moving);
-            })
-            .map(|_| ())
+    /// The entry moved from `from` to `to`, or with `None` went: its
+    /// pairings follow it.
+    pub fn moved(&self, from: &str, to: Option<&str>) -> std::io::Result<()> {
+        self.list.moved(from, to)
     }
 
     /// Forgets one entry's pairings, or with `None` every pairing.
