@@ -203,8 +203,6 @@ impl KeyPort {
             |session| session.decryption_key().map(drop),
             move |task, session| {
                 let key = session.decryption_key()?.clone();
-                // Before `work` shows any progress: a stage other than the
-                // PIN drops a PIN typed at the task's first stage.
                 session.unlocked(task.as_ref(), |_| Ok(()))?;
                 if task.cancelled() {
                     return Err(KeyError::Cancelled.into());
