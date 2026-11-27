@@ -21,14 +21,19 @@
 //! the vault after taking it, so two callers in one process never spend one
 //! refresh token twice.
 //!
-//! Only the app uses the sign-in: the AutoFill extension never reaches
-//! GitHub, and the background refresh runs in the app's own process. A
-//! refresh GitHub refuses as spent re-reads the vault once: a sign-in that
-//! finished meanwhile is kept and used; else the sign-in is over.
+//! **Between processes** (the app and its extension share the vault) no
+//! lock is held: a file lock held across the refresh request would get a
+//! process suspended mid-request killed by iOS. If both send the same
+//! refresh token, GitHub honours one and refuses the other with
+//! `bad_refresh_token`. The refused one then re-reads the vault for up to
+//! [`OTHER_PROCESS_GRACE`]: once the winner has kept its new pair, that
+//! pair is used. Only if the vault still holds the spent token afterwards
+//! is the sign-in over. So the token is still spent once, and the race
+//! costs one refused request, not the sign-in.
 
 use crate::remote::RemoteFailure;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use zeroize::Zeroizing;
@@ -197,6 +202,11 @@ pub fn system_wall_clock() -> WallClock {
 
 static REFRESHING: Mutex<()> = Mutex::new(());
 
+/// How long a refresh GitHub refused as spent waits for another process
+/// that spent the same token to keep its new pair. That process is past
+/// its request (GitHub answered it first) and keeps the pair at once.
+pub const OTHER_PROCESS_GRACE: Duration = Duration::from_secs(1);
+
 /// The sign-in kept in a vault, and the one way to get a usable access
 /// token from it.
 pub(crate) struct TokenKeeper {
@@ -218,18 +228,21 @@ impl TokenKeeper {
         Ok(tokens)
     }
 
-    /// After GitHub refused `spent` as already used: the pair kept
-    /// meanwhile (a sign-in that finished while this refresh was out), if
-    /// any; else the sign-in is over and forgotten.
+    /// After GitHub refused `spent` as already used: the pair another
+    /// process kept meanwhile, if one appears within
+    /// [`OTHER_PROCESS_GRACE`]; else the sign-in is over and forgotten.
     fn after_spent(&self, spent: &Secret) -> Result<Secret, GitHubError> {
-        match self.load()? {
-            None => Err(GitHubError::from(RemoteFailure::SignedOut)),
-            Some(kept) if kept.refresh.as_ref() != Some(spent) => Ok(kept.access),
-            Some(_) => {
-                self.forget()?;
-                Err(GitHubError::from(RemoteFailure::SignedOut))
+        let deadline = std::time::Instant::now() + OTHER_PROCESS_GRACE;
+        loop {
+            match self.load()? {
+                None => return Err(GitHubError::from(RemoteFailure::SignedOut)),
+                Some(kept) if kept.refresh.as_ref() != Some(spent) => return Ok(kept.access),
+                Some(_) if std::time::Instant::now() >= deadline => break,
+                Some(_) => std::thread::sleep(Duration::from_millis(50)),
             }
         }
+        self.forget()?;
+        Err(GitHubError::from(RemoteFailure::SignedOut))
     }
 
     pub(crate) fn now(&self) -> u64 {
@@ -258,7 +271,8 @@ impl TokenKeeper {
     /// A usable access token: the kept one, or, if it ends within five
     /// minutes (or it is `refused`, the one GitHub just refused), a
     /// refreshed one, stored before it is returned. If the kept one is no
-    /// longer the refused one, another caller has refreshed meanwhile, and its new token is used: refreshing again
+    /// longer the refused one, another caller (thread or process) has
+    /// refreshed meanwhile, and its new token is used: refreshing again
     /// would spend the refresh token a second time and end that caller's
     /// fetch.
     pub(crate) fn access_token(&self, http: &Http, refused: Option<&Secret>) -> Result<Secret, GitHubError> {
