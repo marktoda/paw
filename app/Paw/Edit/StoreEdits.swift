@@ -54,6 +54,10 @@ final class StoreEdits {
         self.live = live
         self.copies = copies
         self.requests = requests
+        // Made before this, the queue has read itself again by now.
+        live.changed.subscribe(self) { edits, _ in
+            edits.dropStaleUndoOffer()
+        }
     }
 
     // MARK: The form
@@ -174,23 +178,11 @@ final class StoreEdits {
         }
     }
 
-    // MARK: The unpushed list
-
-    func undoLastChange() {
-        changeQueue { $0.undoLast() }
-    }
-
-    func discardChange(_ id: String) {
-        changeQueue { $0.discard(id) }
-    }
-
-    func discardAllChanges() {
-        changeQueue { $0.discardAll() }
-    }
-
-    private func changeQueue(_ change: (ChangeQueue) -> Bool) {
-        guard let queue else { return }
-        undoOffer = nil
-        _ = change(queue)
+    /// Undo is offered while its change is the newest one waiting: a change
+    /// undone, discarded, sent or made after it ends the offer.
+    private func dropStaleUndoOffer() {
+        if let offer = undoOffer, queue?.unpushed.first?.id != offer.change {
+            undoOffer = nil
+        }
     }
 }

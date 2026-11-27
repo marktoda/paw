@@ -136,7 +136,7 @@ struct HeldBackScreen: View {
                     identifier: "held-back-discard-\(entry.name)",
                     onConfirm: {
                         confirming = nil
-                        model.storeSession.edits?.discardChange(item.id)
+                        syncing.queue.discard(item.id)
                     },
                     onCancel: { confirming = nil })
                     .pawListRow()

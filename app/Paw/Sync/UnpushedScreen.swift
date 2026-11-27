@@ -30,7 +30,6 @@ struct UnpushedScreen: View {
     @State private var confirming: String?
 
     var body: some View {
-        let edits = model.storeSession.edits
         let queue = model.storeSession.syncing?.queue
         let items = queue?.unpushed ?? []
         List {
@@ -51,7 +50,7 @@ struct UnpushedScreen: View {
                 Section {
                     Button("Undo last change") {
                         confirming = nil
-                        edits?.undoLastChange()
+                        queue?.undoLast()
                     }
                     .buttonStyle(.pawSecondary)
                     .accessibilityIdentifier("unpushed-undo-last")
@@ -68,7 +67,7 @@ struct UnpushedScreen: View {
                                 identifier: "unpushed-discard-\(Self.name(item.entry))",
                                 onConfirm: {
                                     confirming = nil
-                                    edits?.discardChange(item.id)
+                                    queue?.discard(item.id)
                                 },
                                 onCancel: { confirming = nil })
                                 .pawListRow()
@@ -88,7 +87,7 @@ struct UnpushedScreen: View {
                             confirmTitle: "Discard all", cancelTitle: "Keep them", identifier: "unpushed-discard-all",
                             onConfirm: {
                                 confirming = nil
-                                edits?.discardAllChanges()
+                                queue?.discardAll()
                             },
                             onCancel: { confirming = nil })
                             .pawListRow()
