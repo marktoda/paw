@@ -83,7 +83,7 @@ fn store_with(files: &[(&str, &[u8])]) -> Store {
     let mut keyring = Keyring::open(&store).unwrap();
     keyring.pin_card_key(&store.exclusive().unwrap(), &card().decryption_key().unwrap()).unwrap();
     keyring.accept_all_recipients_at_setup(&store.exclusive().unwrap()).unwrap();
-    std::fs::write(state.join(paw_core::files::layout::SETUP), format!("{}\n", paw_core::files::layout::SETUP_DONE)).unwrap();
+    std::fs::write(state.join(paw_core::files::layout::SETUP), "step=done\n").unwrap();
     Store { _root: root, state }
 }
 

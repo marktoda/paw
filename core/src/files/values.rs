@@ -20,10 +20,6 @@ impl Values {
     pub fn get(&self, name: &str) -> Option<&str> {
         self.text.lines().find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
     }
-
-    pub fn first_line(&self) -> Option<&str> {
-        self.text.lines().next()
-    }
 }
 
 pub(crate) fn read(path: &Path) -> std::io::Result<Option<Values>> {

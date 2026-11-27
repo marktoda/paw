@@ -62,7 +62,7 @@ fn the_setup_step() {
             }),
         }
     );
-    assert!(!layout::is_set_up(dir.path()));
+    assert!(!crate::setup::is_set_up(dir.path()));
 
     // Setting the same address saves the file again, as it was.
     flow.set_address("ssh://git@example.com/you/store.git").unwrap();
@@ -93,7 +93,7 @@ fn a_finished_setup() {
     put(dir.path(), layout::SETUP, b"step=done\nident=0006:12345678\n");
     std::fs::create_dir_all(layout::repo_dir(dir.path())).unwrap();
     put(&layout::repo_dir(dir.path()), ".gpg-id", b"AAAA1111\n");
-    assert!(layout::is_set_up(dir.path()));
+    assert!(crate::setup::is_set_up(dir.path()));
 }
 
 #[test]

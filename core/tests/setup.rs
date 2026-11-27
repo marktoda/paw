@@ -200,7 +200,7 @@ fn setup_reads_the_key_checks_the_host_downloads_and_opens_one_entry() {
     // Nothing secret is saved.
     let saved = std::fs::read_to_string(rig.dir.path().join(paw_core::files::layout::SETUP)).unwrap();
     assert!(!saved.contains(PIN), "{saved}");
-    assert!(paw_core::files::layout::is_set_up(rig.dir.path()));
+    assert!(paw_core::setup::is_set_up(rig.dir.path()));
     // Sync can find the store.
     assert_eq!(paw_core::sync::address::saved_address(rig.dir.path()).unwrap().display(), address(&server));
 }
@@ -453,7 +453,7 @@ fn a_store_that_went_missing_after_the_download_is_downloaded_again() {
 #[test]
 fn an_unreadable_state_file_starts_setup_over() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join(paw_core::files::layout::SETUP), format!("{}\n", paw_core::files::layout::SETUP_DONE)).unwrap();
+    std::fs::write(dir.path().join(paw_core::files::layout::SETUP), "step=done\n").unwrap();
 
     assert_eq!(relaunch(dir.path()), SetupState::ReadKey);
 }

@@ -95,7 +95,7 @@ fn plain(text: &str) -> String {
 }
 
 fn store_lines(state_dir: Option<&Path>, out: &mut Vec<String>) {
-    let set_up = state_dir.is_some_and(crate::files::layout::is_set_up);
+    let set_up = state_dir.is_some_and(crate::setup::is_set_up);
     out.push(format!("Store: {}", if set_up { "set up" } else { "not set up" }));
     let Some(state_dir) = state_dir else { return };
     let repo = crate::files::layout::repo_dir(state_dir);

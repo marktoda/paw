@@ -14,13 +14,13 @@ use std::sync::Arc;
 use crate::files::values::{self, Values};
 use crate::fingerprint::Fingerprint;
 use crate::files::layout::StoreDirs;
-use crate::files::{self, layout};
+use crate::files::layout;
 use crate::key::enrolment::save_enrolment;
 use crate::key::{CardInfo, KeyError, KeyIdentity, KeyTouch, PinKdfStatus};
 use crate::recipients::Access;
 use crate::ssh::SshPublicKey;
 use crate::store::PassStore;
-use crate::sync::address::{AddressNotice, AddressProblem, StoreAddress};
+use crate::sync::address::{AddressNotice, AddressProblem, StoreAddress, save_address};
 use crate::sync::hosts::{self, KnownHosts};
 use crate::sync::{self, Cloned, Connection, PresentedHostKey};
 use crate::write::{Keyring, LineStatus};
@@ -280,6 +280,20 @@ fn notice_from(line: &str) -> Option<AddressNotice> {
         },
         _ => return None,
     })
+}
+
+/// Setup finished for the store in `state_dir` and the store is there.
+/// Reads two files and writes nothing, so the AutoFill extension can ask.
+pub fn is_set_up(state_dir: &Path) -> bool {
+    let done = values::read(&state_dir.join(layout::SETUP)).is_ok_and(|found| {
+        found.is_some_and(|values| values.get("step").and_then(Step::from_name) == Some(Step::Done))
+    });
+    done && layout::holds_store(&layout::repo_dir(state_dir))
+}
+
+#[uniffi::export]
+pub fn store_is_set_up(state_dir: String) -> bool {
+    is_set_up(Path::new(&state_dir))
 }
 
 pub struct SetupFlow {
@@ -592,12 +606,8 @@ impl SetupFlow {
             self.restart_download()?;
             return Err(e);
         }
-        let address = self.saved.address.clone().unwrap_or_default();
-        {
-            let _held = self.exclusive()?;
-            let remote = self.dir.join(layout::REMOTE);
-            files::write_atomic(&remote, format!("{address}\n").as_bytes()).map_err(failed)?;
-        }
+        let address = self.address()?;
+        save_address(&self.dir, &self.exclusive()?, &address).map_err(failed)?;
         self.go(Step::TestDecrypt)
     }
 
@@ -758,14 +768,6 @@ mod tests {
         let saved = Saved::from_values(&Values::parse(text.into_bytes()).unwrap());
         assert_eq!(saved.step, Step::CheckHost);
         assert_eq!(saved.notice, None);
-    }
-
-    #[test]
-    fn a_finished_setup_starts_with_the_line_layout_reads() {
-        let done = Saved { step: Step::Done, ..Saved::fresh() };
-        let pairs = done.pairs();
-        let text = values::text(pairs.iter().map(|(name, value)| (*name, value.as_str())));
-        assert_eq!(text.lines().next(), Some(layout::SETUP_DONE));
     }
 
     /// A card that names one key's fingerprint and hands over another key:
