@@ -43,4 +43,13 @@ impl SshPublicKey {
         let encoded = base64::engine::general_purpose::STANDARD.encode(&self.blob);
         format!("{} {encoded}", self.algorithm())
     }
+
+    /// [`Self::authorized_key`] read back; `None` for anything else.
+    pub(crate) fn from_authorized_key(line: &str) -> Option<Self> {
+        let blob = base64::engine::general_purpose::STANDARD.decode(line.split(' ').nth(1)?).ok()?;
+        // An ssh-ed25519 blob ends in the 32-byte key.
+        let raw: [u8; 32] = blob.get(blob.len().checked_sub(32)?..)?.try_into().ok()?;
+        let key = Self::ed25519(&raw);
+        (key.blob == blob).then_some(key)
+    }
 }

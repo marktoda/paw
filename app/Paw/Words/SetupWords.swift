@@ -151,8 +151,6 @@ enum SetupWords {
             why = "This is not the key read at the start of setup; plug that one in."
         case .cardKeyMismatch:
             why = "The key read from the card does not match its fingerprint."
-        case .sshKeyUnreadable(let detail):
-            why = asSentence(detail)
         }
         return SetupProblem(problem: "This key can't be used", nextStep: why)
     }
