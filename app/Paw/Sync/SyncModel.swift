@@ -335,9 +335,14 @@ final class SyncModel {
         !checksWithSignIn
     }
 
-    /// Whether the step offered after `failure` asks for the key.
+    /// Whether the step offered after `failure` asks for the key (the disc
+    /// on its button): Try again does, but for a check the sign-in makes;
+    /// Open Settings doesn't.
     func actionNeedsKey(after failure: SyncFailure) -> Bool {
-        failure.actionNeedsKey && (failure.during != .refresh || checkNeedsKey)
+        switch failure.kind {
+        case .hostKeyChanged, .cancelled: false
+        default: failure.during != .refresh || checkNeedsKey
+        }
     }
 
     /// Checks for changes: with the sign-in when it covers this store,

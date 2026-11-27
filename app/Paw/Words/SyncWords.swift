@@ -171,15 +171,6 @@ extension SyncFailure {
         default: "Try again"
         }
     }
-
-    /// Whether that step asks for the key (the disc on the button): Try
-    /// again does.
-    var actionNeedsKey: Bool {
-        switch kind {
-        case .hostKeyChanged, .cancelled: false
-        default: true
-        }
-    }
 }
 
 /// What the key sheet's words name during a sync: the store, and that the

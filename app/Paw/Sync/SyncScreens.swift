@@ -238,17 +238,8 @@ struct RefusedRemoteScreen: View {
                 }
             }
             Section {
-                Button {
-                    syncing.check()
-                } label: {
-                    if syncing.checkNeedsKey {
-                        KeyActionLabel("Check again")
-                    } else {
-                        Text("Check again")
-                    }
-                }
+                CheckButton(syncing: syncing, title: "Check again", identifier: "refused-check-again")
                 .buttonStyle(.pawSecondary)
-                .accessibilityIdentifier("refused-check-again")
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Color.clear)
             }
