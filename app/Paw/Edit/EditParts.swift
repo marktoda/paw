@@ -319,7 +319,6 @@ private struct EditingModifier: ViewModifier {
 }
 
 extension View {
-    /// The edit sheet and the Undo toast; see `EditingModifier`.
     func pawEditing(_ model: AppModel) -> some View {
         modifier(EditingModifier(model: model))
     }

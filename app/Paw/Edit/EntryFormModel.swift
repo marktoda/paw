@@ -165,7 +165,6 @@ final class EntryFormModel {
 
     // MARK: Typing
 
-    /// A binding that tells the draft about each change.
     func binding(_ keyPath: ReferenceWritableKeyPath<EntryFormModel, String>, field: Field) -> Binding<String> {
         Binding(
             get: { self[keyPath: keyPath] },
@@ -230,7 +229,6 @@ final class EntryFormModel {
 
     // MARK: The generator
 
-    /// The Generate button: a new password from the options, shown.
     func generate() {
         guard let draft else { return }
         do {
@@ -287,7 +285,6 @@ final class EntryFormModel {
 
     // MARK: State
 
-    /// Hands every change to the draft, then asks the core what is wrong.
     func changed() {
         guard let draft else { return }
         saveProblem = nil

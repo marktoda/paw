@@ -468,7 +468,6 @@ final class SyncModel {
 }
 
 extension SyncModel {
-    /// Send, or check for changes, with the key.
     private func syncJob(_ kind: SyncKind,
                          _ begin: @escaping (KeyPort, KeyTaskListener) -> KeyTask) -> KeyJob<SyncError> {
         let port = keyPort
@@ -495,8 +494,6 @@ extension SyncModel {
         return job
     }
 
-    /// "Re-encrypt": no network. Each held-back change is opened with the
-    /// key (a touch each) and encrypted for its folder's new list.
     private func reencryptJob() -> KeyJob<SyncError> {
         let sync = sync
         let port = keyPort

@@ -173,7 +173,7 @@ struct SyncSummarySection: View {
         AndMoreRow(count: paths.count)
     }
 
-    /// "Two versions of github.com were kept", then both, each to open.
+    /// Both sides changed one entry: that, then both versions, each to open.
     @ViewBuilder
     private func keptBoth(_ pair: KeptBoth) -> some View {
         let entry = EntryRef(path: pair.entry)
@@ -464,7 +464,6 @@ private struct SyncStatusSheet: View {
         .accessibilityIdentifier("sync-sheet")
     }
 
-    /// What went wrong, and what is waiting to be looked at.
     @ViewBuilder private var attention: some View {
         if let failure = syncing.failure, failure.kind != .refusedRemote {
             Section {

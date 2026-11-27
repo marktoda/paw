@@ -14,7 +14,6 @@ func andMore(_ count: Int) -> String? {
     count > namedAtMost ? "and \(count - namedAtMost) more" : nil
 }
 
-/// "1 change", "3 changes".
 func changeCount(_ count: Int) -> String {
     counted(count, "change", "changes")
 }
@@ -34,12 +33,10 @@ func removeStoreWarning(unpushed: Int?) -> String {
     return text
 }
 
-/// "1 password", "3 passwords".
 func passwordCount(_ count: Int) -> String {
     counted(count, "password", "passwords")
 }
 
-/// The search field's prompt on Home: "Search 3 passwords".
 func searchPromptWords(entryCount: Int) -> String {
     "Search \(passwordCount(entryCount))"
 }

@@ -184,7 +184,6 @@ private struct EntryFormView: View {
                 FolderChoiceLabel(title: "Not in a folder", chosen: form.newFolder == nil && form.folder.isEmpty)
             }
             ForEach(form.folders, id: \.self) { folder in
-                // Not known yet: offered, and Save waits for its answer.
                 let writable = form.folderOpenable[folder] ?? true
                 Button {
                     form.chooseFolder(folder)
@@ -344,7 +343,6 @@ private struct EntryFormView: View {
         return form.removingOneTimeCode ? "Removed when you save" : "Has a one-time code"
     }
 
-    /// The setup key, and Remove for a code the entry already has.
     private var oneTimeCodeSection: some View {
         Section {
             if form.hadOneTimeCode {
@@ -570,7 +568,6 @@ private struct GeneratorOptions: View {
     }
 }
 
-/// One `key: value` line: two fields and a remove button.
 private struct ExtraFieldRow: View {
     @Bindable var form: EntryFormModel
     let field: EntryFormModel.ExtraField
