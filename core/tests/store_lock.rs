@@ -938,12 +938,6 @@ fn origin(w: &World) -> String {
     repo.refname_to_id("refs/remotes/origin/main").unwrap().to_string()
 }
 
-fn markers(w: &World) -> Vec<String> {
-    let repo = git2::Repository::open(w.repo()).unwrap();
-    let mut names = repo.references_glob("refs/paw/pushing/*").unwrap();
-    names.names().map(|n| n.unwrap().to_owned()).collect()
-}
-
 #[test]
 fn taking_back_a_change_that_is_being_sent_is_refused() {
     let w = Arc::new(world());
@@ -961,26 +955,20 @@ fn taking_back_a_change_that_is_being_sent_is_refused() {
     let refused = told.recv_timeout(Duration::from_secs(10)).unwrap().unwrap_err();
     assert!(refused.contains("being sent right now"), "{refused}");
     assert!(w.local_has("lock/on-the-wire") && w.remote_has("lock/on-the-wire"));
-    assert!(markers(&w).is_empty());
     w.assert_consistent();
 }
 
 #[test]
-fn a_push_record_left_by_a_crash_does_not_block_taking_a_change_back() {
+fn a_push_record_left_by_an_earlier_paw_does_not_block_taking_a_change_back() {
     let w = world();
     let saved = w.save("after-crash").unwrap();
-    // A send was killed on the network: its record is left, its lock gone.
+    // An earlier paw kept the commit on the network in a ref; one whose
+    // send was killed left it behind.
     let repo = git2::Repository::open(w.repo()).unwrap();
     let id = git2::Oid::from_str(&saved.commits[0]).unwrap();
     repo.reference("refs/paw/pushing/main", id, true, "a send that died").unwrap();
     queue::discard(&w.store(), &saved.commits[0]).unwrap();
     assert!(!w.local_has("lock/after-crash"));
-    assert!(markers(&w).is_empty(), "the stale record was removed");
-
-    // One left behind is also cleared by the next fetch.
-    repo.reference("refs/paw/pushing/main", repo.head().unwrap().target().unwrap(), true, "again").unwrap();
-    w.account.refresh_store().unwrap();
-    assert!(markers(&w).is_empty());
     w.assert_consistent();
 }
 
@@ -1015,7 +1003,6 @@ fn a_push_that_landed_is_success_even_if_recording_it_has_to_wait_too_long() {
     w.account.refresh_store().unwrap();
     assert_eq!(origin(&w), w.remote.tip().unwrap());
     assert!(queue::unpushed(&w.store()).unwrap().is_empty());
-    assert!(markers(&w).is_empty());
     w.assert_consistent();
 }
 

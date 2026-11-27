@@ -31,7 +31,6 @@ pub struct QueueItem {
 
 pub(crate) struct Waiting<'r> {
     pub(crate) branch: String,
-    pub(crate) short: String,
     pub(crate) head: Oid,
     /// Oldest first.
     pub(crate) commits: Vec<PawCommit<'r>>,
@@ -54,7 +53,7 @@ pub(crate) fn waiting<'r>(_reading: &Shared, store: &'r OpenStore) -> Result<Wai
         }
     }
     let commits = if pushed.is_empty() { Vec::new() } else { paw_commits(repo, head, &pushed)? };
-    Ok(Waiting { branch, short, head, commits })
+    Ok(Waiting { branch, head, commits })
 }
 
 fn item(commit: &PawCommit<'_>) -> QueueItem {
@@ -90,7 +89,7 @@ fn rewrite_from(
     why: &str,
     rebuild: impl FnOnce(Oid) -> Result<Oid, SyncError>,
 ) -> Result<(), SyncError> {
-    check_not_being_sent(held, store, &local.short, local.commits[from].commit.id())?;
+    check_not_being_sent(held, store, local.commits[from].commit.id())?;
     ensure_clean(&store.repo)?;
     let base = local.commits[from].commit.parent_id(0).map_err(git_err)?;
     let tip = rebuild(base)?;

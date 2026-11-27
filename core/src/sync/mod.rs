@@ -229,13 +229,6 @@ pub(crate) fn publish_fetched(held: &Exclusive, store: &OpenStore, fetching: Fet
         }
     }
     drop(fetching);
-    if !store.dirs.lock().push_in_flight() {
-        for name in pushing_refs(repo)? {
-            if let Ok(mut marker) = repo.find_reference(&name) {
-                let _ = marker.delete();
-            }
-        }
-    }
     Ok(())
 }
 
@@ -496,42 +489,14 @@ pub(crate) fn commit_edits(
     Ok(id.to_string())
 }
 
-/// Every push record (`refs/paw/pushing/*`).
-fn pushing_refs(repo: &Repository) -> Result<Vec<String>, PawError> {
-    let mut names = Vec::new();
-    for reference in repo.references().map_err(git_err)? {
-        let reference = reference.map_err(git_err)?;
-        if let Ok(name) = reference.name()
-            && refs::is_pushing(name)
-        {
-            names.push(name.to_owned());
-        }
-    }
-    Ok(names)
-}
-
 /// Before a change waiting to be sent is taken back: refused if a push
 /// that includes it (`removed`, or a later change built on it) is on the
-/// network now, as taking it back would only appear to work. A record
-/// left by a push whose process died is removed.
-pub(crate) fn check_not_being_sent(
-    _held: &Exclusive,
-    store: &OpenStore,
-    short: &str,
-    removed: git2::Oid,
-) -> Result<(), SyncError> {
-    let repo = &store.repo;
-    let name = refs::pushing(short);
-    let Ok(sending) = repo.refname_to_id(&name) else {
+/// network now, as taking it back would only appear to work.
+pub(crate) fn check_not_being_sent(_held: &Exclusive, store: &OpenStore, removed: git2::Oid) -> Result<(), SyncError> {
+    let Some(sending) = store.dirs.lock().being_sent() else {
         return Ok(());
     };
-    if !store.dirs.lock().push_in_flight() {
-        if let Ok(mut stale) = repo.find_reference(&name) {
-            let _ = stale.delete();
-        }
-        return Ok(());
-    }
-    if sending == removed || repo.graph_descendant_of(sending, removed).unwrap_or(true) {
+    if sending == removed || store.repo.graph_descendant_of(sending, removed).unwrap_or(true) {
         return Err(SyncError::BeingSent);
     }
     Ok(())
@@ -555,9 +520,9 @@ impl From<PawError> for PushError {
 }
 
 /// Pushes the commit `tip` to `branch` (`refs/heads/...`) on the remote, as
-/// a fast-forward only. `held` is the store lock: it is used to record
-/// which commit is going out, then released for the transfer. After it,
-/// with the lock again, `origin/<branch>` and the last-seen ref move
+/// a fast-forward only. `held` is the store lock, released for the
+/// transfer; `pushing` records `tip` as on the network meanwhile. After
+/// it, with the lock again, `origin/<branch>` and the last-seen ref move
 /// forward to `tip` if it went, waiting up to `record_wait` for the lock
 /// ([`crate::lock::RECORD_WAIT`]). The caller holds the push lock
 /// throughout.
@@ -568,12 +533,12 @@ pub(crate) fn push_tip(
     branch: &str,
     tip: git2::Oid,
     held: Exclusive,
-    _pushing: &crate::lock::Pushing,
+    pushing: &crate::lock::Pushing,
     record_wait: Duration,
 ) -> Result<(), PushError> {
     let repo = &store.repo;
     let short = refs::short(branch).ok_or_else(|| PawError::Git("HEAD is not on a branch".into()))?;
-    repo.reference(&refs::pushing(short), tip, true, "push").map_err(git_err)?;
+    let sending = pushing.sending(tip);
     drop(held);
 
     // The commit itself, not the branch: the branch may move while this
@@ -614,35 +579,19 @@ pub(crate) fn push_tip(
         )),
         (Ok(()), None) => Ok(()),
     };
-    let clear_marker = || {
-        if let Ok(mut marker) = repo.find_reference(&refs::pushing(short)) {
-            let _ = marker.delete();
-        }
-    };
-    match outcome {
-        // Not sent: the transfer's own error is what the caller needs (a
-        // `NotFastForward` makes a send fetch and try again), never "busy".
-        // The marker goes if the lock comes quickly; if not, the next
-        // discard finds no push in flight and removes it.
-        Err(error) => {
-            if let Ok(_held) = store.dirs.lock().exclusive_within(Duration::from_secs(2)) {
-                clear_marker();
-            }
-            Err(error)
-        }
-        // Sent: it is on the remote whatever happens here, so recording it
-        // waits much longer. If it still cannot, it is not an error: the
-        // next fetch brings `origin/<branch>` to the remote's tip and the
-        // next integrate moves last-seen, and the marker is removed as
-        // stale once no push is in flight.
-        Ok(()) => {
-            if let Ok(held) = store.dirs.lock().exclusive_within(record_wait) {
-                let _ = record_push(&held, repo, short, tip);
-                clear_marker();
-            }
-            Ok(())
-        }
+    // Not sent: the transfer's own error is what the caller needs (a
+    // `NotFastForward` makes a send fetch and try again), never "busy".
+    // Sent: it is on the remote whatever happens here, so recording it
+    // waits long. If it still cannot, it is not an error: the next fetch
+    // brings `origin/<branch>` to the remote's tip and the next integrate
+    // moves last-seen.
+    if outcome.is_ok()
+        && let Ok(held) = store.dirs.lock().exclusive_within(record_wait)
+    {
+        let _ = record_push(&held, repo, short, tip);
     }
+    drop(sending);
+    outcome
 }
 
 /// After a push of `tip`: the remote's branch is there now. Moves

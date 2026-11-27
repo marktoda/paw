@@ -152,20 +152,19 @@ impl StoreLock {
 
     /// Takes the store's push lock, held by a send from before it reads the
     /// tip it will push until it has recorded the result: one send at a
-    /// time, and [`Self::push_in_flight`] can tell a push is under way.
-    /// Like the fetch lock, in this process only (only the app sends) and
-    /// never taken while this thread holds the store.
+    /// time. Like the fetch lock, in this process only (only the app sends)
+    /// and never taken while this thread holds the store.
     pub(crate) fn pushing(&self, wait: Duration) -> Result<Pushing, PawError> {
         if holds(&self.store().key).is_some() {
             return Err(PawError::Store("paw asked for the push lock while holding the store".into()));
         }
-        Ok(Pushing { _held: acquire(&self.in_process("push"), Mode::Exclusive, wait)? })
+        Ok(Pushing { _held: acquire(&self.in_process("push"), Mode::Exclusive, wait)?, root: self.root.clone() })
     }
 
-    /// Whether another thread holds the push lock now: a push is on the
-    /// network.
-    pub(crate) fn push_in_flight(&self) -> bool {
-        acquire(&self.in_process("push"), Mode::Exclusive, Duration::ZERO).is_err()
+    /// The commit a push of this store has on the network now, if one does
+    /// ([`Pushing::sending`]).
+    pub(crate) fn being_sent(&self) -> Option<git2::Oid> {
+        SENDING.lock().unwrap_or_else(|p| p.into_inner()).get(&self.root).copied()
     }
 }
 
@@ -209,6 +208,30 @@ pub(crate) struct Fetching {
 
 pub(crate) struct Pushing {
     _held: Held,
+    root: PathBuf,
+}
+
+/// What each store's push has on the network, by the store's root. Only
+/// this process sends, so this is where it is known.
+static SENDING: LazyLock<Mutex<HashMap<PathBuf, git2::Oid>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+impl Pushing {
+    /// Records `tip` as on the network until the returned guard is
+    /// dropped. One push lock per store, so one record.
+    pub(crate) fn sending(&self, tip: git2::Oid) -> Sending<'_> {
+        SENDING.lock().unwrap_or_else(|p| p.into_inner()).insert(self.root.clone(), tip);
+        Sending { pushing: self }
+    }
+}
+
+pub(crate) struct Sending<'p> {
+    pushing: &'p Pushing,
+}
+
+impl Drop for Sending<'_> {
+    fn drop(&mut self) {
+        SENDING.lock().unwrap_or_else(|p| p.into_inner()).remove(&self.pushing.root);
+    }
 }
 
 // --- the two layers --------------------------------------------------------------------
@@ -532,15 +555,18 @@ mod tests {
     fn a_push_in_flight_is_seen_from_another_thread() {
         let dir = tempfile::tempdir().unwrap();
         let store = StoreLock::for_state_dir(dir.path());
-        assert!(!store.push_in_flight());
+        assert_eq!(store.being_sent(), None);
         let pushing = store.pushing(Duration::ZERO).unwrap();
+        let tip = git2::Oid::hash_object(git2::ObjectType::Blob, b"tip").unwrap();
+        let sending = pushing.sending(tip);
         let other = std::thread::spawn({
             let store = store.clone();
-            move || store.push_in_flight()
+            move || store.being_sent()
         });
-        assert!(other.join().unwrap());
+        assert_eq!(other.join().unwrap(), Some(tip));
+        drop(sending);
+        assert_eq!(store.being_sent(), None);
         drop(pushing);
-        assert!(!store.push_in_flight());
         // Never under the store lock.
         let _held = store.exclusive().unwrap();
         assert!(store.pushing(Duration::ZERO).is_err());
