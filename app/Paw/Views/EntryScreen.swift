@@ -6,17 +6,9 @@ import UIKit
 /// seconds, when the app leaves the foreground and when the screen goes.
 struct EntryScreen: View {
     let model: AppModel
-    private let opened: OpenSession
-
-    init(model: AppModel, session: OpenSession) {
-        self.model = model
-        opened = session
-    }
-
-    /// The session as it is now: a save replaces its text under the same id.
-    private var session: OpenSession {
-        model.session(opened.id) ?? opened
-    }
+    /// Open: its route shows another screen once it closes. A save
+    /// replaces its text under the same id.
+    let session: OpenSession
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var username: String?
@@ -38,7 +30,7 @@ struct EntryScreen: View {
             EntryDeleteConfirm(model: model, session: session)
             Section {
                 VStack(alignment: .leading, spacing: PawMetrics.Spacing.l) {
-                    header
+                    EntryHeader(entry: entry)
                     if let copy = model.copies.copy(of: entry.path) {
                         // This entry's copy only; Lock now in Settings ends them all.
                         FaceIDWindowBar(
@@ -125,9 +117,6 @@ struct EntryScreen: View {
             // its large type goes with it.
             closeLargeType()
         }
-        .onChange(of: model.session(opened.id) == nil) {
-            if model.session(opened.id) == nil { closeLargeType() }
-        }
         .onChange(of: ObjectIdentifier(session.entry)) { load() }
         .entryEditing(model, session: session)
         .onChange(of: scenePhase) {
@@ -142,38 +131,19 @@ struct EntryScreen: View {
     /// This entry's large type: another entry's stays with that entry.
     private var largeType: Binding<LargeTypeItem?> {
         Binding(
-            get: { model.largeType?.entry == opened.id ? model.largeType : nil },
+            get: { model.largeType?.entry == session.id ? model.largeType : nil },
             set: { item in
                 if item == nil { closeLargeType() }
             })
     }
 
     private func closeLargeType() {
-        if model.largeType?.entry == opened.id {
+        if model.largeType?.entry == session.id {
             model.largeType = nil
         }
     }
 
     // MARK: Parts
-
-    private var header: some View {
-        HStack(spacing: 14) {
-            IconChip(symbol: EntryGlyph.symbol(for: entry.name), tint: FolderTint(folder: entry.topFolder), size: .large)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(entry.name)
-                    .font(PawFont.title)
-                    .foregroundStyle(PawColor.label)
-                    .lineLimit(3)
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier("entry-title")
-                Text(entry.folder.isEmpty ? "Not in a folder" : entry.folder)
-                    .font(PawFont.subheadline)
-                    .foregroundStyle(PawColor.labelSecondary)
-                    .accessibilityIdentifier("entry-folder")
-            }
-        }
-        .padding(.horizontal, PawMetrics.Spacing.xs)
-    }
 
     @ViewBuilder private var fields: some View {
         Section {
@@ -189,7 +159,7 @@ struct EntryScreen: View {
                     isRevealed: $passwordRevealed,
                     fetch: { session.entry.password() },
                     onCopy: { copy(session.entry.password(), what: "Password") },
-                    onLargeType: { model.largeType = LargeTypeItem(entry: opened.id, title: "Password", text: $0) })
+                    onLargeType: { model.largeType = LargeTypeItem(entry: session.id, title: "Password", text: $0) })
             }
             if let website {
                 FieldRow(label: "Website", value: website) {
@@ -204,7 +174,7 @@ struct EntryScreen: View {
                         label: label, identifier: "field-\(field.id)", hideToken: hideToken,
                         fetch: { session.entry.fieldValue(id: field.id) },
                         onCopy: { copy(session.entry.fieldValue(id: field.id), what: label) },
-                        onLargeType: { model.largeType = LargeTypeItem(entry: opened.id, title: label, text: $0) })
+                        onLargeType: { model.largeType = LargeTypeItem(entry: session.id, title: label, text: $0) })
                 } else {
                     FieldRow(label: label, value: plainValues[field.id] ?? "") {
                         copy(session.entry.fieldValue(id: field.id), what: label)
@@ -227,8 +197,7 @@ struct EntryScreen: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("field-one-time-code")
                     .pawListRow()
-                } else if model.session(opened.id) != nil {
-                    // Not once the entry has closed: its text is gone.
+                } else {
                     OneTimeCodeRow(entry: session.entry, clock: model.storeSession.clock, ticking: scenePhase == .active) {
                         copy($0, what: "One-time code")
                     }
@@ -272,6 +241,30 @@ struct EntryScreen: View {
     /// "security answer" reads as "Security answer".
     private static func label(_ key: String) -> String {
         key.prefix(1).uppercased() + key.dropFirst()
+    }
+}
+
+/// An entry's glyph, name and folder, at the top of its screen.
+struct EntryHeader: View {
+    let entry: EntryRef
+
+    var body: some View {
+        HStack(spacing: 14) {
+            IconChip(symbol: EntryGlyph.symbol(for: entry.name), tint: FolderTint(folder: entry.topFolder), size: .large)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(entry.name)
+                    .font(PawFont.title)
+                    .foregroundStyle(PawColor.label)
+                    .lineLimit(3)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("entry-title")
+                Text(entry.folder.isEmpty ? "Not in a folder" : entry.folder)
+                    .font(PawFont.subheadline)
+                    .foregroundStyle(PawColor.labelSecondary)
+                    .accessibilityIdentifier("entry-folder")
+            }
+        }
+        .padding(.horizontal, PawMetrics.Spacing.xs)
     }
 }
 

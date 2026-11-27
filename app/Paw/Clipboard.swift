@@ -67,4 +67,14 @@ final class Clipboard {
         guard let expiresAtMs, clock.wallMs() >= expiresAtMs else { return }
         clearIfOurs()
     }
+
+    /// Text that is not a secret (a public key, a sign-in code, a report):
+    /// not followed, so Lock now leaves it. `localOnly` keeps it off
+    /// Universal Clipboard; `expiry` is the system's.
+    static func copyNotSecret(_ text: String, localOnly: Bool, expiry: Date? = nil) {
+        var options: [UIPasteboard.OptionsKey: Any] = [:]
+        if localOnly { options[.localOnly] = true }
+        if let expiry { options[.expirationDate] = expiry }
+        UIPasteboard.general.setItems([[UTType.utf8PlainText.identifier: text]], options: options)
+    }
 }

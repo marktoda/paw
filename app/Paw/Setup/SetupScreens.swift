@@ -1,6 +1,5 @@
 import SwiftUI
 import UIKit
-import UniformTypeIdentifiers
 
 /// First-run setup (design.md 2.4): one screen per step, Back on all but
 /// the first, the shared key sheet for the steps that need the key.
@@ -446,8 +445,7 @@ private struct KeyNotAcceptedScreen: View {
                     Button {
                         // A public key, not a secret: it stays on this
                         // iPhone's pasteboard with no expiry.
-                        UIPasteboard.general.setItems(
-                            [[UTType.utf8PlainText.identifier: publicKey]], options: [.localOnly: true])
+                        Clipboard.copyNotSecret(publicKey, localOnly: true)
                         toast = "SSH key copied."
                     } label: {
                         Label("Copy", systemImage: PawSymbol.copy)

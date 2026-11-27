@@ -179,7 +179,7 @@ struct EntryRowFor: View {
         let access = model.rowAccess(entry.path)
         EntryRow(
             name: entry.name,
-            subtitle: access == .anotherKey ? "Encrypted for another key" : subtitle,
+            subtitle: access == .anotherKey ? AnotherKeyScreen.headline : subtitle,
             symbol: EntryGlyph.symbol(for: entry.name),
             tint: FolderTint(folder: entry.topFolder),
             access: access,

@@ -26,7 +26,6 @@ struct CopyToast: View {
 
 private struct CopyToastModifier: ViewModifier {
     @Binding var message: String?
-    let seconds: Double
 
     func body(content: Content) -> some View {
         content
@@ -49,7 +48,7 @@ private struct CopyToastModifier: ViewModifier {
             .task(id: message) {
                 guard let shown = message else { return }
                 AccessibilityNotification.Announcement(Device.words(shown)).post()
-                try? await Task.sleep(for: .seconds(seconds))
+                try? await Task.sleep(for: .seconds(2))
                 if !Task.isCancelled {
                     message = nil
                 }
@@ -60,7 +59,7 @@ private struct CopyToastModifier: ViewModifier {
 extension View {
     /// Shows a copy confirmation over the bottom of this view for 2 seconds
     /// whenever `message` is set, with a light tap and a spoken announcement.
-    func copyToast(_ message: Binding<String?>, seconds: Double = 2) -> some View {
-        modifier(CopyToastModifier(message: message, seconds: seconds))
+    func copyToast(_ message: Binding<String?>) -> some View {
+        modifier(CopyToastModifier(message: message))
     }
 }

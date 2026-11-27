@@ -1,6 +1,5 @@
 import SwiftUI
 import UIKit
-import UniformTypeIdentifiers
 
 /// Settings › Key diagnostics on a set-up store: what the key session read
 /// when the key was plugged in, which asks for no PIN and sends nothing to
@@ -227,13 +226,11 @@ struct KeyDiagnosticsView: View {
     /// How long a copied report or log stays on the pasteboard.
     static let copyLifetime: TimeInterval = 10 * 60
 
-    /// Not `Clipboard`: the owner pastes these on a desktop, so they may go
+    /// Not as a secret: the owner pastes these on a desktop, so they may go
     /// to other devices by Universal Clipboard (principles 6 notes the
     /// exception), but they still expire, after 10 minutes, not 45 seconds.
     private static func copyForDesktop(_ text: String) {
-        UIPasteboard.general.setItems(
-            [[UTType.utf8PlainText.identifier: text]],
-            options: [.expirationDate: Date().addingTimeInterval(copyLifetime)])
+        Clipboard.copyNotSecret(text, localOnly: false, expiry: Date().addingTimeInterval(copyLifetime))
     }
 
     private func clearLog() {

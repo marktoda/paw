@@ -207,10 +207,8 @@ final class AppModel {
     /// A tap on an entry row.
     func open(_ entry: EntryRef) {
         notice = nil
-        if usesSplitView {
-            if splitShownEntry?.ref.path == entry.path { return }
-            closeSplitEntryForNextOpen()
-        }
+        if splitShownEntry?.ref.path == entry.path { return }
+        closeSplitEntryForNextOpen()
         if copies.copy(of: entry.path) != nil {
             openWithFaceId(entry)
         } else {
@@ -393,7 +391,8 @@ final class AppModel {
         if routes.last == .entry(id) {
             routes.removeLast()
         }
-        while case .folder(let folder)? = routes.last, (try? store.folder(path: folder)) == nil {
+        let folders = Set(store.allFolders())
+        while case .folder(let folder)? = routes.last, !folders.contains(folder) {
             routes.removeLast()
         }
         setPath(routes)
