@@ -337,6 +337,9 @@ final class KeyTaskDriver {
         tasks[id] = Running(task: task, job: job, hold: hold)
         taskPurpose = task.purpose()
         followed = id
+        // The listener's word comes a main-queue turn later; whoever
+        // started the job reads the sheet in this one.
+        changed(id)
     }
 
     private func letGoOfFollowed() {
