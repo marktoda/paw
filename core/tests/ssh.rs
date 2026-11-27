@@ -92,7 +92,7 @@ fn signs_data_longer_than_one_short_apdu() {
 #[test]
 fn fails_when_nobody_touches_the_key() {
     // Long enough not to read as a refusal at once.
-    let key = SimulatedKey::new(PIN.into(), true, 1_500);
+    let key = SimulatedKey::new(PIN.into(), true, 1_100);
     let driver = Driver::typist(PIN);
     let login = login(&port_with(&key), LoginPurpose::Fetch, &driver);
     let signer = login.signer().unwrap();
