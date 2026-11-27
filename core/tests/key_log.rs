@@ -86,9 +86,7 @@ fn a_pin_and_decipher_run_is_logged_with_no_pin_no_data_and_no_names() {
 
     open_and_finish(&rig, ENTRY);
 
-    let session = rig.port.session().unwrap();
-    let merged = key_log_text(dir_string(&state), 0);
-    let ring = session.diagnostics(0);
+    let merged = key_log_text(state.path(), 0);
     println!("{merged}");
     for wanted in [
         "session start",
@@ -102,11 +100,10 @@ fn a_pin_and_decipher_run_is_logged_with_no_pin_no_data_and_no_names() {
         "PIN held",
     ] {
         assert!(merged.contains(wanted), "the log should have {wanted:?}:\n{merged}");
-        assert!(ring.contains(wanted), "the session's ring should have {wanted:?}:\n{ring}");
     }
 
     let ciphertext = std::fs::read(rig.store_dir().join(format!("{ENTRY}.gpg"))).unwrap();
-    assert_clean(&[&merged, &ring], &recording, &[ciphertext, SECRET.as_bytes().to_vec()], &[]);
+    assert_clean(&merged, &recording, &[ciphertext, SECRET.as_bytes().to_vec()], &[]);
 }
 
 #[test]
@@ -136,32 +133,29 @@ fn a_sign_in_a_setup_check_and_a_touch_check_are_logged_with_no_pin_no_data_and_
     driver.drive(&task);
     assert!(matches!(finish(&task), KeyTaskState::Done { outcome: KeyOutcome::SignedIn }));
 
-    let merged = key_log_text(dir_string(&state), 0);
-    let ring = port.session().unwrap().diagnostics(0);
+    let merged = key_log_text(state.path(), 0);
     for wanted in ["task sign in to download:", "task setup check:", "task touch timeout check:", "→ INTERNAL AUTHENTICATE: 9000 ok", "→ PSO:DECIPHER: 9000 ok"] {
         assert!(merged.contains(wanted), "the log should have {wanted:?}:\n{merged}");
     }
-    assert_clean(&[&merged, &ring], &recording, &[SECRET.as_bytes().to_vec()], &["password-store", "store.git"]);
+    assert_clean(&merged, &recording, &[SECRET.as_bytes().to_vec()], &["password-store", "store.git"]);
 }
 
-/// Neither text holds the PIN, a name, any data that went to or from the
-/// card (4 bytes or more, as hex or raw), or any of `more` and `words`.
-fn assert_clean(texts: &[&str], recording: &Recording, more: &[Vec<u8>], words: &[&str]) {
+/// The text holds no PIN, no name, no data that went to or from the card
+/// (4 bytes or more, as hex or raw), and none of `more` and `words`.
+fn assert_clean(text: &str, recording: &Recording, more: &[Vec<u8>], words: &[&str]) {
     let mut secrets: Vec<Vec<u8>> = recording.data.lock().unwrap().clone();
     secrets.extend_from_slice(more);
     let pin_hex = hex(PIN.as_bytes()).0;
-    for text in texts {
-        for word in [PIN, SECRET, ENTRY, "github", "phone-pin", "archive", "old-forum", &pin_hex].iter().chain(words) {
-            assert!(!text.contains(word), "the log shows {word:?}:\n{text}");
+    for word in [PIN, SECRET, ENTRY, "github", "phone-pin", "archive", "old-forum", &pin_hex].iter().chain(words) {
+        assert!(!text.contains(word), "the log shows {word:?}:\n{text}");
+    }
+    for data in &secrets {
+        for window in data.windows(4) {
+            let (upper, lower) = hex(window);
+            assert!(!text.contains(&upper) && !text.contains(&lower), "the log shows data {upper}");
         }
-        for data in &secrets {
-            for window in data.windows(4) {
-                let (upper, lower) = hex(window);
-                assert!(!text.contains(&upper) && !text.contains(&lower), "the log shows data {upper}");
-            }
-            for window in data.windows(6) {
-                assert!(!text.as_bytes().windows(6).any(|w| w == window), "the log shows raw data");
-            }
+        for window in data.windows(6) {
+            assert!(!text.as_bytes().windows(6).any(|w| w == window), "the log shows raw data");
         }
     }
 }
@@ -176,10 +170,6 @@ fn recorded_rig(state: &tempfile::TempDir, decrypt: SimTouch, kdf: bool) -> (Rig
     let recording = Recording::new(&rig.sim);
     rig.port.plugged_in(recording.clone()).unwrap();
     (rig, recording)
-}
-
-fn all_text(state: &tempfile::TempDir, rig: &Rig) -> (String, String) {
-    (key_log_text(dir_string(state), 0), rig.port.session().map(|s| s.diagnostics(0)).unwrap_or_default())
 }
 
 #[test]
@@ -220,7 +210,7 @@ fn failures_are_logged_with_no_pin_no_data_and_no_names() {
     let task = open(&rig, OTHER_ENTRY, &Driver::helpful(PIN, &rig.sim));
     assert!(matches!(finish(&task), KeyTaskState::Failed { error: KeyError::Reader { .. } }));
 
-    let (merged, ring) = all_text(&state, &rig);
+    let merged = key_log_text(state.path(), 0);
     for wanted in [
         "stage Pin (again: WrongPin, 2 left)",
         "VERIFY 00 82 (with PIN): 6982 security status not satisfied",
@@ -248,7 +238,7 @@ fn failures_are_logged_with_no_pin_no_data_and_no_names() {
     words.extend(named.iter().map(String::as_str));
     let wrong_hex = hex(wrong.as_bytes()).0;
     words.push(&wrong_hex);
-    assert_clean(&[&merged, &ring], &recording, &[], &words);
+    assert_clean(&merged, &recording, &[], &words);
 }
 
 #[test]
@@ -256,15 +246,15 @@ fn a_key_with_a_pin_kdf_is_logged_with_no_derived_pin() {
     let state = tempfile::tempdir().unwrap();
     let (rig, recording) = recorded_rig(&state, SimTouch::Off, true);
     open_and_finish(&rig, ENTRY);
-    let (merged, ring) = all_text(&state, &rig);
+    let merged = key_log_text(state.path(), 0);
     assert!(merged.contains("VERIFY 00 82 (with PIN): 9000 ok"), "{merged}");
     assert!(merged.contains("GET DATA 00F9: 9000 ok"), "the KDF object was read:\n{merged}");
-    assert_clean(&[&merged, &ring], &recording, &[], &[]);
+    assert_clean(&merged, &recording, &[], &[]);
 }
 
 /// The log's lines without times, round trips or task numbers.
 fn without_timing(state: &tempfile::TempDir) -> Vec<String> {
-    key_log(dir_string(state), 0)
+    key_log(state.path(), 0)
         .into_iter()
         .map(|line| {
             let text = line.text.split(" · ").next().unwrap().to_string();
@@ -317,7 +307,7 @@ fn the_pin_stage_and_the_verify_after_it_have_whole_second_times() {
     task.supply_pin(PIN.as_bytes().to_vec());
     assert!(matches!(finish(&task), KeyTaskState::Done { .. }));
 
-    let lines = key_log(dir_string(&state), 0);
+    let lines = key_log(state.path(), 0);
     let start = lines.iter().position(|l| l.text.contains("stage Pin")).unwrap();
     let verify = lines.iter().position(|l| l.text.contains("VERIFY 00 82 (with PIN)")).unwrap();
     for line in &lines[start + 1..=verify] {
@@ -338,8 +328,8 @@ fn the_pin_stage_and_the_verify_after_it_have_whole_second_times() {
 /// of the log right after the sheet closed finds how the task ended.
 #[test]
 fn a_task_seen_finished_has_logged_how_it_ended() {
-    let rig = rig_unplugged(SimTouch::Off, SimTouch::Off);
-    rig.port.plugged_in(rig.sim.clone()).unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let rig = logged_rig(state.path(), "app", SimTouch::Off);
     for _ in 0..300 {
         let driver = Driver::helpful(PIN, &rig.sim);
         let task = open(&rig, OTHER_ENTRY, &driver);
@@ -348,10 +338,10 @@ fn a_task_seen_finished_has_logged_how_it_ended() {
             assert!(std::time::Instant::now() < deadline, "the task never finished");
             std::hint::spin_loop();
         }
-        let ring = rig.port.session().unwrap().diagnostics(0);
-        let started = ring.lines().rfind(|l| l.contains(" task open:")).unwrap();
+        let log = key_log_text(state.path(), 0);
+        let started = log.lines().rfind(|l| l.contains(" task open:")).unwrap();
         let tag = started.split_whitespace().find(|word| word.starts_with('#')).unwrap();
-        assert!(ring.contains(&format!("{tag} stage Done")), "{ring}");
+        assert!(log.contains(&format!("{tag} stage Done")), "{log}");
     }
 }
 
@@ -366,7 +356,7 @@ fn a_process_file_is_cut_back_to_its_last_lines() {
     let file = state.path().join(format!("{}app", paw_core::files::layout::KEY_LOG_PREFIX));
     let size = std::fs::metadata(&file).unwrap().len();
     assert!(size <= 41 * 1024, "{size} bytes");
-    let lines = key_log(dir_string(&state), 0);
+    let lines = key_log(state.path(), 0);
     assert!(lines.len() >= KEEP_LINES, "{} lines", lines.len());
     assert!(lines.last().unwrap().text.contains("stage Done"));
     let temp = format!(".{}app.tmp", paw_core::files::layout::KEY_LOG_PREFIX);
@@ -389,7 +379,7 @@ fn two_processes_write_their_own_files_and_merge_by_time() {
     assert!(state.path().join(format!("{}app", paw_core::files::layout::KEY_LOG_PREFIX)).exists());
     assert!(state.path().join(format!("{}fill", paw_core::files::layout::KEY_LOG_PREFIX)).exists());
 
-    let lines = key_log(dir_string(&state), 0);
+    let lines = key_log(state.path(), 0);
     assert!(
         lines.windows(2).all(|pair| pair[0].process == pair[1].process || pair[0].at_ms <= pair[1].at_ms),
         "merged by time"
@@ -406,7 +396,7 @@ fn two_processes_write_their_own_files_and_merge_by_time() {
         app_file.lines().map(|l| l.split_once('\t').unwrap().1.to_string()).collect();
     assert_eq!(app_lines, in_file);
 
-    let text = key_log_text(dir_string(&state), 0);
+    let text = key_log_text(state.path(), 0);
     assert!(text.lines().any(|l| l.contains(" fill ") && l.contains("→ SELECT")));
 }
 
@@ -422,14 +412,14 @@ fn clear_removes_every_process_file() {
     let trim = state.path().join(format!(".{}app.tmp-0123", paw_core::files::layout::KEY_LOG_PREFIX));
     std::fs::write(&trim, "1000\tkey plugged in\n").unwrap();
 
-    clear_key_log(dir_string(&state)).unwrap();
+    clear_key_log(state.path()).unwrap();
 
-    assert!(key_log(dir_string(&state), 0).is_empty());
+    assert!(key_log(state.path(), 0).is_empty());
     assert!(!trim.exists());
     assert!(state.path().join(paw_core::files::layout::ENROLLED_KEY).exists(), "only the log is cleared");
     // It goes on from there.
     open_and_finish(&app, ENTRY);
-    assert!(!key_log(dir_string(&state), 0).is_empty());
+    assert!(!key_log(state.path(), 0).is_empty());
 }
 
 #[test]
@@ -446,7 +436,7 @@ fn removing_the_store_removes_the_log_and_the_log_never_makes_the_folder_again()
     open_and_finish(&rig, ENTRY);
 
     assert!(!state.exists());
-    assert!(key_log(state.to_string_lossy().into_owned(), 0).is_empty());
+    assert!(key_log(&state, 0).is_empty());
 }
 
 #[test]
@@ -455,7 +445,7 @@ fn loading_the_enrolled_key_leaves_the_log_as_it_was_set() {
     let rig = rig_unplugged(SimTouch::Off, SimTouch::Off);
     rig.port.load_enrolled_key(dir_string(&state)).unwrap();
     rig.port.plugged_in(rig.sim.clone()).unwrap();
-    assert!(rig.port.key_log(0).is_empty() && key_log(dir_string(&state), 0).is_empty());
+    assert!(rig.port.key_log(0).is_empty() && key_log(state.path(), 0).is_empty());
 
     let other = tempfile::tempdir().unwrap();
     rig.port.set_key_log(dir_string(&other), "fill".into());
@@ -473,7 +463,7 @@ fn a_silent_reverify_is_logged_with_the_card_check() {
     // The card forgets the PIN on the next SELECT, which every job sends.
     rig.sim.set_reselect_drops_pin(true);
     open_and_finish(&rig, OTHER_ENTRY);
-    let text = key_log_text(dir_string(&state), 0);
+    let text = key_log_text(state.path(), 0);
     // A silent re-verify, not a refusal: the job checked first.
     assert!(text.contains("→ VERIFY 00 82 (check): 63C3 not verified, 3 tries left"), "{text}");
     assert!(!text.contains("refused"));

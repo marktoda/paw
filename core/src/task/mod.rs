@@ -171,6 +171,7 @@ pub enum KeyTaskState {
     Cancelled,
 }
 
+#[uniffi::export]
 impl KeyTaskState {
     /// Done, failed or cancelled: nothing changes it any more.
     pub fn is_final(&self) -> bool {
@@ -181,7 +182,9 @@ impl KeyTaskState {
             Self::PlugIn | Self::Pin { .. } | Self::Busy | Self::Touch | Self::Working { .. } => false,
         }
     }
+}
 
+impl KeyTaskState {
     fn ended(result: Result<KeyOutcome, TaskFailure>) -> Self {
         match result {
             Ok(outcome) => Self::Done { outcome },

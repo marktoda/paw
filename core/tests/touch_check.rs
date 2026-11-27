@@ -25,7 +25,11 @@ fn rig_timing_out(auth: SimTouch, timeout: Duration) -> Rig {
 
 #[test]
 fn an_untouched_key_fails_the_check_with_a_touch_timeout_and_the_log_has_its_answer() {
-    let rig = rig_timing_out(SimTouch::EachUse, Duration::from_millis(1_200));
+    let state = tempfile::tempdir().unwrap();
+    let mut rig = rig_unplugged(SimTouch::EachUse, SimTouch::EachUse);
+    rig.sim = sim(SimTouch::EachUse, SimTouch::EachUse, Duration::from_millis(1_200));
+    rig.port.set_key_log(state.path().to_string_lossy().into_owned(), "app".into());
+    rig.port.plugged_in(rig.sim.clone()).unwrap();
     let driver = Driver::typist(PIN);
     let task = rig.port.clone().check_touch_timeout(driver.clone());
     driver.drive(&task);
@@ -38,7 +42,7 @@ fn an_untouched_key_fails_the_check_with_a_touch_timeout_and_the_log_has_its_ans
     assert_eq!(rig.sim.verify_attempts(), 1);
     assert_eq!(rig.sim.pin_tries_left(), 3);
 
-    let log = session.diagnostics(0);
+    let log = rig.port.key_log_text(0);
     assert!(log.contains("task touch timeout check"), "{log}");
     assert!(log.contains("refused 6982 after"), "{log}");
     assert!(log.contains("PIN check 9000: a touch timeout"), "{log}");

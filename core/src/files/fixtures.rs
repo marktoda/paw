@@ -227,7 +227,7 @@ fn the_one_time_code_list() {
 fn the_key_log() {
     let dir = state();
     put(dir.path(), &format!("{}fill", layout::KEY_LOG_PREFIX), b"1000\tkey plugged in\n");
-    let lines = crate::key::key_log(dir.path().to_string_lossy().into_owned(), 0);
+    let lines = crate::key::key_log(dir.path(), 0);
     assert_eq!(lines.len(), 1);
     assert_eq!((lines[0].at_ms, lines[0].process.as_str(), lines[0].text.as_str()), (1000, "fill", "key plugged in"));
 }

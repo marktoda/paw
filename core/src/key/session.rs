@@ -159,16 +159,14 @@ fn read_error(wire: &Wire, error: card::CardError) -> KeyError {
 
 impl KeySession {
     /// Reads the key's identity, key slots and touch policies. No PIN, no
-    /// touch. Every command goes to a key log written to `sink`, if given;
-    /// `again` says the port had read a key before.
+    /// touch. Every command goes to a key log written to `sink`, if given.
     pub(crate) fn open(
         transport: Arc<dyn CardConnection>,
         uptime: Arc<dyn Clock>,
         sink: Option<Arc<Sink>>,
-        again: bool,
     ) -> Result<Arc<Self>, KeyError> {
         let log = KeyLog::new(sink);
-        log.line(if again { "session start (key read again)" } else { "session start" });
+        log.line("session start");
         let wire = Wire::logged(transport, log.clone());
         let opened = Self::read(wire, uptime);
         match &opened {
@@ -803,13 +801,6 @@ impl KeySession {
     /// is dropped and the card de-verified on another thread.
     pub fn holds_pin(&self) -> bool {
         self.holds_pin_now()
-    }
-
-    /// This session's key log, oldest line first, times at `utc_offset_secs`
-    /// from UTC: its last card commands (instruction, P1, P2, status word,
-    /// timings) and task and session events. No data, no PIN, no names.
-    pub fn diagnostics(&self, utc_offset_secs: i32) -> String {
-        self.log().text(utc_offset_secs)
     }
 
     /// Lock now: drops the PIN from memory before it returns, and

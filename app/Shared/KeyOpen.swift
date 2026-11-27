@@ -25,7 +25,7 @@ struct KeyOpen {
     /// done; `failed` may take a key error the side shows itself, else the
     /// sheet says it. An open the sheet let go of (Cancel, Lock now) can
     /// still finish, in the last milliseconds after the card answered
-    /// (`core/src/key/task.rs`): its entry is closed here, and
+    /// (`core/src/task/run.rs`): its entry is closed here, and
     /// `lateCopyKept` removes the copy it kept.
     @MainActor
     func job(

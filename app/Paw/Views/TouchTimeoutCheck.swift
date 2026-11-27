@@ -26,7 +26,7 @@ final class TouchTimeoutCheck {
     }
 
     /// Started and not yet ended. Cancel ends it at once, even while the
-    /// key still waits for a touch (`core/src/key/task.rs`).
+    /// key still waits for a touch (`core/src/task/run.rs`).
     var running: Bool {
         driver.isFollowing
     }

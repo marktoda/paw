@@ -98,15 +98,6 @@ enum KeyTaskEnd<Step: KeyStepError> {
     }
 }
 
-extension KeyTaskState {
-    var isFinal: Bool {
-        switch self {
-        case .done, .failed, .syncFailed, .setupFailed, .cancelled: true
-        case .plugIn, .pin, .busy, .touch, .working: false
-        }
-    }
-}
-
 /// What the sheet does once the task it follows has ended.
 enum KeySheetAfterEnd {
     /// The end's standard stage, in the job's words
@@ -141,7 +132,7 @@ struct KeyJob<Step: KeyStepError> {
     /// A task the sheet let go of (Cancel, Lock now, Try again) ended;
     /// called once for each such task. An open can still finish after its
     /// Cancel, in the last milliseconds after the card answered
-    /// (`core/src/key/task.rs`): what it leaves is disposed of here.
+    /// (`core/src/task/run.rs`): what it leaves is disposed of here.
     var letGo: (KeyTaskEnd<Step>) -> Void = { _ in }
     /// Any task ended, followed or let go of: called once for each, after
     /// `ended` or `letGo`.
@@ -367,7 +358,7 @@ final class KeyTaskDriver {
         guard let running = tasks[id] else { return }
         let state = running.task.state()
         guard id == followed else {
-            if state.isFinal {
+            if state.isFinal() {
                 settle(id, running, state)
             }
             return
@@ -377,7 +368,7 @@ final class KeyTaskDriver {
             // there: read the key again, so Try again finds it.
             reader.read()
         }
-        guard state.isFinal else {
+        guard state.isFinal() else {
             show(stage(for: state, running.job))
             return
         }

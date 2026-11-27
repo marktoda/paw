@@ -5,6 +5,7 @@
 //! with no key connected waits at `PlugIn` ([`KeyPort::wait_for_session`])
 //! and goes on by itself when one is plugged in.
 
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
@@ -60,8 +61,8 @@ impl KeyPort {
         self.session()?.mismatch(self.expected().as_ref())
     }
 
-    pub(crate) fn key_log_dir(&self) -> Option<String> {
-        self.lock().log.as_ref().map(|sink| sink.dir().to_string_lossy().into_owned())
+    fn key_log_dir(&self) -> Option<PathBuf> {
+        self.lock().log.as_ref().map(|sink| sink.dir().to_path_buf())
     }
 
     /// The key tasks must be on: the enrolled one, if any.
@@ -88,8 +89,7 @@ impl KeyPort {
     pub fn plugged_in(&self, connection: Arc<dyn CardConnection>) -> Result<Arc<KeySession>, KeyError> {
         self.unplugged();
         let sink = self.lock().log.clone();
-        let again = self.plugged.load(Ordering::SeqCst) > 0;
-        let session = KeySession::open(connection, self.uptime.clone(), sink, again)?;
+        let session = KeySession::open(connection, self.uptime.clone(), sink)?;
         let waiting = {
             let mut state = self.lock();
             if let Some(old) = state.session.replace(session.clone()) {
@@ -129,7 +129,7 @@ impl KeyPort {
     /// Returns it, or `None` if setup has not recorded one (then every card
     /// is accepted, as during setup).
     pub fn load_enrolled_key(&self, state_dir: String) -> Result<Option<KeyIdentity>, PawError> {
-        let key = enrolment::load_enrolment(std::path::Path::new(&state_dir))?;
+        let key = enrolment::load_enrolment(Path::new(&state_dir))?;
         self.set_enrolled_key(key.clone());
         Ok(key)
     }
@@ -139,24 +139,24 @@ impl KeyPort {
     /// `process` is "app" or "fill"; anything but letters and digits is
     /// dropped from it.
     pub fn set_key_log(&self, state_dir: String, process: String) {
-        self.lock().log = Some(Sink::new(std::path::Path::new(&state_dir), &process));
+        self.lock().log = Some(Sink::new(Path::new(&state_dir), &process));
     }
 
     /// Every process's key log lines in the folder this one writes to
     /// ([`Self::set_key_log`]), merged by time, oldest first; none if no
     /// log is set. See [`super::keylog::key_log`].
     pub fn key_log(&self, utc_offset_secs: i32) -> Vec<super::KeyLogLine> {
-        self.key_log_dir().map(|dir| super::keylog::key_log(dir, utc_offset_secs)).unwrap_or_default()
+        self.key_log_dir().map(|dir| super::keylog::key_log(&dir, utc_offset_secs)).unwrap_or_default()
     }
 
     /// [`Self::key_log`] as plain text, one line each: what Settings › Key
     /// diagnostics copies. It holds no secrets.
     pub fn key_log_text(&self, utc_offset_secs: i32) -> String {
-        self.key_log_dir().map(|dir| super::keylog::key_log_text(dir, utc_offset_secs)).unwrap_or_default()
+        self.key_log_dir().map(|dir| super::keylog::key_log_text(&dir, utc_offset_secs)).unwrap_or_default()
     }
 
     pub fn clear_key_log(&self) -> Result<(), PawError> {
-        self.key_log_dir().map_or(Ok(()), super::keylog::clear_key_log)
+        self.key_log_dir().map_or(Ok(()), |dir| super::keylog::clear_key_log(&dir))
     }
 
     /// Whether a key is plugged in and tasks may send it the PIN: it is the

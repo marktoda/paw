@@ -81,9 +81,7 @@ pub(super) fn stage_words(state: &KeyTaskState) -> Option<String> {
             if let Some(error) = last_error {
                 words += &format!(" (again: {})", error_name(error));
             }
-            if *tries_left < 3 {
-                words += &format!(" ({tries_left} tries left)");
-            }
+            words += &format!(" ({tries_left} tries left)");
             if *forgot_after_background {
                 words += " (forgot after background)";
             }

@@ -1,18 +1,17 @@
 //! The key log: what paw and the card said to each other, so a report from
 //! a real phone ("it said to tap my key, but…") can be read afterwards.
 //!
-//! Each key session keeps a ring of its last lines in memory, and each
-//! process appends the same lines to its own small file in the store's
-//! state directory (`key-log.app`, `key-log.fill`), so the app can show
-//! what happened in the AutoFill extension too.
+//! Each process appends the lines of its key sessions to its own small file
+//! in the store's state directory (`key-log.app`, `key-log.fill`), so the
+//! app can show what happened in the AutoFill extension too.
 //!
 //! What a line can hold, and nothing else:
 //!
 //! - a card command's instruction byte, P1 and P2 (never its class's
 //!   length byte or data), whether it carried data, its status word, its
 //!   round-trip time and when it went out since the session started;
-//! - a task's purpose as one word (open, setup, clone, fetch, send),
-//!   whether paw held the PIN when it started, its stages, and the name of
+//! - a task's purpose in a few words ("open", "sign in to send"), whether
+//!   paw held the PIN when it started, its stages, and the name of
 //!   the error it ended with (never the error's text, which can name an
 //!   entry or a key);
 //! - the slots' touch policies, which touch watch was armed, and session
@@ -22,7 +21,6 @@
 //! command or response data, or host names. A line is written after the
 //! card has answered; no lock here is held across card I/O.
 
-use std::collections::VecDeque;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,9 +31,6 @@ use super::{KeyError, KeyTouch, apdu};
 use crate::locked;
 use crate::PawError;
 
-/// Lines a session keeps in memory: about 40 card commands with the task
-/// and session lines around them.
-pub const RING: usize = 120;
 /// A process's file is cut back to its last [`KEEP_LINES`] lines once it
 /// grows past this many bytes (about 400 lines).
 const TRIM_AT_BYTES: u64 = 40 * 1024;
@@ -117,7 +112,6 @@ fn read_text(path: &Path) -> std::io::Result<String> {
 pub(crate) struct KeyLog {
     started: Instant,
     sink: Option<Arc<Sink>>,
-    ring: Mutex<VecDeque<(i64, String)>>,
     /// The PIN stage is showing: lines get whole-second times until the
     /// VERIFY with the PIN in it has been logged, so the log cannot say
     /// to the millisecond how long the PIN took to type.
@@ -126,12 +120,7 @@ pub(crate) struct KeyLog {
 
 impl KeyLog {
     pub(crate) fn new(sink: Option<Arc<Sink>>) -> Arc<Self> {
-        Arc::new(Self {
-            started: Instant::now(),
-            sink,
-            ring: Mutex::new(VecDeque::with_capacity(RING)),
-            coarse: AtomicBool::new(false),
-        })
+        Arc::new(Self { started: Instant::now(), sink, coarse: AtomicBool::new(false) })
     }
 
     /// The PIN stage was just shown (or a task starts at it).
@@ -149,13 +138,6 @@ impl KeyLog {
         let mut at_ms = now_ms();
         if self.coarse.load(Ordering::SeqCst) {
             at_ms -= at_ms.rem_euclid(1000);
-        }
-        {
-            let mut ring = locked(&self.ring);
-            if ring.len() == RING {
-                ring.pop_front();
-            }
-            ring.push_back((at_ms, text.clone()));
         }
         if let Some(sink) = &self.sink {
             sink.append(at_ms, &text);
@@ -178,13 +160,6 @@ impl KeyLog {
         if apdu::carries_pin(header, has_data) {
             self.coarse.store(false, Ordering::SeqCst);
         }
-    }
-
-    pub(crate) fn text(&self, utc_offset_secs: i32) -> String {
-        locked(&self.ring)
-            .iter()
-            .map(|(at_ms, text)| format!("{} {text}\n", clock_time(*at_ms, utc_offset_secs)))
-            .collect()
     }
 }
 
@@ -263,9 +238,9 @@ fn log_files(dir: &Path) -> Vec<(String, PathBuf)> {
 /// Each process's lines keep their file order: lines written while the PIN
 /// stage showed carry whole-second times, so a file is not strictly in
 /// time order, and the merge takes the earliest next line of any file.
-pub fn key_log(state_dir: String, utc_offset_secs: i32) -> Vec<KeyLogLine> {
+pub fn key_log(state_dir: &Path, utc_offset_secs: i32) -> Vec<KeyLogLine> {
     let mut files: Vec<std::iter::Peekable<std::vec::IntoIter<KeyLogLine>>> = Vec::new();
-    for (process, path) in log_files(Path::new(&state_dir)) {
+    for (process, path) in log_files(state_dir) {
         let Ok(text) = read_text(&path) else { continue };
         let lines: Vec<KeyLogLine> = text
             .lines()
@@ -297,13 +272,12 @@ pub fn key_log(state_dir: String, utc_offset_secs: i32) -> Vec<KeyLogLine> {
 
 /// [`key_log`] as plain text, one line each, oldest first: what Settings ›
 /// Key diagnostics copies. It holds no secrets (see the module comment).
-pub fn key_log_text(state_dir: String, utc_offset_secs: i32) -> String {
+pub fn key_log_text(state_dir: &Path, utc_offset_secs: i32) -> String {
     key_log(state_dir, utc_offset_secs).iter().map(|line| line.render() + "\n").collect()
 }
 
-pub fn clear_key_log(state_dir: String) -> Result<(), PawError> {
-    let dir = Path::new(&state_dir);
-    let Ok(entries) = std::fs::read_dir(dir) else { return Ok(()) };
+pub fn clear_key_log(state_dir: &Path) -> Result<(), PawError> {
+    let Ok(entries) = std::fs::read_dir(state_dir) else { return Ok(()) };
     for entry in entries.filter_map(Result::ok) {
         let name = entry.file_name().to_string_lossy().into_owned();
         // `.key-log.…tmp-…` is what a trim that never finished left.
@@ -327,17 +301,6 @@ mod tests {
         // 1970-01-01 00:00:01.234 UTC, shown at UTC+1 and UTC-1.
         assert_eq!(clock_time(1234, 3600), "01:00:01.234");
         assert_eq!(clock_time(1234, -3600), "23:00:01.234");
-    }
-
-    #[test]
-    fn the_ring_is_bounded() {
-        let log = KeyLog::new(None);
-        for n in 0..(RING * 3) {
-            log.line(format!("line {n}"));
-        }
-        let text = log.text(0);
-        assert_eq!(text.lines().count(), RING);
-        assert!(text.lines().last().unwrap().ends_with(&format!("line {}", RING * 3 - 1)));
     }
 
     #[test]
