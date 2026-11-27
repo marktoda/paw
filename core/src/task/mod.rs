@@ -31,7 +31,7 @@ pub use run::KeyTask;
 pub enum KeyPurpose {
     OpenEntry { entry: String },
     /// Opens one entry to prove the key works, and keeps nothing. `None`
-    /// when setup found no entry to open.
+    /// when setup found no entry to open or could not open the store.
     CheckKey { entry: Option<String> },
     SignIn { login: LoginPurpose },
     /// Key diagnostics: one signature nobody is meant to touch for, to see
